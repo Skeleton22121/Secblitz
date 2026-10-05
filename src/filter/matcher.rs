@@ -23,6 +23,14 @@ impl HashSet64 {
         HashSet64(v)
     }
 
+    /// From hashes that were computed elsewhere (any order, duplicates fine).
+    pub fn from_hashes(mut hashes: Vec<u64>) -> Self {
+        hashes.sort_unstable();
+        hashes.dedup();
+        hashes.shrink_to_fit();
+        HashSet64(hashes)
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
