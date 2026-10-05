@@ -78,6 +78,10 @@ pub fn classify(r: &Outcome) -> Class {
     if managed(&a) {
         return Class::Managed;
     }
+    if a.step == advice::NextStep::CheckAgain {
+        // "Check again" means we could not confirm the state.
+        return Class::Unknown;
+    }
     match a.group {
         Group::Protected => Class::Protected,
         Group::Recommended => Class::Fixable,
@@ -102,6 +106,9 @@ pub fn classify_finding(f: &secblitz::model::Finding) -> Class {
     let a = advice::for_finding(&f.title, &f.status, &f.detail);
     if managed(&a) {
         return Class::Managed;
+    }
+    if a.step == advice::NextStep::CheckAgain {
+        return Class::Unknown;
     }
     match a.group {
         Group::Protected => Class::Protected,

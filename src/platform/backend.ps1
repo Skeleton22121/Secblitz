@@ -10,7 +10,11 @@ $PSModuleAutoLoadingPreference = 'None'
 $null = Import-Module ([IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1')) -ErrorAction Stop
 $null = Import-Module ([IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
 $value = if ($null -ne $inputJson) { ConvertFrom-Json -InputObject $inputJson } else { $null }
-function Load([string]$name) { $null = Import-Module (Join-Path $moduleRoot "$name\$name.psd1") -ErrorAction Stop }
+function Load([string]$name) {
+    # The inbox LocalAccounts module uses a versioned directory on Windows.
+    $relative = if ($name -ceq 'Microsoft.PowerShell.LocalAccounts') { 'Microsoft.PowerShell.LocalAccounts\1.0.0.0\Microsoft.PowerShell.LocalAccounts.psd1' } else { "$name\$name.psd1" }
+    $null = Import-Module (Join-Path $moduleRoot $relative) -ErrorAction Stop
+}
 function Emit($value) { ConvertTo-Json -InputObject $value -Depth 8 -Compress }
 function ThrowGate([string]$message) {
     # Only call at positively established management/policy evidence sites.
@@ -512,8 +516,20 @@ function Findings {
         @{title='Windows lifecycle'; status=$(if ([int]$s.BuildNumber -lt 22000) {'attention'} else {'info'}); detail="OS=$($s.Caption); version=$($s.Version); build=$($s.BuildNumber). Standard Windows 10 support ended October 14, 2025. ESU enrollment and LTSC/IoT editions have different support terms; enrollment/support entitlement is not verified. Windows 11 support depends on release and edition; check Microsoft's lifecycle information."}
     }
     Finding 'Device encryption' {
-        Load 'BitLocker'; $v=@(Get-BitLockerVolume)
-        if ($v.Count -eq 0) { throw 'No readable volume status' }
+        # Two documented read-only WMI methods. Get-BitLockerVolume needs module
+        # autoloading (off here) and materializes key-protector data internally.
+        Load 'CimCmdlets'
+        $rows=@(Get-CimInstance -Namespace 'root\CIMV2\Security\MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -OperationTimeoutSec 5 | Select-Object -First 65)
+        if ($rows.Count -eq 0 -or $rows.Count -gt 64) { throw 'No readable volume status' }
+        $protection=@('Off','On','Unknown'); $conversion=@('FullyDecrypted','FullyEncrypted','EncryptionInProgress','DecryptionInProgress','EncryptionPaused','DecryptionPaused')
+        $v=@(foreach ($row in $rows) {
+            $p=Invoke-CimMethod -InputObject $row -MethodName GetProtectionStatus -OperationTimeoutSec 5
+            $c=Invoke-CimMethod -InputObject $row -MethodName GetConversionStatus -OperationTimeoutSec 5
+            if ($p.ReturnValue -ne 0 -or $c.ReturnValue -ne 0) { throw 'Cannot read volume status' }
+            $pi=[int]$p.ProtectionStatus; $ci=[int]$c.ConversionStatus
+            if ($pi -lt 0 -or $pi -ge $protection.Count -or $ci -lt 0 -or $ci -ge $conversion.Count) { throw 'Unknown volume status' }
+            @{MountPoint=[string]$row.DriveLetter; ProtectionStatus=$protection[$pi]; VolumeStatus=$conversion[$ci]}
+        })
         @{title='Device encryption'; status=$(if (@($v | Where-Object {$_.ProtectionStatus -ne 'On'}).Count) {'attention'} else {'ok'}); detail=(($v | ForEach-Object { "$($_.MountPoint): protection=$($_.ProtectionStatus), state=$($_.VolumeStatus)" }) -join '; ') + '. Recovery-key backup is not verified.'}
     }
     Finding 'Secure Boot' { Load 'SecureBoot'; $v=Confirm-SecureBootUEFI; @{title='Secure Boot';status=$(if ($v) {'ok'} else {'attention'});detail="Secure Boot enabled=$v. Unsupported firmware or inaccessible status is reported as unknown."} }

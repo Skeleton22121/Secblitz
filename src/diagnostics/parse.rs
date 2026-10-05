@@ -278,6 +278,7 @@ pub(super) fn wifi_class(security_enabled: bool, auth: u32, cipher: u32) -> &'st
 }
 
 /// Lower is weaker; the weakest connected interface is the one reported.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn wifi_rank(class: &str) -> u8 {
     match class {
         "Open" => 0,
