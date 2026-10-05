@@ -239,7 +239,7 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
 fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Element<'a, Message> {
     let p = ctx.palette;
     let content = column![
-        widgets::icon_badge(p, Icon::ShieldAlert, Tone::Bad),
+        widgets::icon(Icon::ShieldAlert, theme::ICON_ROW, p.bad_text),
         widgets::h2(p, ctx.t(title)),
         widgets::muted(
             p,

@@ -110,6 +110,11 @@ impl canvas::Program<Message> for Counted {
         let mut text = std::collections::hash_map::DefaultHasher::new();
         self.ring.label.hash(&mut text);
         self.ring.caption.hash(&mut text);
+        // The page-entrance fade swaps in a washed-out palette: colours count.
+        let p = &self.ring.p;
+        for c in [p.text, p.text_muted, p.tone(self.ring.tone)] {
+            c.into_rgba8().hash(&mut text);
+        }
         let key = (
             state.shown.to_bits(),
             self.ring.tone,

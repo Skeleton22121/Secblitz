@@ -206,6 +206,8 @@ pub struct App {
     warmed: [bool; 3],
     /// A background load of that page is running (no duplicate loads).
     flight: [bool; 3],
+    /// When each warmable page last started loading.
+    warm_at: [Option<std::time::Instant>; 3],
 }
 
 /// Write the history entry and the tray status off the UI thread: both fsync
@@ -330,6 +332,7 @@ impl App {
             enter_t: 1.0,
             warmed: [false; 3],
             flight: [false; 3],
+            warm_at: [None; 3],
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
@@ -432,8 +435,10 @@ impl App {
             Message::Fixes(m) => fixes::update(&mut self.fixes, m, &mut self.ctx),
             Message::Fix(m) => fixflow::update(&mut self.fix, m, &mut self.ctx),
             Message::Debloat(m) => {
-                if matches!(m, debloat::Msg::Scanned(_)) {
-                    self.flight[WARM_DEBLOAT] = false;
+                if let debloat::Msg::Scanned(g, _) = &m {
+                    if debloat::is_current_scan(&self.debloat, *g) {
+                        self.flight[WARM_DEBLOAT] = false;
+                    }
                 }
                 debloat::update(&mut self.debloat, m, &mut self.ctx)
             }
@@ -501,7 +506,9 @@ impl App {
         }
         // The engine just opened or a check just finished: warm the other
         // pages in the background so navigating to them is instant.
-        let warm = if matches!(&event, E::Opened(Ok(_)) | E::Checked(_)) {
+        // Later checks need no reload here: History refreshes itself on every
+        // log write and Debloat / Settings data does not depend on a check.
+        let warm = if matches!(&event, E::Opened(Ok(_))) {
             self.preload_all()
         } else {
             Task::none()
@@ -583,10 +590,20 @@ impl App {
     /// data stays on screen), never reset to a spinner.
     fn enter_page(&mut self, page: Page) -> Task<Message> {
         match page {
-            Page::History => self.warm(WARM_HISTORY),
-            Page::Debloat => self.warm(WARM_DEBLOAT),
-            Page::Settings => self.warm(WARM_SETTINGS),
+            Page::History => self.revisit(WARM_HISTORY),
+            Page::Debloat => self.revisit(WARM_DEBLOAT),
+            Page::Settings => self.revisit(WARM_SETTINGS),
             _ => Task::none(),
+        }
+    }
+
+    /// Entering a page again: reload only when the last load is stale.
+    fn revisit(&mut self, which: usize) -> Task<Message> {
+        let fresh = self.warm_at[which].is_some_and(|t| t.elapsed() < WARM_TTL);
+        if fresh {
+            Task::none()
+        } else {
+            self.warm(which)
         }
     }
 
@@ -597,6 +614,7 @@ impl App {
             return Task::none();
         }
         self.flight[which] = true;
+        self.warm_at[which] = Some(std::time::Instant::now());
         let first = !std::mem::replace(&mut self.warmed[which], true);
         let task = match (which, first) {
             (WARM_HISTORY, true) => history::on_enter(&mut self.history, &mut self.ctx),
@@ -948,6 +966,9 @@ impl App {
 const NAV_GAP: f32 = theme::S1;
 /// Id of the page scrollable (reset to the top on navigation).
 const PAGE_SCROLL: &str = "page-scroll";
+/// A page revisited within this long keeps what it already shows.
+const WARM_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Indexes into `warmed` / `flight`.
 const WARM_HISTORY: usize = 0;
 const WARM_DEBLOAT: usize = 1;

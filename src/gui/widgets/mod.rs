@@ -94,20 +94,6 @@ pub fn icon_filled<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message>
         .into()
 }
 
-/// Plain leading icon (20 px, tinted glyph only). There is no badge, circle
-/// or square behind icons anywhere in the app; the name is kept so older call
-/// sites compile. Neutral uses the muted text tone. Prefer [`row_item`].
-pub fn icon_badge<'a>(p: Palette, i: Icon, tone: Tone) -> Element<'a, Message> {
-    let fg = if tone == Tone::Neutral {
-        p.text_muted
-    } else {
-        p.tone(tone)
-    };
-    container(icon(i, theme::ICON_ROW, fg))
-        .center_x(theme::S6)
-        .into()
-}
-
 /// Small status label, e.g. "Needs attention".
 pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
     let fg = p.tone_text(tone);
@@ -283,7 +269,7 @@ pub fn sheet_layer<'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let panel = container(content)
-        .max_width(560)
+        .max_width(theme::CONTENT_MAX)
         .padding(theme::S6)
         .style(move |_| container::Style {
             background: Some(Background::Color(p.surface)),

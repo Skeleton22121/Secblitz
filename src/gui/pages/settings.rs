@@ -54,6 +54,8 @@ pub struct State {
     update: Remote<UpdateView>,
     confirm: Option<Confirm>,
     working: bool,
+    /// Bumped by every load and change; a read from an older one is dropped.
+    generation: u32,
     tray: bool,
     /// Running from the installed location (the only place a logon entry
     /// may point at).
@@ -71,6 +73,7 @@ impl Default for State {
             update: Remote::Loading,
             confirm: None,
             working: false,
+            generation: 0,
             // Cheap local reads; everything slower goes through `Load`.
             tray: prefs_store::tray_enabled(),
             installed: prefs_store::installed_exe().is_some(),
@@ -131,6 +134,7 @@ pub enum Msg {
     /// (Re)read background protection and update status.
     Load,
     Loaded {
+        generation: u32,
         background: Result<bool, String>,
         update: Option<UpdateView>,
     },
@@ -170,16 +174,17 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.clock.restart();
             state.background = Remote::Loading;
             state.update = Remote::Loading;
-            Task::perform(
-                blocking(|| {
-                    let background = prefs_store::background_on().map_err(|e| format!("{e:#}"));
-                    let update = secblitz::updater::status().ok().map(|s| update_view(&s));
-                    (background, update)
-                }),
-                |(background, update)| Message::Settings(Msg::Loaded { background, update }),
-            )
+            load_task(state)
         }
-        Msg::Loaded { background, update } => {
+        Msg::Loaded {
+            generation,
+            background,
+            update,
+        } => {
+            // A read that started before a change (or lands mid-change) is stale.
+            if generation != state.generation || state.working {
+                return Task::none();
+            }
             state.background = match background {
                 Ok(on) => Remote::Ready(on),
                 Err(_) => Remote::Failed,
@@ -227,6 +232,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.working = true;
+            state.generation = state.generation.wrapping_add(1);
             state.clock.restart();
             match confirm {
                 Confirm::Background(on) => Task::perform(
@@ -250,6 +256,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::BackgroundDone(on, result) => {
             state.working = false;
+            state.generation = state.generation.wrapping_add(1);
             match result {
                 Ok(()) => {
                     state.background = Remote::Ready(on);
@@ -272,6 +279,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::TrayDone(on, result) => {
             state.working = false;
+            state.generation = state.generation.wrapping_add(1);
             match result {
                 Ok(()) => {
                     state.tray = on;
@@ -561,7 +569,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Some(format!("{} {}", t("Version"), env!("CARGO_PKG_VERSION"))),
         state.technical,
         Message::Settings(Msg::ToggleTechnical),
-        container(details).padding([theme::S2, theme::S4 + 16.0 + theme::S3]),
+        container(details).padding([theme::S2, theme::S4 + theme::ICON_ROW + theme::S3]),
     );
 
     column![
@@ -636,13 +644,29 @@ mod tests {
 /// and the page keeps whatever it already shows until they land.
 #[allow(clippy::items_after_test_module)]
 pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    let _ = (state, ctx);
+    let _ = ctx;
+    if state.working {
+        return Task::none();
+    }
+    load_task(state)
+}
+
+/// Start a read tagged with a fresh generation; older reads are dropped.
+fn load_task(state: &mut State) -> Task<Message> {
+    state.generation = state.generation.wrapping_add(1);
+    let generation = state.generation;
     Task::perform(
         blocking(|| {
             let background = prefs_store::background_on().map_err(|e| format!("{e:#}"));
             let update = secblitz::updater::status().ok().map(|s| update_view(&s));
             (background, update)
         }),
-        |(background, update)| Message::Settings(Msg::Loaded { background, update }),
+        move |(background, update)| {
+            Message::Settings(Msg::Loaded {
+                generation,
+                background,
+                update,
+            })
+        },
     )
 }
