@@ -265,6 +265,11 @@ fn controls() -> Vec<Control> {
     out
 }
 
+/// Ids of every control the engine can assess, for catalogs keyed by id.
+pub fn control_ids() -> Vec<String> {
+    controls().into_iter().map(|c| c.id).collect()
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 fn validate_value(id: &str, value: &Value) -> Result<()> {
     if let Some(spec) = crate::hardening::spec(id) {

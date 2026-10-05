@@ -1123,7 +1123,11 @@ pub struct Tip {
     pub state: TipState,
     pub advice: &'static str,
     /// Windows page that helps with a `Look` tip, shown as a button.
+    #[allow(dead_code)] // the Open button is not drawn yet
     pub open: Option<secblitz::actions::Action>,
+    /// Check id whose plain-language explanation the row can open: the first
+    /// check that needs a look, else the first check with an explanation.
+    pub explain: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1181,7 +1185,16 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .filter(|a| a.status == diag::Status::Attention)
             .find_map(|a| rule_advice(&a.rule.id).map(|text| (text, rule_open(&a.rule.id))));
         let look = state == TipState::Look;
+        let explain = probe
+            .assessments
+            .iter()
+            .filter(|a| a.status == diag::Status::Attention)
+            .chain(probe.assessments.iter())
+            .map(|a| a.rule.id.as_str())
+            .find(|rule| crate::explain::for_check(rule).is_some())
+            .map(str::to_owned);
         tips.push(Tip {
+            explain,
             title: tip_title(id),
             state,
             advice: match (look, first) {

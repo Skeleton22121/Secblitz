@@ -601,7 +601,7 @@ fn attention_group<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> El
         .map(|(r, a)| {
             let impact = (!a.impact.is_empty())
                 .then(|| format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact)));
-            widgets::row_item_tinted(
+            let head = widgets::row_item_tinted(
                 p,
                 Some(Icon::AlertTriangle),
                 Some(Tone::Warn),
@@ -609,6 +609,14 @@ fn attention_group<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> El
                 impact,
                 widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
                 Some(Message::Navigate(Page::Fixes)),
+            );
+            widgets::explain::with_disclosure(
+                ctx,
+                "home",
+                &r.id,
+                false,
+                widgets::explain::INDENT,
+                head,
             )
         })
         .collect();

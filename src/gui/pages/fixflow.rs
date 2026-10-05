@@ -191,6 +191,7 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
     if chosen.is_empty() {
         return Task::none();
     }
+    ctx.explain_open = None;
     state.plan = chosen.iter().map(|id| plan_row(ctx, id, true)).collect();
     state.stage = Stage::Review {
         ids: chosen,
@@ -223,6 +224,7 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if ctx.busy || state.is_open() {
         return Task::none();
     }
+    ctx.explain_open = None;
     // Exact list when this session applied the batch that will be undone.
     state.plan = state
         .batches
@@ -522,7 +524,8 @@ fn footer<'a>(buttons: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     r.into()
 }
 
-fn plan_list<'a>(p: Palette, plan: &[PlanRow], restart_label: &str) -> Element<'a, Message> {
+fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a, Message> {
+    let p = ctx.palette;
     let mut list = column![].spacing(theme::S3);
     for r in plan {
         let mut line = row![row_text(p, r.name.clone(), r.line.clone())]
@@ -531,7 +534,14 @@ fn plan_list<'a>(p: Palette, plan: &[PlanRow], restart_label: &str) -> Element<'
         if r.restart {
             line = line.push(widgets::pill(p, restart_label.to_owned(), Tone::Neutral));
         }
-        list = list.push(line);
+        if let Some(info) = widgets::explain::toggle(ctx, "plan", &r.id) {
+            line = line.push(info);
+        }
+        let mut item = column![line].spacing(theme::S2);
+        if let Some(inset) = widgets::explain::panel(ctx, "plan", &r.id, false, 0.0) {
+            item = item.push(inset);
+        }
+        list = list.push(item);
     }
     bounded(p, list.into())
 }
@@ -559,7 +569,7 @@ fn review_view<'a>(
                 p,
                 ctx.t("We'll put these settings back the way they were:"),
             ));
-            c = c.push(plan_list(p, &state.plan, &restart_label));
+            c = c.push(plan_list(ctx, &state.plan, &restart_label));
         } else if let Some(note) = &state.undo_note {
             c = c.push(widgets::muted(p, note.clone()));
         } else {
@@ -574,7 +584,7 @@ fn review_view<'a>(
         ));
     } else {
         c = c.push(widgets::muted(p, ctx.t("Here's what we'll change:")));
-        c = c.push(plan_list(p, &state.plan, &restart_label));
+        c = c.push(plan_list(ctx, &state.plan, &restart_label));
         if state.plan.iter().any(|r| r.restart) {
             c = c.push(note(
                 p,
