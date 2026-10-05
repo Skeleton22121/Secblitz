@@ -11,14 +11,15 @@
 //! any PowerShell is started.
 pub mod backup;
 pub mod catalog;
+pub mod journal;
+pub mod offline;
 pub mod vault;
 #[cfg(windows)]
 pub(crate) mod wincrypto;
 #[cfg(windows)]
-pub(crate) mod winfs;
-pub mod journal;
-#[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub(crate) mod winfs;
 
 #[cfg(test)]
 mod tests;
@@ -76,9 +77,20 @@ pub struct Installed {
     pub version: String,
 }
 
+/// Why an app was left installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Kept {
+    /// Not enough free space to save a copy first.
+    NoSpace,
+    /// The copy couldn't be made (technical reason for the details only).
+    NoCopy(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemResult {
     Removed,
+    /// A copy could not be saved first, so the app was left installed.
+    Kept(Kept),
     /// Windows protects this app; nothing changed.
     Protected,
     Failed(String),
@@ -87,6 +99,8 @@ pub enum ItemResult {
 /// Live progress of `remove`, per catalog app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Progress {
+    /// Saving a copy of the app before removing it.
+    Saving(u16),
     Started(u16),
     Finished(u16, ItemResult),
 }
@@ -117,6 +131,9 @@ pub struct Batch {
     /// Catalog indices Windows protects.
     pub skipped: Vec<u16>,
     pub failed: Vec<Failure>,
+    /// Catalog indices left installed because no copy could be saved.
+    #[serde(default)]
+    pub kept: Vec<u16>,
 }
 
 impl Batch {
@@ -253,6 +270,7 @@ pub(crate) fn validate_indices(indices: &[u16]) -> Result<Vec<u16>> {
 pub(crate) fn remove_with(
     indices: &[u16],
     installed: &[Installed],
+    backup: &dyn Fn(&Installed) -> std::result::Result<(), Kept>,
     run: &dyn Fn(&str) -> PackageOutcome,
     emit: &dyn Fn(Progress),
 ) -> Result<Batch> {
@@ -269,6 +287,19 @@ pub(crate) fn remove_with(
             .filter(|p| catalog::owner(&p.package) == Some(index))
             .collect();
         if packages.is_empty() {
+            continue;
+        }
+        emit(Progress::Saving(index));
+        let mut kept = None;
+        for p in &packages {
+            if let Err(k) = backup(p) {
+                kept = Some(k);
+                break;
+            }
+        }
+        if let Some(k) = kept {
+            batch.kept.push(index);
+            emit(Progress::Finished(index, ItemResult::Kept(k)));
             continue;
         }
         emit(Progress::Started(index));
@@ -327,7 +358,23 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     #[cfg(not(windows))]
     let run =
         |_: &str| -> PackageOutcome { PackageOutcome::Failed("Only available on Windows".into()) };
-    let batch = remove_with(&indices, &installed, &run, emit)?;
+    #[cfg(windows)]
+    let store = backup::Store::open().inspect(|s| s.clean_staging());
+    #[cfg(windows)]
+    let backup = |p: &Installed| -> std::result::Result<(), Kept> {
+        match &store {
+            Ok(store) => {
+                offline::backup_family_with(&offline::WindowsHost, store, p.index, &p.package)
+                    .map(|_| ())
+            }
+            Err(e) => Err(Kept::NoCopy(format!("{e:#}"))),
+        }
+    };
+    #[cfg(not(windows))]
+    let backup = |_: &Installed| -> std::result::Result<(), Kept> {
+        Err(Kept::NoCopy("Only available on Windows".into()))
+    };
+    let batch = remove_with(&indices, &installed, &backup, &run, emit)?;
     if !batch.removed.is_empty() || !batch.skipped.is_empty() || !batch.failed.is_empty() {
         let _ = journal::append(&batch);
     }

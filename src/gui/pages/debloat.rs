@@ -497,7 +497,8 @@ fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 
 fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
     match run {
-        Run::Step(Progress::Started(i)) => {
+        // Task 7 gives saving its own wording; until then it shows as working.
+        Run::Step(Progress::Saving(i) | Progress::Started(i)) => {
             if let Sheet::Working(items) = &mut state.sheet {
                 if let Some(item) = items.iter_mut().find(|(n, _)| *n == i) {
                     item.1 = Step::Working;
@@ -784,12 +785,14 @@ fn group_card<'a>(
     let expanded = state.expanded.contains(&group);
     let mut body = column![].spacing(theme::S1);
     // Lined up with the app names below it.
-    body = body.push(container(widgets::small(p, ctx.t(subtitle))).padding(Padding {
-        top: theme::S1,
-        right: theme::S4,
-        bottom: theme::S1,
-        left: widgets::explain::INDENT,
-    }));
+    body = body.push(
+        container(widgets::small(p, ctx.t(subtitle))).padding(Padding {
+            top: theme::S1,
+            right: theme::S4,
+            bottom: theme::S1,
+            left: widgets::explain::INDENT,
+        }),
+    );
     if group == Group::Gaming {
         body = body.push(widgets::inline_notice(
             p,
@@ -1109,7 +1112,8 @@ fn working_sheet<'a>(
                 widgets::icon(Icon::Info, 18.0, p.text_muted),
                 ctx.t("Windows protects this app"),
             ),
-            Step::Done(ItemResult::Failed(_), at) => (
+            // Task 7 gives "left installed" its own wording.
+            Step::Done(ItemResult::Failed(_) | ItemResult::Kept(_), at) => (
                 anim::cross_draw(
                     18.0,
                     p.bad,

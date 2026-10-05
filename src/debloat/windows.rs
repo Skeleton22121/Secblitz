@@ -20,9 +20,7 @@ const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 pub const INVENTORY: &str = include_str!("scripts/inventory.ps1");
 pub const REMOVE: &str = include_str!("scripts/remove.ps1");
 pub const POLICY: &str = include_str!("scripts/policy.ps1");
-#[allow(dead_code)] // consumed by offline.rs (Task 6)
 pub const DESCRIBE: &str = include_str!("scripts/describe.ps1");
-#[allow(dead_code)] // consumed by offline.rs (Task 6)
 pub const REGISTER: &str = include_str!("scripts/register.ps1");
 
 /// Runs before every script: only inbox modules, imported by absolute path,

@@ -1,7 +1,6 @@
 //! Privileged file work for saved copies. Every path is opened without
 //! following links, and every handle is checked to still be inside the
 //! folder it should be in (a planted junction is refused, never followed).
-#![allow(dead_code)] // consumed by offline.rs (Task 6)
 use super::backup::{hex, valid_relative, FileEntry, MAX_BYTES, MAX_FILES};
 use super::vault::{Item, Sink, Source};
 use anyhow::{ensure, Context, Result};
@@ -465,6 +464,47 @@ pub fn security_sddl(path: &Path) -> Result<String> {
     Ok(String::from_utf16_lossy(text)
         .trim_end_matches('\0')
         .to_owned())
+}
+
+/// The account this process runs as, as a SID string.
+pub fn current_sid() -> Result<String> {
+    unsafe {
+        let mut token: HANDLE = null_mut();
+        ensure!(
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0,
+            "Couldn't read the current account"
+        );
+        let token = OwnedHandle(token);
+        let mut needed = 0u32;
+        GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut needed);
+        ensure!(
+            needed > 0 && needed < 4096,
+            "Couldn't read the current account"
+        );
+        // u64 storage keeps the TOKEN_USER view aligned.
+        let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
+        ensure!(
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                buf.as_mut_ptr().cast(),
+                needed,
+                &mut needed
+            ) != 0,
+            "Couldn't read the current account"
+        );
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut raw: *mut u16 = null_mut();
+        ensure!(
+            ConvertSidToStringSidW(user.User.Sid, &mut raw) != 0 && !raw.is_null(),
+            "Couldn't read the current account"
+        );
+        let _free = Local(raw.cast());
+        let len = (0..).take_while(|&i| *raw.add(i) != 0).count();
+        Ok(String::from_utf16_lossy(std::slice::from_raw_parts(
+            raw, len,
+        )))
+    }
 }
 
 /// `ProfileImagePath` for a user account (expanded), from the registry.

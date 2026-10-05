@@ -169,7 +169,13 @@ fn idx(family: &str) -> u16 {
 
 #[test]
 fn request_for_unknown_index_is_refused() {
-    let out = remove_with(&[u16::MAX], &[], &|_| PackageOutcome::Removed, &|_| {});
+    let out = remove_with(
+        &[u16::MAX],
+        &[],
+        &|_| Ok(()),
+        &|_| PackageOutcome::Removed,
+        &|_| {},
+    );
     assert!(out.is_err());
 }
 
@@ -198,6 +204,7 @@ fn removal_never_runs_for_protected_or_foreign_packages() {
     let batch = remove_with(
         &[news],
         &installed,
+        &|_| Ok(()),
         &|p| {
             seen.borrow_mut().push(p.to_string());
             PackageOutcome::Removed
@@ -236,6 +243,7 @@ fn removal_reports_removed_protected_and_failed() {
     let batch = remove_with(
         &[news, weather, maps, news],
         &installed,
+        &|_| Ok(()),
         &|p| match p {
             "Microsoft.BingNews" => PackageOutcome::Removed,
             "Microsoft.BingWeather" => PackageOutcome::Protected,
@@ -254,19 +262,52 @@ fn removal_reports_removed_protected_and_failed() {
         }]
     );
     let events = events.into_inner();
-    assert_eq!(events.len(), 6, "each app starts and finishes once");
-    assert_eq!(events[0], Progress::Started(news));
-    assert_eq!(events[1], Progress::Finished(news, ItemResult::Removed));
+    assert_eq!(events.len(), 9, "each app saves, starts and finishes once");
+    assert_eq!(events[0], Progress::Saving(news));
+    assert_eq!(events[1], Progress::Started(news));
+    assert_eq!(events[2], Progress::Finished(news, ItemResult::Removed));
     assert_eq!(
-        events[3],
+        events[5],
         Progress::Finished(weather, ItemResult::Protected)
     );
 }
 
 #[test]
+fn no_copy_means_no_removal() {
+    let index = catalog::owner("Microsoft.BingWeather").unwrap();
+    let installed = vec![Installed {
+        index,
+        package: "Microsoft.BingWeather".into(),
+        version: "1".into(),
+    }];
+    let ran = std::cell::Cell::new(false);
+    let batch = remove_with(
+        &[index],
+        &installed,
+        &|_| Err(Kept::NoSpace),
+        &|_| {
+            ran.set(true);
+            PackageOutcome::Removed
+        },
+        &|_| {},
+    )
+    .unwrap();
+    assert!(!ran.get(), "never removed without a copy");
+    assert!(batch.removed.is_empty() && batch.failed.is_empty());
+    assert_eq!(batch.kept, vec![index]);
+}
+
+#[test]
 fn apps_that_are_not_installed_are_ignored() {
     let news = idx("Microsoft.BingNews");
-    let batch = remove_with(&[news], &[], &|_| panic!("must not run"), &|_| {}).unwrap();
+    let batch = remove_with(
+        &[news],
+        &[],
+        &|_| panic!("must not save"),
+        &|_| panic!("must not run"),
+        &|_| {},
+    )
+    .unwrap();
     assert_eq!(
         batch,
         Batch {
@@ -296,6 +337,7 @@ fn journal_round_trip_and_restore_marking() {
             index: 7,
             reason: "x".into(),
         }],
+        kept: vec![],
     };
     journal::append_to(&path, &batch).unwrap();
     journal::append_to(&path, &batch).unwrap();
