@@ -158,6 +158,16 @@ struct Outcome<'a> {
 }
 
 fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome<'a>) -> El<'a> {
+    finished_with(state, ctx, o, None)
+}
+
+/// `finished` plus one visible next-step button (Retry, Open Windows Update).
+fn finished_with<'a>(
+    state: &State,
+    ctx: &Ctx,
+    o: Outcome<'a>,
+    button: Option<(String, Icon, Msg)>,
+) -> El<'a> {
     let p = ctx.palette;
     let t = state.shot(o.slot);
     let color = p.tone(o.tone);
@@ -184,7 +194,21 @@ fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome<'a>) -> El<'a> {
         None,
         o.title,
         o.sub,
-        trailing(vec![mark, more(p, menu)]),
+        {
+            let mut items = Vec::new();
+            if let Some((label, icon, msg)) = button {
+                items.push(widgets::action(
+                    p,
+                    ButtonKind::Secondary,
+                    label,
+                    Some(icon),
+                    Some(tools(msg)),
+                ));
+            }
+            items.push(mark);
+            items.push(more(p, menu));
+            trailing(items)
+        },
         below,
         None,
     )
@@ -560,19 +584,23 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         Updates::Failed {
             technical: raw,
             note,
-        } => finished(
-            state,
-            ctx,
-            Outcome {
-                slot: Slot::Updates,
-                icon: Icon::Download,
-                tone: Tone::Warn,
-                title: ctx.t("We couldn't check for updates"),
-                sub: Some(ctx.t(note)),
-                menu: vec![again(ctx.t("Try again"))],
-                raw: Some((Detail::Updates, raw)),
-            },
-        ),
+        } => {
+            let (menu, button) = failure_steps(ctx, note, again(ctx.t("Try again")));
+            finished_with(
+                state,
+                ctx,
+                Outcome {
+                    slot: Slot::Updates,
+                    icon: Icon::Download,
+                    tone: Tone::Warn,
+                    title: ctx.t("We couldn't check for updates"),
+                    sub: Some(ctx.t(note)),
+                    menu,
+                    raw: Some((Detail::Updates, raw)),
+                },
+                button,
+            )
+        }
         Updates::Installing {
             cancel,
             stage,
@@ -623,6 +651,12 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 _ => ctx.t(result.detail()),
             };
             let mut menu = Vec::new();
+            let mut button = None;
+            if let (InstallResult::CouldNotFinish, Some(n)) = (result, note) {
+                if logic::suggests_windows_update(n) && ctx.broker.is_some() {
+                    button = Some(open_update_button(ctx));
+                }
+            }
             if *result == InstallResult::NotConfirmed && ctx.broker.is_some() {
                 menu.push(entry(
                     Icon::ExternalLink,
@@ -631,7 +665,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 ));
             }
             menu.push(entry(Icon::Check, ctx.t("Done"), Msg::ClearUpdates));
-            finished(
+            finished_with(
                 state,
                 ctx,
                 Outcome {
@@ -643,8 +677,34 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     menu,
                     raw: Some((Detail::Updates, raw)),
                 },
+                button,
             )
         }
+    }
+}
+
+fn open_update_button(ctx: &Ctx) -> (String, Icon, Msg) {
+    (
+        ctx.t("Open Windows Update"),
+        Icon::ExternalLink,
+        Msg::Open(Shortcut::WindowsUpdate),
+    )
+}
+
+/// What to offer after a failed update lookup: retrying only when it can help,
+/// otherwise a way to finish in Windows Update itself.
+fn failure_steps(
+    ctx: &Ctx,
+    note: &str,
+    retry: MenuEntry,
+) -> (Vec<MenuEntry>, Option<(String, Icon, Msg)>) {
+    if logic::suggests_windows_update(note) {
+        let button = ctx.broker.is_some().then(|| open_update_button(ctx));
+        (Vec::new(), button)
+    } else if logic::is_retryable(note) {
+        (vec![retry], None)
+    } else {
+        (Vec::new(), None)
     }
 }
 
@@ -737,27 +797,44 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
         None,
     )];
     if let Tips::Done(report) = &state.tips {
-        let good = report.count(TipState::Good);
-        let look = report.count(TipState::Look);
-        let mut summary = ctx.t("{n} look good").replace("{n}", &good.to_string());
-        if look > 0 {
-            summary = format!(
-                "{summary}  ·  {}",
-                ctx.t("{n} worth a look").replace("{n}", &look.to_string())
-            );
-        }
         let scanning = matches!(state.scan, Run::Working);
-        let list = column(report.tips.iter().map(|tip| tip_row(ctx, tip, scanning)))
-            .spacing(theme::S1)
-            .width(Length::Fill);
-        out.push(widgets::collapsible(
-            p,
-            ctx.t(report.profile.title()),
-            Some(summary),
-            state.detail_open(Detail::TipsList),
-            tools(Msg::ToggleDetail(Detail::TipsList)),
-            list,
-        ));
+        let (needs, fine): (Vec<&logic::Tip>, Vec<&logic::Tip>) = report
+            .tips
+            .iter()
+            .partition(|tip| tip.state != TipState::Good);
+        let rows = |tips: &[&logic::Tip]| -> El<'a> {
+            column(tips.iter().map(|tip| tip_row(ctx, tip, scanning)))
+                .spacing(theme::S1)
+                .width(Length::Fill)
+                .into()
+        };
+        if !needs.is_empty() {
+            // Open until the person folds it.
+            out.push(widgets::collapsible(
+                p,
+                ctx.t("Needs a look"),
+                Some(match report.count(TipState::Look) {
+                    0 => ctx.t("{n} items").replace("{n}", &needs.len().to_string()),
+                    n => ctx.t("{n} worth a look").replace("{n}", &n.to_string()),
+                }),
+                !state.detail_open(Detail::TipsList),
+                tools(Msg::ToggleDetail(Detail::TipsList)),
+                rows(&needs),
+            ));
+        }
+        if !fine.is_empty() {
+            out.push(widgets::collapsible(
+                p,
+                ctx.t("All good"),
+                Some(
+                    ctx.t("{n} look good")
+                        .replace("{n}", &fine.len().to_string()),
+                ),
+                state.detail_open(Detail::TipsGood),
+                tools(Msg::ToggleDetail(Detail::TipsGood)),
+                rows(&fine),
+            ));
+        }
     }
     out
 }
@@ -771,22 +848,21 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     };
     // One compact action: the usual scan (after its own confirmation), or the
     // Windows page that helps. Nothing starts without the person's say-so.
-    let action: El<'a> = if tip.state != TipState::Look {
-        space::horizontal().width(0).into()
-    } else if tip.scan {
-        secondary(
+    let action: El<'a> = match tip.open {
+        _ if tip.state != TipState::Look => space::horizontal().width(0).into(),
+        _ if tip.scan => secondary(
             p,
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
-        )
-    } else if let Some(shortcut) = tip.open.and_then(Shortcut::from_action) {
-        secondary(
+        ),
+        Some(open) if ctx.broker.is_some() => widgets::action(
             p,
+            ButtonKind::Secondary,
             ctx.t("Open"),
-            ctx.broker.is_some().then_some(Msg::Open(shortcut)),
-        )
-    } else {
-        space::horizontal().width(0).into()
+            Some(Icon::ExternalLink),
+            Some(tools(Msg::OpenAction(open))),
+        ),
+        _ => space::horizontal().width(0).into(),
     };
     let head = widgets::row_item_tinted(
         p,
@@ -943,6 +1019,20 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 menu: vec![entry(Icon::Check, ctx.t("Done"), Msg::ClearBitwarden)],
                 raw: None,
             },
+        ),
+        Run::Done(Err(raw)) if state.bitwarden_offline => finished_with(
+            state,
+            ctx,
+            Outcome {
+                slot: Slot::Bitwarden,
+                icon: Icon::Lock,
+                tone: Tone::Warn,
+                title: ctx.t("We couldn't install Bitwarden"),
+                sub: Some(ctx.t("You're offline. Connect to the internet and try again.")),
+                menu: vec![entry(Icon::X, ctx.t("Done"), Msg::ClearBitwarden)],
+                raw: Some((Detail::Bitwarden, raw)),
+            },
+            Some((ctx.t("Retry"), Icon::Refresh, Msg::Ask(Sheet::Bitwarden))),
         ),
         Run::Done(Err(raw)) => finished(
             state,
