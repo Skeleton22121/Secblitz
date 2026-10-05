@@ -17,6 +17,7 @@ use crate::i18n::Lang;
 use iced::widget::canvas::Cache;
 use iced::widget::{column, row, space};
 use iced::{Alignment, Element, Task};
+use secblitz::debloat;
 use std::collections::HashSet;
 
 const TREND_POINTS: usize = 30;
@@ -59,7 +60,7 @@ struct Data {
     points: Vec<(u64, f32)>,
     /// (protected, total) of the latest check.
     latest: Option<(usize, usize)>,
-    /// Apps removed so far.
+    /// Apps removed right now (restored ones don't count).
     removed: usize,
     days: Vec<Day>,
 }
@@ -82,7 +83,7 @@ fn trend_points(entries: &[Entry], max: usize) -> Vec<(u64, f32)> {
 }
 
 impl Data {
-    fn of(entries: &[Entry]) -> Self {
+    fn of(entries: &[Entry], removed: usize) -> Self {
         Self {
             points: trend_points(entries, TREND_POINTS),
             latest: entries
@@ -90,11 +91,7 @@ impl Data {
                 .rev()
                 .find(|e| e.total > 0)
                 .map(|e| (e.protected, e.total)),
-            removed: entries
-                .iter()
-                .filter(|e| e.kind == Kind::Debloat)
-                .map(|e| e.n)
-                .sum(),
+            removed,
             days: log::timeline(entries),
         }
     }
@@ -102,7 +99,8 @@ impl Data {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    Loaded(Vec<Entry>),
+    /// The score log and how many apps are removed right now.
+    Loaded(Vec<Entry>, usize),
     ShowMore,
     ToggleDay(u64),
 }
@@ -112,11 +110,15 @@ fn refresh(ctx: &Ctx) -> Task<Message> {
         Some(dir) => Task::perform(
             blocking(move || {
                 crate::gui::wait_persisted();
-                log::load(&dir)
+                let removed = debloat::journal::still_removed(
+                    &debloat::journal::load_from(&dir.join(debloat::journal::FILE)),
+                    debloat::catalog().len(),
+                );
+                (log::load(&dir), removed.len())
             }),
-            |e| Message::History(Msg::Loaded(e)),
+            |(e, removed)| Message::History(Msg::Loaded(e, removed)),
         ),
-        None => Task::done(Message::History(Msg::Loaded(Vec::new()))),
+        None => Task::done(Message::History(Msg::Loaded(Vec::new(), 0))),
     };
     let engine = Task::run(ctx.worker.run(Job::History), Message::Worker);
     Task::batch([load, engine])
@@ -144,8 +146,8 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     let _ = ctx;
     match msg {
-        Msg::Loaded(entries) => {
-            state.data = Some(Data::of(&entries));
+        Msg::Loaded(entries, removed) => {
+            state.data = Some(Data::of(&entries, removed));
             state.chart.clear();
         }
         Msg::ShowMore => state.days_shown += DAYS_PAGE,
@@ -207,13 +209,13 @@ fn date_fn(lang: Lang) -> &'static dyn Fn(u64) -> String {
     }
 }
 
-/// Sentence for the removed-apps row ("1 app" / "{n} apps").
+/// Sentence for the removed-apps row: how many apps are removed right now.
 fn removed_text(ctx: &Ctx, removed: usize) -> String {
     match removed {
-        0 => ctx.t("You haven't removed any apps yet."),
-        1 => ctx.t("You've removed 1 app so far. You can bring it back at any time."),
+        0 => ctx.t("No apps are removed right now."),
+        1 => ctx.t("1 app is removed. You can bring it back at any time."),
         n => ctx
-            .t("You've removed {n} apps so far. You can bring one back at any time.")
+            .t("{n} apps are removed. You can bring any of them back at any time.")
             .replace("{n}", &n.to_string()),
     }
 }
@@ -451,13 +453,18 @@ mod tests {
             total,
             n,
         };
-        let d = Data::of(&[
-            e(1, Kind::Check, 3, 5, 0),
-            e(2, Kind::Debloat, 0, 0, 2),
-            e(3, Kind::Debloat, 0, 0, 1),
-            e(4, Kind::Check, 4, 5, 0),
-        ]);
-        assert_eq!(d.removed, 3);
+        let d = Data::of(
+            &[
+                e(1, Kind::Check, 3, 5, 0),
+                e(2, Kind::Debloat, 0, 0, 2),
+                e(3, Kind::Debloat, 0, 0, 1),
+                e(4, Kind::Check, 4, 5, 0),
+            ],
+            1,
+        );
+        // The count comes from the removed-apps list, not from adding up
+        // removal events: the log shows three removals but one app is left.
+        assert_eq!(d.removed, 1);
         assert_eq!(d.latest, Some((4, 5)));
         assert_eq!(d.points.len(), 2);
     }

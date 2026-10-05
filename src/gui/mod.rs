@@ -464,7 +464,7 @@ impl App {
             }
             Message::Tools(m) => tools::update(&mut self.tools, m, &mut self.ctx),
             Message::History(m) => {
-                if matches!(m, history::Msg::Loaded(_)) {
+                if matches!(m, history::Msg::Loaded(..)) {
                     self.flight[WARM_HISTORY] = false;
                 }
                 history::update(&mut self.history, m, &mut self.ctx)

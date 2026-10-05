@@ -366,3 +366,34 @@ fn offline_scripts_are_plain_ascii_and_emit_json() {
         assert!(text.contains("ConvertTo-Json"), "{name}.ps1 prints JSON");
     }
 }
+
+#[test]
+fn still_removed_lists_each_app_once_and_skips_restored_ones() {
+    let item = |index, restored| Removed {
+        index,
+        package: "p".into(),
+        version: "1".into(),
+        restored,
+    };
+    let batch = |t, removed| Batch {
+        t,
+        removed,
+        skipped: vec![],
+        failed: vec![],
+        kept: vec![],
+    };
+    let journal = [
+        batch(10, vec![item(3, true), item(4, true), item(5, false)]),
+        batch(
+            20,
+            vec![item(3, false), item(5, false), item(u16::MAX, false)],
+        ),
+    ];
+    // Removed again after a restore counts once, at its newest time; restored
+    // apps and indices outside the catalog are left out.
+    assert_eq!(
+        journal::still_removed(&journal, catalog().len()),
+        vec![(3, 20), (5, 20)]
+    );
+    assert!(journal::still_removed(&[], catalog().len()).is_empty());
+}

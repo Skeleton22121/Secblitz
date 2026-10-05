@@ -28,6 +28,21 @@ pub fn mark_restored(index: u16) -> Result<()> {
     mark_restored_in(&default_path()?, index)
 }
 
+/// Apps that are removed right now: (catalog index, time of the newest
+/// removal), newest batch first. An app removed again after a restore counts
+/// once; restored apps and indices outside the catalog are left out.
+pub fn still_removed(batches: &[Batch], catalog_len: usize) -> Vec<(u16, u64)> {
+    let mut out: Vec<(u16, u64)> = Vec::new();
+    for batch in batches.iter().rev() {
+        for r in batch.removed.iter().filter(|r| !r.restored) {
+            if (r.index as usize) < catalog_len && !out.iter().any(|(i, _)| *i == r.index) {
+                out.push((r.index, batch.t));
+            }
+        }
+    }
+    out
+}
+
 pub fn load_from(path: &Path) -> Vec<Batch> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
