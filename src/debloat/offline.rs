@@ -129,8 +129,8 @@ pub(crate) fn backup_family_with(
         )?;
     }
     let family = family.expect("non-empty");
-    // Space: package sizes are unknown until copied; require headroom plus
-    // a generous estimate (4x the previous saved size, or 1 GB).
+    // Package sizes are unknown until copied: start only with twice the
+    // headroom free, and re-check after every package.
     let free = host.free_bytes().map_err(no_copy)?;
     if free < backup::HEADROOM.saturating_mul(2) {
         return Err(Kept::NoSpace);
@@ -179,29 +179,26 @@ pub(crate) fn backup_family_with(
         std::fs::create_dir_all(staging.join(backup::DATA))?;
         let mut data = Vec::new();
         for sid in &d.users {
-            if !backup::valid_sid(sid) {
+            // No data folder (or a link where it should be): nothing of
+            // this account's to keep.
+            if !backup::valid_sid(sid) || !host.data_folder_ready(sid, &family) {
                 continue;
             }
             let path = staging.join(backup::DATA).join(format!("{sid}.bin"));
             let mut out = std::fs::File::create(&path)?;
-            match host.save_data(sid, &family, sealer.as_ref(), &mut out) {
-                Ok(plain_size) => {
-                    out.sync_all()?;
-                    drop(out);
-                    let (_, sha256) = backup::hash_file(&path)?;
-                    data.push(backup::DataBlob {
-                        sid: sid.clone(),
-                        plain_size,
-                        sha256,
-                    });
-                }
-                // No data folder for this account (or a link was found):
-                // the app is still saved; that account's data is not.
-                Err(_) => {
-                    drop(out);
-                    std::fs::remove_file(&path)?;
-                }
-            }
+            // Removal deletes this data, so data that can't be saved keeps
+            // the app installed.
+            let plain_size = host
+                .save_data(sid, &family, sealer.as_ref(), &mut out)
+                .context("Couldn't save an account's app data")?;
+            out.sync_all()?;
+            drop(out);
+            let (_, sha256) = backup::hash_file(&path)?;
+            data.push(backup::DataBlob {
+                sid: sid.clone(),
+                plain_size,
+                sha256,
+            });
         }
         let manifest = Manifest {
             schema: SCHEMA,
@@ -405,10 +402,13 @@ pub(crate) fn finish_pending_with(host: &dyn Host, store: &Store) -> Result<()> 
             }
             if put_back(host, store, &m, &me).is_ok() {
                 pending.retain(|s| s != &me);
-                let path = store.family_dir(&m.family).join(PENDING);
                 if pending.is_empty() {
-                    std::fs::remove_file(path)?;
+                    // The app was restored earlier and every account now
+                    // has its data back: the copy has done its job.
+                    store.delete(&m.family)?;
+                    store.gc_frameworks()?;
                 } else {
+                    let path = store.family_dir(&m.family).join(PENDING);
                     std::fs::write(path, serde_json::to_vec(&pending)?)?;
                 }
             }
@@ -422,6 +422,39 @@ pub fn finish_pending() {
     #[cfg(windows)]
     if let Ok(store) = Store::open() {
         let _ = finish_pending_with(&WindowsHost, &store);
+    }
+}
+
+/// The app is installed again (from its copy or from the Store): its saved
+/// copy has done its job. A copy still holding data for an account that
+/// hasn't signed in yet (`pending.json`) is kept. Damaged copies are removed
+/// too, so they are matched by folder name, not by a readable manifest.
+pub(crate) fn forget_with(store: &Store, index: u16) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(store.root()) else {
+        return Ok(());
+    };
+    for e in entries.flatten() {
+        let Some(family) = e.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some((name, _)) = family.rsplit_once('_') else {
+            continue;
+        };
+        if family.starts_with('.')
+            || family == backup::FRAMEWORKS
+            || super::catalog::owner(name) != Some(index)
+            || !read_pending(store, &family).is_empty()
+        {
+            continue;
+        }
+        store.delete(&family)?;
+    }
+    store.gc_frameworks()
+}
+
+pub fn forget(index: u16) {
+    if let Ok(store) = Store::open() {
+        let _ = forget_with(&store, index);
     }
 }
 
@@ -727,6 +760,7 @@ mod tests {
         log: RefCell<Vec<String>>,
         fail_register: bool,
         fail_data_restore: bool,
+        fail_save: bool,
         data: RefCell<BTreeMap<String, Vec<u8>>>, // sid -> plaintext marker
         signed_out: RefCell<BTreeSet<String>>,    // accounts with no data folder yet
         me: RefCell<String>,
@@ -756,6 +790,7 @@ mod tests {
             out: &mut dyn Write,
         ) -> Result<u64> {
             self.log.borrow_mut().push(format!("save {sid}"));
+            ensure!(!self.fail_save, "too much data");
             let plain = self.data.borrow().get(sid).cloned().unwrap_or_default();
             crate::debloat::vault::encrypt(&mut OneFile(plain), sealer, FAMILY, sid, out)
         }
@@ -1095,7 +1130,73 @@ mod tests {
         finish_pending_with(&host, &store).unwrap();
         assert_eq!(host.data.borrow().get(OTHER).unwrap(), b"other city");
         assert!(read_pending(&store, FAMILY).is_empty());
-        assert!(!store.family_dir(FAMILY).join(PENDING).exists());
+        assert!(
+            !store.family_dir(FAMILY).exists(),
+            "every account has its data back: the copy is gone"
+        );
+    }
+
+    #[test]
+    fn data_that_cannot_be_saved_keeps_the_app() {
+        let (_d, store) = store();
+        let mut host = weather();
+        host.fail_save = true;
+        assert!(matches!(
+            backup_family_with(&host, &store, index(), "Microsoft.BingWeather"),
+            Err(Kept::NoCopy(_))
+        ));
+        assert!(store.for_index(index()).is_empty());
+    }
+
+    #[test]
+    fn account_without_a_data_folder_is_skipped_not_fatal() {
+        let (_d, store) = store();
+        let host = weather();
+        host.signed_out.borrow_mut().insert(TESTER.into());
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        assert!(store
+            .load(FAMILY, index())
+            .unwrap()
+            .unwrap()
+            .data
+            .is_empty());
+        assert!(!host.log.borrow().iter().any(|l| l.starts_with("save")));
+    }
+
+    #[test]
+    fn copy_is_forgotten_once_the_app_is_back() {
+        let (_d, store) = store();
+        let host = weather();
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        // Another app's copy is untouched.
+        let other = store.family_dir("Microsoft.BingNews_8wekyb3d8bbwe");
+        std::fs::create_dir_all(&other).unwrap();
+        // A damaged copy of this app is removed too.
+        let damaged = store.family_dir("Microsoft.BingWeather_abcdefghijklm");
+        std::fs::create_dir_all(&damaged).unwrap();
+        std::fs::write(damaged.join(crate::debloat::backup::MANIFEST), b"junk").unwrap();
+        forget_with(&store, index()).unwrap();
+        assert!(!store.family_dir(FAMILY).exists());
+        assert!(!damaged.exists());
+        assert!(other.exists());
+        assert!(
+            !store.framework_dir(FW).exists(),
+            "unused framework removed"
+        );
+    }
+
+    #[test]
+    fn copy_with_waiting_data_is_kept() {
+        let (_d, store) = store();
+        let host = weather();
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        std::fs::write(
+            store.family_dir(FAMILY).join(PENDING),
+            serde_json::to_vec(&vec!["S-1-5-21-1-2-3-1002"]).unwrap(),
+        )
+        .unwrap();
+        forget_with(&store, index()).unwrap();
+        assert!(store.family_dir(FAMILY).exists());
     }
 
     #[test]

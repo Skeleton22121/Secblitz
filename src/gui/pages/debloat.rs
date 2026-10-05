@@ -584,7 +584,9 @@ fn restored_ok(
         // The app is installed again: list it under "Apps to remove" without
         // a loading state (the journal is reloaded above, after it is marked).
         inventory_task(state),
-        copies_task(),
+        // The app is back: its saved copy has done its job.
+        Task::perform(blocking(move || debloat::offline::forget(index)), |_| ())
+            .then(|_| copies_task()),
         toast(text, tone),
     ])
 }
