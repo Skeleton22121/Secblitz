@@ -131,6 +131,24 @@ try {
     Set-Acl -LiteralPath $file -AclObject $acl
     Expect-Rejected { Assert-SafeItem $file }
     Protect-Item $file $false
+    # Stock C:\ProgramData grants Users (CI)(WD,AD,WEA,WA) = 0x116: allowed only as the ProgramData ancestor.
+    $pdLike = Join-Path $root 'pd-like'
+    $null = New-Item -ItemType Directory -Path $pdLike
+    $acl = Get-Acl -LiteralPath $pdLike
+    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;0x116;;;BU)')
+    Set-Acl -LiteralPath $pdLike -AclObject $acl
+    Expect-Rejected { Assert-SafeItem $pdLike $true }
+    Release-Pins
+    Assert-SafeItem $pdLike $true $true
+    Release-Pins
+    Expect-Rejected { Assert-SafeItem $pdLike }
+    Release-Pins
+    $acl = Get-Acl -LiteralPath $pdLike
+    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;0x1200bf;;;BU)')
+    Set-Acl -LiteralPath $pdLike -AclObject $acl
+    Expect-Rejected { Assert-SafeItem $pdLike $true $true }
+    Release-Pins
+    Remove-Item -LiteralPath $pdLike -Recurse -Force
     # The web protection commands use the same native dispatch and only two fixed
     # argument strings; anything else is refused before a process starts.
     $failed = $false
