@@ -89,6 +89,8 @@ pub struct State {
     expanded: Vec<Group>,
     journal: Vec<Batch>,
     restoring: Option<u16>,
+    /// App whose restore failed because the PC is offline (shows Retry).
+    offline: Option<u16>,
     /// Machine-wide setting result, arrives just before the batch result.
     policy: Option<bool>,
     /// Precomputed in update(): installed catalog indices, per group.
@@ -116,6 +118,7 @@ impl Default for State {
             expanded: Vec::new(),
             journal: Vec::new(),
             restoring: None,
+            offline: None,
             policy: None,
             groups: Vec::new(),
             removed: Vec::new(),
@@ -378,6 +381,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.restoring = Some(index);
+            state.offline = None;
             ctx.broker_task(crate::broker::Request::ReinstallStoreApp(index), move |r| {
                 wrap(Msg::Restored(index, r))
             })
@@ -419,6 +423,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                             Tone::Good,
                         ),
                     ])
+                }
+                Ok(crate::broker::Reply::Offline) => {
+                    state.offline = Some(index);
+                    Task::none()
                 }
                 Ok(crate::broker::Reply::OpenedStore) => toast(
                     format!(
@@ -878,6 +886,18 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             (
                 ago(ctx, t),
                 anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
+            )
+        } else if state.offline == Some(index) {
+            let enabled = state.restoring.is_none() && !ctx.busy;
+            (
+                ctx.t("You're offline. Connect to the internet and try again."),
+                widgets::action(
+                    p,
+                    widgets::ButtonKind::Secondary,
+                    ctx.t("Retry"),
+                    Some(Icon::Refresh),
+                    enabled.then(|| wrap(Msg::Restore(index))),
+                ),
             )
         } else {
             let enabled = state.restoring.is_none() && !ctx.busy;

@@ -59,6 +59,24 @@ impl Shortcut {
     }
 }
 
+/// The broker request that opens the Windows page for an action.
+fn request_for(action: actions::Action) -> Option<broker::Request> {
+    use actions::Action as A;
+    use broker::Request as R;
+    Some(match action {
+        A::OpenWindowsUpdate => R::OpenWindowsUpdate,
+        A::OpenWindowsSecurity => R::OpenWindowsSecurity,
+        A::OpenSignInSettings => R::OpenSignIn,
+        A::OpenEncryptionSettings => R::OpenEncryption,
+        A::OpenTamperProtection => R::OpenTamperProtection,
+        A::OpenProtectionHistory => R::OpenProtectionHistory,
+        A::OpenAppBrowserControl => R::OpenAppBrowserControl,
+        A::OpenOptionalFeatures => R::OpenOptionalFeatures,
+        A::OpenAccounts => R::OpenAccounts,
+        A::UpdateDefender | A::QuickScan | A::StartMonitoring => return None,
+    })
+}
+
 /// Which "More details" expander is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
@@ -69,6 +87,8 @@ pub enum Detail {
     Tips,
     /// The list of health tips is expanded.
     TipsList,
+    /// The collapsed "All good" group of health tips.
+    TipsGood,
     Bitwarden,
     Sheet,
 }
@@ -103,6 +123,8 @@ pub enum Msg {
     BitwardenDone(Result<broker::Reply, String>),
     ClearBitwarden,
     Open(Shortcut),
+    /// Open the Windows page a health tip points to.
+    OpenAction(actions::Action),
     OpenSecurity,
     Opened(Result<broker::Reply, String>),
     ToggleDetail(Detail),
@@ -203,6 +225,8 @@ pub struct State {
     tip_choice: TipProfile,
     password: Password,
     bitwarden: Run<Result<(), String>>,
+    /// The last Bitwarden install failed because the PC is offline.
+    bitwarden_offline: bool,
     open_details: Vec<Detail>,
     /// Time of the latest animation frame (never read from the clock in `view`).
     now: Instant,
@@ -234,6 +258,7 @@ impl Default for State {
                 copied: false,
             },
             bitwarden: Run::Idle,
+            bitwarden_offline: false,
             open_details: Vec::new(),
             now: Instant::now(),
             epoch: Instant::now(),
@@ -489,6 +514,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::BitwardenDone(reply) => {
+            state.bitwarden_offline = matches!(reply, Ok(broker::Reply::Offline));
             state.bitwarden = Run::Done(match reply {
                 Ok(broker::Reply::Done) => Ok(()),
                 Ok(other) => Err(format!("{other:?}")),
@@ -503,6 +529,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Open(shortcut) => ctx.broker_task(shortcut.request(), |r| tools(Msg::Opened(r))),
+        Msg::OpenAction(action) => match request_for(action) {
+            Some(request) => ctx.broker_task(request, |r| tools(Msg::Opened(r))),
+            None => Task::none(),
+        },
         Msg::OpenSecurity => ctx.broker_task(broker::Request::OpenWindowsSecurity, |r| {
             tools(Msg::Opened(r))
         }),
@@ -647,6 +677,32 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             ctx.broker_task(broker::Request::InstallBitwarden, |r| {
                 tools(Msg::BitwardenDone(r))
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod followup_tests {
+    use super::*;
+
+    #[test]
+    fn every_open_action_has_a_broker_request() {
+        use actions::Action as A;
+        for action in [
+            A::OpenWindowsUpdate,
+            A::OpenWindowsSecurity,
+            A::OpenSignInSettings,
+            A::OpenEncryptionSettings,
+            A::OpenTamperProtection,
+            A::OpenProtectionHistory,
+            A::OpenAppBrowserControl,
+            A::OpenOptionalFeatures,
+            A::OpenAccounts,
+        ] {
+            assert!(request_for(action).is_some(), "{action:?}");
+        }
+        for action in [A::UpdateDefender, A::QuickScan, A::StartMonitoring] {
+            assert!(request_for(action).is_none());
         }
     }
 }

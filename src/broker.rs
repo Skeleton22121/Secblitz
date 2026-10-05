@@ -17,6 +17,11 @@ pub enum Request {
     BlockSuggestedApps,
     /// Reinstall a removed app; arg = index into `secblitz::debloat::catalog()`.
     ReinstallStoreApp(u16),
+    OpenTamperProtection,
+    OpenProtectionHistory,
+    OpenAppBrowserControl,
+    OpenOptionalFeatures,
+    OpenAccounts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +70,11 @@ impl Request {
             Request::InstallBitwarden => (5, 0),
             Request::BlockSuggestedApps => (6, 0),
             Request::ReinstallStoreApp(i) => (7, i),
+            Request::OpenTamperProtection => (8, 0),
+            Request::OpenProtectionHistory => (9, 0),
+            Request::OpenAppBrowserControl => (10, 0),
+            Request::OpenOptionalFeatures => (11, 0),
+            Request::OpenAccounts => (12, 0),
         };
         let [lo, hi] = arg.to_le_bytes();
         [kind, lo, hi]
@@ -91,6 +101,11 @@ impl Request {
             5 => Request::InstallBitwarden,
             6 => Request::BlockSuggestedApps,
             7 if usize::from(arg) < catalog_len => Request::ReinstallStoreApp(arg),
+            8 => Request::OpenTamperProtection,
+            9 => Request::OpenProtectionHistory,
+            10 => Request::OpenAppBrowserControl,
+            11 => Request::OpenOptionalFeatures,
+            12 => Request::OpenAccounts,
             _ => return None,
         })
     }
@@ -395,6 +410,11 @@ mod tests {
             Request::BlockSuggestedApps,
             Request::ReinstallStoreApp(0),
             Request::ReinstallStoreApp(41),
+            Request::OpenTamperProtection,
+            Request::OpenProtectionHistory,
+            Request::OpenAppBrowserControl,
+            Request::OpenOptionalFeatures,
+            Request::OpenAccounts,
         ]
     }
 
@@ -407,10 +427,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 8, 9, 100, 255] {
+        for kind in [0u8, 13, 14, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in 1..=6u8 {
+        for kind in (1..=6u8).chain(8..=12) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
