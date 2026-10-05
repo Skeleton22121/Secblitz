@@ -159,11 +159,14 @@ impl Widget<Message, Theme, Renderer> for Hoverable<'_> {
     ) {
         let state = tree.state.downcast_mut::<HoverState>();
         let over = cursor.is_over(layout.bounds());
-        if let Event::Window(window::Event::RedrawRequested(_)) = event {
-            // Settle after the hit-test below flagged a change.
-        } else if state.hovered != over {
+        // Hit-test on every event, frames included: a wheel scroll moves the
+        // row under a still pointer, and only the next frame sees the new
+        // offset. A frame draws right after this, so it needs no extra one.
+        if state.hovered != over {
             state.hovered = over;
-            shell.request_redraw();
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
         }
         if let Some(l) = layout.children().next() {
             self.content.as_widget_mut().update(
@@ -285,13 +288,8 @@ pub fn row_item_below<'a>(
     below: Vec<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    // Line up with the title: the icon and its gap, plus the gap after the
-    // zero-width spacer that sets the row's minimum height.
-    let indent = if glyph.is_some() {
-        theme::ICON_ROW + theme::S4
-    } else {
-        0.0
-    } + theme::S4;
+    // Line up with the title: the icon (if any) and the gap after it.
+    let indent = if glyph.is_some() { theme::ICON_ROW } else { 0.0 } + theme::S4;
     let mut texts = column![text(title.into())
         .size(theme::BODY)
         .line_height(LineHeight::Absolute(Pixels(theme::LINE_BODY)))
@@ -308,16 +306,18 @@ pub fn row_item_below<'a>(
                 .color(p.text_muted),
         );
     }
-    let mut line = row![].spacing(theme::S4).align_y(Alignment::Center);
+    // The invisible spacer gives the row its minimum height. It shares a
+    // slot with the icon so it adds no gap: the title then sits exactly one
+    // gap after the icon, where every inset below a row expects it.
+    let mut lead = row![].align_y(Alignment::Center);
     if let Some(g) = glyph {
         let c = tone.map(|t| p.tone(t)).unwrap_or(p.text_muted);
-        line = line.push(icon(g, theme::ICON_ROW, c));
+        lead = lead.push(icon(g, theme::ICON_ROW, c));
     }
-    // The invisible spacer gives the row its minimum height.
-    line = line
-        .push(iced::widget::space::vertical().height(theme::ROW_ITEM - theme::S2 * 2.0))
-        .push(texts)
-        .push(trailing.into());
+    lead = lead.push(iced::widget::space::vertical().height(theme::ROW_ITEM - theme::S2 * 2.0));
+    let line = row![lead, texts, trailing.into()]
+        .spacing(theme::S4)
+        .align_y(Alignment::Center);
     let body: Element<'a, Message> = if below.is_empty() {
         line.into()
     } else {
