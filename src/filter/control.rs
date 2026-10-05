@@ -94,30 +94,26 @@ pub fn change(desired: &Desired, current: Option<&[IpAddr]>) -> Change {
     }
 }
 
-/// The routing script (see `routing`); kept here so its guarantees are tested
-/// on every host.
-pub const NRPT_SCRIPT: &str = include_str!("scripts/nrpt.ps1");
-
-#[derive(serde::Deserialize)]
-struct Shown {
-    servers: Option<Vec<String>>,
-    #[serde(default)]
-    count: u32,
+/// The rule's server list as Windows stores it: addresses joined by `;`.
+pub fn servers_value(servers: &[IpAddr]) -> String {
+    servers
+        .iter()
+        .map(IpAddr::to_string)
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
-/// Reads the script's one-line answer. `None` means no rule of ours. More than
-/// one rule of ours, or a server that is not an address, reads as a rule that
-/// matches nothing, so the next change rewrites it cleanly.
-pub fn parse_shown(line: &str) -> anyhow::Result<Option<Vec<IpAddr>>> {
-    let shown: Shown = serde_json::from_str(line.trim())?;
-    let Some(servers) = shown.servers else {
-        return Ok(None);
-    };
-    let parsed: Option<Vec<IpAddr>> = servers.iter().map(|s| s.parse().ok()).collect();
-    match parsed {
-        Some(list) if shown.count <= 1 => Ok(Some(list)),
-        _ => Ok(Some(Vec::new())),
-    }
+/// Reads a stored server list. Anything that is not a plain list of
+/// addresses reads as an empty list, which never equals what we want, so the
+/// next change rewrites the rule cleanly.
+pub fn parse_servers_value(value: &str) -> Vec<IpAddr> {
+    let parsed: Option<Vec<IpAddr>> = value
+        .split([';', ','])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().ok())
+        .collect();
+    parsed.unwrap_or_default()
 }
 
 /// The config with only the pause changed.
@@ -412,42 +408,18 @@ mod tests {
     }
 
     #[test]
-    fn nrpt_script_never_touches_adapters_and_checks_both_marks() {
-        let script = NRPT_SCRIPT;
-        for forbidden in [
-            "Set-DnsClient",
-            "Set-DnsClientServerAddress",
-            "DohServerAddress",
-            "Remove-DnsClientNrptRule -Namespace",
-        ] {
-            assert!(!script.contains(forbidden), "script uses {forbidden}");
-        }
-        assert!(script.contains("$_.DisplayName -eq $displayName"));
-        assert!(script.contains("$_.Comment -eq $comment"));
-        assert!(script.contains("'Secblitz web protection'"));
-        assert!(script.contains("'Managed by Secblitz'"));
-        assert!(script.contains("TryParse"));
-        assert!(script.contains("Clear-DnsClientCache"));
-        // Removal only ever goes through the filtered list.
-        assert_eq!(script.matches("Remove-DnsClientNrptRule").count(), 1);
-        assert!(script.contains("foreach ($rule in (Get-Ours))"));
-    }
-
-    #[test]
-    fn shown_rule_is_read_from_the_script_line() {
+    fn server_list_round_trips_as_windows_stores_it() {
+        let servers = rule_servers(&[ip("10.0.2.3")]);
+        let value = servers_value(&servers);
+        assert_eq!(value, "127.0.0.1;::1;10.0.2.3;9.9.9.9;149.112.112.112");
+        assert_eq!(parse_servers_value(&value), servers);
         assert_eq!(
-            parse_shown(r#"{"servers":["127.0.0.1","::1"],"count":1}"#).unwrap(),
-            Some(vec![ip("127.0.0.1"), ip("::1")])
+            parse_servers_value("127.0.0.1, ::1"),
+            vec![ip("127.0.0.1"), ip("::1")]
         );
-        assert_eq!(parse_shown(r#"{"servers":null,"count":0}"#).unwrap(), None);
-        // Two rules of ours, or an odd entry: never equal to what we want.
-        for line in [
-            r#"{"servers":["127.0.0.1"],"count":2}"#,
-            r#"{"servers":["nope"],"count":1}"#,
-        ] {
-            assert_eq!(parse_shown(line).unwrap(), Some(Vec::new()));
-        }
-        assert!(parse_shown("not json").is_err());
+        // An odd entry never equals what we want.
+        assert!(parse_servers_value("127.0.0.1;nope").is_empty());
+        assert!(parse_servers_value("").is_empty());
     }
 
     #[test]
