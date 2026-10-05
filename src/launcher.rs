@@ -480,6 +480,7 @@ mod imp {
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,
                 Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,
+                Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
                 Err(_) => Reply::Failed,
             },
             Request::BlockSuggestedApps => match block_suggested_apps() {

@@ -228,8 +228,9 @@ pub struct State {
     tip_choice: TipProfile,
     password: Password,
     bitwarden: Run<Result<(), String>>,
-    /// The last Bitwarden install failed because the PC is offline.
-    bitwarden_offline: bool,
+    /// Why the last Bitwarden install failed, when it is a known reason
+    /// (`Offline` or `Unavailable` for this account).
+    bitwarden_why: Option<broker::Reply>,
     open_details: Vec<Detail>,
     personal: personal::State,
     /// Time of the latest animation frame (never read from the clock in `view`).
@@ -261,7 +262,7 @@ impl Default for State {
                 copied: false,
             },
             bitwarden: Run::Idle,
-            bitwarden_offline: false,
+            bitwarden_why: None,
             open_details: Vec::new(),
             personal: Default::default(),
             now: Instant::now(),
@@ -522,7 +523,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::BitwardenDone(reply) => {
-            state.bitwarden_offline = matches!(reply, Ok(broker::Reply::Offline));
+            state.bitwarden_why = match reply {
+                Ok(r @ (broker::Reply::Offline | broker::Reply::Unavailable)) => Some(r),
+                _ => None,
+            };
             state.bitwarden = Run::Done(match reply {
                 Ok(broker::Reply::Done) => Ok(()),
                 Ok(other) => Err(format!("{other:?}")),

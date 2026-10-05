@@ -11,6 +11,7 @@ use super::{
 use crate::app::tools::{
     self as logic, InstallResult, RepairKind, RepairResult, TipProfile, TipState,
 };
+use crate::broker;
 use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
@@ -1017,7 +1018,20 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 raw: None,
             },
         ),
-        Run::Done(Err(raw)) if state.bitwarden_offline => finished_with(
+        Run::Done(Err(raw)) if state.bitwarden_why == Some(broker::Reply::Unavailable) => finished(
+            state,
+            ctx,
+            Outcome {
+                slot: Slot::Bitwarden,
+                icon: Icon::Lock,
+                tone: Tone::Warn,
+                title: ctx.t("Bitwarden can't be installed from this account"),
+                sub: Some(ctx.t("You can get it from bitwarden.com instead.")),
+                menu: vec![entry(Icon::Check, ctx.t("Done"), Msg::ClearBitwarden)],
+                raw: Some((Detail::Bitwarden, raw)),
+            },
+        ),
+        Run::Done(Err(raw)) if state.bitwarden_why == Some(broker::Reply::Offline) => finished_with(
             state,
             ctx,
             Outcome {
@@ -1039,7 +1053,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 icon: Icon::Lock,
                 tone: Tone::Bad,
                 title: ctx.t("We couldn't install Bitwarden"),
-                sub: Some(ctx.t("Check your internet connection and try again.")),
+                sub: Some(ctx.t("Please try again later.")),
                 menu: vec![entry(
                     Icon::Refresh,
                     ctx.t("Try again"),

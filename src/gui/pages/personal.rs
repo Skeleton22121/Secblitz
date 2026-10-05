@@ -328,8 +328,11 @@ fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
     match setting {
         Setting::StoreAppsWebCheck => (Icon::Package, ctx.t("Web check for Store apps")),
         Setting::ShowExtensions => (Icon::Eye, ctx.t("Show file endings like .pdf")),
-        Setting::NearbySharing => (Icon::Globe, ctx.t("Nearby sharing with everyone")),
-        Setting::TailoredExperiences => (Icon::EyeOff, ctx.t("Tips and ads based on your PC use")),
+        Setting::NearbySharing => (Icon::Globe, ctx.t("Nearby sharing with your devices only")),
+        Setting::TailoredExperiences => (
+            Icon::EyeOff,
+            ctx.t("Keep your PC habits out of tips and ads"),
+        ),
         Setting::OfficeMacros => (
             Icon::Lock,
             ctx.t("Block macros in Office files from the internet"),

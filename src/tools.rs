@@ -31,6 +31,24 @@ impl std::fmt::Display for Offline {
 
 impl std::error::Error for Offline {}
 
+/// Secblitz may not install apps from this account (an administrator or
+/// background account, or no App Installer). Retrying cannot help.
+#[derive(Debug)]
+pub struct NotHere;
+
+impl std::fmt::Display for NotHere {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not_available_for_this_account")
+    }
+}
+
+impl std::error::Error for NotHere {}
+
+/// True when an error from this module means "not from this account".
+pub fn is_not_here_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<NotHere>().is_some()
+}
+
 /// True when an error from this module (or its context chain) means offline.
 pub fn is_offline_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<Offline>())
@@ -709,11 +727,11 @@ mod windows {
     }
 
     pub(super) fn install() -> Result<()> {
-        require_desktop_user()?;
+        require_desktop_user().context(super::NotHere)?;
         if known_install()? {
             return Ok(());
         }
-        let exe = winget()?;
+        let exe = winget().context(super::NotHere)?;
         let deadline = Instant::now() + Duration::from_secs(600);
         let (code, source) = run(&exe, Operation::Source, deadline)?;
         if super::is_offline_code(code) {
@@ -758,6 +776,17 @@ mod tests {
         let error = anyhow::Error::new(Offline).context("Install Bitwarden");
         assert!(is_offline_error(&error));
         assert!(!is_offline_error(&anyhow::anyhow!("hash mismatch")));
+        assert!(!is_not_here_error(&error));
+    }
+
+    #[test]
+    fn account_refusals_are_told_apart_from_other_failures() {
+        use anyhow::Context;
+        let refused = Err::<(), _>(anyhow::anyhow!("not the desktop user")).context(NotHere);
+        let refused = refused.unwrap_err();
+        assert!(is_not_here_error(&refused));
+        assert!(!is_offline_error(&refused));
+        assert!(!is_not_here_error(&anyhow::anyhow!("hash mismatch")));
     }
 
     #[test]
