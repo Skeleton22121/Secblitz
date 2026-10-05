@@ -1,0 +1,140 @@
+A background program has a risky setup. Ask someone you trust to look at it.
+A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.
+A hidden file may be sending trusted websites somewhere else. Ask someone you trust to check it.
+A record of what you did on this PC being kept and shared
+A setting has switched off your browser's warnings about dangerous sites. Ask whoever set up this PC.
+Activity history
+Ad tracking ID
+An old Windows tool that attackers like to use is still installed. Remove it in Windows Features.
+An unused powerful account being guessed or abused
+Anonymous account listing
+Apps allowed through the firewall
+Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.
+Apps tracking you across other apps for ads
+Apps will show less relevant ads. Nothing else changes.
+Attackers stealing passwords or hiding inside Windows
+Automatic updates
+Automatic updates switched off
+Booby-trapped scripts and email attachments starting programs
+Check who can sign in to this PC and switch off accounts nobody uses.
+Cloud threat lookups
+Download and website warnings
+Extra shields against password theft
+Fake name-lookup blocking
+Fake printer drivers giving attackers full control
+Harmful programs starting from a USB stick or disc
+Harmful script files starting with a double-click
+Harmful scripts and network attacks reaching your PC
+Hidden Administrator account
+Hidden background tasks
+Hide your PC on public Wi-Fi
+Junk and adware bundled with free downloads
+Junk app blocking
+Left as it is
+New threats that only cloud checks can spot
+No backup found. Set up a regular backup of your files.
+Nobody can invite a helper to take over this PC. Quick Assist still works.
+Not offered
+Not offered: Defender behavior monitoring is off
+Not offered: Defender cloud protection is off
+Not offered: Defender real-time protection is off
+Not offered: Microsoft Office was not found
+Not offered: Recall is not available on this PC
+Not offered: Secblitz cannot tell who is signed in
+Not offered: Secure Boot is off
+Not offered: Smart App Control is on
+Not offered: a printer on this PC is shared with other computers
+Not offered: a shared folder or drive may rely on the old name service
+Not offered: no other administrator account could be confirmed
+Not offered: no other administrator account is enabled
+Not offered: sign-in add-ons from other companies are installed
+Not offered: some sign-in add-ons would stop working
+Not offered: the old file-sharing version (SMB1) is still on
+Not offered: the old file-sharing version could not be checked
+Not offered: this PC uses Configuration Manager
+Not offered: this edition of Windows does not include it
+Not offered: this setting is not available on Windows Home
+Not offered: your account has no password
+Nothing was changed. If you're not sure, leave it as it is.
+Old .vbs and .js script files will stop running when you open them.
+Old Windows tools
+Old and hidden accounts
+Old script files
+Old sign-in methods
+Old, easily cracked sign-in methods used on your network
+Open Windows Features and untick the old scripting tool.
+Open Windows Security and check the app and file protection settings.
+Open Windows Security and check your virus protection settings.
+Open Windows Security and make sure virus protection is fully turned on.
+Open Windows Update and make sure updates are allowed to install.
+Open sign-in settings and choose to ask for your password after sleep.
+Password guessing lockout
+Password-stealing programs reading your sign-in details
+Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead.
+Printer driver safety
+Remote Assistance invitations
+Remove an old Windows tool that attackers like to use.
+Restart your PC to finish installing updates.
+Risky script and attachment warnings
+Rogue Wi-Fi hotspots connecting your PC without asking
+Saved risky Wi-Fi networks stop joining by themselves. You can still connect by hand.
+Script and network attack checks
+Security fixes never being installed
+Shared folders
+Sign-in add-ons from other companies are installed, so we leave this alone.
+Sign-in add-ons from other companies may stop working. Needs a restart.
+Sign-in process shield
+Smart App Control already guards this part of Windows, so we leave it alone.
+Some apps in your personal folders are allowed through the firewall. Remove ones you don't know.
+Some folders are shared with everyone on your network. Stop sharing what you don't need.
+Some old accounts are still switched on. Remove the ones nobody uses.
+Some sign-in add-ons would stop working, so we leave this alone.
+Someone guessing your password again and again
+Someone taking over your PC through a help invitation
+Something is set to run quietly in the background. Ask someone you trust to look at it.
+Something is set up to run quietly in the background. Ask someone you trust to look at it.
+Startup security renewal
+Stop sharing folders you don't need.
+Strangers on public Wi-Fi seeing your shared files
+Strangers on the network listing your accounts and shares
+Strangers on your network answering lookups with fake replies
+The hidden Administrator account is switched off. Your own account is not affected.
+This may be the only administrator account, so we keep it switched on.
+This protection needs Secure Boot, which is off on this PC. We leave it alone.
+Turn automatic Windows updates back on and restart your PC when asked.
+Turn off hidden or unused accounts on this PC.
+Turn on Tamper Protection so malware can't switch off your virus protection.
+Turn on cloud threat lookups first, then check again.
+Turn on live virus protection first, then check again.
+Turn on warnings for risky downloads and websites in Windows Security.
+Turn on warnings for unknown downloads in Windows Security.
+USB stick auto-start
+Updates are paused. Resume them in Windows Update.
+Very old devices may stop showing your shared folders. Needs a restart.
+Very old network drives or scanners may stop signing in. Needs a restart.
+Virus protection safeguards
+We can fix this. Fake name-lookup answers will be ignored.
+We can fix this. It blocks common tricks used to steal passwords.
+We can fix this. It turns scanning for harmful scripts back on.
+We can fix this. Junk apps bundled with downloads will be blocked.
+We can fix this. Printer drivers will only be installed with your permission.
+We can fix this. Too many wrong passwords will lock sign-in for a few minutes.
+We can fix this. Your shared files and printers stay hidden on public Wi-Fi.
+Website redirects
+Wi-Fi networks that join by themselves
+Windows Defender will send details about suspicious files to Microsoft to catch new threats faster.
+Windows found something harmful. Open Windows Security and follow the steps.
+Windows stops keeping a list of what you did on this PC.
+Windows version support
+Windows will ask before running scripts or email attachments that look risky, and you can allow them.
+Windows will go back to installing security updates by itself.
+Windows' safe default is in place.
+Your PC hasn't been scanned for a while. Run a quick scan in Windows Security.
+Your PC may be missing security updates. Open Windows Update to install them.
+Your PC's startup security needs a renewal. Install all Windows updates and check your PC maker's website.
+Your PC's startup security needs a renewal. Install all Windows updates, then check your PC maker's website.
+Your Windows version is running out of safety updates. Install the newest version in Windows Update.
+Your organization's tools manage this, so we leave it alone.
+Your version of Windows is running out of safety updates. Install the newest version in Windows Update.
+Your virus protection skips some risky places. Look at the list in Windows Security.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
