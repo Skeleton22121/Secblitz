@@ -15,6 +15,8 @@
 #[path = "diagnostics/types.rs"]
 mod types;
 pub use types::*;
+#[path = "diagnostics/checks.rs"]
+mod checks;
 #[cfg(any(windows, test))]
 #[path = "diagnostics/parse.rs"]
 mod parse;
@@ -28,7 +30,7 @@ mod tests;
 mod windows;
 
 pub const SCHEMA_VERSION: u32 = 1;
-pub const RULE_MAPPING_VERSION: &str = "2026-10-03.1";
+pub const RULE_MAPPING_VERSION: &str = "2026-10-05.1";
 pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_ITEMS: usize = 512;
 pub const PROBE_TIMEOUT_SECONDS: u64 = 15;
@@ -158,7 +160,8 @@ fn assemble(profile: Profile, context: &Context, mut probes: Vec<Diagnostic>) ->
         Omission::new(Scope::Machine, "Network", "No connectivity requests, packet capture, web history, credentials, IP/DNS/proxy/VPN endpoints, interface names or private paths. Machine WinHTTP default is not every application's effective proxy."),
         Omission::new(Scope::OriginalUser, "User settings", "Per-user software, backup settings, VPN connections, browser policies, proxy/PAC settings and other profiles are not inspected."),
         Omission::new(Scope::Machine, "Permissions", "Fixed-service broad-principal ACE audit only; no token AccessCheck, filesystem-wide audit or proof of exploitability."),
-        Omission::new(Scope::Machine, "Exposure", "Local configuration and TCP listeners do not prove remote reachability; firewall, upstream NAT, credentials and group nesting may alter effective access."),
+        Omission::new(Scope::Machine, "Detect-only checks", "Hosts file, Defender exclusions and threats, shares, firewall rules, services and accounts are reduced to counts and fixed categories on the device; no paths, names, host entries, SSIDs or file contents are collected, and nothing is changed."),
+        Omission::new(Scope::Machine, "Exposure","Local configuration and TCP listeners do not prove remote reachability; firewall, upstream NAT, credentials and group nesting may alter effective access."),
     ];
     let browsers = probes
         .iter()

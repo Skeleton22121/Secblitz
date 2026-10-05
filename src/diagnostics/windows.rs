@@ -499,7 +499,15 @@ fn modules(id: ProbeId) -> Vec<&'static str> {
         "Microsoft.PowerShell.Management",
     ];
     names.extend_from_slice(match id {
-        ProbeId::DefenderHealth | ProbeId::DefenderPolicy => &["Defender"],
+        ProbeId::DefenderHealth | ProbeId::DefenderPolicy | ProbeId::DefenderProtection => {
+            &["Defender"]
+        }
+        ProbeId::SecureBootCerts => &["SecureBoot", "Microsoft.PowerShell.Diagnostics"],
+        ProbeId::UpdatePolicy | ProbeId::Persistence => &["CimCmdlets"],
+        ProbeId::LegacyFeatures => &["Dism"],
+        ProbeId::AccountHygiene => &["Microsoft.PowerShell.LocalAccounts"],
+        ProbeId::Sharing => &["SmbShare"],
+        ProbeId::FirewallRules => &["NetSecurity"],
         ProbeId::SecurityProviders
         | ProbeId::Management
         | ProbeId::BitLocker

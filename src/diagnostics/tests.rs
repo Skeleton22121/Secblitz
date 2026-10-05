@@ -688,3 +688,340 @@ fn unsupported_platform_never_fabricates_native_evidence() {
         .all(|p| p.evidence.is_none() && p.status == Status::Unsupported));
     assert_eq!(report.coverage.probes_with_evidence, 0);
 }
+
+// ---------------------------------------------------------------------------
+// 2026-10 detect-only checks: synthetic fixtures, no native evidence.
+// ---------------------------------------------------------------------------
+
+fn status_of(probe: &Diagnostic, id: &str) -> Status {
+    assessment(probe, id).status
+}
+
+#[test]
+fn defender_protection_threats_scans_and_exclusions() {
+    let base = |threats: u32, quick: u64, risky: u32, mode: &str| {
+        json!({
+            "running_mode":k(mode),"tamper_protected":k(true),"tamper_feature_value":k(5),
+            "active_threats":k(threats),"recent_detections":k(0),
+            "quick_scan_age_days":k(quick),"full_scan_age_days":k(30),
+            "exclusion_count":k(risky),"risky_exclusion_count":k(risky)
+        })
+    };
+    let ok = assessed(ProbeId::DefenderProtection, base(0, 1, 0, "Normal"));
+    assert_eq!(ok.status, Status::Healthy);
+    let threats = assessed(ProbeId::DefenderProtection, base(2, 1, 0, "Normal"));
+    assert_eq!(status_of(&threats, "defender.threats"), Status::Attention);
+    for stale in [8u64, u32::MAX as u64] {
+        let p = assessed(ProbeId::DefenderProtection, base(0, stale, 0, "Normal"));
+        assert_eq!(status_of(&p, "defender.scan_age"), Status::Attention);
+    }
+    let risky = assessed(ProbeId::DefenderProtection, base(0, 1, 3, "Normal"));
+    assert_eq!(
+        status_of(&risky, "defender.exclusions_risky"),
+        Status::Attention
+    );
+    // Passive mode means another antivirus is in charge: no false scan alarm.
+    let passive = assessed(
+        ProbeId::DefenderProtection,
+        base(0, u32::MAX as u64, 3, "Passive Mode"),
+    );
+    assert_eq!(
+        status_of(&passive, "defender.scan_age"),
+        Status::Informational
+    );
+    assert_eq!(
+        status_of(&passive, "defender.exclusions_risky"),
+        Status::Informational
+    );
+}
+
+#[test]
+fn tamper_protection_prefers_the_status_property_and_falls_back_to_the_feature_value() {
+    let make = |prop: Value, feature: Value| {
+        assessed(
+            ProbeId::DefenderProtection,
+            json!({"running_mode":k("Normal"),"tamper_protected":prop,"tamper_feature_value":feature}),
+        )
+    };
+    let id = "defender.tamper_protection";
+    assert_eq!(status_of(&make(k(true), k(4)), id), Status::Healthy);
+    assert_eq!(status_of(&make(k(false), k(5)), id), Status::Attention);
+    let unavailable = json!({"state":"Unknown","value":"Unavailable"});
+    assert_eq!(
+        status_of(&make(unavailable.clone(), k(5)), id),
+        Status::Healthy
+    );
+    assert_eq!(
+        status_of(&make(unavailable.clone(), k(4)), id),
+        Status::Attention
+    );
+    assert_eq!(status_of(&make(unavailable, k(0)), id), Status::Unknown);
+}
+
+#[test]
+fn smartscreen_policy_and_smart_app_control_are_distinguished() {
+    let fixture = |local: bool, policy: bool, edge: bool, sac: &str| {
+        assessed(
+            ProbeId::SmartScreen,
+            json!({
+                "apps_off_local":k(local),"apps_off_policy":k(policy),
+                "edge_off_policy":k(edge),"chrome_off_policy":k(false),"smart_app_control":k(sac)
+            }),
+        )
+    };
+    let ok = fixture(false, false, false, "Absent");
+    assert_eq!(status_of(&ok, "smartscreen.apps"), Status::Healthy);
+    assert_eq!(
+        status_of(&ok, "smartscreen.browser_policy"),
+        Status::Healthy
+    );
+    assert_eq!(
+        status_of(&ok, "smart_app_control.state"),
+        Status::Informational
+    );
+    let apps = |p: &Diagnostic| status_of(p, "smartscreen.apps");
+    assert_eq!(apps(&fixture(true, false, false, "On")), Status::Attention);
+    assert_eq!(apps(&fixture(false, true, false, "On")), Status::Attention);
+    assert_eq!(
+        status_of(
+            &fixture(false, false, true, "Off"),
+            "smartscreen.browser_policy"
+        ),
+        Status::Attention
+    );
+    // Smart App Control being off is information, never an alarm.
+    assert_eq!(
+        status_of(
+            &fixture(false, false, false, "Off"),
+            "smart_app_control.state"
+        ),
+        Status::Informational
+    );
+    assert_eq!(
+        status_of(
+            &fixture(false, false, false, "bogus"),
+            "smart_app_control.state"
+        ),
+        Status::Unknown
+    );
+}
+
+#[test]
+fn update_policy_blockers_pauses_and_overdue_restarts() {
+    let fixture = |auto: bool, paused: bool, pending: bool, uptime: u32| {
+        assessed(
+            ProbeId::UpdatePolicy,
+            json!({
+                "auto_updates_blocked":k(auto),"update_access_blocked":k(false),"update_service_disabled":k(false),
+                "paused":k(paused),"drivers_excluded":k(false),"reboot_pending":k(pending),"uptime_days":k(uptime)
+            }),
+        )
+    };
+    let ok = fixture(false, false, false, 30);
+    assert_eq!(ok.status, Status::Healthy);
+    assert_eq!(
+        status_of(
+            &fixture(true, false, false, 1),
+            "update.auto_policy_disabled"
+        ),
+        Status::Attention
+    );
+    assert_eq!(
+        status_of(&fixture(false, true, false, 1), "update.paused"),
+        Status::Attention
+    );
+    assert_eq!(
+        status_of(&fixture(false, false, true, 6), "update.reboot_overdue"),
+        Status::Informational
+    );
+    assert_eq!(
+        status_of(&fixture(false, false, true, 7), "update.reboot_overdue"),
+        Status::Attention
+    );
+    // A long uptime alone (Fast Startup) is not a pending restart.
+    assert_eq!(
+        status_of(&fixture(false, false, false, 90), "update.reboot_overdue"),
+        Status::Healthy
+    );
+    // The owned update.freshness/backup.coverage findings are untouched by this probe.
+    assert!(ok
+        .assessments
+        .iter()
+        .all(|a| a.rule.id != "update.freshness"));
+}
+
+#[test]
+fn hosts_file_reports_counts_and_flags_sensitive_redirects_only() {
+    let fixture = |size: u64, redirects: u32, sensitive: u32, blocks: u32| {
+        assessed(
+            ProbeId::HostsFile,
+            json!({
+                "size_bytes":k(size),"redirect_count":k(redirects),
+                "sensitive_redirect_count":k(sensitive),"sensitive_block_count":k(blocks)
+            }),
+        )
+    };
+    let hosts = |p: &Diagnostic| status_of(p, "net.hosts_file");
+    assert_eq!(hosts(&fixture(800, 0, 0, 0)), Status::Healthy);
+    assert_eq!(hosts(&fixture(800, 4, 0, 0)), Status::Informational);
+    assert_eq!(hosts(&fixture(800, 4, 1, 0)), Status::Attention);
+    assert_eq!(hosts(&fixture(800, 0, 0, 2)), Status::Attention);
+    assert_eq!(hosts(&fixture(2_000_000, 0, 0, 0)), Status::Attention);
+    let big = assessed(ProbeId::HostsFile, json!({"size_bytes":k(5_000_000u64)}));
+    assert_eq!(hosts(&big), Status::Attention);
+    let partial = assessed(ProbeId::HostsFile, json!({"size_bytes":k(800)}));
+    assert_eq!(hosts(&partial), Status::Unknown);
+}
+
+#[test]
+fn legacy_feature_persistence_accounts_sharing_and_firewall_rules() {
+    let p = assessed(
+        ProbeId::LegacyFeatures,
+        json!({"powershell_v2_enabled":k(true)}),
+    );
+    assert_eq!(status_of(&p, "ps.v2_engine"), Status::Attention);
+    let p = assessed(
+        ProbeId::LegacyFeatures,
+        json!({"powershell_v2_enabled":k(false)}),
+    );
+    assert_eq!(status_of(&p, "ps.v2_engine"), Status::Healthy);
+
+    let p = assessed(
+        ProbeId::Persistence,
+        json!({"wmi_consumers":k(1),"unquoted_service_paths":k(3),"unquoted_service_paths_writable":k(0)}),
+    );
+    assert_eq!(
+        status_of(&p, "persistence.wmi_subscriptions"),
+        Status::Attention
+    );
+    assert_eq!(
+        status_of(&p, "services.unquoted_paths"),
+        Status::Informational
+    );
+    let p = assessed(
+        ProbeId::Persistence,
+        json!({"wmi_consumers":k(0),"unquoted_service_paths":k(3),"unquoted_service_paths_writable":k(1)}),
+    );
+    assert_eq!(status_of(&p, "services.unquoted_paths"), Status::Attention);
+    assert_eq!(
+        status_of(&p, "persistence.wmi_subscriptions"),
+        Status::Healthy
+    );
+
+    let p = assessed(
+        ProbeId::AccountHygiene,
+        json!({"builtin_admin_enabled":k(true),"stale_enabled_accounts":k(2)}),
+    );
+    assert_eq!(
+        status_of(&p, "accounts.builtin_administrator"),
+        Status::Attention
+    );
+    assert_eq!(status_of(&p, "accounts.stale_enabled"), Status::Attention);
+    let p = assessed(
+        ProbeId::AccountHygiene,
+        json!({"builtin_admin_enabled":k(false),"stale_enabled_accounts":k(0)}),
+    );
+    assert_eq!(p.status, Status::Healthy);
+
+    let p = assessed(
+        ProbeId::Sharing,
+        json!({"share_count":k(2),"broad_access_shares":k(1),"encrypt_data":k(false)}),
+    );
+    assert_eq!(status_of(&p, "smb.shares_exposed"), Status::Attention);
+    assert_eq!(
+        status_of(&p, "smb.server_encryption"),
+        Status::Informational
+    );
+    let p = assessed(
+        ProbeId::Sharing,
+        json!({"share_count":k(0),"broad_access_shares":k(0),"encrypt_data":k(false)}),
+    );
+    assert_eq!(p.status, Status::Healthy);
+
+    let rules = |risky: u32| {
+        assessed(
+            ProbeId::FirewallRules,
+            json!({"risky_inbound_allow_rules":k(risky),"user_folder_inbound_allow_rules":k(4)}),
+        )
+    };
+    let id = "firewall.user_dir_inbound_allow";
+    assert_eq!(status_of(&rules(1), id), Status::Attention);
+    assert_eq!(status_of(&rules(0), id), Status::Informational);
+}
+
+#[test]
+fn os_support_and_secure_boot_certificate_probes_parse_end_to_end() {
+    let p = assessed(
+        ProbeId::OsSupport,
+        json!({"display_version":k("24H2"),"build":k(26100),"edition_id":k("Core")}),
+    );
+    assert!(matches!(
+        p.status,
+        Status::Attention | Status::Healthy | Status::Informational
+    ));
+    assert_eq!(
+        assessment(&p, "os.feature_release_support").rule.id,
+        "os.feature_release_support"
+    );
+    let p = assessed(
+        ProbeId::SecureBootCerts,
+        json!({
+            "update_completed_event":k(true),"update_staged_event":k(false),"update_error_event":k(false),
+            "servicing_status":k("Updated"),"ca2023_in_db":k(true),"secure_boot_enabled":k(true)
+        }),
+    );
+    assert_eq!(p.status, Status::Healthy);
+    // A bad servicing type is unknown, not a guess.
+    let p = assessed(ProbeId::SecureBootCerts, json!({"servicing_status":k(7)}));
+    assert_eq!(p.status, Status::Unknown);
+}
+
+#[test]
+fn new_probes_have_compiled_branches_and_read_only_privacy_boundaries() {
+    let script = format!(
+        "{}\n{}",
+        include_str!("common.ps1"),
+        include_str!("probes.ps1")
+    );
+    for &id in &ProbeId::ALL[23..] {
+        assert!(
+            script.contains(&format!("'{id:?}' {{")),
+            "{id:?} has no compiled branch"
+        );
+    }
+    // Hosts entries, exclusion lists, share names and rule programs never reach output.
+    for forbidden in [
+        "Get-Content",
+        "Set-ItemProperty",
+        "Remove-Item",
+        "Set-NetFirewallRule",
+        "Disable-WindowsOptionalFeature",
+        "Set-SmbShare",
+        "Stop-Service",
+    ] {
+        assert!(!script.contains(forbidden), "{forbidden}");
+    }
+    assert!(script.contains("Exclusion paths, extensions and process names are never emitted"));
+    assert!(script.contains("message text can carry firmware"));
+}
+
+#[test]
+fn every_new_probe_has_a_launcher_module_entry_and_unique_source() {
+    let launcher = include_str!("windows.rs");
+    for id in [
+        "DefenderProtection",
+        "SecureBootCerts",
+        "UpdatePolicy",
+        "Persistence",
+        "LegacyFeatures",
+        "AccountHygiene",
+        "Sharing",
+        "FirewallRules",
+    ] {
+        assert!(launcher.contains(&format!("ProbeId::{id}")), "{id}");
+    }
+    let mut sources: Vec<_> = ProbeId::ALL.iter().map(|id| id.source()).collect();
+    sources.sort_unstable();
+    sources.dedup();
+    assert_eq!(sources.len(), ProbeId::ALL.len());
+}
