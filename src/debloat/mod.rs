@@ -11,6 +11,7 @@
 //! any PowerShell is started.
 pub mod backup;
 pub mod catalog;
+pub mod icons;
 pub mod journal;
 pub mod offline;
 pub mod vault;

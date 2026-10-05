@@ -288,8 +288,30 @@ pub fn row_item_below<'a>(
     below: Vec<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
+    let c = tone.map(|t| p.tone(t)).unwrap_or(p.text_muted);
+    let lead = glyph.map(|g| icon(g, theme::ICON_ROW, c));
+    row_item_lead(p, lead, title, subtitle, trailing, below, on_press)
+}
+
+/// A row whose leading picture is any element of `ICON_ROW` size (an app's
+/// own icon, say) instead of a tinted glyph. Same height and alignment as
+/// [`row_item`].
+#[allow(clippy::too_many_arguments)]
+pub fn row_item_lead<'a>(
+    p: Palette,
+    lead_icon: Option<Element<'a, Message>>,
+    title: impl Into<String>,
+    subtitle: Option<String>,
+    trailing: impl Into<Element<'a, Message>>,
+    below: Vec<Element<'a, Message>>,
+    on_press: Option<Message>,
+) -> Element<'a, Message> {
     // Line up with the title: the icon (if any) and the gap after it.
-    let indent = if glyph.is_some() { theme::ICON_ROW } else { 0.0 } + theme::S4;
+    let indent = if lead_icon.is_some() {
+        theme::ICON_ROW
+    } else {
+        0.0
+    } + theme::S4;
     let mut texts = column![text(title.into())
         .size(theme::BODY)
         .line_height(LineHeight::Absolute(Pixels(theme::LINE_BODY)))
@@ -310,9 +332,8 @@ pub fn row_item_below<'a>(
     // slot with the icon so it adds no gap: the title then sits exactly one
     // gap after the icon, where every inset below a row expects it.
     let mut lead = row![].align_y(Alignment::Center);
-    if let Some(g) = glyph {
-        let c = tone.map(|t| p.tone(t)).unwrap_or(p.text_muted);
-        lead = lead.push(icon(g, theme::ICON_ROW, c));
+    if let Some(g) = lead_icon {
+        lead = lead.push(g);
     }
     lead = lead.push(iced::widget::space::vertical().height(theme::ROW_ITEM - theme::S2 * 2.0));
     let line = row![lead, texts, trailing.into()]

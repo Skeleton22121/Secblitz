@@ -285,7 +285,7 @@ impl FrameworkCopy {
 }
 
 /// Refuse links of any kind: symlinks, junctions and other reparse points.
-fn plain(meta: &fs::Metadata) -> bool {
+pub(crate) fn plain(meta: &fs::Metadata) -> bool {
     if meta.file_type().is_symlink() {
         return false;
     }

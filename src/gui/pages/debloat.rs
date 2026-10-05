@@ -8,11 +8,12 @@ use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::widgets::{anim, progress};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
+use iced::widget::image::Handle;
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Subscription, Task};
 use secblitz::debloat::offline::Restored;
 use secblitz::debloat::{self, Batch, Group, Installed, ItemResult, Kept, Progress};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -98,6 +99,8 @@ pub struct State {
     restoring: Option<u16>,
     /// The restore in progress uses the saved copy (not the Store).
     restoring_copy: bool,
+    /// Each app's own icon, when one was found (see `debloat::icons`).
+    icons: BTreeMap<u16, Handle>,
     /// Catalog indices that have a saved copy.
     copies: BTreeSet<u16>,
     /// Total size of all saved copies.
@@ -132,6 +135,7 @@ impl Default for State {
             journal: Vec::new(),
             restoring: None,
             restoring_copy: false,
+            icons: BTreeMap::new(),
             copies: BTreeSet::new(),
             saved_bytes: 0,
             offline: None,
@@ -181,6 +185,7 @@ pub enum Msg {
     Delete(u16),
     Deleted(Result<(), String>),
     Copies(BTreeSet<u16>, u64),
+    Icons(BTreeMap<u16, Handle>),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -196,6 +201,31 @@ fn inventory_task(state: &mut State) -> Task<Message> {
         blocking(|| debloat::inventory().map_err(|e| format!("{e:#}"))),
         move |r| wrap(Msg::Scanned(generation, r)),
     )
+}
+
+/// Look up each app's own icon (blocking work on a thread).
+fn icons_task(installed: Vec<Installed>) -> Task<Message> {
+    Task::perform(
+        blocking(move || {
+            debloat::icons::load(&installed)
+                .into_iter()
+                .map(|(i, img)| (i, Handle::from_rgba(img.width, img.height, img.pixels)))
+                .collect::<BTreeMap<u16, Handle>>()
+        }),
+        |icons| wrap(Msg::Icons(icons)),
+    )
+}
+
+/// The app's own icon at `size`, or the generic package glyph when none is
+/// known. Same footprint either way, so rows keep their height.
+fn app_glyph<'a>(p: Palette, state: &State, index: u16, size: f32) -> Element<'a, Message> {
+    match state.icons.get(&index) {
+        Some(handle) => iced::widget::image(handle.clone())
+            .width(size)
+            .height(size)
+            .into(),
+        None => widgets::icon(Icon::Package, size, p.text_muted),
+    }
 }
 
 /// Which apps have a saved copy, and how much room the copies use.
@@ -315,6 +345,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Scanned(generation, _) if generation != state.scan_gen => Task::none(),
         Msg::Scanned(_, Ok(found)) => {
             state.installed = found;
+            let icons = icons_task(state.installed.clone());
             let present: BTreeSet<u16> = installed_indices(state).into_iter().collect();
             if state.initialised {
                 state.selected.retain(|i| present.contains(i));
@@ -338,6 +369,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 })
                 .collect();
             state.scan = Scan::Ready;
+            icons
+        }
+        Msg::Icons(found) => {
+            // Keep what we had: a later look-up that misses one never takes
+            // an icon away.
+            state.icons.extend(found);
             Task::none()
         }
         Msg::Scanned(_, Err(e)) => {
@@ -1021,12 +1058,13 @@ fn group_card<'a>(
         } else {
             (None, box_)
         };
-        body = body.push(widgets::row_item(
+        body = body.push(widgets::row_item_lead(
             p,
-            Some(Icon::Package),
+            Some(app_glyph(p, state, index, theme::ICON_ROW)),
             ctx.t(app.name),
             note,
             trailing,
+            Vec::new(),
             Some(wrap(Msg::Toggle(index))),
         ));
     }
@@ -1140,12 +1178,13 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 actions_view(p, ctx, row_actions(state, index, enabled)),
             )
         };
-        rows.push(widgets::row_item(
+        rows.push(widgets::row_item_lead(
             p,
-            Some(Icon::Package),
+            Some(app_glyph(p, state, index, theme::ICON_ROW)),
             ctx.t(app.name),
             Some(subtitle),
             trailing,
+            Vec::new(),
             None,
         ));
     }
@@ -1291,7 +1330,7 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     for &i in &indices {
         list = list.push(
             row![
-                widgets::icon(Icon::Package, 16.0, p.text_muted),
+                app_glyph(p, state, i, 16.0),
                 widgets::body(p, ctx.t(app_of(i).name))
             ]
             .spacing(theme::S3)
@@ -1387,8 +1426,9 @@ fn working_sheet<'a>(
     let mut list = column![].spacing(theme::S3);
     for (index, step) in items {
         let (lead, note): (Element<'a, Message>, String) = match step {
+            // The app's own icon sits next to the name, so no glyph here.
             Step::Waiting => (
-                widgets::icon(Icon::Package, 18.0, p.text_muted),
+                space::horizontal().width(theme::CHECK).into(),
                 ctx.t("Waiting"),
             ),
             Step::Saving => (anim::spinner(20.0, p.text, spin), ctx.t("Saving a copy…")),
@@ -1421,6 +1461,7 @@ fn working_sheet<'a>(
         list = list.push(
             row![
                 container(lead).center(theme::CHECK),
+                app_glyph(p, state, *index, theme::CHECK),
                 widgets::body(p, ctx.t(app_of(*index).name)),
                 space::horizontal(),
                 widgets::small(p, note),
@@ -1455,31 +1496,43 @@ fn kept_text(kept: &Kept) -> &'static str {
     }
 }
 
-fn names(ctx: &Ctx, indices: impl Iterator<Item = u16>) -> Vec<String> {
+fn names(ctx: &Ctx, indices: impl Iterator<Item = u16>) -> Vec<(u16, String)> {
     let mut v: Vec<u16> = indices.collect();
     v.sort_unstable();
     v.dedup();
-    v.into_iter().map(|i| ctx.t(app_of(i).name)).collect()
+    v.into_iter().map(|i| (i, ctx.t(app_of(i).name))).collect()
 }
 
 fn result_block<'a>(
     p: theme::Palette,
+    state: &State,
     icon: Icon,
     tone: Tone,
     title: String,
-    list: Vec<String>,
+    list: Vec<(u16, String)>,
 ) -> Element<'a, Message> {
-    column![
-        row![
-            widgets::icon(icon, 18.0, p.tone(tone)),
-            widgets::body(p, title)
-        ]
-        .spacing(theme::S2)
-        .align_y(Alignment::Center),
-        widgets::muted(p, list.join(", ")),
+    let head = row![
+        widgets::icon(icon, 18.0, p.tone(tone)),
+        widgets::body(p, title)
     ]
-    .spacing(theme::S1)
-    .into()
+    .spacing(theme::S2)
+    .align_y(Alignment::Center);
+    // Without any known icon keep the compact "a, b, c" line.
+    if !list.iter().any(|(i, _)| state.icons.contains_key(i)) {
+        let line = list.into_iter().map(|(_, n)| n).collect::<Vec<_>>();
+        return column![head, widgets::muted(p, line.join(", "))]
+            .spacing(theme::S1)
+            .into();
+    }
+    let mut col = column![head].spacing(theme::S1);
+    for (i, name) in list {
+        col = col.push(
+            row![app_glyph(p, state, i, 16.0), widgets::muted(p, name)]
+                .spacing(theme::S2)
+                .align_y(Alignment::Center),
+        );
+    }
+    col.into()
 }
 
 fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Element<'a, Message> {
@@ -1515,6 +1568,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             if !removed.is_empty() {
                 col = col.push(result_block(
                     p,
+                    state,
                     Icon::CheckCircle,
                     Tone::Good,
                     ctx.t("Removed"),
@@ -1524,6 +1578,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             if !protected.is_empty() {
                 col = col.push(result_block(
                     p,
+                    state,
                     Icon::Info,
                     Tone::Neutral,
                     ctx.t("Windows protects these apps"),
@@ -1543,6 +1598,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 if !list.is_empty() {
                     col = col.push(result_block(
                         p,
+                        state,
                         Icon::Info,
                         Tone::Neutral,
                         ctx.t(kept_text(&reason)),
@@ -1553,6 +1609,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             if !failed.is_empty() {
                 col = col.push(result_block(
                     p,
+                    state,
                     Icon::AlertTriangle,
                     Tone::Bad,
                     ctx.t("Couldn't remove"),
@@ -1708,6 +1765,19 @@ mod tests {
             debug(&actions.primary),
             Some(format!("{:?}", Msg::Restore(index)))
         );
+    }
+
+    #[test]
+    fn app_glyph_falls_back_and_uses_a_known_icon() {
+        let index = debloat::catalog::owner("Microsoft.BingWeather").unwrap();
+        let mut state = State::default();
+        // No icon known: builds the generic glyph (and does not panic).
+        let _ = app_glyph(theme::LIGHT, &state, index, theme::ICON_ROW);
+        assert!(!state.icons.contains_key(&index));
+        state
+            .icons
+            .insert(index, Handle::from_rgba(1, 1, vec![1, 2, 3, 255]));
+        let _ = app_glyph(theme::LIGHT, &state, index, theme::ICON_ROW);
     }
 
     #[test]
