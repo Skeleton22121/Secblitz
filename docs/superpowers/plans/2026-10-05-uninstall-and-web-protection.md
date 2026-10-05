@@ -94,7 +94,7 @@
 
 ### Task A2: Suggested apps as a journaled personal setting
 
-**Files:**
+**Files:** (note: `user_settings`, `broker`, `launcher` and `gui` are binary-crate modules declared in `src/main.rs`)
 - Modify: `src/user_settings.rs`, `src/launcher.rs` (`block_suggested_apps`, `SUGGESTION_VALUES`, `CONTENT_DELIVERY`), `src/broker.rs` (tests only, plus the launcher's handling of `BlockSuggestedApps`), `src/gui/pages/personal.rs`
 
 **Interfaces:**
@@ -127,12 +127,12 @@
 
 **Interfaces:**
 - Produces (`secblitz::debloat::suggested`):
-  - `pub trait PolicyStore { fn get(&self) -> Result<crate::user_settings::Value>; fn set(&mut self, value: u32) -> Result<()>; fn delete(&mut self) -> Result<()>; }`. `crate::user_settings::Value` is `Absent | Dword(u32) | Other`.
+  - `#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum PolicyValue { Absent, Dword(u32), Other }` and `pub trait PolicyStore { fn get(&self) -> Result<PolicyValue>; fn set(&mut self, value: u32) -> Result<()>; fn delete(&mut self) -> Result<()>; }`. (`user_settings` lives in the binary crate, so the library defines its own value type.)
   - `#[cfg(windows)] pub struct MachinePolicy;` implementing it on `HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent`, value `DisableWindowsConsumerFeatures` (create the key on set; deleting a missing value is Ok).
   - `pub fn journal_path() -> Result<PathBuf>`: `crate::platform::app_dir()?.join("suggested-policy.json")`.
   - `pub fn block(store: &mut dyn PolicyStore, journal: &Path) -> Result<()>`: if no journal file yet, read the prior (`Absent` → `{"prior":null}`, `Dword(v)` → `{"prior":v}`, `Other` → bail without writing); write the journal atomically (temp + rename) before writing 1; read back 1 or restore the prior and bail. If a journal already exists, keep the first prior and just ensure 1.
   - `pub enum Undo { Restored, NothingRecorded, ChangedSince }` and `pub fn undo(store: &mut dyn PolicyStore, journal: &Path) -> Result<Undo>`: no journal → `NothingRecorded`; current value is not `Dword(1)` → remove the journal, `ChangedSince`; else write the prior (delete for `null`), read back, remove the journal, `Restored`.
-  - `pub fn recorded(journal: &Path) -> bool` and `pub fn legacy_block(store: &dyn PolicyStore, journal: &Path) -> bool` (= value is `Dword(1)` and nothing recorded: a 0.7.0 block or someone else's policy; left alone and listed).
+  - `pub fn recorded(journal: &Path) -> bool` and `pub fn legacy_block(store: &dyn PolicyStore, journal: &Path) -> bool` (= value is `PolicyValue::Dword(1)` and nothing recorded: a 0.7.0 block or someone else's policy; left alone and listed).
   - `debloat::set_consumer_features_policy()` keeps its signature and calls `suggested::block(&mut MachinePolicy, &journal_path()?)` (Windows) / bails elsewhere.
   - `pub struct RestoreAll { pub restored: Vec<u16>, pub needs_store: Vec<u16>, pub failed: Vec<u16> }` and `pub fn restore_all(emit: &dyn Fn(u16, bool)) -> RestoreAll` in `debloat/mod.rs`: for each index from `journal::still_removed(&journal::load(), catalog().len())`, newest first: if `offline::has_copy(i)` call `offline::restore_index(i)`; `Back | BackWithoutSomeData | AlreadyThere` → do the same bookkeeping the GUI's `restored_ok` does today (read `src/gui/pages/debloat.rs` around line 577 and move that bookkeeping into a shared `pub fn finish_restore(index: u16)` in `debloat/mod.rs`, then make the GUI call it too); `Damaged | NoCopy` or `Err` → `needs_store` if the catalog entry has a `store_id`, else `failed`. Indices without a copy go to `needs_store`/`failed` the same way. `emit(index, ok)` after each.
 - [ ] **Step 1: Failing tests** (`src/debloat/suggested.rs` `#[cfg(test)]` with an in-memory `PolicyStore`, journal in a `tempfile::tempdir()`):
