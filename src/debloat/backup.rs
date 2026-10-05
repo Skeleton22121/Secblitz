@@ -117,7 +117,10 @@ pub fn parse_full_name(full: &str) -> Result<Identity> {
     );
     let numbers: Vec<&str> = version.split('.').collect();
     ensure!(
-        numbers.len() == 4 && numbers.iter().all(|n| n.parse::<u16>().is_ok()),
+        numbers.len() == 4
+            && numbers
+                .iter()
+                .all(|n| n.bytes().all(|b| b.is_ascii_digit()) && n.parse::<u16>().is_ok()),
         "Unexpected package version"
     );
     ensure!(
@@ -144,6 +147,16 @@ pub fn parse_full_name(full: &str) -> Result<Identity> {
     })
 }
 
+/// `CON`, `NUL`, `COM1`... with or without an extension (any case).
+fn reserved_device(component: &str) -> bool {
+    let stem = component.split('.').next().unwrap_or("").trim_end();
+    let up = stem.to_ascii_uppercase();
+    matches!(up.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ((up.starts_with("COM") || up.starts_with("LPT"))
+            && up.len() == 4
+            && up.as_bytes()[3].is_ascii_digit())
+}
+
 /// A '/'-separated relative path that can't escape its root on Windows.
 pub fn valid_relative(path: &str) -> bool {
     if path.is_empty() || path.chars().count() > MAX_PATH_CHARS {
@@ -157,6 +170,7 @@ pub fn valid_relative(path: &str) -> bool {
                 && *p != ".."
                 && !p.ends_with('.')
                 && !p.ends_with(' ')
+                && !reserved_device(p)
                 && p.chars().all(|c| {
                     !c.is_control() && !matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
                 })
@@ -208,7 +222,9 @@ impl Manifest {
             "Saved copy has no app"
         );
         let (mut count, mut bytes) = (0usize, 0u64);
+        let mut seen = std::collections::BTreeSet::new();
         for p in &self.packages {
+            ensure!(seen.insert(p.full_name.as_str()), "Duplicate package");
             let id = parse_full_name(&p.full_name)?;
             ensure!(id.family() == self.family, "Package outside the family");
             let kind_ok = match p.kind {
@@ -227,9 +243,13 @@ impl Manifest {
                 "Unexpected framework"
             );
         }
+        let mut sids = std::collections::BTreeSet::new();
         for d in &self.data {
             ensure!(
-                valid_sid(&d.sid) && valid_hash(&d.sha256),
+                valid_sid(&d.sid)
+                    && valid_hash(&d.sha256)
+                    && d.plain_size <= MAX_BYTES
+                    && sids.insert(d.sid.as_str()),
                 "Unexpected saved data"
             );
         }
@@ -405,7 +425,20 @@ impl Store {
         };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with(STAGING) || name.starts_with(OLD) {
+            if let Some(rest) = name.strip_prefix(OLD) {
+                // An interrupted replace: if the family has no copy, the
+                // `.old-` folder is the only complete one, so put it back.
+                let family = rest.get(17..).filter(|_| rest.as_bytes().get(16) == Some(&b'-'));
+                if let Some(family) = family.filter(|f| valid_family_dir(f)) {
+                    let target = self.family_dir(family);
+                    if fs::symlink_metadata(&target).is_err()
+                        && fs::rename(e.path(), &target).is_ok()
+                    {
+                        continue;
+                    }
+                }
+                let _ = fs::remove_dir_all(e.path());
+            } else if name.starts_with(STAGING) {
                 let _ = fs::remove_dir_all(e.path());
             }
         }
@@ -467,6 +500,14 @@ impl Store {
 
     /// Atomically make `staging` the saved copy for `family`.
     pub fn commit(&self, staging: &Path, family: &str) -> Result<()> {
+        ensure!(valid_family_dir(family), "Unexpected family");
+        ensure!(
+            staging
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(STAGING)),
+            "Unexpected staging folder"
+        );
         ensure!(
             staging.parent() == Some(self.root.as_path()),
             "Unexpected staging folder"
@@ -474,7 +515,8 @@ impl Store {
         let target = self.family_dir(family);
         let mut tag = [0u8; 8];
         rand::rngs::OsRng.fill_bytes(&mut tag);
-        let old = self.root.join(format!("{OLD}{}", hex(&tag)));
+        // The family is part of the name so an interrupted replace can be undone.
+        let old = self.root.join(format!("{OLD}{}-{family}", hex(&tag)));
         let had_old = target.exists();
         if had_old {
             fs::rename(&target, &old)?;
@@ -660,6 +702,10 @@ mod tests {
         ] {
             assert!(!valid_relative(bad), "{bad:?}");
         }
+        for bad in ["CON", "nul.txt", "a/Aux.b", "COM1", "lpt9.x", "a/con "] {
+            assert!(!valid_relative(bad), "{bad:?}");
+        }
+        assert!(valid_relative("console.txt") && valid_relative("COM10"));
         let deep = vec!["d"; 40].join("/");
         assert!(!valid_relative(&deep));
     }
@@ -718,6 +764,22 @@ mod tests {
         let mut m = manifest();
         m.data[0].sid = "S-1-5-18".into();
         assert!(m.check(index).is_err());
+
+        let mut m = manifest();
+        m.packages[1].full_name = m.packages[1].full_name.replace("_4.", "_+4.");
+        assert!(m.check(index).is_err(), "plus sign in version");
+
+        let mut m = manifest();
+        m.packages[1].full_name = m.packages[0].full_name.clone();
+        assert!(m.check(index).is_err(), "duplicate package");
+
+        let mut m = manifest();
+        m.data.push(m.data[0].clone());
+        assert!(m.check(index).is_err(), "duplicate sid");
+
+        let mut m = manifest();
+        m.data[0].plain_size = MAX_BYTES + 1;
+        assert!(m.check(index).is_err(), "data size cap");
 
         let mut m = manifest();
         m.packages[1].kind = Kind::Resource;
@@ -831,6 +893,45 @@ mod tests {
         assert!(store.for_index(weather()).is_empty());
         store.clean_staging();
         assert!(!staging.exists());
+    }
+
+    #[test]
+    fn commit_refuses_bad_family_or_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join(DIR));
+        let keep = store.framework_dir("Microsoft.VCLibs.140.00_14.0.33519.0_x64__8wekyb3d8bbwe");
+        fs::create_dir_all(&keep).unwrap();
+        for bad in ["frameworks", "../x", ".old-1", "a/b", ""] {
+            let staging = store.new_staging().unwrap();
+            assert!(store.commit(&staging, bad).is_err(), "{bad:?}");
+            assert!(staging.exists());
+        }
+        assert!(keep.exists());
+        let fam = store.family_dir("Microsoft.BingWeather_8wekyb3d8bbwe");
+        fs::create_dir_all(&fam).unwrap();
+        assert!(store.commit(&fam, "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
+        assert!(fam.exists());
+    }
+
+    #[test]
+    fn interrupted_replace_is_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join(DIR));
+        let family = "Microsoft.BingWeather_8wekyb3d8bbwe";
+        fs::create_dir_all(store.root()).unwrap();
+        let old = store.root().join(format!("{OLD}0123456789abcdef-{family}"));
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("keep"), b"1").unwrap();
+        let staging = store.new_staging().unwrap();
+        store.clean_staging();
+        assert!(!staging.exists() && !old.exists());
+        assert!(store.family_dir(family).join("keep").exists());
+
+        // With a current copy in place the leftover is just removed.
+        let old = store.root().join(format!("{OLD}0123456789abcdef-{family}"));
+        fs::create_dir_all(&old).unwrap();
+        store.clean_staging();
+        assert!(!old.exists() && store.family_dir(family).join("keep").exists());
     }
 
     #[test]
