@@ -1,45 +1,87 @@
 //! Protection page: every check grouped, attention rows selectable.
 //! OWNER: fixes agent.
 //!
-//! Layout (docs/DESIGN-SYSTEM.md): one card per group, rows of
-//! [badge, title + one plain line, pill, chevron], 48 px minimum, `S1` apart.
-//! Row text is translated and built once per check result (`Cache`) so
-//! `view()` only assembles widgets.
+//! Layout (docs/DESIGN-SYSTEM.md): borderless groups of `row_item`s. "Needs
+//! attention" is open; "Worth a look" is a plain group; "Can't check" and
+//! "Protected" are collapsibles. Secondary actions live in an overflow menu.
+//! While a check runs the page shows the compact check hero plus the status
+//! ticker. Row text is translated and built once per check result (`Cache`)
+//! so `view()` only assembles widgets.
 use crate::advice::{self, Group, NextStep};
 use crate::app::flow;
 use crate::app::score::{self, Class};
 use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::widgets::anim;
+use crate::gui::widgets::scan::{self, HeroPhase};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use crate::i18n::Lang;
-use iced::widget::{column, container, row, space, text, Column};
-use iced::{Alignment, Background, Border, Element, Length, Task};
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::widget::Tree;
+use iced::advanced::{renderer, Clipboard, Shell, Widget};
+use iced::widget::{column, container, row, space, stack, Column};
+use iced::{mouse, window, Alignment, Background, Border, Element, Event, Length};
+use iced::{Rectangle, Renderer, Size, Task, Theme};
 use secblitz::engine::Report;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
-/// Size of the small chevron / inline icons inside rows.
-const ICON_SMALL: f32 = 16.0;
+/// Rows shown before "See more" in a long list.
+const FIRST_ROWS: usize = 8;
+/// Status lines kept for the ticker.
+const TICKER_LINES: usize = 6;
 /// Left inset that lines expanded text up with a row's title:
-/// checkbox box + its padding, gap, row padding, badge, gap.
+/// checkbox box + its padding, gap, row padding, icon, gap.
 const INDENT: f32 =
-    theme::CHECK + theme::S1 * 2.0 + theme::S2 + theme::S4 + theme::CONTROL + theme::S3;
+    theme::CHECK + theme::S1 * 2.0 + theme::S1 + theme::S4 + theme::ICON_ROW + theme::S4;
 /// Same inset for rows that have no checkbox.
-const INDENT_PLAIN: f32 = theme::S4 + theme::CONTROL + theme::S3;
+const INDENT_PLAIN: f32 = theme::S4 + theme::ICON_ROW + theme::S4;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct State {
     /// `Ctx::checked_at` the selection below belongs to.
     synced_at: Option<u64>,
     selected: HashSet<String>,
     expanded: HashSet<String>,
-    show_protected: bool,
+    open_protected: bool,
+    open_cant: bool,
+    all_attention: bool,
+    all_protected: bool,
     show_error: bool,
     /// Translated row text for the current report (built lazily, once).
     cache: RefCell<Option<Cached>>,
+    /// Start of the running check on this page (set by the first frame).
+    scan: Option<Instant>,
+    /// Timestamp of the latest frame (never `Instant::now()` in `view()`).
+    now: Instant,
+    /// Status lines for the ticker, oldest first.
+    lines: Vec<(String, Instant)>,
+    /// How many `ctx.checking` items are already in `lines`.
+    processed: usize,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            synced_at: None,
+            selected: HashSet::new(),
+            expanded: HashSet::new(),
+            open_protected: false,
+            open_cant: false,
+            all_attention: false,
+            all_protected: false,
+            show_error: false,
+            cache: RefCell::new(None),
+            scan: None,
+            now: Instant::now(),
+            lines: Vec::new(),
+            processed: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +91,12 @@ pub enum Msg {
     SelectNone,
     Expand(String),
     ShowProtected,
+    ToggleCant,
+    AllAttention,
+    AllProtected,
     ErrorDetails,
+    /// Animation frame (only while a check runs).
+    Frame(Instant),
     /// Open a Windows Settings page through the launcher.
     Open(Request),
 }
@@ -300,11 +347,43 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::SelectAll => state.selected = candidates(ctx).into_iter().collect(),
         Msg::SelectNone => state.selected.clear(),
         Msg::Expand(id) => flip(&mut state.expanded, id),
-        Msg::ShowProtected => state.show_protected = !state.show_protected,
+        Msg::ShowProtected => state.open_protected = !state.open_protected,
+        Msg::ToggleCant => state.open_cant = !state.open_cant,
+        Msg::AllAttention => state.all_attention = !state.all_attention,
+        Msg::AllProtected => state.all_protected = !state.all_protected,
+        Msg::Frame(now) => track_scan(state, ctx, now),
         Msg::ErrorDetails => state.show_error = !state.show_error,
         Msg::Open(request) => return open_settings(ctx, request),
     }
     Task::none()
+}
+
+/// Feed the ticker from the live check: one line per newly finished item.
+fn track_scan(state: &mut State, ctx: &Ctx, now: Instant) {
+    state.now = now;
+    let Some(progress) = &ctx.checking else {
+        state.scan = None;
+        state.lines.clear();
+        state.processed = 0;
+        return;
+    };
+    if state.scan.is_none() {
+        state.scan = Some(now);
+        state.lines = vec![(ctx.t("Looking at your settings…"), now)];
+        state.processed = 0;
+    }
+    if state.processed > progress.items.len() {
+        state.processed = 0;
+    }
+    for (id, _) in progress.items.iter().skip(state.processed) {
+        let label = ctx.t(advice::control_label(id));
+        if state.lines.last().is_none_or(|(l, _)| *l != label) {
+            state.lines.push((label, now));
+        }
+    }
+    state.processed = progress.items.len();
+    let extra = state.lines.len().saturating_sub(TICKER_LINES);
+    state.lines.drain(..extra);
 }
 
 fn flip(set: &mut HashSet<String>, id: String) {
@@ -347,9 +426,9 @@ pub fn sanitize(s: &str) -> String {
 // ------------------------------------------------------- shared row pieces
 
 /// Row title (medium weight) with one muted line under it. Shared by the
-/// Protection, fix-flow and History pages so rows read the same everywhere.
+/// fix-flow sheets so their rows read the same as the page.
 pub fn row_text<'a>(p: Palette, title: String, line: Option<String>) -> Element<'a, Message> {
-    let mut c = column![text(title)
+    let mut c = column![iced::widget::text(title)
         .size(theme::BODY)
         .font(theme::MEDIUM)
         .color(p.text)]
@@ -361,7 +440,7 @@ pub fn row_text<'a>(p: Palette, title: String, line: Option<String>) -> Element<
     c.into()
 }
 
-/// Quiet inset box for extra detail (expanded rows, lists inside sheets).
+/// Quiet tonal inset for extra detail (expanded rows). No border.
 pub fn well<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
@@ -379,58 +458,62 @@ pub fn well<'a>(
         })
 }
 
-/// Card with a leading badge, a title, one muted line and a trailing action.
-pub fn banner<'a>(
-    p: Palette,
-    icon: Icon,
-    tone: Tone,
-    title: String,
-    body: String,
-    action: Option<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    let mut r = row![
-        widgets::icon_badge(p, icon, tone),
-        column![widgets::h2(p, title), widgets::muted(p, body)]
-            .spacing(theme::S1)
-            .width(Length::Fill),
-    ]
-    .spacing(theme::S4)
-    .align_y(Alignment::Center);
-    if let Some(a) = action {
-        r = r.push(a);
+/// Zero-size widget that asks for the next frame and publishes it, but only
+/// while it is in the tree, i.e. while a check runs on this page. Idle cost
+/// is nil because the page stops including it.
+struct Frames;
+
+impl Widget<Message, Theme, Renderer> for Frames {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(0.0), Length::Fixed(0.0))
     }
-    widgets::card(p, r).into()
+    fn layout(&mut self, _: &mut Tree, _: &Renderer, _: &layout::Limits) -> layout::Node {
+        layout::Node::new(Size::ZERO)
+    }
+    fn draw(
+        &self,
+        _: &Tree,
+        _: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        _: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Rectangle,
+    ) {
+    }
+    fn update(
+        &mut self,
+        _: &mut Tree,
+        event: &Event,
+        _: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _: &Rectangle,
+    ) {
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            shell.publish(Message::Fixes(Msg::Frame(*now)));
+            shell.request_redraw();
+        }
+    }
 }
 
-fn chevron<'a>(p: Palette, open: bool) -> Element<'a, Message> {
-    widgets::icon(
-        if open {
-            Icon::ChevronDown
-        } else {
-            Icon::ChevronRight
-        },
-        ICON_SMALL,
-        p.text_muted,
-    )
+fn frames<'a>() -> Element<'a, Message> {
+    Element::new(Frames)
 }
 
-/// `[lead] [clickable row] [trailing]`, vertically centred, `S2` apart.
-fn entry<'a>(
-    p: Palette,
+/// `[lead] [row] [trailing]`, vertically centred, `S1` apart.
+fn line<'a>(
     lead: Option<Element<'a, Message>>,
     content: Element<'a, Message>,
-    trailing: Option<Element<'a, Message>>,
-    on_press: Message,
+    trailing: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut r = row![].spacing(theme::S2).align_y(Alignment::Center);
+    let mut r = row![].spacing(theme::S1).align_y(Alignment::Center);
     if let Some(l) = lead {
-        r = r.push(l);
+        r = r.push(container(l).padding([0.0, theme::S2]));
     }
-    r = r.push(widgets::list_button(p, content, on_press));
-    if let Some(t) = trailing {
-        r = r.push(t);
-    }
-    r.into()
+    r.push(content).push(trailing).into()
 }
 
 /// Expanded text under a row, lined up with the row's title.
@@ -451,41 +534,18 @@ fn expanded<'a>(
     row![space::horizontal().width(indent), well(p, c)].into()
 }
 
-fn section_header<'a>(
-    p: Palette,
-    title: String,
-    count: usize,
-    tone: Tone,
-    subtitle: Option<String>,
-) -> Element<'a, Message> {
-    let mut c = column![row![
-        widgets::h2(p, title),
-        widgets::pill(p, count.to_string(), tone)
-    ]
-    .spacing(theme::S2)
-    .align_y(Alignment::Center)]
-    .spacing(theme::S1);
-    if let Some(s) = subtitle {
-        c = c.push(widgets::muted(p, s));
+fn settings_request(step: NextStep) -> Option<Request> {
+    match step {
+        NextStep::OpenWindowsSecurity => Some(Request::OpenWindowsSecurity),
+        NextStep::OpenWindowsUpdate => Some(Request::OpenWindowsUpdate),
+        NextStep::OpenEncryption => Some(Request::OpenEncryption),
+        NextStep::OpenAccounts => Some(Request::OpenSignIn),
+        _ => None,
     }
-    c.into()
 }
 
-fn settings_button<'a>(ctx: &Ctx, step: NextStep) -> Option<Element<'a, Message>> {
-    let (label, request) = match step {
-        NextStep::OpenWindowsSecurity => ("Open Windows Security", Request::OpenWindowsSecurity),
-        NextStep::OpenWindowsUpdate => ("Open Windows Update", Request::OpenWindowsUpdate),
-        NextStep::OpenEncryption => ("Open encryption settings", Request::OpenEncryption),
-        NextStep::OpenAccounts => ("Open sign-in settings", Request::OpenSignIn),
-        _ => return None,
-    };
-    Some(widgets::action(
-        ctx.palette,
-        ButtonKind::Secondary,
-        ctx.t(label),
-        Some(Icon::ExternalLink),
-        Some(Message::Fixes(Msg::Open(request))),
-    ))
+fn nothing<'a>() -> Element<'a, Message> {
+    space::horizontal().width(0.0).into()
 }
 
 // -------------------------------------------------------------------- rows
@@ -495,35 +555,41 @@ fn attention_row<'a>(
     ctx: &Ctx,
     a: &Att,
     checked: bool,
-    ready_text: &str,
+    restart_label: &str,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&a.id);
-    let mut content = row![
-        widgets::icon_badge(p, Icon::AlertTriangle, Tone::Warn),
-        row_text(p, a.name.clone(), Some(a.line.clone())),
-    ]
-    .spacing(theme::S3)
-    .align_y(Alignment::Center);
-    if a.restart {
-        content = content.push(widgets::pill(p, ready_text.to_owned(), Tone::Neutral));
-    }
-    content = content
-        .push(widgets::pill(p, ctx.t("Not protected"), Tone::Warn))
-        .push(chevron(p, open));
-
-    let check = widgets::checkbox(
-        p,
-        CheckState::from(checked),
-        None,
-        Some(Message::Fixes(Msg::Toggle(a.id.clone()))),
-    );
-    let head = entry(
-        p,
-        Some(check),
-        content.into(),
-        None,
-        Message::Fixes(Msg::Expand(a.id.clone())),
+    let trailing: Element<'a, Message> = if a.restart {
+        widgets::pill(p, restart_label.to_owned(), Tone::Neutral)
+    } else {
+        nothing()
+    };
+    let toggle = Message::Fixes(Msg::Toggle(a.id.clone()));
+    let head = line(
+        Some(widgets::checkbox(
+            p,
+            CheckState::from(checked),
+            None,
+            Some(toggle.clone()),
+        )),
+        widgets::row_item_tinted(
+            p,
+            Some(Icon::AlertTriangle),
+            Some(Tone::Warn),
+            a.name.clone(),
+            Some(a.line.clone()),
+            trailing,
+            Some(toggle),
+        ),
+        widgets::overflow_menu(
+            p,
+            vec![(
+                Icon::Info,
+                ctx.t(if open { "Hide details" } else { "Details" }),
+                Message::Fixes(Msg::Expand(a.id.clone())),
+                false,
+            )],
+        ),
     );
     if !open {
         return head;
@@ -545,32 +611,41 @@ fn attention_row<'a>(
 fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&o.key);
-    let content = row![
-        widgets::icon_badge(p, o.icon, o.tone),
-        row_text(p, o.name.clone(), Some(o.line.clone())),
-        widgets::pill(p, o.status.clone(), o.tone),
-        chevron(p, open),
-    ]
-    .spacing(theme::S3)
-    .align_y(Alignment::Center);
-
-    let trailing = if o.step == NextStep::CheckAgain {
-        Some(widgets::action(
-            p,
-            ButtonKind::Secondary,
+    let mut menu = Vec::new();
+    if let Some(request) = settings_request(o.step) {
+        menu.push((
+            Icon::ExternalLink,
+            ctx.t("Open settings"),
+            Message::Fixes(Msg::Open(request)),
+            false,
+        ));
+    }
+    if o.step == NextStep::CheckAgain && !ctx.busy && ctx.checking.is_none() {
+        menu.push((
+            Icon::Refresh,
             ctx.t("Check again"),
-            Some(Icon::Refresh),
-            (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
-        ))
-    } else {
-        settings_button(ctx, o.step)
-    };
-    let head = entry(
-        p,
-        None,
-        content.into(),
-        trailing,
+            Message::CheckNow,
+            false,
+        ));
+    }
+    menu.push((
+        Icon::Info,
+        ctx.t(if open { "Hide details" } else { "Details" }),
         Message::Fixes(Msg::Expand(o.key.clone())),
+        false,
+    ));
+    let head = line(
+        None,
+        widgets::row_item_tinted(
+            p,
+            Some(o.icon),
+            Some(o.tone),
+            o.name.clone(),
+            Some(o.line.clone()),
+            widgets::pill(p, o.status.clone(), o.tone),
+            None,
+        ),
+        widgets::overflow_menu(p, menu),
     );
     if !open {
         return head;
@@ -583,22 +658,83 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     .into()
 }
 
-fn protected_row<'a>(p: Palette, r: &Prot, label: &str) -> Element<'a, Message> {
-    container(
-        row![
-            widgets::icon_badge(p, Icon::Check, Tone::Good),
-            row_text(p, r.name.clone(), Some(r.line.clone())),
-            widgets::pill(p, label.to_owned(), Tone::Good),
-        ]
-        .spacing(theme::S3)
-        .align_y(Alignment::Center),
+fn protected_row<'a>(p: Palette, r: &Prot) -> Element<'a, Message> {
+    widgets::row_item_tinted(
+        p,
+        Some(Icon::Check),
+        Some(Tone::Good),
+        r.name.clone(),
+        Some(r.line.clone()),
+        nothing(),
+        None,
     )
-    .padding([theme::S3, theme::S4])
-    .width(Length::Fill)
-    .into()
+}
+
+/// "See 12 more" / "Show less" under a truncated list.
+fn more<'a>(ctx: &Ctx, total: usize, all: bool, msg: Msg) -> Option<Element<'a, Message>> {
+    (total > FIRST_ROWS).then(|| {
+        let label = if all {
+            ctx.t("Show less")
+        } else {
+            ctx.t("See {n} more")
+                .replace("{n}", &(total - FIRST_ROWS).to_string())
+        };
+        widgets::show_more_button(ctx.palette, label, Message::Fixes(msg))
+    })
+}
+
+fn count_text(ctx: &Ctx, n: usize) -> String {
+    if n == 1 {
+        ctx.t("1 item")
+    } else {
+        ctx.t("{n} items").replace("{n}", &n.to_string())
+    }
 }
 
 // -------------------------------------------------------------------- view
+
+/// Compact check hero with the live status ticker (first check or re-check).
+fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
+    let total = ctx.catalog.available.len().max(done + 1);
+    let ratio = (done as f32 / total as f32).min(0.96);
+    let sub = if done > 0 {
+        ctx.t("{a} of {b} checked")
+            .replace("{a}", &done.to_string())
+            .replace("{b}", &total.to_string())
+    } else {
+        ctx.t("This takes about a minute. Nothing is changed.")
+    };
+    let live = anim::animating();
+    let elapsed = state
+        .scan
+        .map(|s| state.now.saturating_duration_since(s))
+        .unwrap_or_default();
+    let mut text = column![
+        widgets::h2(p, ctx.t("Checking your PC")),
+        widgets::muted(p, sub)
+    ]
+    .spacing(theme::S1)
+    .width(Length::Fill);
+    if live {
+        text = text
+            .push(space::vertical().height(theme::S2))
+            .push(scan::status_ticker(p, &state.lines, state.now));
+    }
+    let content = row![
+        scan::check_hero(p, HeroPhase::Checking, elapsed, ratio),
+        text,
+    ]
+    .spacing(theme::S6)
+    .align_y(Alignment::Center);
+    let content: Element<'a, Message> = if live {
+        stack![content, frames()].into()
+    } else {
+        content.into()
+    };
+    widgets::region(p, content).into()
+}
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
@@ -610,7 +746,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let page = |body: Column<'a, Message>| -> Element<'a, Message> {
         column![header, space::vertical().height(theme::S6), body].into()
     };
-    let mut body = column![].spacing(theme::S4);
+    let mut body = column![].spacing(theme::S8);
 
     // Could not start.
     if let Some(error) = &ctx.engine_error {
@@ -621,7 +757,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             Message::Fixes(Msg::ErrorDetails),
             widgets::small(p, sanitize(error)),
         );
-        return page(body.push(widgets::card(
+        return page(body.push(widgets::region(
             p,
             widgets::empty_state(
                 p,
@@ -653,7 +789,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 (ctx.checking.is_none() && !ctx.busy).then_some(Message::CheckNow),
             );
             return page(
-                body.push(widgets::card(
+                body.push(widgets::region(
                     p,
                     widgets::empty_state(
                         p,
@@ -670,26 +806,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 )),
             );
         }
-        let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
-        let total = ctx.catalog.available.len().max(done).max(1);
-        let progress = if done > 0 {
-            ctx.t("{a} of {b} checked")
-                .replace("{a}", &done.to_string())
-                .replace("{b}", &total.to_string())
-        } else {
-            ctx.t("This takes about a minute. Nothing is changed.")
-        };
-        return page(
-            body.push(widgets::card(
-                p,
-                column![
-                    widgets::h2(p, ctx.t("Checking your PC")),
-                    widgets::muted(p, progress),
-                    widgets::bar(p, done as f32 / total as f32, Tone::Neutral),
-                ]
-                .spacing(theme::S3),
-            )),
-        );
+        return page(body.push(checking_region(state, ctx)));
     };
 
     ensure(state, ctx, report);
@@ -697,11 +814,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let rows = &cache.as_ref().expect("filled by ensure").rows;
 
     if ctx.checking.is_some() {
-        body = body.push(widgets::inline_notice(
-            p,
-            Tone::Neutral,
-            ctx.t("Checking your PC again. This list updates when it's done."),
-        ));
+        body = body.push(checking_region(state, ctx));
     } else if ctx.check_error.is_some() {
         body = body.push(widgets::inline_notice(
             p,
@@ -712,48 +825,54 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if report.results.iter().any(|r| r.status == "pending")
         || report.findings.iter().any(|f| f.status == "pending")
     {
-        body = body.push(banner(
+        body = body.push(widgets::row_item_tinted(
             p,
-            Icon::Undo,
-            Tone::Warn,
+            Some(Icon::Undo),
+            Some(Tone::Warn),
             ctx.t("An earlier change isn't finished"),
-            ctx.t("Undo your last fixes before making new ones."),
-            Some(widgets::action(
+            Some(ctx.t("Undo your last fixes before making new ones.")),
+            widgets::action(
                 p,
                 ButtonKind::Secondary,
-                ctx.t("Undo your last fixes"),
-                Some(Icon::Undo),
+                ctx.t("Undo"),
+                None,
                 (!ctx.busy).then_some(Message::ReviewUndo),
-            )),
+            ),
+            None,
         ));
     }
 
-    // Needs your attention (selectable).
+    // Needs attention (open, selectable).
     if rows.attention.is_empty() {
-        body = body.push(widgets::card(
-            p,
-            widgets::empty_state(
+        if ctx.checking.is_none() {
+            body = body.push(widgets::region(
                 p,
-                Icon::ShieldCheck,
-                ctx.t("Nothing needs fixing right now"),
-                ctx.t("We'll tell you if anything changes."),
-                None,
-            ),
-        ));
+                widgets::empty_state(
+                    p,
+                    Icon::ShieldCheck,
+                    ctx.t("Nothing needs fixing right now"),
+                    ctx.t("We'll tell you if anything changes."),
+                    None,
+                ),
+            ));
+        }
     } else {
         let all: Vec<String> = rows.attention.iter().map(|a| a.id.clone()).collect();
         let chosen = selection(state, ctx, &all);
         let n = chosen.len();
         let restart_label = ctx.t("Needs restart");
-        let mut list = column![].spacing(theme::S1);
-        for a in &rows.attention {
-            list = list.push(attention_row(
-                state,
-                ctx,
-                a,
-                chosen.contains(&a.id),
-                &restart_label,
-            ));
+        let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
+        let mut list: Vec<Element<'a, Message>> = shown
+            .iter()
+            .map(|a| attention_row(state, ctx, a, chosen.contains(&a.id), &restart_label))
+            .collect();
+        if let Some(m) = more(
+            ctx,
+            rows.attention.len(),
+            state.all_attention,
+            Msg::AllAttention,
+        ) {
+            list.push(m);
         }
         let count = match n {
             0 => ctx.t("Nothing selected"),
@@ -761,21 +880,20 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             _ => ctx.t("{n} selected").replace("{n}", &n.to_string()),
         };
         let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
-        let (toggle_label, toggle_msg) = if n == all.len() {
-            (ctx.t("Select none"), Msg::SelectNone)
+        let select = if n == all.len() {
+            (
+                Icon::X,
+                ctx.t("Select none"),
+                Message::Fixes(Msg::SelectNone),
+            )
         } else {
-            (ctx.t("Select all"), Msg::SelectAll)
+            (
+                Icon::Check,
+                ctx.t("Select all"),
+                Message::Fixes(Msg::SelectAll),
+            )
         };
-        let footer = row![
-            widgets::muted(p, count),
-            space::horizontal(),
-            widgets::action(
-                p,
-                ButtonKind::Ghost,
-                toggle_label,
-                None,
-                Some(Message::Fixes(toggle_msg))
-            ),
+        let trailing = row![
             widgets::action(
                 p,
                 ButtonKind::Primary,
@@ -783,105 +901,75 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 Some(Icon::Wrench),
                 (ready && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
             ),
+            widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
         ]
-        .spacing(theme::S2)
+        .spacing(theme::S1)
         .align_y(Alignment::Center);
-        body =
-            body.push(widgets::card(
-                p,
-                column![
-                    section_header(
-                        p,
-                        ctx.t("Needs your attention"),
-                        rows.attention.len(),
-                        Tone::Warn,
-                        Some(ctx.t(
-                            "We've ticked what we recommend. Nothing changes until you review it."
-                        )),
-                    ),
-                    space::vertical().height(theme::S1),
-                    list,
-                    space::vertical().height(theme::S1),
-                    footer,
-                ]
-                .spacing(theme::S3),
-            ));
-    }
-
-    // Everything else that isn't protected.
-    for (bucket, title, subtitle, tone) in [
-        (
-            Bucket::Look,
-            "Worth a look",
-            "These need a decision from you. We can't safely change them for you.",
-            Tone::Warn,
-        ),
-        (
-            Bucket::Unavailable,
-            "Can't check right now",
-            "Windows didn't give us an answer. Check again in a moment.",
-            Tone::Neutral,
-        ),
-        (
-            Bucket::Managed,
-            "Managed by someone else",
-            "This PC's owner controls these settings, so we leave them alone.",
-            Tone::Neutral,
-        ),
-    ] {
-        let items: Vec<&Other> = rows.others.iter().filter(|o| o.bucket == bucket).collect();
-        if items.is_empty() {
-            continue;
-        }
-        let mut list = column![].spacing(theme::S1);
-        for o in &items {
-            list = list.push(other_row(state, ctx, o));
-        }
-        body = body.push(widgets::card(
+        body = body.push(widgets::group(
             p,
-            column![
-                section_header(p, ctx.t(title), items.len(), tone, Some(ctx.t(subtitle))),
-                space::vertical().height(theme::S1),
-                list,
-            ]
-            .spacing(theme::S3),
+            ctx.t("Needs your attention"),
+            Some(count),
+            Some(trailing.into()),
+            list,
         ));
     }
 
-    // Protected (collapsed by default).
-    if !rows.protected.is_empty() {
-        let mut c = column![row![
-            section_header(
-                p,
-                ctx.t("Protected"),
-                rows.protected.len(),
-                Tone::Good,
-                None
-            ),
-            space::horizontal(),
-            widgets::action(
-                p,
-                ButtonKind::Ghost,
-                ctx.t(if state.show_protected { "Hide" } else { "Show" }),
-                Some(if state.show_protected {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                }),
-                Some(Message::Fixes(Msg::ShowProtected)),
-            ),
-        ]
-        .align_y(Alignment::Center)]
-        .spacing(theme::S3);
-        if state.show_protected {
-            let label = ctx.t("Protected");
-            let mut list = column![].spacing(theme::S1);
-            for r in &rows.protected {
-                list = list.push(protected_row(p, r, &label));
-            }
-            c = c.push(list);
+    let bucket =
+        |b: Bucket| -> Vec<&Other> { rows.others.iter().filter(|o| o.bucket == b).collect() };
+
+    // Worth a look: a plain group, they need a decision.
+    let look = bucket(Bucket::Look);
+    if !look.is_empty() {
+        body = body.push(widgets::group(
+            p,
+            ctx.t("Worth a look"),
+            Some(ctx.t("These need a decision from you. We can't safely change them for you.")),
+            None,
+            look.iter().map(|o| other_row(state, ctx, o)).collect(),
+        ));
+    }
+
+    // Can't check (unavailable + managed): collapsed.
+    let mut cant = bucket(Bucket::Unavailable);
+    cant.extend(bucket(Bucket::Managed));
+    if !cant.is_empty() {
+        let mut list = column![].spacing(theme::S1);
+        for o in &cant {
+            list = list.push(other_row(state, ctx, o));
         }
-        body = body.push(widgets::card(p, c));
+        body = body.push(widgets::collapsible(
+            p,
+            ctx.t("Can't check right now"),
+            Some(count_text(ctx, cant.len())),
+            state.open_cant,
+            Message::Fixes(Msg::ToggleCant),
+            list,
+        ));
+    }
+
+    // Protected: collapsed by default.
+    if !rows.protected.is_empty() {
+        let shown = widgets::limited(&rows.protected, FIRST_ROWS, state.all_protected);
+        let mut list = column![].spacing(theme::S1);
+        for r in shown {
+            list = list.push(protected_row(p, r));
+        }
+        if let Some(m) = more(
+            ctx,
+            rows.protected.len(),
+            state.all_protected,
+            Msg::AllProtected,
+        ) {
+            list = list.push(m);
+        }
+        body = body.push(widgets::collapsible(
+            p,
+            ctx.t("Protected"),
+            Some(count_text(ctx, rows.protected.len())),
+            state.open_protected,
+            Message::Fixes(Msg::ShowProtected),
+            list,
+        ));
     }
     page(body)
 }
