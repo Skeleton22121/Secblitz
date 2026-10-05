@@ -21,6 +21,16 @@
 //! filesystem/SCM calls still depend on Windows completing I/O. Local fixed
 //! drives only; unusual ACLs fail closed rather than being repaired. Elevated
 //! administrators, SYSTEM and TrustedInstaller are outside the trust boundary.
+//!
+//! Deliberate boundary change (0.7.0): a second pre-created directory,
+//! `Program Files/Secblitz/Status`, lets LocalService write a tiny `status.json`
+//! (counts and control ids only, at most 4 KiB, replaced atomically via
+//! temp+rename) so the unelevated tray can show protection state. Its DACL is
+//! protected: SYSTEM/Administrators full, LocalService modify, Users read and
+//! execute only, nothing else; it is validated before every use and the monitor
+//! simply skips writing it if validation fails. The protected Monitor directory
+//! and `latest.json` keep their stricter DACLs unchanged.
+//!
 //! Uninstall requires a stopped, matching service and removes its registration
 //! only. An installer may later remove the retained binary and monitor report.
 //! The shared app directory/binary permit Users read/execute only; the protected
@@ -32,6 +42,19 @@ use anyhow::Result;
 #[cfg(windows)]
 #[path = "service/windows.rs"]
 mod windows;
+
+/// Trusted `Program Files/Secblitz/Status` directory, only when the running
+/// executable is the installed copy.
+#[cfg(windows)]
+pub fn trusted_status_dir() -> Option<std::path::PathBuf> {
+    windows::trusted_status_dir()
+}
+
+/// Create (elevated) or validate the Status directory and return its path.
+#[cfg(windows)]
+pub fn ensure_status_dir() -> Result<std::path::PathBuf> {
+    windows::ensure_status_dir()
+}
 
 pub fn install() -> Result<()> {
     #[cfg(windows)]

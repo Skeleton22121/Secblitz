@@ -1060,7 +1060,16 @@ fn recover_installation(root: &Path, path: &Path) -> Result<Option<UpdateOutcome
     )
     .map(Some)
 }
+#[path = "tray_session.rs"]
+mod tray_session;
+
 fn busy(path: &Path, root: &Path) -> Result<bool> {
+    Ok(scan_busy(path, root)?.0)
+}
+/// `(busy, tray pids)`. Tray agents (command line exactly `secblitz.exe tray`)
+/// never make the app busy; they are returned so an update can ask them to exit
+/// before installing. An unreadable command line is conservatively busy.
+fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
     use windows_service::{
         service::ServiceAccess,
         service_manager::{ServiceManager, ServiceManagerAccess},
@@ -1107,31 +1116,46 @@ fn busy(path: &Path, root: &Path) -> Result<bool> {
         unsafe { GetLastError() } == ERROR_NO_MORE_FILES,
         "Incomplete process enumeration"
     );
+    let mut trays = Vec::new();
     for id in candidates {
         if id == std::process::id() || Some(id) == monitor_pid {
             continue;
         }
         let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, id) };
         if h.is_null() {
-            return Ok(true); // An uninspectable Secblitz session is conservatively busy.
+            return Ok((true, trays)); // An uninspectable Secblitz session is conservatively busy.
         }
         let mut buf = vec![0u16; 32768];
         let mut len = buf.len() as u32;
         let ok = unsafe { QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) };
-        unsafe {
-            CloseHandle(h);
-        }
         if ok == 0 {
-            return Ok(true);
+            unsafe {
+                CloseHandle(h);
+            }
+            return Ok((true, trays));
         }
         let image = PathBuf::from(String::from_utf16(&buf[..len as usize])?);
         // Also defer for an installer surviving a crashed worker. A portable UI
         // (or a same-named installer elsewhere) does not block the installed app.
-        if same(&image, path) || same(&image, &root.join("update-installer.exe")) {
-            return Ok(true);
+        if same(&image, path) {
+            let line = tray_session::command_line(h);
+            unsafe {
+                CloseHandle(h);
+            }
+            match line {
+                Ok(line) if super::tray_cmd::is_tray_command_line(&line) => trays.push(id),
+                _ => return Ok((true, trays)),
+            }
+            continue;
+        }
+        unsafe {
+            CloseHandle(h);
+        }
+        if same(&image, &root.join("update-installer.exe")) {
+            return Ok((true, trays));
         }
     }
-    Ok(false)
+    Ok((false, trays))
 }
 fn config() -> Result<Option<reqwest::Url>> {
     origin(
@@ -1383,6 +1407,18 @@ pub(super) fn install_staged() -> Result<UpdateOutcome> {
         validate_manifest(&m, now()?)?;
         if let Some(a) = authorization.as_ref() {
             delivery::fresh(a, now()?)?;
+        }
+        // Ask the per-user tray agents to leave (never killed) and make sure
+        // they are gone before the installer replaces the image. The guard
+        // closes the event and restarts the tray, unelevated, however we exit.
+        let (is_busy, trays) = scan_busy(&path, &root)?;
+        if is_busy {
+            return record(&root, UpdateOutcome::DeferredBusy);
+        }
+        let mut tray_guard = tray_session::TrayRestore::new(&path, &trays);
+        tray_guard.quiesce()?;
+        if !tray_session::wait_for_exit(&trays, Duration::from_secs(15)) {
+            return record(&root, UpdateOutcome::DeferredBusy);
         }
         let mut attempt = InstallAttempt {
             schema: 1,
