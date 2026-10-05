@@ -32,12 +32,17 @@ pub struct Palette {
     pub bg: Color,
     /// Sidebar background.
     pub sidebar: Color,
-    /// Cards and sheets.
+    /// Regions (the one or two calm blocks per page) and sheets. One tonal
+    /// step from `bg`; separation is tone and whitespace, never a border.
     pub surface: Color,
-    /// Hovered rows, inputs, secondary buttons.
+    /// Fields, selected rows, secondary fills: one more tonal step.
     pub surface_alt: Color,
+    /// Floating layers (menus, dropdown lists). The only surface that may
+    /// carry a faint outline, because nothing else separates it from the page.
+    pub popup: Color,
+    /// Hairline: the rare divider and the popup outline. Not for surfaces.
     pub border: Color,
-    /// Input and control outlines (stronger than `border`).
+    /// Legacy control outline, kept faint. Prefer filled tonal fields.
     pub border_strong: Color,
     /// Row / ghost-button hover on `bg` and `surface`.
     pub hover: Color,
@@ -83,18 +88,19 @@ const fn rgb(hex: u32) -> Color {
 // Neutral base; colour only carries meaning (status). Light is the default.
 pub const LIGHT: Palette = Palette {
     mode: Mode::Light,
-    bg: rgb(0xFAFAFA),
-    sidebar: rgb(0xF4F4F5),
+    bg: rgb(0xF7F7F8),
+    sidebar: rgb(0xF1F1F3),
     surface: rgb(0xFFFFFF),
-    surface_alt: rgb(0xF4F4F5),
-    border: rgb(0xE4E4E7),
-    border_strong: rgb(0xD4D4D8),
-    hover: rgb(0xF4F4F5),
-    hover_strong: rgb(0xEBEBED),
-    pressed: rgb(0xE4E4E7),
-    selected: rgb(0xE4E4E7),
+    surface_alt: rgb(0xF1F1F3),
+    popup: rgb(0xFFFFFF),
+    border: rgb(0xE8E8EB),
+    border_strong: rgb(0xDEDEE2),
+    hover: rgb(0xF0F0F2),
+    hover_strong: rgb(0xE8E8EB),
+    pressed: rgb(0xE1E1E5),
+    selected: rgb(0xEAEAED),
     focus_ring: rgb(0x3F3F46),
-    disabled_bg: rgb(0xF4F4F5),
+    disabled_bg: rgb(0xF1F1F3),
     disabled_fg: rgb(0xA1A1AA),
     text: rgb(0x18181B),
     text_muted: rgb(0x71717A),
@@ -117,18 +123,19 @@ pub const LIGHT: Palette = Palette {
 
 pub const DARK: Palette = Palette {
     mode: Mode::Dark,
-    bg: rgb(0x09090B),
-    sidebar: rgb(0x111113),
-    surface: rgb(0x18181B),
-    surface_alt: rgb(0x27272A),
-    border: rgb(0x2E2E33),
-    border_strong: rgb(0x3F3F46),
-    hover: rgb(0x232326),
-    hover_strong: rgb(0x2C2C30),
-    pressed: rgb(0x3F3F46),
-    selected: rgb(0x2C2C30),
+    bg: rgb(0x0E0E10),
+    sidebar: rgb(0x0A0A0C),
+    surface: rgb(0x161618),
+    surface_alt: rgb(0x1E1E21),
+    popup: rgb(0x212124),
+    border: rgb(0x2A2A2E),
+    border_strong: rgb(0x36363B),
+    hover: rgb(0x1C1C1F),
+    hover_strong: rgb(0x252528),
+    pressed: rgb(0x2D2D31),
+    selected: rgb(0x26262A),
     focus_ring: rgb(0xD4D4D8),
-    disabled_bg: rgb(0x1F1F22),
+    disabled_bg: rgb(0x1C1C1F),
     disabled_fg: rgb(0x636368),
     text: rgb(0xFAFAFA),
     text_muted: rgb(0xA1A1AA),
@@ -186,10 +193,11 @@ impl Palette {
             Tone::Brand => self.brand,
         }
     }
-    /// The same tone at low opacity, for pill/icon backgrounds.
+    /// The same tone at low opacity, for status-pill backgrounds only (never
+    /// behind icons).
     pub fn tint(&self, tone: Tone) -> Color {
         Color {
-            a: if self.mode == Mode::Dark { 0.18 } else { 0.12 },
+            a: if self.mode == Mode::Dark { 0.16 } else { 0.10 },
             ..self.tone(tone)
         }
     }
@@ -236,6 +244,12 @@ pub const CONTROL: f32 = 36.0;
 pub const CONTROL_SMALL: f32 = 28.0;
 /// Minimum height of a list row.
 pub const ROW: f32 = 48.0;
+/// Minimum height of a `row_item` (Windows 11 Settings rhythm).
+pub const ROW_ITEM: f32 = 56.0;
+/// Plain row icon edge (no badge behind it).
+pub const ICON_ROW: f32 = 20.0;
+/// Height of a popup-menu row.
+pub const MENU_ROW: f32 = 32.0;
 /// Checkbox box edge.
 pub const CHECK: f32 = 18.0;
 /// Settings row height: ROW plus S2, so single and two line rows align.
