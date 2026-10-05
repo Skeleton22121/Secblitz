@@ -220,6 +220,14 @@
 - [ ] **Step 2–4:** implement, run tests/clippy/Windows build.
 - [ ] **Step 5: Commit** `Remove Secblitz: put-back logic and uninstaller commands`.
 
+### Phase 2 ownership update (2026-10-06, supersedes the B2/B3 split below where they differ)
+
+- `src/filter/mod.rs` gets `pub const SERVICE_NAME: &str = "SecblitzFilter";` (both B2 and B3 add this exact line; the lead merges).
+- **B3 owns service control** in a new `src/filter/scm.rs` (Windows): `install()`, `set_enabled(on)`, `state() -> ServiceState`, `delete()`, `ensure_dirs()` with the exact behavior listed under B2 "service". `pub enum ServiceState { NotInstalled, Stopped, Running, Other }` lives in `src/filter/control.rs` (portable). B3 wires the hidden CLI `filter reconcile|install|uninstall`.
+- **B2 owns the runtime only**: `server.rs`, `fetch.rs`, `adapters.rs`, and `src/filter/service.rs` with `pub fn run() -> Result<()>` (dispatcher + main loop). B2 wires the hidden CLI `filter run` (no elevation check, SCM starts it). B2 owns `Cargo.toml`/`Cargo.lock`. B3 must not change them (the `DnsClient` PowerShell module needs no new crate; `scm.rs` uses `windows-service` and the windows-sys features already enabled).
+- Memory: the rebuild must not hold the 2.5 million threat domains as `String`s. Add `lists::parse_blocklist_hashes(text) -> (Vec<u64>, Vec<u64>)` (streaming, hashes only) and use it for the threats list; steady memory under 60 MB, rebuild peak under about 150 MB.
+- `dns::parse_query` accepts any printable ASCII label byte (`0x20..=0x7E` except `.`), so odd but well-formed names are forwarded, not dropped.
+
 ### Task B2: SecblitzFilter service runtime
 
 **Files:**
