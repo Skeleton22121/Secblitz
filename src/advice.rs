@@ -110,6 +110,24 @@ pub fn control_impact(id: &str) -> &'static str {
         "accounts.builtin_administrator" => "An unused powerful account being guessed or abused",
         "privacy.activity_history" => "A record of what you did on this PC being kept and shared",
         "privacy.advertising_id" => "Apps tracking you across other apps for ads",
+        "defender.asr.office" => "Booby-trapped Office files starting harmful programs",
+        "defender.asr.ransomware_usb" => {
+            "Ransomware or a harmful USB stick locking or stealing your files"
+        }
+        "defender.network_protection" => {
+            "Programs connecting to known harmful websites and servers"
+        }
+        "defender.cloud_block_level" => {
+            "Brand-new harmful files slipping through before anyone has judged them"
+        }
+        "net.stack_hardening" => "Strangers on your network steering or spoofing your PC's traffic",
+        "net.netbios" => "Strangers on your network learning your PC's name and tricking it",
+        "net.mdns" => "Devices on your network answering lookups with fake replies",
+        "net.wpad" => "A stranger on your network pointing your PC at a rogue proxy",
+        "firewall.outbound_smb_internet" => {
+            "Your PC sending sign-in details to a file server on the internet"
+        }
+        "tls.legacy_protocols" => "Old, breakable secure connections being forced on your PC",
         _ => "",
     }
 }
@@ -173,6 +191,16 @@ pub fn control_label(id: &str) -> &'static str {
         "accounts.builtin_administrator" => "Hidden Administrator account",
         "privacy.activity_history" => "Activity history",
         "privacy.advertising_id" => "Ad tracking ID",
+        "defender.asr.office" => "Office attack shields",
+        "defender.asr.ransomware_usb" => "Ransomware and USB shields",
+        "defender.network_protection" => "Harmful website blocking",
+        "defender.cloud_block_level" => "Stricter cloud blocking",
+        "net.stack_hardening" => "Network traffic hardening",
+        "net.netbios" => "Old name service (NetBIOS)",
+        "net.mdns" => "Local name lookups (mDNS)",
+        "net.wpad" => "Automatic proxy search",
+        "firewall.outbound_smb_internet" => "File sharing to the internet",
+        "tls.legacy_protocols" => "Old secure-connection versions",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -244,7 +272,17 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "wsh.disabled"
         | "ntlm.lm_compat_level"
         | "privacy.activity_history"
-        | "privacy.advertising_id" => (
+        | "privacy.advertising_id"
+        | "defender.asr.office"
+        | "defender.asr.ransomware_usb"
+        | "defender.network_protection"
+        | "defender.cloud_block_level"
+        | "net.stack_hardening"
+        | "net.netbios"
+        | "net.mdns"
+        | "net.wpad"
+        | "firewall.outbound_smb_internet"
+        | "tls.legacy_protocols" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -297,6 +335,32 @@ pub fn choice_consequence(id: &str) -> &'static str {
         }
         "privacy.activity_history" => "Windows stops keeping a list of what you did on this PC.",
         "privacy.advertising_id" => "Apps will show less relevant ads. Nothing else changes.",
+        "defender.asr.office" => {
+            "Office files that try to start other programs are blocked. Macro-heavy files may stop working."
+        }
+        "defender.asr.ransomware_usb" => {
+            "Windows asks before unknown programs or USB apps run, and you can allow them."
+        }
+        "defender.network_protection" => {
+            "Programs are blocked from known harmful sites. Some VPNs or games may be blocked by mistake."
+        }
+        "defender.cloud_block_level" => {
+            "Windows is stricter with unknown files and may pause a download for up to 20 seconds."
+        }
+        "net.stack_hardening" => "Nothing you will notice day to day. Needs a restart.",
+        "net.netbios" => "Very old network devices may stop being found by name.",
+        "net.mdns" => {
+            "Casting, AirPrint and some smart-home devices may stop showing up. Needs a restart."
+        }
+        "net.wpad" => {
+            "Networks that set up their proxy automatically may stop working. Needs a restart."
+        }
+        "firewall.outbound_smb_internet" => {
+            "Cloud file shares reached over the internet may stop connecting. Home sharing still works."
+        }
+        "tls.legacy_protocols" => {
+            "Very old apps or devices may fail to connect securely. Needs a restart."
+        }
         _ => "",
     }
 }
@@ -329,6 +393,24 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: this PC uses Configuration Manager" => {
             "Your organization's tools manage this, so we leave it alone."
+        }
+        "Not offered: Microsoft Office was not found" => {
+            "Microsoft Office isn't installed here, so there is nothing to protect."
+        }
+        "Not offered: this edition of Windows does not include it" => {
+            "This version of Windows doesn't include this protection."
+        }
+        "Not offered: Defender behavior monitoring is off" => {
+            "Turn on suspicious app detection first, then check again."
+        }
+        "Not offered: the old file-sharing version could not be checked" => {
+            "We couldn't check something this depends on, so we leave it alone."
+        }
+        "Not offered: the old file-sharing version (SMB1) is still on" => {
+            "Old file sharing is still on here, so we leave this alone."
+        }
+        "Not offered: a shared folder or drive may rely on the old name service" => {
+            "A shared folder or drive here may need this, so we leave it alone."
         }
         _ => return None,
     })
@@ -718,10 +800,17 @@ mod tests {
                 assert_eq!(a.status, "Your choice");
                 assert_eq!(a.next, choice_consequence(id));
                 assert!(a.next.ends_with('.') && !a.next.contains('\n'));
-                assert!(a.next.len() < 130, "{id}: consequence must stay one short line");
+                assert!(
+                    a.next.len() < 130,
+                    "{id}: consequence must stay one short line"
+                );
                 assert_eq!(
                     a.group,
-                    if id.starts_with("privacy.") { Group::Information } else { Group::Choice }
+                    if id.starts_with("privacy.") {
+                        Group::Information
+                    } else {
+                        Group::Choice
+                    }
                 );
             } else {
                 assert_eq!(a.status, "Can fix");
@@ -729,7 +818,11 @@ mod tests {
                 assert!(choice_consequence(id).is_empty());
             }
             // Management and capability vetoes are never offered as a fix.
-            let managed = for_control(id, "skipped", "Applied computer Group Policy: assessment only");
+            let managed = for_control(
+                id,
+                "skipped",
+                "Applied computer Group Policy: assessment only",
+            );
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
             assert_ne!(managed.step, NextStep::Repair);
             // Restart-needed controls say so after applying.
@@ -751,6 +844,12 @@ mod tests {
             "Not offered: Defender real-time protection is off",
             "Not offered: Defender cloud protection is off",
             "Not offered: this PC uses Configuration Manager",
+            "Not offered: Microsoft Office was not found",
+            "Not offered: this edition of Windows does not include it",
+            "Not offered: Defender behavior monitoring is off",
+            "Not offered: the old file-sharing version could not be checked",
+            "Not offered: the old file-sharing version (SMB1) is still on",
+            "Not offered: a shared folder or drive may rely on the old name service",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
