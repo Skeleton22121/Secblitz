@@ -164,7 +164,10 @@ length limits, at most 50 000 files and 4 GB per backup.
    anywhere on the path stops the data restore for that account with a
    plain message; the app itself stays restored.
 8. Verify `Get-AppxPackage` shows the packages with `Status = Ok`, mark the
-   journal entry restored. The backup is kept until the user deletes it.
+   journal entry restored. The copy has then done its job and is deleted
+   (removing the app again makes a fresh one), unless it still holds data
+   for an account that hasn't signed in yet; that copy goes once the last
+   account has its data back. The same applies after a Store reinstall.
 
 ### Security notes
 

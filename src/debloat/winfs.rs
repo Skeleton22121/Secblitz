@@ -329,6 +329,8 @@ pub fn copy_in(
     file_sddl: &str,
 ) -> Result<()> {
     ensure!(!dst.exists(), "The app's folder is already there");
+    // Only a folder this call created is ever cleaned up.
+    let mut created = false;
     let result = (|| -> Result<()> {
         let dsd = descriptor(dir_sddl)?;
         let fsd = descriptor(file_sddl)?;
@@ -363,6 +365,7 @@ pub fn copy_in(
             Ok(())
         };
         mkdir(dst, true)?; // must be brand new
+        created = true;
         for f in files {
             let target = rel_path(dst, &f.path)?;
             let mut parent = dst.to_path_buf();
@@ -393,7 +396,7 @@ pub fn copy_in(
         }
         Ok(())
     })();
-    if result.is_err() {
+    if result.is_err() && created {
         let _ = remove_tree(dst);
     }
     result
