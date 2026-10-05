@@ -249,6 +249,11 @@ h3 { font-size: 17px; line-height: 1.35; font-weight: 600; letter-spacing: -0.00
 .shot-toggle:active { background: var(--brand-pressed); }
 .shot-toggle .icon { width: 16px; height: 16px; color: currentColor; }
 .shot-toggle[hidden] { display: none; }
+@media (max-width: 600px) {
+  .shot-toggle { right: var(--s2); bottom: var(--s2); height: 30px; padding: 0 var(--s3); gap: var(--s1); font-size: 13px; }
+  .shot-toggle.is-playing { width: 30px; }
+  .shot-toggle .icon { width: 14px; height: 14px; }
+}
 /* While the tour plays, only the pause icon shows; its name stays for screen readers. */
 .shot-toggle.is-playing { width: 36px; padding: 0; justify-content: center; }
 .shot-toggle.is-playing span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
