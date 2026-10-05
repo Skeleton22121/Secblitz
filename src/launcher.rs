@@ -102,6 +102,8 @@ mod imp {
     use super::{args_are_plain, Guard, Instance};
     use crate::broker::{self, Reply, Request};
     use crate::i18n::Lang;
+    use crate::user_apps::{self, AppState};
+    use crate::user_settings::{self, Op, Setting, SystemRegistry};
     use anyhow::{ensure, Context, Result};
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut, time::Duration};
     use windows_sys::Win32::{
@@ -471,6 +473,94 @@ mod imp {
                 Err(_) => Reply::Failed,
             },
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
+            Request::UserSetting(setting, op) => user_setting(setting, op),
+            Request::AppUpdatesScan => match scan_apps() {
+                Ok(states) => {
+                    user_apps::remember(states);
+                    Reply::Done
+                }
+                Err(reply) => {
+                    user_apps::forget();
+                    reply
+                }
+            },
+            Request::AppUpdateQuery(index) => match user_apps::remembered(usize::from(index)) {
+                Some(AppState::Available) => Reply::UpdateAvailable,
+                Some(AppState::NothingToDo) => Reply::NotApplicable,
+                Some(AppState::Unknown) | None => Reply::Unknown,
+            },
+            Request::AppUpdate(index) => update_app(usize::from(index)),
+        }
+    }
+
+    // ----- per-user settings (HKCU of the signed-in person) -----
+
+    fn user_setting(setting: Setting, op: Op) -> Reply {
+        let mut registry = SystemRegistry;
+        let journal = user_settings::journal_path();
+        match user_settings::handle(&mut registry, journal.as_deref(), setting, op) {
+            Ok(result) => Reply::from_result(result),
+            Err(_) if op == Op::Query => Reply::Unknown,
+            Err(_) => Reply::Failed,
+        }
+    }
+
+    // ----- app updates (WinGet, unelevated) -----
+
+    /// One `winget upgrade` listing, read defensively.
+    fn scan_apps() -> Result<[AppState; user_apps::APPS.len()], Reply> {
+        let run = user_apps::run_winget(&user_apps::list_args(), Duration::from_secs(150));
+        if run.code.is_some_and(secblitz::tools::is_offline_code) {
+            return Err(Reply::Offline);
+        }
+        if run.code.is_none() && run.output.trim().is_empty() {
+            // WinGet is missing or never answered.
+            return Err(Reply::Unavailable);
+        }
+        match user_apps::parse_upgrades(&run.output, run.code) {
+            user_apps::Scan::Apps(states) => Ok(states),
+            user_apps::Scan::Unreadable if secblitz::tools::dns_offline() => Err(Reply::Offline),
+            user_apps::Scan::Unreadable => Err(Reply::Unknown),
+        }
+    }
+
+    fn update_app(index: usize) -> Reply {
+        let Some(args) = user_apps::upgrade_args(index) else {
+            return Reply::Unavailable;
+        };
+        let run = user_apps::run_winget(&args, Duration::from_secs(13 * 60));
+        if run.code.is_some_and(secblitz::tools::is_offline_code) {
+            return Reply::Offline;
+        }
+        if run.code.is_none() {
+            return Reply::Failed;
+        }
+        // Read again: only a program that no longer lists a newer version
+        // counts as updated.
+        match scan_apps() {
+            Ok(states) => {
+                let reply = match states[index] {
+                    AppState::NothingToDo => Reply::Done,
+                    AppState::Available => {
+                        if run.code != Some(0) && secblitz::tools::dns_offline() {
+                            Reply::Offline
+                        } else {
+                            Reply::Failed
+                        }
+                    }
+                    AppState::Unknown => Reply::Unknown,
+                };
+                user_apps::remember(states);
+                reply
+            }
+            Err(_) => {
+                user_apps::forget();
+                if run.code == Some(0) {
+                    Reply::Unknown
+                } else {
+                    Reply::Failed
+                }
+            }
         }
     }
 

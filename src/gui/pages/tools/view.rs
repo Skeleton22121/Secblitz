@@ -12,6 +12,7 @@ use crate::app::tools::{
     self as logic, InstallResult, RepairKind, RepairResult, TipProfile, TipState,
 };
 use crate::gui::icons::Icon;
+use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{Ctx, Message};
@@ -69,6 +70,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             None,
             vec![password_region(state, ctx), manager_row(state, ctx)],
         ),
+        personal::view(&state.personal, ctx),
         settings_group(ctx),
     ]
     .spacing(theme::S8)
