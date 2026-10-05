@@ -4,14 +4,14 @@
 //! Motion (see docs/MOTION.md): `window::frames()` is subscribed only while the
 //! scan view is live or the score number is counting up, never when idle.
 use crate::advice::{self, Group, NextStep};
-use crate::app::score::{Score, Verdict};
+use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Tone};
 use crate::gui::widgets::{self, anim, progress, ring, scan, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
 use iced::widget::{column, container, row};
 use iced::{Alignment, Element, Length, Subscription, Task};
-use secblitz::engine::{Outcome, Report};
+use secblitz::engine::Report;
 use secblitz::model::Probe;
 use std::time::Instant;
 
@@ -267,16 +267,40 @@ fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Ele
 
 // ---------------------------------------------------------------- assessed
 
-/// Results the user should look at: fixable ones, and checks that need a manual choice.
-fn attention_items(report: &Report) -> Vec<(&Outcome, advice::Advice)> {
-    report
-        .results
-        .iter()
-        .map(|r| (r, advice::for_outcome(r)))
-        .filter(|(r, a)| {
-            a.group == Group::Recommended || (a.group == Group::Choice && r.status == "attention")
-        })
-        .collect()
+/// How the things to check split up: fixes we apply (ticked by default),
+/// optional choices we can apply if the person wants, and steps left to them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Split {
+    fixable: usize,
+    choices: usize,
+    manual: usize,
+}
+
+/// The recommended fix ids among `items`, and how `items` split up.
+fn split(report: &Report, available: &[String], items: &[ToCheck]) -> (Vec<String>, Split) {
+    let recommended = crate::app::flow::recommended(report, available);
+    let candidates = crate::app::flow::candidates(report, available);
+    let mut ids = Vec::new();
+    let mut choices = 0;
+    for item in items {
+        if let ToCheck::Control(r) = item {
+            if recommended.contains(&r.id) {
+                ids.push(r.id.clone());
+            } else if candidates.contains(&r.id) && advice::is_choice(&r.id) {
+                choices += 1;
+            }
+        }
+    }
+    let fixable = ids.len();
+    let manual = items.len() - fixable - choices;
+    (
+        ids,
+        Split {
+            fixable,
+            choices,
+            manual,
+        },
+    )
 }
 
 fn protected_labels(report: &Report) -> (usize, Vec<&'static str>) {
@@ -293,26 +317,6 @@ fn protected_labels(report: &Report) -> (usize, Vec<&'static str>) {
         }
     }
     (count, labels)
-}
-
-/// Findings that need a step in Windows Settings, shown as gentle tips.
-fn tips(report: &Report) -> Vec<advice::Advice> {
-    report
-        .findings
-        .iter()
-        .map(|f| advice::for_finding(&f.title, &f.status, &f.detail))
-        .filter(|a| {
-            matches!(a.group, Group::Recommended | Group::Choice)
-                && matches!(
-                    a.step,
-                    NextStep::OpenWindowsSecurity
-                        | NextStep::OpenWindowsUpdate
-                        | NextStep::OpenEncryption
-                        | NextStep::OpenAccounts
-                        | NextStep::OpenRemoteDesktop
-                )
-        })
-        .collect()
 }
 
 /// Plain readiness notices; only conditions that matter to the user.
@@ -384,32 +388,33 @@ fn last_checked(ctx: &Ctx) -> Option<String> {
     })
 }
 
-/// Things that need a change the person makes themselves in Windows.
-fn left_to_you(attention: usize, fixable: usize) -> usize {
-    attention.saturating_sub(fixable)
-}
-
 fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, Message> {
     let p = ctx.palette;
     let score = Score::of(report);
-    let items = attention_items(report);
+    let items = score::to_check(report);
     // After a failed check the report is stale: never claim protection from it
     // and offer no fix that cannot open.
     let stale = ctx.check_error.is_some();
-    let ids = if stale {
-        Vec::new()
+    let (ids, split) = if stale {
+        (
+            Vec::new(),
+            Split {
+                fixable: 0,
+                choices: 0,
+                manual: items.len(),
+            },
+        )
     } else {
-        crate::app::flow::recommended(report, &ctx.catalog.available)
+        split(report, &ctx.catalog.available, &items)
     };
     let verdict = if stale {
         Verdict::Unknown
     } else {
-        score.verdict()
+        score::overall(report)
     };
-    let attention = score.attention.max(1);
-    let fixable = ids.len().min(attention);
-    let manual = left_to_you(attention, fixable);
-    let mut note: Option<String> = None;
+    let attention = items.len().max(1);
+    let fixable = split.fixable;
+    let mut notes: Vec<String> = Vec::new();
     let (tone, title, subtitle) = match verdict {
         Verdict::Protected => (
             Tone::Good,
@@ -417,12 +422,43 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
             ctx.t("Everything we checked is switched on and working."),
         ),
         Verdict::Attention => {
-            if fixable > 0 && manual > 0 {
-                note = Some(count_text(
+            let subtitle = if fixable == 0 && split.choices == 0 {
+                ctx.t("Each one needs a step from you. We show you what to do.")
+            } else if fixable == 0 && split.manual == 0 {
+                ctx.t("Each one is your choice. We explain what changes before you decide.")
+            } else if fixable == attention {
+                if attention == 1 {
+                    ctx.t("We can fix it for you. You can undo any change later.")
+                } else {
+                    ctx.t("We can fix all of them for you. You can undo any change later.")
+                }
+            } else if fixable > 0 {
+                count_text(
                     ctx,
-                    "The other one needs a change you make yourself in Windows Settings.",
-                    "The other {n} need a change you make yourself in Windows Settings.",
-                    manual,
+                    "We can fix 1 of them for you. You can undo any change later.",
+                    "We can fix {n} of them for you. You can undo any change later.",
+                    fixable,
+                )
+            } else {
+                String::new()
+            };
+            // Name every part that the subtitle does not already cover.
+            let mixed =
+                (fixable > 0) as u8 + (split.choices > 0) as u8 + (split.manual > 0) as u8 > 1;
+            if mixed && split.choices > 0 {
+                notes.push(count_text(
+                    ctx,
+                    "1 is optional: you decide on the Protection page.",
+                    "{n} are optional: you decide on the Protection page.",
+                    split.choices,
+                ));
+            }
+            if mixed && split.manual > 0 {
+                notes.push(count_text(
+                    ctx,
+                    "1 needs a step from you, such as a restart or a Windows setting.",
+                    "{n} need a step from you, such as a restart or a Windows setting.",
+                    split.manual,
                 ));
             }
             (
@@ -433,20 +469,7 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
                     "{n} things need your attention",
                     attention,
                 ),
-                if fixable == 0 {
-                    ctx.t("These need a change in Windows Settings. We will show you where.")
-                } else if attention == 1 {
-                    ctx.t("We can fix it for you. You can undo any change later.")
-                } else if fixable == attention {
-                    ctx.t("We can fix all of them for you. You can undo any change later.")
-                } else {
-                    count_text(
-                        ctx,
-                        "We can fix 1 of them for you. You can undo any change later.",
-                        "We can fix {n} of them for you. You can undo any change later.",
-                        fixable,
-                    )
-                },
+                subtitle,
             )
         }
         Verdict::Unknown => (
@@ -533,9 +556,12 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         buttons = buttons.push(widgets::overflow_menu(p, extras));
     }
 
-    let mut texts = column![widgets::h1(p, title), widgets::muted(p, subtitle)].spacing(theme::S1);
-    if let Some(note) = note {
-        texts = texts.push(widgets::muted(p, note));
+    let mut texts = column![widgets::h1(p, title)].spacing(theme::S1);
+    for line in std::iter::once(subtitle)
+        .chain(notes)
+        .filter(|l| !l.is_empty())
+    {
+        texts = texts.push(widgets::muted(p, line));
     }
     if let Some(when) = last_checked(ctx) {
         texts = texts.push(widgets::small(p, when));
@@ -572,49 +598,51 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     if count > 0 {
         page = page.push(protected_group(state, ctx, count, &labels));
     }
-    let tips = tips(report);
-    if !tips.is_empty() {
-        let rows = tips
-            .iter()
-            .take(3)
-            .map(|a| {
-                widgets::row_item(
-                    p,
-                    Some(Icon::Info),
-                    ctx.t(a.label),
-                    Some(ctx.t(a.next)),
-                    iced::widget::space::horizontal(),
-                    None,
-                )
-            })
-            .collect();
-        page = page.push(widgets::group(p, ctx.t("Good to know"), None, None, rows));
-    }
     page.into()
 }
 
-fn attention_group<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Element<'a, Message> {
+fn attention_group<'a>(ctx: &'a Ctx, items: &[ToCheck]) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut rows: Vec<Element<'a, Message>> = items
         .iter()
         .take(ATTENTION_ROWS)
-        .map(|(r, a)| {
-            let impact = (!a.impact.is_empty())
-                .then(|| format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact)));
+        .map(|item| {
+            let (id, report_only, title, line) = match item {
+                ToCheck::Control(r) => {
+                    let a = advice::for_outcome(r);
+                    // A fix or a choice says what it protects against; any
+                    // other state (restart, conflict, ...) says what to do.
+                    let line = if a.step == NextStep::Repair && !a.impact.is_empty() {
+                        format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact))
+                    } else {
+                        ctx.t(a.next)
+                    };
+                    (
+                        r.id.as_str(),
+                        false,
+                        ctx.t(advice::control_label(&r.id)),
+                        line,
+                    )
+                }
+                ToCheck::Finding(f) => {
+                    let a = advice::for_finding(&f.title, &f.status, &f.detail);
+                    (f.title.as_str(), true, ctx.t(a.label), ctx.t(a.next))
+                }
+            };
             let head = widgets::row_item_tinted(
                 p,
                 Some(Icon::AlertTriangle),
                 Some(Tone::Warn),
-                ctx.t(advice::control_label(&r.id)),
-                impact,
+                title,
+                Some(line),
                 widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
                 Some(Message::Navigate(Page::Fixes)),
             );
             widgets::explain::with_disclosure(
                 ctx,
                 "home",
-                &r.id,
-                false,
+                id,
+                report_only,
                 widgets::explain::INDENT,
                 head,
             )
@@ -696,6 +724,7 @@ fn protected_group<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secblitz::engine::Outcome;
 
     fn outcome(id: &str, status: &str) -> Outcome {
         Outcome {
@@ -714,14 +743,30 @@ mod tests {
             ],
             ..Report::default()
         };
-        assert_eq!(attention_items(&report).len(), 1);
+        assert_eq!(score::to_check(&report).len(), 1);
         assert_eq!(protected_labels(&report).0, 1);
     }
 
     #[test]
-    fn headline_and_button_agree() {
-        assert_eq!(left_to_you(3, 2), 1);
-        assert_eq!(left_to_you(2, 2), 0);
-        assert_eq!(left_to_you(1, 3), 0);
+    fn headline_parts_add_up() {
+        let report = Report {
+            results: vec![
+                outcome("uac.consent", "attention"),
+                outcome("autorun.disabled", "attention"),
+                Outcome {
+                    detail: "Preference applied; restart required".into(),
+                    ..outcome("uac.enabled", "applied")
+                },
+            ],
+            ..Report::default()
+        };
+        let available: Vec<String> = ["uac.consent", "autorun.disabled"]
+            .map(String::from)
+            .to_vec();
+        let items = score::to_check(&report);
+        let (ids, split) = split(&report, &available, &items);
+        assert_eq!(split.fixable + split.choices + split.manual, items.len());
+        assert_eq!(ids.len(), split.fixable);
+        assert!(ids.iter().all(|id| !advice::is_choice(id)));
     }
 }

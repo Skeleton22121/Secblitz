@@ -353,7 +353,17 @@ fn selection(state: &State, ctx: &Ctx, all: &[String]) -> Vec<String> {
             .cloned()
             .collect()
     } else {
-        all.to_vec()
+        // Not synced yet (no message since the check): show exactly what
+        // `sync` will select, so choices are never drawn ticked.
+        let recommended = ctx
+            .report
+            .as_deref()
+            .map(|r| flow::recommended(r, &ctx.catalog.available))
+            .unwrap_or_default();
+        all.iter()
+            .filter(|id| recommended.contains(*id))
+            .cloned()
+            .collect()
     }
 }
 
@@ -582,12 +592,16 @@ fn attention_row<'a>(
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&a.id);
-    let mut pills = row![].spacing(theme::S1).align_y(Alignment::Center);
+    let mut pills = row![].spacing(theme::S3).align_y(Alignment::Center);
     if a.choice {
         pills = pills.push(widgets::pill(p, choice_label.to_owned(), Tone::Neutral));
     }
     if a.restart {
-        pills = pills.push(widgets::pill(p, restart_label.to_owned(), Tone::Neutral));
+        pills = pills.push(widgets::tag(
+            p,
+            Some(Icon::Restart),
+            restart_label.to_owned(),
+        ));
     }
     let trailing: Element<'a, Message> = pills.into();
     let toggle = Message::Fixes(Msg::Toggle(a.id.clone()));

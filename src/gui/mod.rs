@@ -824,7 +824,7 @@ impl App {
 
     /// Colour of the small status dot next to Home.
     fn verdict_tone(&self) -> Tone {
-        match self.ctx.score().map(|s| s.verdict()) {
+        match self.ctx.report.as_deref().map(app::score::overall) {
             Some(app::score::Verdict::Protected) => Tone::Good,
             Some(app::score::Verdict::Attention) => Tone::Warn,
             _ => Tone::Neutral,
@@ -1093,12 +1093,8 @@ fn window_icon() -> Option<iced::window::Icon> {
 
 /// Build the tray summary from a fresh report.
 pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::Status {
-    use crate::advice::{self, Group};
-    let attention: Vec<String> = report
-        .results
-        .iter()
-        .filter(|r| advice::for_outcome(r).group == Group::Recommended)
-        .map(|r| r.id.clone())
+    let attention: Vec<String> = app::score::to_check_ids(report)
+        .into_iter()
         .take(64)
         .collect();
     secblitz::status::Status {
@@ -1106,7 +1102,7 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
         t: now,
         protected: score.protected as u32,
         total: score.total as u32,
-        state: match score.verdict() {
+        state: match app::score::overall(report) {
             app::score::Verdict::Protected => secblitz::status::State::Ok,
             app::score::Verdict::Attention => secblitz::status::State::Attention,
             app::score::Verdict::Unknown => secblitz::status::State::Unknown,
