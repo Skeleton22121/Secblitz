@@ -56,6 +56,12 @@ fn shown_update(installed: bool, update: Option<UpdateView>) -> Remote<UpdateVie
     }
 }
 
+/// Whether the tray switch reads as on. Only the installed copy can show a
+/// tray icon, so any other copy shows the switch off whatever the saved choice.
+fn shown_tray(installed: bool, tray: bool) -> bool {
+    installed && tray
+}
+
 /// A change waiting for the person's yes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirm {
@@ -492,7 +498,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         } else {
             t("Available once Secblitz is installed.")
         }),
-        widgets::switch(p, state.tray, tray_toggle),
+        widgets::switch(p, shown_tray(state.installed, state.tray), tray_toggle),
         None,
     ));
     if let Some(c @ Confirm::Tray(_)) = state.confirm {
@@ -655,6 +661,14 @@ mod tests {
             Remote::Ready(UpdateView::Unknown)
         ));
         assert!(matches!(shown_update(true, None), Remote::Failed));
+    }
+
+    #[test]
+    fn a_copy_that_is_not_installed_shows_the_tray_switch_off() {
+        assert!(!shown_tray(false, true));
+        assert!(!shown_tray(false, false));
+        assert!(shown_tray(true, true));
+        assert!(!shown_tray(true, false));
     }
 
     #[test]
