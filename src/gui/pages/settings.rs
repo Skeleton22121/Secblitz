@@ -569,7 +569,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Some(format!("{} {}", t("Version"), env!("CARGO_PKG_VERSION"))),
         state.technical,
         Message::Settings(Msg::ToggleTechnical),
-        container(details).padding([theme::S2, theme::S4 + theme::ICON_ROW + theme::S3]),
+        container(details).padding([theme::S2, theme::S4 + theme::ICON_ROW + theme::S4]),
     );
 
     column![
