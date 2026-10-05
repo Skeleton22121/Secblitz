@@ -4,6 +4,8 @@
 Run: python assets/generate-icon.py [--check]
 Pillow 12.1.1 is the reference generator. Each ICO frame is independently
 supersampled, including the tiny taskbar sizes (not scaled from a 256px PNG).
+Frames up to SMALL px use secblitz-small.svg, a solid shield that stays
+readable where the outline would blur.
 """
 
 import argparse
@@ -17,6 +19,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
 SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
+SMALL = 24
 
 
 def contours(data):
@@ -44,7 +47,8 @@ def contours(data):
 
 
 def render(size):
-    svg = ET.parse(ROOT / "secblitz.svg").getroot()
+    source = "secblitz-small.svg" if size <= SMALL else "secblitz.svg"
+    svg = ET.parse(ROOT / source).getroot()
     scale = size * 8 / 256
     canvas = Image.new("RGBA", (size * 8, size * 8))
     for element in svg:

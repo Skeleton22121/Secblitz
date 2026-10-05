@@ -1,6 +1,8 @@
 fn main() {
     println!("cargo:rerun-if-changed=assets/secblitz.rc");
     println!("cargo:rerun-if-changed=assets/secblitz.manifest");
+    // The .rc embeds the icon; a new icon alone must re-embed it too.
+    println!("cargo:rerun-if-changed=assets/secblitz.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         embed_resource::compile("assets/secblitz.rc", embed_resource::NONE)
             .manifest_required()

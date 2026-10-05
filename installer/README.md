@@ -250,9 +250,13 @@ arbitrary Windows file or third-party software permission reset is bundled.
 
 ## Icon source
 
-`assets/secblitz.svg` is the source of truth: an ink rounded square and mint
-shield, with an actual even-odd lightning-bolt cutout. No fine outlines or text
-compete at 16px. `python assets/generate-icon.py` uses installed Pillow (reference
+`assets/secblitz.svg` is the source of truth: a white shield outline with a
+lightning bolt inside, on an ink (#18181B) rounded square. It was traced by hand
+from the generated artwork in `docs/brand-icon-source.webp` (fal.ai Nano Banana 2).
+Frames up to 24px use `assets/secblitz-small.svg`, a solid shield with the bolt
+cut out, because the outline blurs at taskbar sizes. The window icon is decoded
+from the same `.ico`, and the sidebar mark (`BRAND_SVG`) is the same shape in
+one colour. `build.rs` re-embeds resources when the `.ico` changes. `python assets/generate-icon.py` uses installed Pillow (reference
 version 12.1.1), without CairoSVG or network access, to render nine independent
 supersampled 32-bit RGBA frames from 16 through 256px. `--check` checks exact
 regeneration and decodes every ICO frame.

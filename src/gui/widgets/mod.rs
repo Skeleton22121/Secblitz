@@ -78,7 +78,7 @@ pub fn icon<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message> {
         .into()
 }
 
-/// The filled Secblitz shield, tinted `color`.
+/// The Secblitz shield and bolt, tinted `color`.
 pub fn brand_mark<'a>(size: f32, color: Color) -> Element<'a, Message> {
     svg(svg::Handle::from_memory(super::icons::BRAND_SVG))
         .width(size)
