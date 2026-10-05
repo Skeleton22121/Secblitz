@@ -226,7 +226,16 @@ fn program_data() -> Result<PathBuf> {
 /// itself inspected but not walked: it holds thousands of app files, it
 /// inherits this folder's SYSTEM/Administrators-only ACL, and its own code
 /// refuses links. Only an administrator could plant anything inside it.
-fn secure_tree(path: &Path, opaque: &Path, handles: &mut Vec<Handle>, depth: usize) -> Result<()> {
+/// `foreign` (web protection's folder) has its own, wider permissions: it
+/// only has to be a real folder owned by SYSTEM or Administrators, and it is
+/// not walked because nothing here ever reads from it.
+fn secure_tree(
+    path: &Path,
+    opaque: &Path,
+    foreign: &Path,
+    handles: &mut Vec<Handle>,
+    depth: usize,
+) -> Result<()> {
     ensure!(
         depth <= 8 && handles.len() < 4096,
         "Journal directory exceeds inspection limits"
@@ -234,11 +243,21 @@ fn secure_tree(path: &Path, opaque: &Path, handles: &mut Vec<Handle>, depth: usi
     for entry in std::fs::read_dir(path)? {
         let path = entry?.path();
         let h = open(&path).with_context(|| format!("Inspect {}", path.display()))?;
+        if path == foreign {
+            inspect(&h, false, false)
+                .and_then(|directory| {
+                    ensure!(directory, "Wrong object type");
+                    Ok(())
+                })
+                .with_context(|| format!("Untrusted journal entry {}", path.display()))?;
+            handles.push(h);
+            continue;
+        }
         let directory = inspect(&h, true, false)
             .with_context(|| format!("Untrusted journal entry {}", path.display()))?;
         handles.push(h);
         if directory && path != opaque {
-            secure_tree(&path, opaque, handles, depth + 1)?;
+            secure_tree(&path, opaque, foreign, handles, depth + 1)?;
         }
         ensure!(handles.len() < 4096, "Too many journal entries");
     }
@@ -358,7 +377,8 @@ pub fn state_dir() -> Result<PathBuf> {
     held.push(root);
     let mut entries = Vec::new();
     let opaque = path.join("App").join(crate::platform::APP_BACKUPS);
-    secure_tree(&path, &opaque, &mut entries, 0)?;
+    let foreign = path.join(crate::platform::WEB_PROTECTION);
+    secure_tree(&path, &opaque, &foreign, &mut entries, 0)?;
     // Keep one set of non-delete-sharing root/ancestor handles for process
     // lifetime. This prevents directory replacement after returning PathBuf.
     static PINNED: OnceLock<PathBuf> = OnceLock::new();
