@@ -302,17 +302,7 @@ impl Finished {
 }
 
 fn refresh_removed(state: &mut State) {
-    let mut out: Vec<(u16, u64)> = Vec::new();
-    for batch in state.journal.iter().rev() {
-        for r in batch.removed.iter().filter(|r| !r.restored) {
-            if (r.index as usize) < debloat::catalog().len()
-                && !out.iter().any(|(i, _)| *i == r.index)
-            {
-                out.push((r.index, batch.t));
-            }
-        }
-    }
-    state.removed = out;
+    state.removed = debloat::journal::still_removed(&state.journal, debloat::catalog().len());
 }
 
 /// Close the review sheet or the result with Escape. Working cannot be dismissed.
