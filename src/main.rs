@@ -8,6 +8,7 @@ mod gui;
 mod i18n;
 mod launcher;
 mod tray;
+mod uninstall;
 mod user_apps;
 mod user_settings;
 
@@ -75,6 +76,20 @@ fn command(lang: Lang) -> Command {
                 .subcommand(sub("uninstall", "Uninstall the service"))
                 .subcommand(sub("status", "Query service status"))
                 .subcommand(sub("run", "Run the service dispatcher")),
+        )
+        // Hidden: only the uninstaller calls these.
+        .subcommand(
+            Command::new("uninstall-revert")
+                .hide(true)
+                .arg(Arg::new("user").long("user").action(ArgAction::SetTrue)),
+        )
+        .subcommand(
+            Command::new("uninstall-cleanup").hide(true).arg(
+                Arg::new("user")
+                    .long("user")
+                    .action(ArgAction::SetTrue)
+                    .required(true),
+            ),
         );
     fn localize(cmd: Command, lang: Lang, parent: &str) -> Command {
         let path = if parent.is_empty() {
@@ -190,6 +205,11 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
         anyhow::ensure!(matches.get_flag("json"), "update-health-requires-json");
         return write_health(updater::health()?, &mut io::stdout().lock());
     }
+    // The uninstaller's commands decide about privileges themselves and never
+    // elevate, so they come before every UAC path.
+    if let Some(command) = uninstall_command(matches) {
+        return execute_uninstall(command, matches.get_flag("json"), lang);
+    }
     let json = matches.get_flag("json");
     if json && !json_allowed(matches) {
         bail!(lang.t(
@@ -256,6 +276,74 @@ fn update_command(matches: &ArgMatches) -> Option<UpdateCommand> {
         "health" => Some(UpdateCommand::Health),
         _ => unreachable!(),
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UninstallCommand {
+    /// Machine part, must already be elevated.
+    Revert,
+    /// Personal part, as the person.
+    RevertUser,
+    CleanupUser,
+}
+
+fn uninstall_command(matches: &ArgMatches) -> Option<UninstallCommand> {
+    let (name, sub) = matches.subcommand()?;
+    match name {
+        "uninstall-revert" if sub.get_flag("user") => Some(UninstallCommand::RevertUser),
+        "uninstall-revert" => Some(UninstallCommand::Revert),
+        "uninstall-cleanup" => Some(UninstallCommand::CleanupUser),
+        _ => None,
+    }
+}
+
+/// Exit code for "not allowed to run here": no UAC, nothing changed.
+#[cfg(windows)]
+const UNINSTALL_REFUSED: i32 = 2;
+/// The personal part refuses an elevated process (it could be another account's
+/// registry). Distinct from 0..=6, the number of personal settings left.
+#[cfg(windows)]
+const UNINSTALL_USER_REFUSED: i32 = 9;
+
+#[cfg(windows)]
+fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Result<i32> {
+    use uninstall::{left_line, Summary};
+    fn print(summary: &Summary, json: bool, lang: Lang) {
+        // Output problems (no console, closed pipe) must never change the exit code.
+        let mut out = io::stdout().lock();
+        if json {
+            let _ = serde_json::to_writer(&mut out, summary);
+            let _ = writeln!(out);
+        } else {
+            for left in &summary.left {
+                let _ = writeln!(out, "{}", left_line(left, lang));
+            }
+        }
+    }
+    match command {
+        UninstallCommand::Revert => {
+            if !platform::is_elevated().unwrap_or(false) {
+                return Ok(UNINSTALL_REFUSED);
+            }
+            print(&uninstall::revert_machine(&|_, _| {}), json, lang);
+            Ok(0)
+        }
+        UninstallCommand::RevertUser => {
+            if platform::is_elevated().unwrap_or(true) {
+                return Ok(UNINSTALL_USER_REFUSED);
+            }
+            let summary = uninstall::revert_user();
+            print(&summary, json, lang);
+            Ok(summary.left.len().min(6) as i32)
+        }
+        UninstallCommand::CleanupUser => Ok(i32::from(uninstall::cleanup_user().is_err())),
+    }
+}
+
+#[cfg(not(windows))]
+fn execute_uninstall(_: UninstallCommand, _: bool, _: Lang) -> Result<i32> {
+    // Only Windows has anything to put back.
+    Ok(1)
 }
 
 fn json_allowed(matches: &ArgMatches) -> bool {
@@ -935,6 +1023,57 @@ mod tests {
                 .try_get_matches_from(["secblitz", word])
                 .is_err());
         }
+        // The only new words are the hidden uninstaller commands.
+        for words in [
+            vec!["secblitz", "uninstall-revert"],
+            vec!["secblitz", "uninstall-cleanup", "--user"],
+        ] {
+            assert!(command(Lang::En).try_get_matches_from(words).is_ok());
+        }
+        assert!(command(Lang::En)
+            .try_get_matches_from(["secblitz", "uninstall-cleanup"])
+            .is_err());
+    }
+
+    #[test]
+    fn uninstall_commands_are_hidden() {
+        let help = command(Lang::En).render_help().to_string();
+        assert!(!help.contains("uninstall-revert"), "{help}");
+        assert!(!help.contains("uninstall-cleanup"), "{help}");
+    }
+
+    #[test]
+    fn uninstall_commands_never_elevate() {
+        for (words, expected) in [
+            (
+                vec!["secblitz", "uninstall-revert"],
+                UninstallCommand::Revert,
+            ),
+            (
+                vec!["secblitz", "uninstall-revert", "--user"],
+                UninstallCommand::RevertUser,
+            ),
+            (
+                vec!["secblitz", "--json", "uninstall-revert"],
+                UninstallCommand::Revert,
+            ),
+            (
+                vec!["secblitz", "uninstall-cleanup", "--user"],
+                UninstallCommand::CleanupUser,
+            ),
+        ] {
+            let m = command(Lang::En).try_get_matches_from(words).unwrap();
+            // Recognised by the handler that runs before every elevation path.
+            assert_eq!(uninstall_command(&m), Some(expected));
+        }
+        let m = command(Lang::En)
+            .try_get_matches_from(["secblitz", "service", "start"])
+            .unwrap();
+        assert_eq!(uninstall_command(&m), None);
+        let m = command(Lang::En)
+            .try_get_matches_from(["secblitz"])
+            .unwrap();
+        assert_eq!(uninstall_command(&m), None);
     }
 
     #[test]
