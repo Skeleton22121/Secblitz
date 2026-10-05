@@ -82,7 +82,9 @@ pub fn empty_state<'a>(
     .align_x(Alignment::Center)
     .max_width(420);
     if let Some(a) = action {
-        c = c.push(iced::widget::space::vertical().height(theme::S1)).push(a);
+        c = c
+            .push(iced::widget::space::vertical().height(theme::S1))
+            .push(a);
     }
     container(c)
         .center_x(Length::Fill)
@@ -261,9 +263,9 @@ pub fn toast<'a>(p: Palette, message: impl Into<String>, tone: Tone) -> Element<
             .on_press(Message::DismissToast)
             .style(move |_, status| button::Style {
                 background: match status {
-                    button::Status::Hovered | button::Status::Pressed => Some(Background::Color(
-                        theme::mix(p.brand, p.on_brand, 0.18),
-                    )),
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Some(Background::Color(theme::mix(p.brand, p.on_brand, 0.18)))
+                    }
                     _ => None,
                 },
                 border: Border {

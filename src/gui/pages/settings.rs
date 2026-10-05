@@ -590,7 +590,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         widgets::muted(p, t("A safer PC. Without headaches.")),
         widgets::small(
             p,
-            t("Secblitz uses the Inter font (SIL Open Font License) and Lucide icons (ISC licence). Its app clean-up lists draw on the Win11Debloat and WinUtil projects (MIT licence).")
+            t("Secblitz uses the IBM Plex Sans font (SIL Open Font License) and Fluent UI System Icons (MIT licence). Its app clean-up lists draw on the Win11Debloat and WinUtil projects (MIT licence).")
         ),
         button(
             row![

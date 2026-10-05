@@ -77,16 +77,8 @@ pub fn brand_mark<'a>(size: f32, color: Color) -> Element<'a, Message> {
         .into()
 }
 
-/// Same glyph with its closed shapes filled (active navigation item). Thin
-/// fallback until the icon set ships real filled artwork.
-pub fn svg_filled(i: Icon) -> Vec<u8> {
-    String::from_utf8_lossy(i.svg())
-        .replacen("fill=\"none\"", "fill=\"currentColor\"", 1)
-        .into_bytes()
-}
-
 pub fn icon_filled<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message> {
-    svg(svg::Handle::from_memory(svg_filled(i)))
+    svg(svg::Handle::from_memory(i.svg_filled()))
         .width(size)
         .height(size)
         .style(move |_, _| svg::Style { color: Some(color) })
