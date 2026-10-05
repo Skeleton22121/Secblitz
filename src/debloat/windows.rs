@@ -21,6 +21,17 @@ pub const INVENTORY: &str = include_str!("scripts/inventory.ps1");
 pub const REMOVE: &str = include_str!("scripts/remove.ps1");
 pub const POLICY: &str = include_str!("scripts/policy.ps1");
 
+/// Runs before every script: only inbox modules, imported by absolute path,
+/// and no autoloading, so a module planted in the user's Documents folder can
+/// never answer for `Get-AppxPackage` in this elevated process.
+const PRELUDE: &str = r#"$moduleRoot = [IO.Path]::Combine($env:SystemRoot, 'System32\WindowsPowerShell\v1.0\Modules')
+$env:PSModulePath = $moduleRoot
+$PSModuleAutoLoadingPreference = 'None'
+foreach ($m in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility', 'Appx', 'Dism') {
+    $null = Import-Module ([IO.Path]::Combine($moduleRoot, "$m\$m.psd1")) -ErrorAction Stop
+}
+"#;
+
 fn windows_dir() -> Result<PathBuf> {
     let mut buffer = vec![0u16; 32768];
     let count = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
@@ -79,6 +90,7 @@ pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Res
     let mut input = child.stdin.take().context("Missing stdin")?;
     let mut output = child.stdout.take().context("Missing stdout")?;
     std::thread::spawn(move || {
+        let _ = input.write_all(PRELUDE.as_bytes());
         let _ = input.write_all(script.as_bytes());
     });
     let (tx, rx) = mpsc::channel();

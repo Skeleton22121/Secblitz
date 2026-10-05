@@ -214,7 +214,12 @@ pub(crate) fn parse_outcome(json: &str) -> PackageOutcome {
     match serde_json::from_str::<RawOutcome>(json) {
         Ok(o) if o.protected => PackageOutcome::Protected,
         Ok(o) if o.removed => PackageOutcome::Removed,
-        Ok(o) => PackageOutcome::Failed(o.error.unwrap_or_else(|| "Unknown result".into())),
+        Ok(o) => PackageOutcome::Failed(
+            o.error
+                .map(|e| crate::text::excerpt(&e, 300))
+                .filter(|e| !e.is_empty())
+                .unwrap_or_else(|| "Unknown result".into()),
+        ),
         Err(_) => PackageOutcome::Failed("Unreadable answer from Windows".into()),
     }
 }

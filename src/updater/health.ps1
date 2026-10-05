@@ -1,8 +1,13 @@
 # Read-only task/preference health probe, embedded in the trusted executable.
-# No imports, shell commands, updater/Engine locks, task changes or networking.
+# Inbox modules only (by absolute path, no autoload); no shell commands,
+# updater/Engine locks, task changes or networking.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 try {
+    $moduleRoot = [IO.Path]::Combine($env:SystemRoot, 'System32\WindowsPowerShell\v1.0\Modules')
+    $env:PSModulePath = $moduleRoot
+    $PSModuleAutoLoadingPreference = 'None'
+    $null = Import-Module ([IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
     $app = [IO.Path]::Combine([Environment]::GetFolderPath('ProgramFiles'), 'Secblitz')
     $exe = [IO.Path]::Combine($app, 'secblitz.exe')
     $trusted = @('S-1-5-18', 'S-1-5-32-544')

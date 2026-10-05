@@ -608,6 +608,12 @@ pub fn install() -> Result<()> {
         cfg!(target_arch = "x86_64"),
         "The monitor requires Windows x64"
     );
+    // Only the protected installed copy may become the service binary: a
+    // copy in a user-writable folder could be swapped before it is read.
+    ensure!(
+        trusted_status_dir().is_some(),
+        "The background check needs Secblitz installed with its setup program"
+    );
     let scm = manager(ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
     match scm.open_service(NAME, ServiceAccess::QUERY_CONFIG) {
         Ok(_) => bail!("SecblitzMonitor already exists; it was not changed"),

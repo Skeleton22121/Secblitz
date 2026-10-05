@@ -38,6 +38,56 @@ fn open(path: &Path) -> Result<Handle> {
     Ok(Handle(h))
 }
 
+/// A reparse point, or an owner other than SYSTEM/Administrators: not ours.
+fn planted(handle: &Handle) -> Result<bool> {
+    unsafe {
+        let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
+        if GetFileInformationByHandle(handle.0, &mut info) == 0 {
+            return Err(winerr());
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Ok(true);
+        }
+        let mut owner = null_mut();
+        let mut sd = null_mut();
+        let error = GetSecurityInfo(
+            handle.0,
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut sd,
+        );
+        ensure!(
+            error == 0,
+            "Cannot query journal security (Windows error {error})"
+        );
+        let _sd = Local(sd);
+        let system = sid("S-1-5-18")?;
+        let admins = sid("S-1-5-32-544")?;
+        Ok(owner.is_null() || (EqualSid(owner, system.0) == 0 && EqualSid(owner, admins.0) == 0))
+    }
+}
+
+/// Rename a planted entry (the entry itself, never a link's target) to a
+/// fresh random name next to it. Its contents are left untouched.
+fn set_aside(base: &Path, path: &Path) -> Result<()> {
+    use rand::RngCore;
+    let mut tag = [0u8; 8];
+    rand::rngs::OsRng.fill_bytes(&mut tag);
+    let aside = base.join(format!("Secblitz.untrusted-{}", hex::encode(tag)));
+    let (from, to) = (wide(path)?, wide(&aside)?);
+    ensure!(
+        unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0,
+        "A folder at {} was not created by Secblitz and could not be moved aside: {}",
+        path.display(),
+        winerr()
+    );
+    Ok(())
+}
+
 fn inspect(handle: &Handle, strict: bool, root: bool) -> Result<bool> {
     unsafe {
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
@@ -283,6 +333,18 @@ pub fn state_dir() -> Result<PathBuf> {
             error == ERROR_ALREADY_EXISTS,
             "Cannot create protected journal directory (Windows error {error})"
         );
+        // Secblitz always creates it owned by Administrators and never as a
+        // link. Anything else was planted (any user may create folders in
+        // ProgramData) to block Secblitz: move it aside, never adopt it.
+        if planted(&open(&path)?)? {
+            set_aside(&base, &path)?;
+            if unsafe { CreateDirectoryW(path_w.as_ptr(), &attributes) } == 0 {
+                bail!(
+                    "Cannot create protected journal directory (Windows error {})",
+                    unsafe { GetLastError() }
+                );
+            }
+        }
     }
     let root = open(&path)?;
     ensure!(

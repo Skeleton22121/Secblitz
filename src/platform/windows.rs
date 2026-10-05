@@ -486,7 +486,7 @@ fn run_script_in<T: DeserializeOwned>(
         ensure!(
             status.success() && stderr.is_empty(),
             "PowerShell failed ({status}): {}",
-            String::from_utf8_lossy(&stderr)
+            crate::text::excerpt(&String::from_utf8_lossy(&stderr), 300)
         );
         writer
             .join()

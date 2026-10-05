@@ -123,6 +123,8 @@ pub enum Msg {
     /// Animation frame; only delivered while something moves.
     Frame(Instant),
     BitwardenDone(Result<broker::Reply, String>),
+    /// Whether Bitwarden is already installed, asked once on entering.
+    BitwardenKnown(Result<broker::Reply, String>),
     ClearBitwarden,
     Open(Shortcut),
     /// Open the Windows page a health tip points to.
@@ -231,6 +233,8 @@ pub struct State {
     /// Why the last Bitwarden install failed, when it is a known reason
     /// (`Offline` or `Unavailable` for this account).
     bitwarden_why: Option<broker::Reply>,
+    /// Already installed when the page was opened: nothing to offer.
+    pub bitwarden_present: bool,
     open_details: Vec<Detail>,
     personal: personal::State,
     /// Time of the latest animation frame (never read from the clock in `view`).
@@ -263,6 +267,7 @@ impl Default for State {
             },
             bitwarden: Run::Idle,
             bitwarden_why: None,
+            bitwarden_present: false,
             open_details: Vec::new(),
             personal: Default::default(),
             now: Instant::now(),
@@ -297,9 +302,19 @@ pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
     }
 }
 
-/// The Tools page was opened: read the account settings once.
+/// The Tools page was opened: read the account settings once, and whether
+/// Bitwarden is already there.
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    personal::on_enter(&mut state.personal, ctx)
+    let settings = personal::on_enter(&mut state.personal, ctx);
+    if ctx.broker.is_none() || state.bitwarden_present || !matches!(state.bitwarden, Run::Idle) {
+        return settings;
+    }
+    Task::batch([
+        settings,
+        ctx.broker_task(broker::Request::BitwardenStatus, |r| {
+            tools(Msg::BitwardenKnown(r))
+        }),
+    ])
 }
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
@@ -527,12 +542,17 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Ok(r @ (broker::Reply::Offline | broker::Reply::Unavailable)) => Some(r),
                 _ => None,
             };
+            state.bitwarden_present |= matches!(reply, Ok(broker::Reply::Done));
             state.bitwarden = Run::Done(match reply {
                 Ok(broker::Reply::Done) => Ok(()),
                 Ok(other) => Err(format!("{other:?}")),
                 Err(e) => Err(e),
             });
             state.finish(Slot::Bitwarden);
+            Task::none()
+        }
+        Msg::BitwardenKnown(reply) => {
+            state.bitwarden_present = matches!(reply, Ok(broker::Reply::Done));
             Task::none()
         }
         Msg::ClearBitwarden => {

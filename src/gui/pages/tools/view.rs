@@ -983,6 +983,14 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let has_broker = ctx.broker.is_some();
     match &state.bitwarden {
+        Run::Idle if state.bitwarden_present => widgets::row_item(
+            p,
+            Some(Icon::Lock),
+            ctx.t("Bitwarden is installed"),
+            Some(ctx.t("Find it in your Start menu.")),
+            anim::check_draw(MARK, p.tone(Tone::Good), 1.0),
+            None,
+        ),
         Run::Idle => widgets::row_item(
             p,
             Some(Icon::Lock),

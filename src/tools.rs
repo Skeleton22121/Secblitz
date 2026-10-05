@@ -18,6 +18,25 @@ pub fn install_bitwarden() -> anyhow::Result<()> {
     anyhow::bail!("Bitwarden installation is supported only on Windows")
 }
 
+/// Is Bitwarden already installed (for this user or machine-wide)? Only
+/// looks for its files; never starts anything.
+pub fn bitwarden_installed() -> anyhow::Result<bool> {
+    #[cfg(windows)]
+    {
+        windows::known_install()
+    }
+    #[cfg(not(windows))]
+    Ok(false)
+}
+
+/// The signed-in user's registered App Installer `winget.exe`, found through
+/// the package manager. Never searches PATH: the user's WindowsApps alias
+/// folder is writable by any program the user runs.
+#[cfg(windows)]
+pub fn winget_path() -> anyhow::Result<std::path::PathBuf> {
+    windows::winget()
+}
+
 /// The PC could not reach the internet (DNS or connection failure). Distinct
 /// from every other installer failure so the UI can say "you're offline".
 #[derive(Debug)]
@@ -414,7 +433,7 @@ mod windows {
         Ok(path)
     }
 
-    fn known_install() -> Result<bool> {
+    pub(super) fn known_install() -> Result<bool> {
         // These are existence checks only; never execute an application found here.
         // WinGet below also checks ARP registrations in user/machine, 32/64-bit
         // scopes, covering custom install directories and non-WinGet installers.
@@ -491,7 +510,7 @@ mod windows {
         Ok(())
     }
 
-    fn winget() -> Result<PathBuf> {
+    pub(super) fn winget() -> Result<PathBuf> {
         // The package manager resolves the CURRENT user's registered, publisher-
         // qualified App Installer family, including packages on another volume.
         // Never search PATH, CWD, environment-derived folders, or wildcard packages.

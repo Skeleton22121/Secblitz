@@ -34,6 +34,8 @@ pub enum Request {
     AppUpdateQuery(u16),
     /// Upgrade one allowlisted program (index into `user_apps::APPS`).
     AppUpdate(u16),
+    /// Is Bitwarden already installed for the signed-in user? Read-only.
+    BitwardenStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +136,7 @@ impl Request {
             Request::AppUpdatesScan => (14, 0),
             Request::AppUpdateQuery(i) => (15, i),
             Request::AppUpdate(i) => (16, i),
+            Request::BitwardenStatus => (17, 0),
         };
         let [lo, hi] = arg.to_le_bytes();
         [kind, lo, hi]
@@ -170,6 +173,7 @@ impl Request {
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
             16 if usize::from(arg) < apps => Request::AppUpdate(arg),
+            17 => Request::BitwardenStatus,
             _ => return None,
         })
     }
@@ -486,6 +490,7 @@ mod tests {
             Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
             Request::AppUpdate(0),
             Request::AppUpdate(user_apps::APPS.len() as u16 - 1),
+            Request::BitwardenStatus,
         ]
         .into_iter()
         .chain(Setting::ALL.iter().flat_map(|s| {
@@ -505,10 +510,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 17, 18, 100, 255] {
+        for kind in [0u8, 18, 19, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12) {
+        for kind in (1..=6u8).chain(8..=12).chain([17]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
