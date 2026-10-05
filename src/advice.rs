@@ -44,7 +44,7 @@ impl Advice {
             return "";
         }
         match self.group {
-            Group::Recommended => "Risk:",
+            Group::Recommended => "Leaves you open to:",
             Group::Protected => "Protects you from:",
             _ => "Why it matters:",
         }
@@ -71,7 +71,7 @@ pub fn control_impact(id: &str) -> &'static str {
             "Uninvited incoming connections on public networks like cafes or airports"
         }
         "uac.enabled" => "Apps silently making system-wide changes without asking you",
-        "uac.consent" => "Apps making administrator changes without asking for approval",
+        "uac.consent" => "Apps making big changes without asking for approval",
         "installer.always_install_elevated" => {
             "Any app installer quietly getting full control of your PC"
         }
@@ -81,7 +81,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "lsa.limit_blank_password_use" => {
             "Someone signing in over the network to an account with no password"
         }
-        "wdigest.use_logon_credential" => "Attackers stealing your Windows password from memory",
+        "wdigest.use_logon_credential" => "Attackers stealing your Windows password",
         "permissions.service.bits" | "permissions.service.wuauserv" => {
             "Tampered or fake Windows updates reaching your PC"
         }
@@ -95,13 +95,13 @@ pub fn finding_impact(title: &str) -> &'static str {
     match title {
         "Windows lifecycle" => "Running Windows that no longer gets security fixes",
         "Device encryption" => "Strangers reading your files if your PC is lost or stolen",
-        "Secure Boot" => "Hidden malware loading before Windows starts",
+        "Secure Boot" => "Hidden malware starting before Windows does",
         "Windows updates" => "Known security holes staying open on your PC",
-        "Remote Desktop" => "Attackers trying to sign in to your PC remotely",
-        "SMB1" => "Old file-sharing flaws used by worms like WannaCry",
+        "Remote Desktop" => "Strangers trying to sign in to your PC from far away",
+        "SMB1" => "Old file-sharing flaws that let malware spread between PCs",
         "SmartScreen" => "Scam websites and unrecognized apps you open by mistake",
         "Local accounts" => "Weak or shared sign-ins that are easier to guess or steal",
-        "Memory integrity" => "Malicious drivers taking over the core of Windows",
+        "Memory integrity" => "Harmful drivers taking over the core of Windows",
         "Automatic logon" => "Anyone who turns on your PC getting straight into your account",
         _ => "",
     }
@@ -137,7 +137,7 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
     use NextStep::*;
     match id {
         "defender.realtime" | "defender.behavior" | "defender.ioav" | "defender.archive" => (
-            "Open Windows Security and review Virus & threat protection.",
+            "Open Windows Security and make sure virus protection is on.",
             OpenWindowsSecurity,
         ),
         "firewall.domain.enabled"
@@ -146,35 +146,35 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "firewall.domain.inbound"
         | "firewall.private.inbound"
         | "firewall.public.inbound" => (
-            "Open Windows Security and review Firewall & network protection.",
+            "Open Windows Security and make sure the firewall is on.",
             OpenWindowsSecurity,
         ),
         "uac.enabled" | "uac.consent" => (
-            "Review User Account Control settings with your administrator.",
+            "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
         "installer.always_install_elevated" => (
-            "Ask your administrator to review app installation permissions.",
+            "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
         "lsa.restrict_anonymous_sam" => (
-            "Ask your administrator to review anonymous access to account names.",
+            "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
         "lsa.limit_blank_password_use" => (
-            "Review account passwords and remote sign-in access with your administrator.",
+            "Make sure every account on this PC has a password.",
             OpenAccounts,
         ),
         "wdigest.use_logon_credential" => (
-            "Ask your administrator to review how Windows keeps sign-in secrets.",
+            "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
         "permissions.service.bits" | "permissions.service.wuauserv" => (
-            "Ask your administrator to review update service permissions.",
+            "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
         _ => (
-            "View details and run the check again before deciding what to change.",
+            "Check again in a moment. Nothing has been changed.",
             CheckAgain,
         ),
     }
@@ -188,26 +188,26 @@ fn repair_help(id: &str) -> &'static str {
         | "firewall.domain.inbound"
         | "firewall.private.inbound"
         | "firewall.public.inbound" => {
-            "Secblitz can fix this. Help protect against uninvited connections."
+            "We can fix this. It stops uninvited connections to your PC."
         }
         "permissions.service.bits" | "permissions.service.wuauserv" => {
-            "Secblitz can fix this. Help protect updates from tampering."
+            "We can fix this. It keeps Windows updates from being tampered with."
         }
         "wdigest.use_logon_credential" => {
-            "Secblitz can fix this. Stop keeping reusable sign-in secrets after a restart."
+            "We can fix this. Your password will no longer be kept where it can be stolen."
         }
-        "uac.enabled" => "Secblitz can fix this. Restore permission prompts after a restart.",
-        "uac.consent" => "Secblitz can fix this. Ask for approval before administrator changes.",
+        "uac.enabled" => "We can fix this. Windows will ask before big changes are made.",
+        "uac.consent" => "We can fix this. Windows will ask for approval before big changes.",
         "installer.always_install_elevated" => {
-            "Secblitz can fix this. Limit elevated permissions for app installers."
+            "We can fix this. App installers will no longer get full control of your PC."
         }
         "lsa.restrict_anonymous_sam" => {
-            "Secblitz can fix this. Limit anonymous access to account names."
+            "We can fix this. Strangers on the network will no longer see your account names."
         }
         "lsa.limit_blank_password_use" => {
-            "Secblitz can fix this. Restrict remote sign-ins with blank passwords."
+            "We can fix this. Accounts without a password can no longer be used over the network."
         }
-        _ => "Secblitz can fix this. Turn on this virus protection setting.",
+        _ => "We can fix this. It turns this protection on.",
     }
 }
 
@@ -242,7 +242,7 @@ fn base(label: &'static str, status: &str, help: (&'static str, NextStep)) -> Ad
     match status {
         "compliant" | "ok" => {
             a.status = "Good to go";
-            a.next = "No action needed for this check.";
+            a.next = "Nothing to do here.";
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
@@ -277,7 +277,7 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             ) =>
         {
             a.status = "Good to go";
-            a.next = "No action needed for this check.";
+            a.next = "Nothing to do here.";
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
@@ -286,16 +286,16 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.step = NextStep::CheckAgain;
         }
         "pending" => {
-            a.next = "Review saved changes and finish undo before making more changes.";
+            a.next = "Undo your last fixes before making new ones.";
             a.step = NextStep::ReviewUndo;
         }
         "conflict" => {
-            a.next = "This setting changed since it was saved. Review details before undoing it.";
+            a.next = "This setting changed again after our fix, so we left it alone.";
             a.step = NextStep::ReviewUndo;
         }
         "skipped" if managed(detail) => {
             a.status = "Managed elsewhere";
-            a.next = "Ask the person or organization managing this PC to review this setting.";
+            a.next = "This PC's owner controls this setting, so we leave it as it is.";
             a.step = NextStep::ReviewWithAdministrator;
         }
         "skipped"
@@ -305,7 +305,7 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
                     | "Preserving absent or already-safe machine preference"
             ) =>
         {
-            a.next = "Kept your existing setting. It may already protect you or use Windows defaults; review details if unsure.";
+            a.next = "We kept your current setting. It may already protect you, so nothing was changed.";
         }
         "skipped"
             if matches!(
@@ -314,7 +314,7 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
                     | "Revert the active transaction before applying again"
             ) =>
         {
-            a.next = "Review saved changes and finish undo before making more changes.";
+            a.next = "Undo your last fixes before making new ones.";
             a.step = NextStep::ReviewUndo;
         }
         _ => {}
@@ -349,7 +349,7 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
     }
     if outcome.authority == Some(Authority::Managed) {
         a.status = "Managed elsewhere";
-        a.next = "Ask the person or organization managing this PC to review this setting.";
+        a.next = "This PC's owner controls this setting, so we leave it as it is.";
         a.step = NextStep::ReviewWithAdministrator;
         a.group = Group::Choice;
         return a;
@@ -362,7 +362,7 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
             "attention" | "compliant" | "ok" | "unchanged" | "applied"
         ) {
             a.status = "Couldn't check";
-            a.next = "The active firewall setting could not be verified. Check again before making changes.";
+            a.next = "We couldn't confirm your firewall setting. Check again before making changes.";
             a.step = NextStep::CheckAgain;
             a.group = Group::Choice;
         }
@@ -380,12 +380,12 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
         );
         if protected && outcome.status != "applied" {
             a.status = "Protected by Windows";
-            a.next = "Windows is already providing this firewall protection. No change is needed.";
+            a.next = "Windows is already blocking these connections. Nothing to do.";
             a.step = NextStep::None;
             a.group = Group::Protected;
         } else if !protected {
             a.status = "Needs your choice";
-            a.next = "The active firewall setting could not be verified. Check again before making changes.";
+            a.next = "We couldn't confirm your firewall setting. Check again before making changes.";
             a.step = NextStep::CheckAgain;
             a.group = Group::Choice;
         }
@@ -396,28 +396,28 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
 pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
     use NextStep::*;
     let (label, next, step) = match title {
-        "Security providers" => ("Your security apps", "Open Windows Security to check which security app is active and healthy.", OpenWindowsSecurity),
-        "Windows Firewall" => ("Network protection", "Open Windows Security and review Firewall & network protection.", OpenWindowsSecurity),
-        "Defender" => ("Virus protection", "Open Windows Security to review virus protection and protection updates.", OpenWindowsSecurity),
-        "Windows lifecycle" => ("Windows support", "Check support for your Windows version and edition, including any extended support plan.", OpenWindowsUpdate),
-        "Device encryption" => ("Protection if your PC is lost", "Review device encryption and save your recovery key before changing encryption settings.", OpenEncryption),
-        "Secure Boot" => ("Startup protection", "Check your PC maker's Secure Boot instructions before changing firmware settings.", ReviewFirmware),
-        "Windows updates" => ("Windows updates", "Open Windows Update and check for updates. An offline check cannot confirm you are up to date.", OpenWindowsUpdate),
-        "Remote Desktop" => ("Remote access", "Review Remote Desktop in Settings. Turn it off if you do not use it.", OpenRemoteDesktop),
-        "SMB1" => ("Older file sharing", "Review older device dependencies before turning off SMB1 in Windows Features.", ReviewWindowsFeatures),
-        "SmartScreen" => ("Unsafe app and website warnings", "Review reputation-based protection in Windows Security and your browser.", OpenWindowsSecurity),
-        "Local accounts" => ("Account sign-in safety", "Review who can sign in. Use unique passwords and extra sign-in verification where supported.", OpenAccounts),
-        "Memory integrity" => ("Core system protection", "Review Core isolation in Windows Security and driver compatibility before enabling memory integrity.", OpenWindowsSecurity),
-        "Management and mutation eligibility" => ("Who manages this PC", "Review work or school connections in Settings if you are unsure who manages this PC.", ReviewWithAdministrator),
-        "Automatic logon" => ("Automatic sign-in", "Review automatic sign-in and physical access to this PC before changing your sign-in routine.", OpenAccounts),
-        "Service permissions: BITS" => ("Update download permissions", "Review update service permissions with your administrator. Only a separately listed fix can be selected.", ReviewWithAdministrator),
-        "Service permissions: wuauserv" => ("Windows Update permissions", "Review update service permissions with your administrator. Only a separately listed fix can be selected.", ReviewWithAdministrator),
-        "Service permissions: WinDefend" => ("Antivirus service permissions", "Ask your administrator to review antivirus service permissions.", ReviewWithAdministrator),
-        "Service permissions: Schedule" => ("Scheduled task service permissions", "Ask your administrator to review scheduled task service permissions.", ReviewWithAdministrator),
-        "Service permissions: SecblitzMonitor" => ("Protection monitor permissions", "Ask your administrator to review Secblitz monitor service permissions.", ReviewWithAdministrator),
-        "Journal recovery" => ("Saved changes", "Review saved changes before undoing them or making more changes.", ReviewUndo),
-        "Assessment unavailable" | "Service permission audit" => ("Additional protection checks", "View details and run the check again before deciding what to change.", CheckAgain),
-        _ => ("Protection check", "View details and run the check again before deciding what to change.", CheckAgain),
+        "Security providers" => ("Your security apps", "Open Windows Security to make sure your antivirus is on and working.", OpenWindowsSecurity),
+        "Windows Firewall" => ("Network protection", "Open Windows Security and make sure the firewall is on.", OpenWindowsSecurity),
+        "Defender" => ("Virus protection", "Open Windows Security to make sure virus protection is on and up to date.", OpenWindowsSecurity),
+        "Windows lifecycle" => ("Windows support", "Open Windows Update to check your version of Windows still gets security updates.", OpenWindowsUpdate),
+        "Device encryption" => ("Protection if your PC is lost", "Open encryption settings. Save your recovery key somewhere safe before you change anything.", OpenEncryption),
+        "Secure Boot" => ("Startup protection", "This is set when your PC starts up. Follow your PC maker's guide before changing it.", ReviewFirmware),
+        "Windows updates" => ("Windows updates", "Open Windows Update and install anything that is waiting.", OpenWindowsUpdate),
+        "Remote Desktop" => ("Remote access", "Remote access lets someone sign in to this PC from elsewhere. Turn it off in Settings if you don't use it.", OpenRemoteDesktop),
+        "SMB1" => ("Older file sharing", "An old way of sharing files is still on. Turn it off in Windows Features unless an old device needs it.", ReviewWindowsFeatures),
+        "SmartScreen" => ("Unsafe app and website warnings", "Open Windows Security and make sure warnings about risky apps and websites are on.", OpenWindowsSecurity),
+        "Local accounts" => ("Account sign-in safety", "Check who can sign in to this PC. Give each account its own strong password.", OpenAccounts),
+        "Memory integrity" => ("Core system protection", "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.", OpenWindowsSecurity),
+        "Management and mutation eligibility" => ("Who manages this PC", "If you're not sure who manages this PC, look at work or school accounts in Settings.", ReviewWithAdministrator),
+        "Automatic logon" => ("Automatic sign-in", "Your PC signs in by itself. Turn that off if other people can get to it.", OpenAccounts),
+        "Service permissions: BITS" => ("Update download permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
+        "Service permissions: wuauserv" => ("Windows Update permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
+        "Service permissions: WinDefend" => ("Antivirus service permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
+        "Service permissions: Schedule" => ("Scheduled task service permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
+        "Service permissions: SecblitzMonitor" => ("Protection monitor permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
+        "Journal recovery" => ("Saved changes", "Undo your last fixes before making new ones.", ReviewUndo),
+        "Assessment unavailable" | "Service permission audit" => ("Additional protection checks", "Check again in a moment. Nothing has been changed.", CheckAgain),
+        _ => ("Protection check", "Check again in a moment. Nothing has been changed.", CheckAgain),
     };
     let mut a = base(label, status, (next, step));
     if status == "info" {
@@ -505,10 +505,10 @@ mod tests {
         assert_eq!(a.group, Group::Protected);
         assert_eq!(a.impact_prefix(), "Protects you from:");
 
-        // Recommended → "Risk:"
+        // Recommended → "Leaves you open to:"
         let a = for_control("uac.enabled", "attention", "");
         assert_eq!(a.group, Group::Recommended);
-        assert_eq!(a.impact_prefix(), "Risk:");
+        assert_eq!(a.impact_prefix(), "Leaves you open to:");
 
         // Choice → "Why it matters:"
         let a = for_control("uac.enabled", "unknown", "");

@@ -103,7 +103,7 @@ pub enum SummaryKind {
 
 pub const REASON_BLOCKED: &str = "Windows didn't allow this change";
 pub const REASON_RESTART: &str = "Needs a restart first";
-pub const REASON_MANAGED: &str = "Your organization manages this setting";
+pub const REASON_MANAGED: &str = "Someone else manages this setting";
 pub const REASON_UNDO_FIRST: &str = "Undo your last fixes first";
 pub const REASON_CHANGED: &str = "It changed while we were working";
 pub const REASON_STILL_OPEN: &str = "This still needs attention after the fix";
