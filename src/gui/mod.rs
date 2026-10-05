@@ -603,21 +603,19 @@ impl App {
             format!("{} {}", self.ctx.t("Version"), env!("CARGO_PKG_VERSION")),
         ))
         .padding([0.0, theme::S3]);
-        container(
-            column![brand, nav, iced::widget::space::vertical(), version].spacing(theme::S6),
-        )
-        .padding([theme::S6, theme::S3])
-        .width(232)
-        .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(p.sidebar)),
-            border: Border {
-                width: 0.0,
-                ..Border::default()
-            },
-            ..container::Style::default()
-        })
-        .into()
+        container(column![brand, nav, iced::widget::space::vertical(), version].spacing(theme::S6))
+            .padding([theme::S6, theme::S3])
+            .width(232)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.sidebar)),
+                border: Border {
+                    width: 0.0,
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {

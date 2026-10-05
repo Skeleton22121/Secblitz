@@ -116,9 +116,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Arrow<'_, Message> {
         self.content
             .as_widget_mut()
             .overlay(tree, layout, renderer, viewport, translation)
-            .map(|inner| {
-                overlay::Element::new(Box::new(ArrowOverlay { inner }))
-            })
+            .map(|inner| overlay::Element::new(Box::new(ArrowOverlay { inner })))
     }
 }
 

@@ -162,7 +162,10 @@ mod tests {
     #[test]
     fn rejects_software_rasterizers() {
         assert!(!is_real_gpu("Microsoft Basic Render Driver", D::Cpu));
-        assert!(!is_real_gpu("Microsoft Basic Render Driver", D::IntegratedGpu));
+        assert!(!is_real_gpu(
+            "Microsoft Basic Render Driver",
+            D::IntegratedGpu
+        ));
         assert!(!is_real_gpu("Microsoft Direct3D12 (WARP)", D::VirtualGpu));
         assert!(!is_real_gpu("llvmpipe (LLVM 15.0.7, 256 bits)", D::Cpu));
         assert!(!is_real_gpu("SwiftShader Device (Subzero)", D::DiscreteGpu));

@@ -25,11 +25,21 @@ protection score + history timeline, debloater.
 
 ## 2. Technology
 
-- **iced 0.14**, `default-features = false`, features `tiny-skia` (CPU renderer,
-  verified in the no-3D VM), `canvas`, `svg`, `image`, `advanced`, `thread-pool`.
-  No wgpu. Cross-compiles with the existing MinGW toolchain (Rust 1.93).
-- Bundled **Inter** font (OFL, `assets/fonts/`), icons as inline SVG
-  (Lucide, ISC licence; attribution in `assets/ICONS-LICENSE.txt`).
+- **iced 0.14**, `default-features = false`, features `wgpu`, `tiny-skia`,
+  `canvas`, `svg`, `image`, `advanced`, `thread-pool`. The renderer is chosen
+  automatically at start-up (`src/gui/render.rs`): a short wgpu adapter probe
+  (DX12/Vulkan, hardware adapters only) selects the GPU renderer; if there is
+  no usable hardware adapter (for example the no-3D VM or software-only
+  adapters) it falls back to the tiny-skia CPU renderer. A forced CPU mode
+  sets `ICED_BACKEND=tiny-skia`. MSAA is enabled only for the GPU renderer.
+  Cross-compiles with the existing MinGW toolchain (Rust 1.93).
+- Bundled **IBM Plex Sans** font (SIL OFL 1.1, `assets/fonts/`), a corporate
+  neutral grotesque; icons are inline SVG from **Fluent UI System Icons**
+  (Microsoft, MIT; Regular and Filled; attribution in
+  `assets/ICONS-LICENSE.txt`).
+- Motion tokens (Fluent/Material cubic-bezier curves, 83/150/250/400 ms) and
+  reduced-motion handling are described in `docs/MOTION.md`; the component
+  catalogue in `docs/DESIGN-SYSTEM.md`.
 - Executable built with `#![windows_subsystem = "windows"]`.
 
 ## 3. Process model

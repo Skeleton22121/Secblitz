@@ -1,7 +1,7 @@
 //! One-shot "slide in" for small overlays such as toasts.
 //!
 //! The child is drawn `distance` px lower and eases up to its place over
-//! `SLIDE_MS` with a decelerate curve. It asks for a redraw only while the
+//! `SLIDE_MS` with the shared emphasized curve (`anim::EMPHASIZED`). It asks for a redraw only while the
 //! slide runs (no subscription, no timer): when it ends the window is idle.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Renderer as _};
@@ -10,14 +10,10 @@ use iced::advanced::{overlay, Clipboard, Shell, Widget};
 use iced::{mouse, window, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
 use std::time::Instant;
 
-/// Slide duration (Fluent "fast" decelerate).
-pub const SLIDE_MS: f32 = 180.0;
+use super::anim;
 
-/// Fluent-style decelerate (fast start, soft landing): ease-out quartic.
-pub fn decelerate(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    1.0 - (1.0 - t).powi(4)
-}
+/// Slide duration: the shared "normal" motion token.
+const SLIDE_MS: f32 = anim::NORMAL.as_millis() as f32;
 
 #[derive(Default)]
 struct State {
@@ -31,7 +27,7 @@ struct SlideIn<'a, Message> {
 }
 
 fn offset(state: &State, distance: f32, now: Option<Instant>) -> f32 {
-    if state.done {
+    if state.done || anim::reduced() {
         return 0.0;
     }
     let Some(start) = state.start else {
@@ -40,7 +36,7 @@ fn offset(state: &State, distance: f32, now: Option<Instant>) -> f32 {
     let elapsed = now
         .map(|n| n.saturating_duration_since(start).as_secs_f32() * 1000.0)
         .unwrap_or(0.0);
-    distance * (1.0 - decelerate(elapsed / SLIDE_MS))
+    distance * (1.0 - anim::EMPHASIZED.at(elapsed / SLIDE_MS))
 }
 
 impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {

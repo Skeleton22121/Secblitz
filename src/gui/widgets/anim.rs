@@ -36,7 +36,9 @@
 
 #![allow(dead_code)]
 
-use iced::widget::canvas::{self, path::Arc, Cache, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
+use iced::widget::canvas::{
+    self, path::Arc, Cache, Frame, Geometry, LineCap, LineJoin, Path, Stroke,
+};
 use iced::{mouse, Color, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -159,7 +161,9 @@ impl Default for Clock {
 
 impl Clock {
     pub fn new() -> Self {
-        Self { start: Instant::now() }
+        Self {
+            start: Instant::now(),
+        }
     }
     pub fn at(start: Instant) -> Self {
         Self { start }
@@ -310,7 +314,12 @@ pub struct Tween {
 
 impl Tween {
     pub fn new(from: f32, to: f32, dur: Duration) -> Self {
-        Self { from, to, clock: Clock::new(), dur }
+        Self {
+            from,
+            to,
+            clock: Clock::new(),
+            dur,
+        }
     }
     /// Retarget from the value currently shown, so changes never jump.
     pub fn retarget(&mut self, now: Instant, to: f32) {
@@ -403,7 +412,12 @@ impl<M> canvas::Program<M> for Glyph {
         vec![frame.into_geometry()]
     }
 
-    fn mouse_interaction(&self, _: &GlyphState, _: Rectangle, _: mouse::Cursor) -> mouse::Interaction {
+    fn mouse_interaction(
+        &self,
+        _: &GlyphState,
+        _: Rectangle,
+        _: mouse::Cursor,
+    ) -> mouse::Interaction {
         mouse::Interaction::None
     }
 }
@@ -420,10 +434,21 @@ pub fn spinner<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element
     spinner_with(size, color, elapsed, reduced())
 }
 
-fn spinner_with<'a, M: 'a>(size: f32, color: Color, elapsed: Duration, reduced: bool) -> Element<'a, M> {
+fn spinner_with<'a, M: 'a>(
+    size: f32,
+    color: Color,
+    elapsed: Duration,
+    reduced: bool,
+) -> Element<'a, M> {
     element(
         size,
-        Glyph { kind: Kind::Spinner, color, t: 1.0, secs: elapsed.as_secs_f32(), still: reduced },
+        Glyph {
+            kind: Kind::Spinner,
+            color,
+            t: 1.0,
+            secs: elapsed.as_secs_f32(),
+            still: reduced,
+        },
     )
 }
 
@@ -444,14 +469,29 @@ pub fn warn_draw<'a, M: 'a>(size: f32, color: Color, t: f32) -> Element<'a, M> {
 
 fn one_shot<'a, M: 'a>(kind: Kind, size: f32, color: Color, t: f32) -> Element<'a, M> {
     let t = effective(t, reduced());
-    element(size, Glyph { kind, color, t, secs: 0.0, still: t >= 1.0 })
+    element(
+        size,
+        Glyph {
+            kind,
+            color,
+            t,
+            secs: 0.0,
+            still: t >= 1.0,
+        },
+    )
 }
 
 /// Shield outline with a thin scan line sweeping over it.
 pub fn shield_scan<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
     element(
         size,
-        Glyph { kind: Kind::Shield, color, t: 1.0, secs: elapsed.as_secs_f32(), still: reduced() },
+        Glyph {
+            kind: Kind::Shield,
+            color,
+            t: 1.0,
+            secs: elapsed.as_secs_f32(),
+            still: reduced(),
+        },
     )
 }
 
@@ -459,7 +499,13 @@ pub fn shield_scan<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Ele
 pub fn pulse_dot<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
     element(
         size,
-        Glyph { kind: Kind::Pulse, color, t: 1.0, secs: elapsed.as_secs_f32(), still: reduced() },
+        Glyph {
+            kind: Kind::Pulse,
+            color,
+            t: 1.0,
+            secs: elapsed.as_secs_f32(),
+            still: reduced(),
+        },
     )
 }
 
@@ -475,7 +521,11 @@ struct Xf {
 
 impl Xf {
     fn new(size: iced::Size, scale: f32) -> Self {
-        Self { cx: size.width / 2.0, cy: size.height / 2.0, k: size.width.min(size.height) / 24.0 * scale }
+        Self {
+            cx: size.width / 2.0,
+            cy: size.height / 2.0,
+            k: size.width.min(size.height) / 24.0 * scale,
+        }
     }
     fn p(&self, x: f32, y: f32) -> Point {
         Point::new(self.cx + (x - 12.0) * self.k, self.cy + (y - 12.0) * self.k)
@@ -509,7 +559,10 @@ fn partial_line(pts: &[Point], frac: f32) -> Option<Path> {
                 left -= d;
             } else {
                 let r = if d > 0.0 { left / d } else { 0.0 };
-                b.line_to(Point::new(w[0].x + (w[1].x - w[0].x) * r, w[0].y + (w[1].y - w[0].y) * r));
+                b.line_to(Point::new(
+                    w[0].x + (w[1].x - w[0].x) * r,
+                    w[0].y + (w[1].y - w[0].y) * r,
+                ));
                 break;
             }
         }
@@ -522,7 +575,12 @@ fn dist(a: Point, b: Point) -> f32 {
 
 fn arc_path(c: Point, r: f32, start: f32, sweep: f32) -> Path {
     Path::new(|b| {
-        b.arc(Arc { center: c, radius: r, start_angle: Radians(start), end_angle: Radians(start + sweep) })
+        b.arc(Arc {
+            center: c,
+            radius: r,
+            start_angle: Radians(start),
+            end_angle: Radians(start + sweep),
+        })
     })
 }
 
@@ -564,7 +622,10 @@ fn paint_spinner(f: &mut Frame, g: &Glyph) {
     let tail = POINT_TO_POINT.at(phase(p, 0.28, 1.0));
     let len = (head - tail).max(0.03) * TAU;
     let rot = (g.secs / SPIN).fract() * TAU;
-    f.stroke(&arc_path(c, r, TOP + rot + tail * TAU, len), stroke(g.color, w));
+    f.stroke(
+        &arc_path(c, r, TOP + rot + tail * TAU, len),
+        stroke(g.color, w),
+    );
 }
 
 fn paint_badge(f: &mut Frame, g: &Glyph) {
@@ -576,7 +637,11 @@ fn paint_badge(f: &mut Frame, g: &Glyph) {
     let c = xf.p(12.0, 12.0);
     let ring = DECELERATE.at(phase(t, 0.0, 0.5));
     if ring > 0.0 {
-        let p = if ring >= 1.0 { Path::circle(c, xf.len(9.75)) } else { arc_path(c, xf.len(9.75), TOP, TAU * ring) };
+        let p = if ring >= 1.0 {
+            Path::circle(c, xf.len(9.75))
+        } else {
+            arc_path(c, xf.len(9.75), TOP, TAU * ring)
+        };
         f.stroke(&p, stroke(g.color, w));
     }
     let mark = DECELERATE.at(phase(t, 0.4, 1.0));
@@ -651,7 +716,10 @@ fn paint_shield(f: &mut Frame, g: &Glyph) {
     let full = |y0: f32, y1: f32| {
         let top = xf.p(0.0, y0.max(0.0)).y.max(0.0);
         let bot = xf.p(0.0, y1).y.min(size.height);
-        Rectangle::new(Point::new(0.0, top), iced::Size::new(size.width, (bot - top).max(0.0)))
+        Rectangle::new(
+            Point::new(0.0, top),
+            iced::Size::new(size.width, (bot - top).max(0.0)),
+        )
     };
     // Faint trailing band and the bright line, both clipped to the shield by
     // filling the shield shape through a thin clip rectangle.
@@ -690,7 +758,15 @@ fn paint_pulse(f: &mut Frame, g: &Glyph) {
 mod tests {
     use super::*;
 
-    const ALL: [Curve; 7] = [DECELERATE, ACCELERATE, POINT_TO_POINT, EMPHASIZED, STANDARD, EASE_IN_OUT, LINEAR];
+    const ALL: [Curve; 7] = [
+        DECELERATE,
+        ACCELERATE,
+        POINT_TO_POINT,
+        EMPHASIZED,
+        STANDARD,
+        EASE_IN_OUT,
+        LINEAR,
+    ];
 
     #[test]
     fn endpoints_are_exact() {
@@ -730,7 +806,11 @@ mod tests {
         // (0,0,0,1): x = s^3, y = 3s^2 - 2s^3 -> closed form.
         let s = 0.5f64.powf(1.0 / 3.0);
         let want = (3.0 * s * s - 2.0 * s * s * s) as f32;
-        assert!((DECELERATE.at(0.5) - want).abs() < 1e-4, "{}", DECELERATE.at(0.5));
+        assert!(
+            (DECELERATE.at(0.5) - want).abs() < 1e-4,
+            "{}",
+            DECELERATE.at(0.5)
+        );
         // Decelerate is front-loaded, accelerate back-loaded.
         assert!(DECELERATE.at(0.25) > 0.5);
         assert!(ACCELERATE.at(0.75) < 0.5);
@@ -746,7 +826,11 @@ mod tests {
                 let s = 0.5 * (lo + hi);
                 let u = 1.0 - s;
                 let bx = 3.0 * u * u * s * 0.25 + 3.0 * u * s * s * 0.25 + s * s * s;
-                if bx < x { lo = s } else { hi = s }
+                if bx < x {
+                    lo = s
+                } else {
+                    hi = s
+                }
             }
             let s = 0.5 * (lo + hi);
             let u = 1.0 - s;

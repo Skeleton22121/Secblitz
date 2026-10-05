@@ -1,7 +1,7 @@
 //! Form controls: dropdown, segmented control, switch, checkbox, text field.
 //! All are 36 px tall (28 px segments inside a 36 px track), keep the native
 //! arrow cursor and use only theme colours.
-use super::appear::decelerate;
+use super::anim;
 use super::cursor::arrow;
 use super::icon;
 use crate::gui::icons::Icon;
@@ -84,11 +84,11 @@ where
             shadow: Shadow::default(),
         });
     let chevron = container(icon(Icon::ChevronDown, 16.0, p.text_muted))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Alignment::End)
-    .align_y(Alignment::Center)
-    .padding([0.0, theme::S3]);
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::Center)
+        .padding([0.0, theme::S3]);
     arrow(stack![list, chevron])
 }
 
@@ -111,7 +111,11 @@ where
             text(label.clone())
                 .size(theme::BODY)
                 .line_height(line(theme::LINE_BODY))
-                .font(if active { theme::SEMIBOLD } else { theme::MEDIUM })
+                .font(if active {
+                    theme::SEMIBOLD
+                } else {
+                    theme::MEDIUM
+                })
                 .wrapping(Wrapping::None),
         )
         .height(Length::Fill)
@@ -122,7 +126,8 @@ where
                 .padding([0.0, theme::S4])
                 .on_press(on_select(*value))
                 .style(move |_, status| {
-                    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+                    let hovered =
+                        matches!(status, button::Status::Hovered | button::Status::Pressed);
                     button::Style {
                         background: if active {
                             Some(Background::Color(p.surface))
@@ -131,7 +136,11 @@ where
                         } else {
                             None
                         },
-                        text_color: if active || hovered { p.text } else { p.text_muted },
+                        text_color: if active || hovered {
+                            p.text
+                        } else {
+                            p.text_muted
+                        },
                         border: Border {
                             radius: theme::R_SMALL.into(),
                             width: if active { 1.0 } else { 0.0 },
@@ -162,7 +171,6 @@ where
 
 const SWITCH_W: f32 = 40.0;
 const SWITCH_H: f32 = 20.0;
-const SWITCH_MS: f32 = 160.0;
 
 #[derive(Default)]
 struct SwitchState {
@@ -223,12 +231,13 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
                     st.start = Some(*now);
                 }
                 if let Some(start) = st.start {
-                    let t = now.saturating_duration_since(start).as_secs_f32() * 1000.0 / SWITCH_MS;
-                    if t >= 1.0 {
+                    let t = now.saturating_duration_since(start).as_secs_f32()
+                        / anim::FAST.as_secs_f32();
+                    if t >= 1.0 || anim::reduced() {
                         st.start = None;
                         st.progress = st.target;
                     } else {
-                        st.progress = st.from + (st.target - st.from) * decelerate(t);
+                        st.progress = st.from + (st.target - st.from) * anim::DECELERATE.at(t);
                         shell.request_redraw();
                     }
                 }
@@ -380,12 +389,20 @@ pub fn checkbox<'a>(
     let enabled = on_press.is_some();
     let checked = state != CheckState::Off;
     let mark: Element<'a, Message> = match state {
-        CheckState::On => icon(Icon::Check, 14.0, if enabled { p.on_brand } else { p.disabled_bg }),
+        CheckState::On => icon(
+            Icon::Check,
+            14.0,
+            if enabled { p.on_brand } else { p.disabled_bg },
+        ),
         CheckState::Mixed => container(iced::widget::space::horizontal())
             .width(8)
             .height(2)
             .style(move |_| container::Style {
-                background: Some(Background::Color(if enabled { p.on_brand } else { p.disabled_bg })),
+                background: Some(Background::Color(if enabled {
+                    p.on_brand
+                } else {
+                    p.disabled_bg
+                })),
                 border: Border {
                     radius: 1.0.into(),
                     ..Border::default()
@@ -399,7 +416,11 @@ pub fn checkbox<'a>(
         .center(theme::CHECK)
         .style(move |_| container::Style {
             background: Some(Background::Color(if checked {
-                if enabled { p.brand } else { p.disabled_fg }
+                if enabled {
+                    p.brand
+                } else {
+                    p.disabled_fg
+                }
             } else if enabled {
                 p.surface
             } else {
@@ -409,7 +430,11 @@ pub fn checkbox<'a>(
                 radius: 4.0.into(),
                 width: 1.0,
                 color: if checked {
-                    if enabled { p.brand } else { p.disabled_fg }
+                    if enabled {
+                        p.brand
+                    } else {
+                        p.disabled_fg
+                    }
                 } else if enabled {
                     p.text_muted
                 } else {
@@ -481,7 +506,10 @@ pub fn text_field<'a>(
                 icon: p.text_muted,
                 placeholder: p.text_muted,
                 value: if disabled { p.disabled_fg } else { p.text },
-                selection: Color { a: 0.25, ..p.focus_ring },
+                selection: Color {
+                    a: 0.25,
+                    ..p.focus_ring
+                },
             }
         })
 }
@@ -515,8 +543,16 @@ pub fn scroll_style(
                 is_horizontal_scrollbar_hovered,
                 ..
             } => (
-                if is_vertical_scrollbar_hovered { p.text_muted } else { p.border_strong },
-                if is_horizontal_scrollbar_hovered { p.text_muted } else { p.border_strong },
+                if is_vertical_scrollbar_hovered {
+                    p.text_muted
+                } else {
+                    p.border_strong
+                },
+                if is_horizontal_scrollbar_hovered {
+                    p.text_muted
+                } else {
+                    p.border_strong
+                },
             ),
             Status::Dragged { .. } => (p.text_muted, p.text_muted),
         };
