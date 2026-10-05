@@ -11,8 +11,8 @@ A one-minute security checkup for Windows. Plain words, your choice on every fix
 ![Version 0.7.0](https://img.shields.io/badge/version-0.7.0-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="website/assets/home-dark-1215a72074e4.webp">
-  <img src="website/assets/preview-541ff80cb74f.webp" width="900" alt="The Secblitz home screen: a score ring showing how many protections are on, and a short list of what needs attention.">
+  <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
+  <img src="website/assets/app-home-light.webp" width="900" alt="The Secblitz home screen: a score ring showing how many protections are on, and a short list of what needs attention.">
 </picture>
 
 </div>
