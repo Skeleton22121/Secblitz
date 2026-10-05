@@ -466,3 +466,11 @@ mod tests {
         assert_eq!(d.points.len(), 2);
     }
 }
+
+/// Warm the page in the background (shell: after the engine opens and after
+/// every check). Marks the page as in use so later checks keep it fresh.
+#[allow(clippy::items_after_test_module)]
+pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    state.visited = true;
+    refresh(ctx)
+}

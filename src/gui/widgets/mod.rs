@@ -11,9 +11,10 @@ pub mod appear;
 pub mod controls;
 pub mod cursor;
 pub mod parts;
+pub mod press;
 pub mod ring;
 
-pub use controls::{checkbox, dropdown, segmented, switch, text_field, CheckState};
+pub use controls::{checkbox, dropdown, segmented, slide_marker, switch, text_field, CheckState};
 pub use cursor::arrow;
 pub use parts::*;
 
@@ -262,9 +263,10 @@ pub fn action<'a>(
             .wrapping(Wrapping::None),
     );
     arrow(
-        button(container(content).center_y(Length::Fill))
+        press::button(container(content).center_y(Length::Fill))
             .height(theme::CONTROL)
             .padding([0.0, theme::S4])
+            .focus_color(p.focus_ring)
             .on_press_maybe(on_press)
             .style(button_style(p, kind)),
     )
@@ -280,10 +282,11 @@ pub fn icon_button<'a>(
 ) -> Element<'a, Message> {
     let fg = button_fg(&p, kind, on_press.is_some());
     arrow(
-        button(container(icon(glyph, 16.0, fg)).center(Length::Fill))
+        press::button(container(icon(glyph, 16.0, fg)).center(Length::Fill))
             .width(theme::CONTROL)
             .height(theme::CONTROL)
             .padding(0)
+            .focus_color(p.focus_ring)
             .on_press_maybe(on_press)
             .style(button_style(p, kind)),
     )

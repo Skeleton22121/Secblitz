@@ -698,3 +698,18 @@ mod tests {
         assert_eq!(codes, ["en", "es", "fr", "de", "pt", "it"]);
     }
 }
+
+/// Warm the page in the background: the two slow reads run off the UI thread
+/// and the page keeps whatever it already shows until they land.
+#[allow(clippy::items_after_test_module)]
+pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    let _ = (state, ctx);
+    Task::perform(
+        blocking(|| {
+            let background = prefs_store::background_on().map_err(|e| format!("{e:#}"));
+            let update = secblitz::updater::status().ok().map(|s| update_view(&s));
+            (background, update)
+        }),
+        |(background, update)| Message::Settings(Msg::Loaded { background, update }),
+    )
+}
