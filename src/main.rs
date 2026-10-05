@@ -8,6 +8,8 @@ mod gui;
 mod i18n;
 mod launcher;
 mod tray;
+mod user_apps;
+mod user_settings;
 
 use anyhow::{bail, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
