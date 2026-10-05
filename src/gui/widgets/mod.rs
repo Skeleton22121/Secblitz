@@ -14,19 +14,39 @@ use iced::widget::{button, column, container, opaque, row, stack, svg, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Vector};
 
 pub fn h1<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
-    text(s.into()).size(theme::H1).font(theme::BOLD).color(p.text).into()
+    text(s.into())
+        .size(theme::H1)
+        .font(theme::BOLD)
+        .color(p.text)
+        .into()
 }
 pub fn h2<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
-    text(s.into()).size(theme::H2).font(theme::SEMIBOLD).color(p.text).into()
+    text(s.into())
+        .size(theme::H2)
+        .font(theme::SEMIBOLD)
+        .color(p.text)
+        .into()
 }
 pub fn body<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
-    text(s.into()).size(theme::BODY).font(theme::REGULAR).color(p.text).into()
+    text(s.into())
+        .size(theme::BODY)
+        .font(theme::REGULAR)
+        .color(p.text)
+        .into()
 }
 pub fn muted<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
-    text(s.into()).size(theme::BODY).font(theme::REGULAR).color(p.text_muted).into()
+    text(s.into())
+        .size(theme::BODY)
+        .font(theme::REGULAR)
+        .color(p.text_muted)
+        .into()
 }
 pub fn small<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
-    text(s.into()).size(theme::SMALL).font(theme::REGULAR).color(p.text_muted).into()
+    text(s.into())
+        .size(theme::SMALL)
+        .font(theme::REGULAR)
+        .color(p.text_muted)
+        .into()
 }
 
 pub fn icon<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message> {
@@ -54,22 +74,41 @@ pub fn icon_badge<'a>(p: Palette, i: Icon, tone: Tone) -> Element<'a, Message> {
         .center(36)
         .style(move |_| container::Style {
             background: Some(Background::Color(bg)),
-            border: Border { radius: 18.0.into(), ..Border::default() },
+            border: Border {
+                radius: 18.0.into(),
+                ..Border::default()
+            },
             ..container::Style::default()
         })
         .into()
 }
 
 /// Rounded surface with border. Use for every content block.
-pub fn card<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> container::Container<'a, Message> {
+pub fn card<'a>(
+    p: Palette,
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
     container(content)
         .padding(theme::PAD)
         .width(Length::Fill)
         .style(move |_| container::Style {
             background: Some(Background::Color(p.surface)),
-            border: Border { radius: theme::RADIUS.into(), width: 1.0, color: p.border },
+            border: Border {
+                radius: theme::RADIUS.into(),
+                width: 1.0,
+                color: p.border,
+            },
             shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, if p.mode == theme::Mode::Dark { 0.30 } else { 0.05 }),
+                color: Color::from_rgba(
+                    0.0,
+                    0.0,
+                    0.0,
+                    if p.mode == theme::Mode::Dark {
+                        0.30
+                    } else {
+                        0.05
+                    },
+                ),
                 offset: Vector::new(0.0, 1.0),
                 blur_radius: 3.0,
             },
@@ -82,14 +121,22 @@ pub fn card<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> contain
 pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
     let fg = p.tone(tone);
     let bg = p.tint(tone);
-    container(text(label.into()).size(theme::SMALL).font(theme::MEDIUM).color(fg))
-        .padding([3, 10])
-        .style(move |_| container::Style {
-            background: Some(Background::Color(bg)),
-            border: Border { radius: 999.0.into(), ..Border::default() },
-            ..container::Style::default()
-        })
-        .into()
+    container(
+        text(label.into())
+            .size(theme::SMALL)
+            .font(theme::MEDIUM)
+            .color(fg),
+    )
+    .padding([3, 10])
+    .style(move |_| container::Style {
+        background: Some(Background::Color(bg)),
+        border: Border {
+            radius: 999.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    })
+    .into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,9 +181,23 @@ pub fn action<'a>(
                 button::Status::Active => (bg, 1.0),
             };
             button::Style {
-                background: Some(Background::Color(Color { a: bg.a * alpha, ..bg })),
-                text_color: Color { a: if status == button::Status::Disabled { 0.6 } else { 1.0 }, ..fg },
-                border: Border { radius: theme::RADIUS_SMALL.into(), width: 1.0, color: border },
+                background: Some(Background::Color(Color {
+                    a: bg.a * alpha,
+                    ..bg
+                })),
+                text_color: Color {
+                    a: if status == button::Status::Disabled {
+                        0.6
+                    } else {
+                        1.0
+                    },
+                    ..fg
+                },
+                border: Border {
+                    radius: theme::RADIUS_SMALL.into(),
+                    width: 1.0,
+                    color: border,
+                },
                 shadow: Shadow::default(),
                 snap: true,
             }
@@ -156,8 +217,16 @@ pub fn sheet<'a>(
         .padding(28)
         .style(move |_| container::Style {
             background: Some(Background::Color(p.surface)),
-            border: Border { radius: 16.0.into(), width: 1.0, color: p.border },
-            shadow: Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.35), offset: Vector::new(0.0, 12.0), blur_radius: 32.0 },
+            border: Border {
+                radius: 16.0.into(),
+                width: 1.0,
+                color: p.border,
+            },
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                offset: Vector::new(0.0, 12.0),
+                blur_radius: 32.0,
+            },
             text_color: Some(p.text),
             snap: true,
         });
@@ -177,7 +246,11 @@ pub fn sheet<'a>(
 }
 
 /// Page header: title + optional subtitle.
-pub fn page_header<'a>(p: Palette, title: impl Into<String>, subtitle: Option<String>) -> Element<'a, Message> {
+pub fn page_header<'a>(
+    p: Palette,
+    title: impl Into<String>,
+    subtitle: Option<String>,
+) -> Element<'a, Message> {
     let mut c = column![h1(p, title)].spacing(4);
     if let Some(s) = subtitle {
         c = c.push(muted(p, s));

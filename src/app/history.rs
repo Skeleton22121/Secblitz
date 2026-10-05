@@ -85,6 +85,46 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Days since 1970-01-01 of the moment `t` (Unix seconds) on this PC's clock.
+pub fn local_day(t: u64) -> u64 {
+    local_seconds(t) / 86_400
+}
+
+/// `t` shifted to local wall-clock time (still counted from the Unix epoch).
+#[cfg(windows)]
+fn local_seconds(t: u64) -> u64 {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{
+        FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
+    };
+    const EPOCH_GAP_SECS: u64 = 11_644_473_600;
+    let ticks = (t + EPOCH_GAP_SECS) * 10_000_000;
+    let utc_file = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    // SAFETY: all pointers refer to live local values of the right type.
+    unsafe {
+        let mut utc: SYSTEMTIME = std::mem::zeroed();
+        let mut local: SYSTEMTIME = std::mem::zeroed();
+        let mut local_file: FILETIME = std::mem::zeroed();
+        if FileTimeToSystemTime(&utc_file, &mut utc) == 0
+            || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) == 0
+            || SystemTimeToFileTime(&local, &mut local_file) == 0
+        {
+            return t;
+        }
+        let ticks =
+            (u64::from(local_file.dwHighDateTime) << 32) | u64::from(local_file.dwLowDateTime);
+        (ticks / 10_000_000).saturating_sub(EPOCH_GAP_SECS)
+    }
+}
+
+#[cfg(not(windows))]
+fn local_seconds(t: u64) -> u64 {
+    t
+}
+
 /// One row of the timeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -97,7 +137,7 @@ pub struct Item {
     pub repeats: usize,
 }
 
-/// All items of one calendar day (UTC), newest first.
+/// All items of one calendar day (local time), newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Day {
     /// Days since 1970-01-01.
@@ -113,7 +153,7 @@ pub fn timeline(entries: &[Entry]) -> Vec<Day> {
     sorted.sort_by(|a, b| b.t.cmp(&a.t));
     let mut days: Vec<Day> = Vec::new();
     for e in sorted {
-        let day = e.t / 86_400;
+        let day = local_day(e.t);
         if days.last().is_none_or(|d| d.day != day) {
             days.push(Day {
                 day,
@@ -205,7 +245,10 @@ mod tests {
         record(dir.path(), &e(10, Kind::Check, 3, 5, 0)).unwrap();
         record(dir.path(), &e(20, Kind::Fix, 5, 5, 2)).unwrap();
         let all = load(dir.path());
-        assert_eq!(all, vec![e(10, Kind::Check, 3, 5, 0), e(20, Kind::Fix, 5, 5, 2)]);
+        assert_eq!(
+            all,
+            vec![e(10, Kind::Check, 3, 5, 0), e(20, Kind::Fix, 5, 5, 2)]
+        );
         assert!(!dir.path().join("checks.jsonl.tmp").exists());
     }
 
@@ -293,7 +336,9 @@ mod tests {
 
     #[test]
     fn trend_takes_newest_window_oldest_first() {
-        let entries: Vec<Entry> = (0..40u64).map(|i| e(i, Kind::Check, (i % 4) as usize, 4, 0)).collect();
+        let entries: Vec<Entry> = (0..40u64)
+            .map(|i| e(i, Kind::Check, (i % 4) as usize, 4, 0))
+            .collect();
         let t = trend(&entries, 30);
         assert_eq!(t.len(), 30);
         assert_eq!(t[0], 10.0f32 % 4.0 / 4.0);

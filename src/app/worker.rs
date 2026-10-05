@@ -81,7 +81,11 @@ pub enum Event {
     /// The engine opened (or failed to). Always the first event ever sent.
     Opened(Result<Catalog, String>),
     /// Live progress: (item id or phase, status word).
-    Progress { phase: Phase, id: String, status: String },
+    Progress {
+        phase: Phase,
+        id: String,
+        status: String,
+    },
     Checked(Outcome),
     Applied {
         attempted: Vec<String>,

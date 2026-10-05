@@ -220,8 +220,13 @@ mod imp {
             ensure!(needed > 0 && needed < 4096, "token information unavailable");
             // u64 storage keeps the TOKEN_USER view aligned.
             let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
-            if GetTokenInformation(token.0, TokenUser, buf.as_mut_ptr().cast(), needed, &mut needed)
-                == 0
+            if GetTokenInformation(
+                token.0,
+                TokenUser,
+                buf.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            ) == 0
             {
                 return Err(std::io::Error::last_os_error().into());
             }
@@ -309,7 +314,13 @@ mod imp {
             unsafe { ResetEvent(event) };
             let rest = &mut buf[done..];
             let started = unsafe {
-                ReadFile(pipe, rest.as_mut_ptr(), rest.len() as u32, null_mut(), &mut overlapped)
+                ReadFile(
+                    pipe,
+                    rest.as_mut_ptr(),
+                    rest.len() as u32,
+                    null_mut(),
+                    &mut overlapped,
+                )
             };
             if started == 0 {
                 if unsafe { GetLastError() } != ERROR_IO_PENDING {
@@ -338,8 +349,7 @@ mod imp {
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event;
         unsafe { ResetEvent(event) };
-        let started =
-            unsafe { WriteFile(pipe, byte.as_ptr(), 1, null_mut(), &mut overlapped) };
+        let started = unsafe { WriteFile(pipe, byte.as_ptr(), 1, null_mut(), &mut overlapped) };
         if started == 0 {
             if unsafe { GetLastError() } != ERROR_IO_PENDING {
                 return false;

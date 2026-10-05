@@ -15,9 +15,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, WAIT_OBJECT_0},
     Security::{
-        Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-        },
+        Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
         DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, TokenElevationType,
         TokenLinkedToken, TokenPrimary, SECURITY_ATTRIBUTES, TOKEN_ALL_ACCESS,
     },
@@ -95,7 +93,10 @@ pub(super) fn command_line(process: HANDLE) -> Result<String> {
             size = needed.max(size + 8);
             continue;
         }
-        ensure!(status >= 0, "Cannot read process command line ({status:#x})");
+        ensure!(
+            status >= 0,
+            "Cannot read process command line ({status:#x})"
+        );
         #[repr(C)]
         struct UnicodeString {
             length: u16,
@@ -159,7 +160,10 @@ impl Quiesce {
         let event = Handle(event);
         // An existing event was not created by this worker; do not trust it.
         ensure!(code != ERROR_ALREADY_EXISTS, "Quiesce event already exists");
-        ensure!(unsafe { SetEvent(event.0) } != 0, "Cannot signal quiesce event");
+        ensure!(
+            unsafe { SetEvent(event.0) } != 0,
+            "Cannot signal quiesce event"
+        );
         Ok(Self(event))
     }
 }
@@ -274,7 +278,11 @@ fn launch_in_session(exe: &Path, session: u32) -> Result<()> {
             null(),
             null(),
             0,
-            if have_env { CREATE_UNICODE_ENVIRONMENT } else { 0 },
+            if have_env {
+                CREATE_UNICODE_ENVIRONMENT
+            } else {
+                0
+            },
             if have_env { env } else { null_mut() },
             directory.as_ptr(),
             &startup,

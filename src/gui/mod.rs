@@ -278,6 +278,7 @@ impl App {
                 match page {
                     Page::History => history::on_enter(&mut self.history, &mut self.ctx),
                     Page::Debloat => debloat::on_enter(&mut self.debloat, &mut self.ctx),
+                    Page::Settings => settings::on_enter(&mut self.settings, &mut self.ctx),
                     _ => Task::none(),
                 }
             }
@@ -291,7 +292,17 @@ impl App {
             Message::Worker(event) => self.on_worker(event),
             Message::ReviewFixes(ids) => fixflow::open_fixes(&mut self.fix, ids, &mut self.ctx),
             Message::ReviewUndo => fixflow::open_undo(&mut self.fix, &mut self.ctx),
-            Message::Escape => fixflow::escape(&mut self.fix, &mut self.ctx),
+            Message::Escape => {
+                if self.fix.is_open() {
+                    return fixflow::escape(&mut self.fix, &mut self.ctx);
+                }
+                match self.page {
+                    Page::Debloat => debloat::escape(&mut self.debloat),
+                    Page::Tools => tools::escape(&mut self.tools),
+                    _ => {}
+                }
+                Task::none()
+            }
             Message::Toast(text, tone) => {
                 self.ctx.toast = Some((text, tone));
                 Task::none()
@@ -343,7 +354,9 @@ impl App {
                 self.ctx.checking = None;
                 self.assessed(outcome, app::history::Kind::Check, 0);
             }
-            E::Applied { attempted, verify, .. } => {
+            E::Applied {
+                attempted, verify, ..
+            } => {
                 self.ctx.checking = None;
                 self.assessed(verify, app::history::Kind::Fix, attempted.len());
             }
@@ -398,9 +411,14 @@ impl App {
             Page::Settings => settings::view(&self.settings, &self.ctx),
         };
         // Content is centred with a readable maximum width.
-        let column_content = container(content).max_width(PAGE_MAX_WIDTH).width(Length::Fill);
+        let column_content = container(content)
+            .max_width(PAGE_MAX_WIDTH)
+            .width(Length::Fill);
         let main = container(scrollable(
-            container(column_content).center_x(Length::Fill).padding([32, 40]).width(Length::Fill),
+            container(column_content)
+                .center_x(Length::Fill)
+                .padding([32, 40])
+                .width(Length::Fill),
         ))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -408,9 +426,19 @@ impl App {
             background: Some(Background::Color(p.bg)),
             ..container::Style::default()
         });
-        let body = row![self.sidebar(), main];
+        let body: Element<'_, Message> = row![self.sidebar(), main].into();
+        // Page sheets (clean-up apps, tools) sit above the whole window.
+        let modal = match self.page {
+            Page::Debloat => debloat::modal(&self.debloat, &self.ctx),
+            Page::Tools => tools::modal(&self.tools, &self.ctx),
+            _ => None,
+        };
+        let body = match modal {
+            Some(content) => widgets::sheet(p, body, content),
+            None => body,
+        };
         // The fix flow (review sheet / working / result) draws over any page.
-        let base = fixflow::overlay(&self.fix, &self.ctx, body.into());
+        let base = fixflow::overlay(&self.fix, &self.ctx, body);
         match &self.ctx.toast {
             Some((message, tone)) => stack![
                 base,
@@ -449,7 +477,11 @@ impl App {
                 widgets::icon(page.icon(), 18.0, fg),
                 text(self.ctx.t(page.label()))
                     .size(theme::BODY)
-                    .font(if active { theme::SEMIBOLD } else { theme::MEDIUM })
+                    .font(if active {
+                        theme::SEMIBOLD
+                    } else {
+                        theme::MEDIUM
+                    })
                     .color(fg),
                 iced::widget::space::horizontal(),
             ]
@@ -457,20 +489,33 @@ impl App {
             .align_y(Alignment::Center);
             if page == Page::Home && self.ctx.checking.is_none() && self.ctx.report.is_some() {
                 let dot = p.tone(self.verdict_tone());
-                item = item.push(container(iced::widget::space::horizontal()).width(8).height(8).style(
-                    move |_| container::Style {
-                        background: Some(Background::Color(dot)),
-                        border: Border { radius: 4.0.into(), ..Border::default() },
-                        ..container::Style::default()
-                    },
-                ));
+                item = item.push(
+                    container(iced::widget::space::horizontal())
+                        .width(8)
+                        .height(8)
+                        .style(move |_| container::Style {
+                            background: Some(Background::Color(dot)),
+                            border: Border {
+                                radius: 4.0.into(),
+                                ..Border::default()
+                            },
+                            ..container::Style::default()
+                        }),
+                );
             }
             let indicator = container(iced::widget::space::horizontal())
                 .width(3)
                 .height(18)
                 .style(move |_| container::Style {
-                    background: Some(Background::Color(if active { p.brand } else { iced::Color::TRANSPARENT })),
-                    border: Border { radius: 2.0.into(), ..Border::default() },
+                    background: Some(Background::Color(if active {
+                        p.brand
+                    } else {
+                        iced::Color::TRANSPARENT
+                    })),
+                    border: Border {
+                        radius: 2.0.into(),
+                        ..Border::default()
+                    },
                     ..container::Style::default()
                 });
             let entry = button(item)
@@ -481,7 +526,10 @@ impl App {
                     background: Some(Background::Color(if active {
                         p.surface
                     } else if status == button::Status::Hovered {
-                        iced::Color { a: 0.7, ..p.surface }
+                        iced::Color {
+                            a: 0.7,
+                            ..p.surface
+                        }
                     } else {
                         iced::Color::TRANSPARENT
                     })),
@@ -496,14 +544,20 @@ impl App {
                 });
             nav = nav.push(row![indicator, entry].spacing(4).align_y(Alignment::Center));
         }
-        let version = widgets::small(p, format!("{} {}", self.ctx.t("Version"), env!("CARGO_PKG_VERSION")));
+        let version = widgets::small(
+            p,
+            format!("{} {}", self.ctx.t("Version"), env!("CARGO_PKG_VERSION")),
+        );
         container(column![brand, nav, iced::widget::space::vertical(), version].spacing(28))
             .padding([24, 14])
             .width(232)
             .height(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(Background::Color(p.sidebar)),
-                border: Border { width: 0.0, ..Border::default() },
+                border: Border {
+                    width: 0.0,
+                    ..Border::default()
+                },
                 ..container::Style::default()
             })
             .into()
@@ -654,24 +708,26 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
 }
 
 pub fn run(options: Options) -> anyhow::Result<()> {
-    let mut application = iced::application(move || App::new(options.clone()), App::update, App::view)
-        .title(|app: &App| app.ctx.t("Secblitz"))
-        .theme(|app: &App| app.ctx.palette.theme())
-        .subscription(App::subscription)
-        .window_size((1100.0, 720.0))
-        .default_font(theme::REGULAR)
-        .antialiasing(true);
+    let mut application =
+        iced::application(move || App::new(options.clone()), App::update, App::view)
+            .title(|app: &App| app.ctx.t("Secblitz"))
+            .theme(|app: &App| app.ctx.palette.theme())
+            .subscription(App::subscription)
+            .window_size((1100.0, 720.0))
+            .default_font(theme::REGULAR)
+            .antialiasing(true);
     for font in theme::FONT_FILES {
         application = application.font(font);
     }
-    application.window(iced::window::Settings {
-        size: iced::Size::new(1100.0, 720.0),
-        min_size: Some(iced::Size::new(880.0, 600.0)),
-        icon: window_icon(),
-        ..Default::default()
-    })
-    .run()
-    .map_err(|e| anyhow::anyhow!("{e}"))
+    application
+        .window(iced::window::Settings {
+            size: iced::Size::new(1100.0, 720.0),
+            min_size: Some(iced::Size::new(880.0, 600.0)),
+            icon: window_icon(),
+            ..Default::default()
+        })
+        .run()
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 #[cfg(test)]
 mod tests {
@@ -687,4 +743,3 @@ mod tests {
         assert!(window_icon().is_some());
     }
 }
-

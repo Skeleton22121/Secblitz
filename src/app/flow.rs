@@ -60,13 +60,12 @@ pub fn payoff(
         if impact.is_empty() || !confirmed {
             continue;
         }
-        let list = if advice::for_control(id, &change.status, &change.detail).step
-            == NextStep::Restart
-        {
-            &mut after_restart
-        } else {
-            &mut now
-        };
+        let list =
+            if advice::for_control(id, &change.status, &change.detail).step == NextStep::Restart {
+                &mut after_restart
+            } else {
+                &mut now
+            };
         if !list.iter().any(|k| k == impact) {
             list.push(impact.to_owned());
         }
@@ -362,7 +361,11 @@ mod tests {
         let a = ids(&["uac.enabled", "uac.consent", "defender.ioav"]);
         let applied = rep(vec![
             out("uac.enabled", "applied", ""),
-            out("uac.consent", "skipped", "Domain-managed machine: assessment only"),
+            out(
+                "uac.consent",
+                "skipped",
+                "Domain-managed machine: assessment only",
+            ),
             out("defender.ioav", "error", "access denied"),
         ]);
         let verified = rep(vec![

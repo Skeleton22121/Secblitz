@@ -17,21 +17,41 @@ pub struct Ring {
 
 impl canvas::Program<Message> for Ring {
     type State = ();
-    fn draw(&self, _: &(), renderer: &Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &Renderer,
+        _: &Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let center = frame.center();
         let radius = bounds.width.min(bounds.height) / 2.0 - 10.0;
         let track = Path::circle(center, radius);
-        frame.stroke(&track, Stroke::default().with_width(12.0).with_color(self.p.surface_alt));
+        frame.stroke(
+            &track,
+            Stroke::default()
+                .with_width(12.0)
+                .with_color(self.p.surface_alt),
+        );
         let start = -std::f32::consts::FRAC_PI_2;
         let sweep = std::f32::consts::TAU * self.ratio.clamp(0.0, 1.0);
         if sweep > 0.0 {
             let arc = Path::new(|b| {
-                b.arc(Arc { center, radius, start_angle: Radians(start), end_angle: Radians(start + sweep) })
+                b.arc(Arc {
+                    center,
+                    radius,
+                    start_angle: Radians(start),
+                    end_angle: Radians(start + sweep),
+                })
             });
             frame.stroke(
                 &arc,
-                Stroke::default().with_width(12.0).with_color(self.p.tone(self.tone)).with_line_cap(canvas::LineCap::Round),
+                Stroke::default()
+                    .with_width(12.0)
+                    .with_color(self.p.tone(self.tone))
+                    .with_line_cap(canvas::LineCap::Round),
             );
         }
         frame.fill_text(Text {
@@ -59,5 +79,8 @@ impl canvas::Program<Message> for Ring {
 }
 
 pub fn ring<'a>(ring: Ring, size: f32) -> Element<'a, Message> {
-    canvas::Canvas::new(ring).width(Length::Fixed(size)).height(Length::Fixed(size)).into()
+    canvas::Canvas::new(ring)
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
+        .into()
 }

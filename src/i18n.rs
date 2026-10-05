@@ -2755,12 +2755,23 @@ mod tests {
     fn advice_impact_keys_are_translated_in_all_six_languages() {
         // All non-empty control_impact phrases must be translated.
         let control_ids = [
-            "defender.realtime", "defender.behavior", "defender.ioav", "defender.archive",
-            "firewall.domain.enabled", "firewall.private.enabled", "firewall.public.enabled",
-            "firewall.domain.inbound", "firewall.private.inbound", "firewall.public.inbound",
-            "uac.enabled", "uac.consent", "installer.always_install_elevated",
-            "lsa.restrict_anonymous_sam", "lsa.limit_blank_password_use",
-            "wdigest.use_logon_credential", "permissions.service.bits",
+            "defender.realtime",
+            "defender.behavior",
+            "defender.ioav",
+            "defender.archive",
+            "firewall.domain.enabled",
+            "firewall.private.enabled",
+            "firewall.public.enabled",
+            "firewall.domain.inbound",
+            "firewall.private.inbound",
+            "firewall.public.inbound",
+            "uac.enabled",
+            "uac.consent",
+            "installer.always_install_elevated",
+            "lsa.restrict_anonymous_sam",
+            "lsa.limit_blank_password_use",
+            "wdigest.use_logon_credential",
+            "permissions.service.bits",
             "permissions.service.wuauserv",
         ];
         for id in control_ids {
@@ -2772,16 +2783,32 @@ mod tests {
             );
             for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
                 let translated = lang.t(impact);
-                assert!(!translated.is_empty(), "empty translation for {id} impact in {}", lang.code());
+                assert!(
+                    !translated.is_empty(),
+                    "empty translation for {id} impact in {}",
+                    lang.code()
+                );
                 if lang != Lang::En {
-                    assert_ne!(translated, impact, "{}: impact phrase not translated for {id}", lang.code());
+                    assert_ne!(
+                        translated,
+                        impact,
+                        "{}: impact phrase not translated for {id}",
+                        lang.code()
+                    );
                 }
             }
         }
         // All non-empty finding_impact phrases must be translated.
         let finding_titles = [
-            "Windows lifecycle", "Device encryption", "Secure Boot", "Windows updates",
-            "Remote Desktop", "SMB1", "SmartScreen", "Local accounts", "Memory integrity",
+            "Windows lifecycle",
+            "Device encryption",
+            "Secure Boot",
+            "Windows updates",
+            "Remote Desktop",
+            "SMB1",
+            "SmartScreen",
+            "Local accounts",
+            "Memory integrity",
             "Automatic logon",
         ];
         for title in finding_titles {
@@ -2793,9 +2820,18 @@ mod tests {
             );
             for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
                 let translated = lang.t(impact);
-                assert!(!translated.is_empty(), "empty translation for {title} impact in {}", lang.code());
+                assert!(
+                    !translated.is_empty(),
+                    "empty translation for {title} impact in {}",
+                    lang.code()
+                );
                 if lang != Lang::En {
-                    assert_ne!(translated, impact, "{}: finding impact phrase not translated for {title}", lang.code());
+                    assert_ne!(
+                        translated,
+                        impact,
+                        "{}: finding impact phrase not translated for {title}",
+                        lang.code()
+                    );
                 }
             }
         }
@@ -2807,7 +2843,12 @@ mod tests {
             );
             for lang in [Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
                 let translated = lang.t(prefix);
-                assert_ne!(translated, prefix, "{}: prefix not translated: {prefix}", lang.code());
+                assert_ne!(
+                    translated,
+                    prefix,
+                    "{}: prefix not translated: {prefix}",
+                    lang.code()
+                );
                 assert!(!translated.is_empty());
             }
         }
@@ -2817,10 +2858,18 @@ mod tests {
             "You're now protected from:",
             "After you restart, you'll be protected from:",
         ] {
-            assert!(TEXT.iter().any(|row| row[0] == key), "key not in catalog: {key}");
+            assert!(
+                TEXT.iter().any(|row| row[0] == key),
+                "key not in catalog: {key}"
+            );
             for lang in [Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
                 let translated = lang.t(key);
-                assert_ne!(translated, key, "{}: key not translated: {key}", lang.code());
+                assert_ne!(
+                    translated,
+                    key,
+                    "{}: key not translated: {key}",
+                    lang.code()
+                );
                 assert!(!translated.is_empty());
             }
         }

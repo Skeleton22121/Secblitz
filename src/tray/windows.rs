@@ -10,8 +10,8 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::{
-        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, WAIT_OBJECT_0,
-        WPARAM,
+        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT,
+        WAIT_OBJECT_0, WPARAM,
     },
     Graphics::Gdi::{
         CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO,
@@ -67,7 +67,11 @@ thread_local! {
 /// Run `f` on the tray state unless it is already borrowed (a nested message
 /// delivered while we are inside Shell or menu calls); skipping is harmless.
 fn with_tray<R>(f: impl FnOnce(&mut Tray) -> R) -> Option<R> {
-    TRAY.with(|cell| cell.try_borrow_mut().ok().and_then(|mut t| t.as_mut().map(f)))
+    TRAY.with(|cell| {
+        cell.try_borrow_mut()
+            .ok()
+            .and_then(|mut t| t.as_mut().map(f))
+    })
 }
 
 fn wide(s: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
@@ -154,7 +158,10 @@ fn add_icon(hwnd: HWND, t: &mut Tray, icon: usize, tip: &str) {
 }
 
 fn set_icon(hwnd: HWND, t: &mut Tray, icon: usize, tip: &str) {
-    if t.shown.as_ref().is_some_and(|(i, s)| *i == icon && s == tip) {
+    if t.shown
+        .as_ref()
+        .is_some_and(|(i, s)| *i == icon && s == tip)
+    {
         return;
     }
     if t.shown.is_none() {
@@ -194,7 +201,9 @@ fn balloon(hwnd: HWND, lang: Lang) {
 
 /// Start the app (it asks for administrator permission itself).
 fn open_app(t: &mut Tray) {
-    if t.opened.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+    if t.opened
+        .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
+    {
         return; // One click can arrive as several notification messages.
     }
     t.opened = Some(Instant::now());
@@ -223,7 +232,10 @@ fn refresh(hwnd: HWND, t: &mut Tray) {
     set_icon(hwnd, t, icon, &tip);
     if let Some(now) = now {
         // The first status we see only sets the baseline; it never alerts.
-        if t.last.as_ref().is_some_and(|prev| logic::worsened(prev, &now)) {
+        if t.last
+            .as_ref()
+            .is_some_and(|prev| logic::worsened(prev, &now))
+        {
             balloon(hwnd, t.lang);
         }
         t.last = Some(now);

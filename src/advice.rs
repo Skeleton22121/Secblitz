@@ -81,9 +81,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "lsa.limit_blank_password_use" => {
             "Someone signing in over the network to an account with no password"
         }
-        "wdigest.use_logon_credential" => {
-            "Attackers stealing your Windows password from memory"
-        }
+        "wdigest.use_logon_credential" => "Attackers stealing your Windows password from memory",
         "permissions.service.bits" | "permissions.service.wuauserv" => {
             "Tampered or fake Windows updates reaching your PC"
         }
@@ -460,7 +458,10 @@ mod tests {
             let a = for_control(id, "attention", "");
             assert!(!a.impact.is_empty(), "missing impact for control: {id}");
             let a_ok = for_control(id, "compliant", "");
-            assert!(!a_ok.impact.is_empty(), "missing impact for compliant control: {id}");
+            assert!(
+                !a_ok.impact.is_empty(),
+                "missing impact for compliant control: {id}"
+            );
         }
         // Fallback and aggregate have no impact phrase.
         assert!(for_control("unknown.id", "attention", "").impact.is_empty());
@@ -483,8 +484,17 @@ mod tests {
             assert!(!a.impact.is_empty(), "missing impact for finding: {title}");
         }
         // Informational / audit findings have no impact phrase.
-        for title in ["Security providers", "Windows Firewall", "Defender", "Journal recovery", "Assessment unavailable"] {
-            assert!(for_finding(title, "attention", "").impact.is_empty(), "unexpected impact for finding: {title}");
+        for title in [
+            "Security providers",
+            "Windows Firewall",
+            "Defender",
+            "Journal recovery",
+            "Assessment unavailable",
+        ] {
+            assert!(
+                for_finding(title, "attention", "").impact.is_empty(),
+                "unexpected impact for finding: {title}"
+            );
         }
     }
 
@@ -506,7 +516,11 @@ mod tests {
         assert_eq!(a.impact_prefix(), "Why it matters:");
 
         // Restart needed → Choice group → "Why it matters:"
-        let a = for_control("uac.enabled", "applied", "Preference applied; restart required");
+        let a = for_control(
+            "uac.enabled",
+            "applied",
+            "Preference applied; restart required",
+        );
         assert_eq!(a.group, Group::Choice);
         assert_eq!(a.impact_prefix(), "Why it matters:");
 

@@ -8,6 +8,7 @@
 //! the installer's Restart Manager uses to close the tray.
 use crate::i18n::Lang;
 
+#[cfg_attr(not(windows), allow(dead_code))]
 mod logic;
 #[cfg(windows)]
 #[path = "tray/windows.rs"]

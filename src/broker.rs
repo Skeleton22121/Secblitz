@@ -3,8 +3,6 @@
 //! Protocol (spec 3.1): request `[kind, arg_lo, arg_hi]`, response `[status]`.
 //! No strings cross the boundary. The launcher (standard user) serves the
 //! pipe; the elevated GUI is the only client.
-// Consumed by the page modules (restore, Bitwarden, Windows settings shortcuts).
-#![allow(dead_code)]
 
 use std::time::Duration;
 
@@ -22,6 +20,7 @@ pub enum Request {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Reply {
     Done,
     Failed,
@@ -30,6 +29,7 @@ pub enum Reply {
     Unavailable,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 impl Reply {
     pub fn encode(self) -> u8 {
         match self {
@@ -50,6 +50,7 @@ impl Reply {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 impl Request {
     pub fn encode(self) -> [u8; 3] {
         let (kind, arg) = match self {
@@ -180,7 +181,9 @@ mod imp {
             CloseHandle, GetLastError, ERROR_IO_PENDING, HANDLE, INVALID_HANDLE_VALUE,
             WAIT_OBJECT_0,
         },
-        Storage::FileSystem::{CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, OPEN_EXISTING},
+        Storage::FileSystem::{
+            CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+        },
         System::{
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -351,7 +354,11 @@ mod imp {
             Ok(())
         }
 
-        pub fn round_trip(&mut self, mut request: [u8; 3], timeout: Duration) -> anyhow::Result<u8> {
+        pub fn round_trip(
+            &mut self,
+            mut request: [u8; 3],
+            timeout: Duration,
+        ) -> anyhow::Result<u8> {
             anyhow::ensure!(!self.broken, "broker unavailable");
             let result = (|| {
                 self.io(true, &mut request, Duration::from_secs(10))?;
@@ -415,7 +422,12 @@ mod tests {
 
     #[test]
     fn replies_round_trip_and_reject_unknown() {
-        for reply in [Reply::Done, Reply::Failed, Reply::OpenedStore, Reply::Unavailable] {
+        for reply in [
+            Reply::Done,
+            Reply::Failed,
+            Reply::OpenedStore,
+            Reply::Unavailable,
+        ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
         for byte in [0u8, 5, 255] {

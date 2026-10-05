@@ -154,10 +154,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Task<Message> {
     use worker::Event as E;
     let Stage::Working {
-        undo,
-        phase,
-        items,
-        ..
+        undo, phase, items, ..
     } = &mut state.stage
     else {
         return Task::none();
@@ -286,7 +283,10 @@ fn title_row<'a>(p: Palette, icon: Icon, tone: Tone, title: String) -> Element<'
 fn note<'a>(p: Palette, icon: Icon, s: String) -> Element<'a, Message> {
     row![
         widgets::icon(icon, 16.0, p.text_muted),
-        text(s).size(theme::SMALL).font(theme::REGULAR).color(p.text_muted)
+        text(s)
+            .size(theme::SMALL)
+            .font(theme::REGULAR)
+            .color(p.text_muted)
     ]
     .spacing(10)
     .align_y(Alignment::Center)
@@ -298,10 +298,17 @@ fn bounded<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     container(scrollable(content)).max_height(300).into()
 }
 
-fn name_row<'a>(ctx: &Ctx, id: &str, trailing: Option<Element<'a, Message>>) -> Element<'a, Message> {
+fn name_row<'a>(
+    ctx: &Ctx,
+    id: &str,
+    trailing: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut r = row![
-        text(ctx.lang.control(id)).size(theme::BODY).font(theme::MEDIUM).color(p.text),
+        text(ctx.lang.control(id))
+            .size(theme::BODY)
+            .font(theme::MEDIUM)
+            .color(p.text),
         space::horizontal(),
     ]
     .align_y(Alignment::Center)
@@ -356,7 +363,10 @@ fn review_view<'a>(ctx: &'a Ctx, ids: &'a [String], undo: bool) -> Element<'a, M
                 .width(Length::Fill)
                 .style(move |_| container::Style {
                     background: Some(iced::Background::Color(p.surface_alt)),
-                    border: iced::Border { radius: theme::RADIUS_SMALL.into(), ..Default::default() },
+                    border: iced::Border {
+                        radius: theme::RADIUS_SMALL.into(),
+                        ..Default::default()
+                    },
                     ..container::Style::default()
                 }),
         );
@@ -379,7 +389,13 @@ fn review_view<'a>(ctx: &'a Ctx, ids: &'a [String], undo: bool) -> Element<'a, M
     ));
     c = c.push(
         row![
-            widgets::action(p, ButtonKind::Secondary, ctx.t("Cancel"), None, Some(Message::Fix(Msg::Cancel))),
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Cancel"),
+                None,
+                Some(Message::Fix(Msg::Cancel))
+            ),
             space::horizontal(),
             widgets::action(
                 p,
@@ -421,7 +437,10 @@ fn working_view<'a>(
     };
     let c = column![
         title_row(p, Icon::Refresh, Tone::Neutral, title),
-        widgets::muted(p, ctx.t("Please keep this window open. This can take a minute.")),
+        widgets::muted(
+            p,
+            ctx.t("Please keep this window open. This can take a minute.")
+        ),
     ]
     .spacing(theme::GAP);
 
@@ -450,7 +469,14 @@ fn working_view<'a>(
         list = list.push(
             row![
                 widgets::icon(Icon::Refresh, 18.0, p.text_muted),
-                widgets::muted(p, ctx.t(if undo { "Putting your settings back" } else { "Getting ready" }))
+                widgets::muted(
+                    p,
+                    ctx.t(if undo {
+                        "Putting your settings back"
+                    } else {
+                        "Getting ready"
+                    })
+                )
             ]
             .spacing(12)
             .align_y(Alignment::Center),
@@ -483,7 +509,11 @@ fn bullets<'a>(ctx: &Ctx, heading: String, keys: &[String], tone: Tone) -> Eleme
         c = c.push(
             row![
                 widgets::icon(Icon::Check, 16.0, p.tone(tone)),
-                text(ctx.t(k)).size(theme::BODY).font(theme::REGULAR).color(p.text).width(Length::Fill)
+                text(ctx.t(k))
+                    .size(theme::BODY)
+                    .font(theme::REGULAR)
+                    .color(p.text)
+                    .width(Length::Fill)
             ]
             .spacing(10),
         );
@@ -500,7 +530,9 @@ fn result_view<'a>(
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let (icon, tone, title) = match (undo, s.kind) {
-        (false, SummaryKind::Success) => (Icon::ShieldCheck, Tone::Good, "You're now more protected"),
+        (false, SummaryKind::Success) => {
+            (Icon::ShieldCheck, Tone::Good, "You're now more protected")
+        }
         (false, SummaryKind::Partial) => (Icon::ShieldAlert, Tone::Warn, "Some fixes are done"),
         (false, SummaryKind::Failed) => (Icon::ShieldX, Tone::Bad, "We couldn't make these fixes"),
         (true, SummaryKind::Success) => (Icon::CheckCircle, Tone::Good, "Your fixes were undone"),
@@ -512,7 +544,12 @@ fn result_view<'a>(
         .padding([4, 0]);
     let mut body = column![].spacing(theme::GAP);
     if !s.protected_now.is_empty() {
-        body = body.push(bullets(ctx, ctx.t("You're now protected from:"), &s.protected_now, Tone::Good));
+        body = body.push(bullets(
+            ctx,
+            ctx.t("You're now protected from:"),
+            &s.protected_now,
+            Tone::Good,
+        ));
     }
     if !s.after_restart.is_empty() {
         body = body.push(bullets(
@@ -537,7 +574,10 @@ fn result_view<'a>(
         for (id, reason) in &s.not_done {
             names = names.push(
                 column![
-                    text(ctx.lang.control(id)).size(theme::BODY).font(theme::MEDIUM).color(p.text),
+                    text(ctx.lang.control(id))
+                        .size(theme::BODY)
+                        .font(theme::MEDIUM)
+                        .color(p.text),
                     widgets::small(p, ctx.t(reason)),
                 ]
                 .spacing(2),
@@ -582,7 +622,10 @@ fn result_view<'a>(
             .width(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(p.tint(Tone::Warn))),
-                border: iced::Border { radius: theme::RADIUS_SMALL.into(), ..Default::default() },
+                border: iced::Border {
+                    radius: theme::RADIUS_SMALL.into(),
+                    ..Default::default()
+                },
                 ..container::Style::default()
             }),
         );
@@ -604,12 +647,23 @@ fn result_view<'a>(
     }
     column![
         hero,
-        container(text(ctx.t(title)).size(theme::H1).font(theme::BOLD).color(p.text))
-            .center_x(Length::Fill),
+        container(
+            text(ctx.t(title))
+                .size(theme::H1)
+                .font(theme::BOLD)
+                .color(p.text)
+        )
+        .center_x(Length::Fill),
         bounded(body.into()),
         row![
             space::horizontal(),
-            widgets::action(p, ButtonKind::Primary, ctx.t("Done"), None, Some(Message::Fix(Msg::Done)))
+            widgets::action(
+                p,
+                ButtonKind::Primary,
+                ctx.t("Done"),
+                None,
+                Some(Message::Fix(Msg::Done))
+            )
         ]
         .align_y(Alignment::Center),
     ]
