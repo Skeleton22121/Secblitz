@@ -244,3 +244,25 @@ Only Windows 11 Enterprise Evaluation build 26200.9457 in `Secblitz-W11-UI-Test`
 The public homepage is current **0.5.0**; its actual **0.3.1** Remotion/Windows footage remains illustrative, muted/looping, with no captions or playback controls. Media uses content-hashed public names; source/provenance/test code stays outside allowlisted publication. The recording is not current updater evidence or six-language runtime coverage.
 
 See [security review summary](SECURITY-REVIEW.md), [security model](security-model.md), [update contract](update-contract.md), [live evidence](windows-v050-results.md) and [roadmap](ROADMAP.md). Recommended-batch approval, inherited-protection recognition, automatic verification and read-only readiness are implemented. DISM/SFC, general cleanup, broader app/Windows updating and backup provisioning remain **future work**, not hidden automatic features.
+
+### System-area engine controls (OS, credentials, updates, privacy)
+
+All journaled, gated and reversible like the table above; every one is a choice (never pre-selected) except `system.exploit_mitigations`. Absent values that are Windows' safe default count as protected. Verify on the VM before relying on them.
+
+| Control ID | Repair |
+| --- | --- |
+| `ntlm.extras` | NoLMHash 1, MSV1_0 allownullsessionfallback 0 (UseMachineId deliberately not set); restart |
+| `driver.vulnerable_blocklist` | CI\Config VulnerableDriverBlocklistEnable 0 to 1 (absent = on); restart |
+| `system.exploit_mitigations` | Only DEP/SEHOP/BottomUp/HighEntropy/CFG that read OFF are turned ON; ON and NOTSET never touched |
+| `ps.v2_engine` | Disable PowerShell 2.0 optional features (DISM, 15 minute limit); undo enables them |
+| `printer.spooler_remote` | RegisterSpoolerRemoteRpcEndPoint 2 only when no printer is shared; Spooler restarted |
+| `services.legacy_remote` | RemoteRegistry, WinRM, sshd, TlntSvr, FTPSVC, W3SVC, SNMP stopped and disabled; start type and running state restored on undo |
+| `session.lock_on_wake` | CONSOLELOCK 1 (AC and DC) on the active plan through the power WMI provider; refused when the signed-in account has no password |
+| `update.store_autoupdate_policy` | Remove WindowsStore AutoDownload=2 |
+| `update.paused` | Remove the five Pause* values under WindowsUpdate\UX\Settings while a pause is in force; undo restores times to the minute |
+| `smartscreen.apps` | SmartScreenEnabled Off to Warn; remove local EnableSmartScreen=0 |
+| `privacy.recall` | WindowsAI DisableAIDataAnalysis=1, only where the Recall feature exists |
+| `privacy.diagnostic_data_level` | AllowTelemetry 1 only (never 0) |
+| `privacy.delivery_optimization` | DODownloadMode 0 |
+| `privacy.clipboard_sync` | AllowCrossDeviceClipboard 0; not offered on Home |
+| `defender.exclusions_risky` | Remove only risky exclusions (drive roots, Windows, user folders, exe/dll/ps1/bat/js/vbs/scr, script engines); each is journaled and re-added on undo |

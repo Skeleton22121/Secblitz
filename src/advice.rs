@@ -128,6 +128,34 @@ pub fn control_impact(id: &str) -> &'static str {
             "Your PC sending sign-in details to a file server on the internet"
         }
         "tls.legacy_protocols" => "Old, breakable secure connections being forced on your PC",
+        // System area.
+        "ntlm.extras" => "Weak stored copies of your password being cracked",
+        "driver.vulnerable_blocklist" => {
+            "Attackers using a flawed driver to switch off your security"
+        }
+        "system.exploit_mitigations" => "A program bug being turned into a full break-in",
+        "ps.v2_engine" => "Attackers running harmful scripts through an old back door",
+        "printer.spooler_remote" => {
+            "Someone on your network using printing flaws to take over your PC"
+        }
+        "services.legacy_remote" => {
+            "Strangers reaching your PC through forgotten remote-access tools"
+        }
+        "session.lock_on_wake" => "Anyone nearby opening your PC while you are away",
+        "update.store_autoupdate_policy" => {
+            "Store apps staying out of date and open to known flaws"
+        }
+        "update.paused" => "Security fixes waiting while known flaws stay open",
+        "smartscreen.apps" => "Fake installers and harmful downloads starting with one click",
+        "privacy.recall" => "Pictures of your screen, passwords included, being kept on this PC",
+        "privacy.diagnostic_data_level" => {
+            "More details about how you use your PC leaving it than needed"
+        }
+        "privacy.delivery_optimization" => {
+            "Your PC sending files to strangers over your connection"
+        }
+        "privacy.clipboard_sync" => "What you copy showing up on your other devices",
+        "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
         _ => "",
     }
 }
@@ -201,6 +229,22 @@ pub fn control_label(id: &str) -> &'static str {
         "net.wpad" => "Automatic proxy search",
         "firewall.outbound_smb_internet" => "File sharing to the internet",
         "tls.legacy_protocols" => "Old secure-connection versions",
+        // System area.
+        "ntlm.extras" => "Old password leftovers",
+        "driver.vulnerable_blocklist" => "Dangerous driver blocking",
+        "system.exploit_mitigations" => "Built-in memory protections",
+        "ps.v2_engine" => "Old scripting tool",
+        "printer.spooler_remote" => "Printing open to the network",
+        "services.legacy_remote" => "Leftover remote-access services",
+        "session.lock_on_wake" => "Password after sleep",
+        "update.store_autoupdate_policy" => "Store app updates",
+        "update.paused" => "Paused Windows updates",
+        "smartscreen.apps" => "Unknown download warnings",
+        "privacy.recall" => "Recall screenshots",
+        "privacy.diagnostic_data_level" => "Diagnostic data",
+        "privacy.delivery_optimization" => "Update sharing",
+        "privacy.clipboard_sync" => "Clipboard sync",
+        "defender.exclusions_risky" => "Antivirus skip list",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -258,6 +302,19 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
             "Open Windows Update and make sure updates are allowed to install.",
             OpenWindowsUpdate,
         ),
+        "update.paused" => ("Open Windows Update and resume updates.", OpenWindowsUpdate),
+        "smartscreen.apps" | "defender.exclusions_risky" => (
+            "Open Windows Security and check the app and file protection settings.",
+            OpenWindowsSecurity,
+        ),
+        "ps.v2_engine" => (
+            "Open Windows Features and untick the old scripting tool.",
+            ReviewWindowsFeatures,
+        ),
+        "session.lock_on_wake" => (
+            "Open sign-in settings and choose to ask for your password after sleep.",
+            OpenAccounts,
+        ),
         "defender.asr.standard"
         | "defender.asr.web_script_email"
         | "lsa.run_as_ppl"
@@ -282,7 +339,17 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "net.mdns"
         | "net.wpad"
         | "firewall.outbound_smb_internet"
-        | "tls.legacy_protocols" => (
+        | "tls.legacy_protocols"
+        | "ntlm.extras"
+        | "driver.vulnerable_blocklist"
+        | "system.exploit_mitigations"
+        | "printer.spooler_remote"
+        | "services.legacy_remote"
+        | "update.store_autoupdate_policy"
+        | "privacy.recall"
+        | "privacy.diagnostic_data_level"
+        | "privacy.delivery_optimization"
+        | "privacy.clipboard_sync" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -361,6 +428,38 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "tls.legacy_protocols" => {
             "Very old apps or devices may fail to connect securely. Needs a restart."
         }
+        "ntlm.extras" => "Very old network drives or scanners may stop connecting. Needs a restart.",
+        "driver.vulnerable_blocklist" => {
+            "A very old hardware tool may stop working if its driver is on the list. Needs a restart."
+        }
+        "ps.v2_engine" => {
+            "Very old scripts that need the old version stop working. Removing it can take a minute."
+        }
+        "printer.spooler_remote" => {
+            "Other computers can no longer print through this PC. Printing restarts for a moment."
+        }
+        "services.legacy_remote" => {
+            "Remote tools that use these services stop working until you turn them back on."
+        }
+        "session.lock_on_wake" => "You will type your password each time the PC wakes from sleep.",
+        "update.store_autoupdate_policy" => "Store apps will go back to updating by themselves.",
+        "update.paused" => "Windows will start downloading updates again and may ask you to restart.",
+        "smartscreen.apps" => {
+            "Windows will warn you before you run unknown programs. You can still choose to run them."
+        }
+        "privacy.recall" => "Windows stops saving screen pictures and deletes the ones it kept.",
+        "privacy.diagnostic_data_level" => {
+            "Windows sends only the basic diagnostic data it needs. Nothing stops working."
+        }
+        "privacy.delivery_optimization" => {
+            "Updates still come from Microsoft. This PC just stops sharing them with others."
+        }
+        "privacy.clipboard_sync" => {
+            "What you copy stays on this PC and no longer appears on your other devices."
+        }
+        "defender.exclusions_risky" => {
+            "Skipped places are scanned again, so some games or work tools may scan slower."
+        }
         _ => "",
     }
 }
@@ -412,6 +511,21 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: a shared folder or drive may rely on the old name service" => {
             "A shared folder or drive here may need this, so we leave it alone."
         }
+        "Not offered: Recall is not available on this PC" => {
+            "Recall is not on this PC, so there is nothing to change."
+        }
+        "Not offered: this setting is not available on Windows Home" => {
+            "Windows Home does not support this setting, so we leave it alone."
+        }
+        "Not offered: a printer on this PC is shared with other computers" => {
+            "A printer on this PC is shared with others, so we leave this alone."
+        }
+        "Not offered: your account has no password" => {
+            "Give your account a password first, then check again."
+        }
+        "Not offered: Secblitz cannot tell who is signed in" => {
+            "We could not tell which account is signed in, so we leave this alone."
+        }
         _ => return None,
     })
 }
@@ -457,6 +571,9 @@ fn repair_help(id: &str) -> &'static str {
         "net.llmnr" => "We can fix this. Fake name-lookup answers will be ignored.",
         "accounts.lockout_policy" => {
             "We can fix this. Too many wrong passwords will lock sign-in for a few minutes."
+        }
+        "system.exploit_mitigations" => {
+            "We can fix this. It switches Windows' built-in memory protections back on."
         }
         _ => "We can fix this. It turns this protection on.",
     }
@@ -850,6 +967,11 @@ mod tests {
             "Not offered: the old file-sharing version could not be checked",
             "Not offered: the old file-sharing version (SMB1) is still on",
             "Not offered: a shared folder or drive may rely on the old name service",
+            "Not offered: Recall is not available on this PC",
+            "Not offered: this setting is not available on Windows Home",
+            "Not offered: a printer on this PC is shared with other computers",
+            "Not offered: your account has no password",
+            "Not offered: Secblitz cannot tell who is signed in",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
