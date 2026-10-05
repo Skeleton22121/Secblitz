@@ -11,11 +11,12 @@ $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'setup.iss') -Raw
 $code = $source.Substring($source.IndexOf('[Code]'))
 $pattern = '(?s)function Maintain\(Action: String\): Boolean;.*?(?=function PrepareToInstall)'
 if ([regex]::Matches($code, $pattern).Count -ne 1) { throw 'Cannot locate the production maintenance seam.' }
-foreach ($case in @('Success', 'Secure', 'InstallMonitor', 'ResumeMonitor', 'Exception')) {
+foreach ($case in @('Success', 'Secure', 'InstallFilter', 'InstallMonitor', 'ResumeMonitor', 'ResumeFilter', 'Exception')) {
     $mock = @"
 function Maintain(Action: String): Boolean;
 begin
   if (Action = 'Prepare') and ('$case' = 'ResumeMonitor') then ResumeAfterUpgrade := True;
+  if (Action = 'Prepare') and ('$case' = 'ResumeFilter') then ResumeFilterAfterUpgrade := True;
   if (Action = 'InstallMonitor') and ('$case' = 'Exception') then RaiseException('Injected maintenance exception');
   Result := Action <> '$case';
 end;
@@ -24,7 +25,7 @@ end;
     $testCode = [regex]::Replace($code, $pattern, $mock)
     # CreateAppDir=no deliberately makes {app} unsuitable for the production
     # fixed-directory precondition. Bypass Prepare only in this no-install harness.
-    $prepare = "function PrepareToInstall(var NeedsRestart: Boolean): String;`r`nbegin`r`n  Result := '';`r`n  if '$case' = 'ResumeMonitor' then ResumeAfterUpgrade := True;`r`nend;`r`n`r`n"
+    $prepare = "function PrepareToInstall(var NeedsRestart: Boolean): String;`r`nbegin`r`n  Result := '';`r`n  if '$case' = 'ResumeMonitor' then ResumeAfterUpgrade := True;`r`n  if '$case' = 'ResumeFilter' then ResumeFilterAfterUpgrade := True;`r`nend;`r`n`r`n"
     $testCode = [regex]::Replace($testCode, '(?s)function PrepareToInstall\(var NeedsRestart: Boolean\): String;.*?(?=procedure CurStepChanged)', $prepare)
     $harness = @"
 [Setup]

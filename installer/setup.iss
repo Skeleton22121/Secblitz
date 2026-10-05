@@ -88,6 +88,73 @@ fr.Failed=Échec de la maintenance Secblitz. Consultez le journal. Aucun réglag
 de.Failed=Secblitz-Wartung fehlgeschlagen. Siehe Protokoll. Keine Sicherheitseinstellungen angewendet.
 pt.Failed=A manutenção do Secblitz falhou. Consulte o log de instalação. Nenhuma configuração de segurança foi aplicada.
 it.Failed=Manutenzione di Secblitz non riuscita. Consulta il registro di installazione. Nessuna impostazione di sicurezza è stata applicata.
+en.RemoveTitle=Remove Secblitz
+es.RemoveTitle=Quitar Secblitz
+fr.RemoveTitle=Supprimer Secblitz
+de.RemoveTitle=Secblitz entfernen
+pt.RemoveTitle=Remover o Secblitz
+it.RemoveTitle=Rimuovi Secblitz
+en.RemoveQuestion=What should happen to the changes Secblitz made?
+es.RemoveQuestion=¿Qué debe pasar con los cambios que hizo Secblitz?
+fr.RemoveQuestion=Que faire des modifications effectuées par Secblitz ?
+de.RemoveQuestion=Was soll mit den Änderungen geschehen, die Secblitz vorgenommen hat?
+pt.RemoveQuestion=O que deve acontecer com as alterações feitas pelo Secblitz?
+it.RemoveQuestion=Cosa deve succedere alle modifiche fatte da Secblitz?
+en.KeepChoice=Keep my PC as it is now
+es.KeepChoice=Dejar mi PC como está ahora
+fr.KeepChoice=Laisser mon PC tel qu'il est maintenant
+de.KeepChoice=Meinen PC so lassen, wie er jetzt ist
+pt.KeepChoice=Manter meu PC como está agora
+it.KeepChoice=Lascia il mio PC com'è adesso
+en.KeepDetail=Your protection stays on. Apps you removed stay removed; you can reinstall them from the Microsoft Store.
+es.KeepDetail=Tu protección sigue activa. Las apps que quitaste siguen quitadas; puedes volver a instalarlas desde Microsoft Store.
+fr.KeepDetail=Votre protection reste active. Les applications que vous avez supprimées restent supprimées ; vous pouvez les réinstaller depuis le Microsoft Store.
+de.KeepDetail=Dein Schutz bleibt eingeschaltet. Apps, die Du entfernt hast, bleiben entfernt; Du kannst sie aus dem Microsoft Store neu installieren.
+pt.KeepDetail=Sua proteção continua ativada. Os apps que você removeu continuam removidos; você pode reinstalá-los pela Microsoft Store.
+it.KeepDetail=La tua protezione resta attiva. Le app che hai rimosso restano rimosse; puoi reinstallarle dal Microsoft Store.
+en.PutBackChoice=Put everything back the way it was
+es.PutBackChoice=Devolver todo a como estaba
+fr.PutBackChoice=Tout remettre comme avant
+de.PutBackChoice=Alles wieder so machen, wie es war
+pt.PutBackChoice=Voltar tudo como estava
+it.PutBackChoice=Rimetti tutto com'era
+en.PutBackDetail=Secblitz undoes its changes and brings back the apps you removed first. This can take a few minutes.
+es.PutBackDetail=Primero Secblitz deshace sus cambios y recupera las apps que quitaste. Esto puede tardar unos minutos.
+fr.PutBackDetail=Secblitz commence par annuler ses modifications et récupérer les applications que vous avez supprimées. Cela peut prendre quelques minutes.
+de.PutBackDetail=Secblitz macht zuerst seine Änderungen rückgängig und holt die Apps zurück, die Du entfernt hast. Das kann einige Minuten dauern.
+pt.PutBackDetail=O Secblitz primeiro desfaz suas alterações e traz de volta os apps que você removeu. Isso pode levar alguns minutos.
+it.PutBackDetail=Prima Secblitz annulla le sue modifiche e recupera le app che hai rimosso. Può richiedere alcuni minuti.
+en.RemoveNote=Windows updates, virus scans and apps you installed with Secblitz stay.
+es.RemoveNote=Las actualizaciones de Windows, los análisis de virus y las apps que instalaste con Secblitz se quedan.
+fr.RemoveNote=Les mises à jour Windows, les analyses antivirus et les applications installées avec Secblitz sont conservées.
+de.RemoveNote=Windows-Updates, Virenscans und mit Secblitz installierte Apps bleiben erhalten.
+pt.RemoveNote=As atualizações do Windows, as verificações de vírus e os apps que você instalou com o Secblitz permanecem.
+it.RemoveNote=Gli aggiornamenti di Windows, le scansioni antivirus e le app installate con Secblitz restano.
+en.PuttingBack=Putting your settings back
+es.PuttingBack=Restaurando tus ajustes
+fr.PuttingBack=Rétablissement de vos paramètres
+de.PuttingBack=Deine Einstellungen werden zurückgesetzt
+pt.PuttingBack=Restaurando suas configurações
+it.PuttingBack=Ripristino delle tue impostazioni
+en.LeftIntro=Some things could not be put back:
+es.LeftIntro=Algunas cosas no se pudieron restaurar:
+fr.LeftIntro=Certaines choses n'ont pas pu être rétablies :
+de.LeftIntro=Einiges ließ sich nicht zurücksetzen:
+pt.LeftIntro=Algumas coisas não puderam ser restauradas:
+it.LeftIntro=Alcune cose non è stato possibile ripristinarle:
+en.PersonalLeft=Some of your personal settings could not be put back.
+es.PersonalLeft=Algunos de tus ajustes personales no se pudieron restaurar.
+fr.PersonalLeft=Certains de vos paramètres personnels n'ont pas pu être rétablis.
+de.PersonalLeft=Einige Deiner persönlichen Einstellungen ließen sich nicht zurücksetzen.
+pt.PersonalLeft=Algumas das suas configurações pessoais não puderam ser restauradas.
+it.PersonalLeft=Alcune delle tue impostazioni personali non è stato possibile ripristinarle.
+en.SettingsLeft=Some settings could not be put back.
+es.SettingsLeft=Algunos ajustes no se pudieron restaurar.
+fr.SettingsLeft=Certains paramètres n'ont pas pu être rétablis.
+de.SettingsLeft=Einige Einstellungen ließen sich nicht zurücksetzen.
+pt.SettingsLeft=Algumas configurações não puderam ser restauradas.
+it.SettingsLeft=Alcune impostazioni non è stato possibile ripristinarle.
+
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Check: DesktopDefault
@@ -140,7 +207,8 @@ const MaintenanceSource =
 #endif
 '';
 
-var ResumeAfterUpgrade, PostInstallFailed: Boolean;
+var ResumeAfterUpgrade, ResumeFilterAfterUpgrade, PostInstallFailed: Boolean;
+    UninstallPutBack: Boolean;
     PreviousDesktopSelected, PreviousAutoUpdatesEnabled, PreviousHasUpdatePreference: Boolean;
 
 procedure InitializeWizard;
@@ -267,36 +335,6 @@ begin
   end;
 end;
 
-function Maintain(Action: String): Boolean;
-var Code: Integer; Saved: TStringList; Script, Arguments: String;
-begin
-  Script := ExpandConstant('{tmp}\secblitz-maintenance.ps1');
-  if not SaveStringToFile(Script, UTF8Encode(MaintenanceSource), False) then
-    RaiseException('Cannot extract maintenance script.');
-  Saved := TStringList.Create;
-  Code := -1;
-  try
-    CleanEnvironment(Saved);
-    Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
-      Script + '" -Action ' + Action;
-    if IsUninstaller and (Action = 'RemoveMonitor') then
-      Arguments := Arguments + ' -UninstallerDataPath "' +
-        ChangeFileExt(ExpandConstant('{uninstallexe}'), '.dat') + '"';
-    Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-      Arguments, ExpandConstant('{sys}'), SW_HIDE, ewWaitUntilTerminated, Code);
-  finally
-    RestoreEnvironment(Saved);
-    Saved.Free;
-    DeleteFile(Script);
-  end;
-  if Result and (Action = 'Prepare') and (Code = 10) then begin
-    ResumeAfterUpgrade := True;
-    Code := 0;
-  end;
-  if Result then Result := Code = 0;
-  if not Result then Log('Secblitz maintenance failed: ' + Action + ', code ' + IntToStr(Code));
-end;
-
 { Politely ask a running tray agent (this session) to exit; never kill it. }
 procedure CloseTray;
 var Window: HWND; Tries: Integer;
@@ -309,6 +347,38 @@ begin
     Tries := Tries + 1;
     Window := FindWindowByClassName('SecblitzTrayWindow');
   end;
+end;
+
+function Maintain(Action: String): Boolean;
+var Code: Integer; Saved: TStringList; Script, Arguments: String;
+begin
+  Script := ExpandConstant('{tmp}\secblitz-maintenance.ps1');
+  if not SaveStringToFile(Script, UTF8Encode(MaintenanceSource), False) then
+    RaiseException('Cannot extract maintenance script.');
+  Saved := TStringList.Create;
+  Code := -1;
+  try
+    CleanEnvironment(Saved);
+    Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+      Script + '" -Action ' + Action;
+    if IsUninstaller and ((Action = 'RemoveMonitor') or (Action = 'RemoveFilter') or (Action = 'Purge')) then
+      Arguments := Arguments + ' -UninstallerDataPath "' +
+        ChangeFileExt(ExpandConstant('{uninstallexe}'), '.dat') + '"';
+    Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Arguments, ExpandConstant('{sys}'), SW_HIDE, ewWaitUntilTerminated, Code);
+  finally
+    RestoreEnvironment(Saved);
+    Saved.Free;
+    DeleteFile(Script);
+  end;
+  { Prepare stopped what was running: 10 the monitor, 11 web protection, 12 both. }
+  if Result and (Action = 'Prepare') and (Code >= 10) and (Code <= 12) then begin
+    if (Code = 10) or (Code = 12) then ResumeAfterUpgrade := True;
+    if (Code = 11) or (Code = 12) then ResumeFilterAfterUpgrade := True;
+    Code := 0;
+  end;
+  if Result then Result := Code = 0;
+  if not Result then Log('Secblitz maintenance failed: ' + Action + ', code ' + IntToStr(Code));
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -334,12 +404,20 @@ begin
     PostInstallFailed := True;
     if not Maintain('Secure') then
       RaiseException(ExpandConstant('{cm:Failed}'));
+    { Web protection is registered turned off; it starts only when the person
+      switches something on. An upgrade starts it again if it was running. }
+    if not Maintain('InstallFilter') then
+      RaiseException(ExpandConstant('{cm:Failed}'));
     if WizardIsTaskSelected('monitor') then
       if not Maintain('InstallMonitor') then
         RaiseException(ExpandConstant('{cm:Failed}'));
     if ResumeAfterUpgrade then begin
       if not Maintain('ResumeMonitor') then RaiseException(ExpandConstant('{cm:Failed}'));
       ResumeAfterUpgrade := False;
+    end;
+    if ResumeFilterAfterUpgrade then begin
+      if not Maintain('ResumeFilter') then RaiseException(ExpandConstant('{cm:Failed}'));
+      ResumeFilterAfterUpgrade := False;
     end;
     { The marker is a preference-preservation hint, not caller authentication.
       Setup already requires elevation; it grants no additional authority. }
@@ -380,13 +458,201 @@ begin
   { Also restore a formerly running monitor after cancellation/rollback. }
   if ResumeAfterUpgrade then
     if not Maintain('ResumeMonitor') then Log('Could not resume monitor after failed upgrade.');
+  if ResumeFilterAfterUpgrade then
+    if not Maintain('ResumeFilter') then Log('Could not resume web protection after failed upgrade.');
+end;
+
+{ ---- Removing Secblitz ----------------------------------------------------------
+  Interactive uninstall asks one question: keep the PC as it is, or put
+  everything back. A silent uninstall, and one the app started after it already
+  put things back (/SECBLITZDONE), keeps the changes and never asks. }
+
+function SecblitzExe: String;
+begin
+  Result := ExpandConstant('{app}\secblitz.exe');
+end;
+
+function HasSwitch(Switch: String): Boolean;
+var I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), Switch) = 0 then Result := True;
+end;
+
+procedure AddLine(var Lines: TArrayOfString; Line: String);
+var N: Integer;
+begin
+  Line := Trim(Line);
+  if Line = '' then Exit;
+  N := GetArrayLength(Lines);
+  SetArrayLength(Lines, N + 1);
+  Lines[N] := Line;
+end;
+
+procedure AddLines(var Lines: TArrayOfString; Text: String);
+var I: Integer; Line: String;
+begin
+  Line := '';
+  for I := 1 to Length(Text) do begin
+    if Text[I] = #10 then begin
+      AddLine(Lines, Line);
+      Line := '';
+    end else
+      Line := Line + Text[I];
+  end;
+  AddLine(Lines, Line);
+end;
+
+function AddText(Form: TSetupForm; Top, Indent: Integer; Text: String; Bold: Boolean): TNewStaticText;
+begin
+  Result := TNewStaticText.Create(Form);
+  Result.Parent := Form;
+  Result.Left := ScaleX(16) + Indent;
+  Result.Top := Top;
+  Result.Width := Form.ClientWidth - ScaleX(32) - Indent;
+  Result.WordWrap := True;
+  Result.Caption := Text;
+  if Bold then Result.Font.Style := [fsBold];
+  Result.AutoSize := True;
+end;
+
+function AddChoice(Form: TSetupForm; Top: Integer; Text: String): TNewRadioButton;
+begin
+  Result := TNewRadioButton.Create(Form);
+  Result.Parent := Form;
+  Result.Left := ScaleX(16);
+  Result.Top := Top;
+  Result.Width := Form.ClientWidth - ScaleX(32);
+  Result.Height := ScaleY(20);
+  Result.Caption := Text;
+end;
+
+{ The one question. False means Cancel: nothing has been touched yet. }
+function AskRemoveChoice(var PutBack: Boolean): Boolean;
+var
+  Form: TSetupForm;
+  Question, KeepDetail, PutDetail, Note: TNewStaticText;
+  KeepChoice, PutChoice: TNewRadioButton;
+  RemoveButton, CancelButton: TNewButton;
+  Top: Integer;
+begin
+  Form := CreateCustomForm;
+  try
+    Form.Caption := CustomMessage('RemoveTitle');
+    Form.ClientWidth := ScaleX(470);
+    Top := ScaleY(16);
+    Question := AddText(Form, Top, 0, CustomMessage('RemoveQuestion'), True);
+    Top := Question.Top + Question.Height + ScaleY(14);
+    KeepChoice := AddChoice(Form, Top, CustomMessage('KeepChoice'));
+    Top := KeepChoice.Top + KeepChoice.Height + ScaleY(2);
+    KeepDetail := AddText(Form, Top, ScaleX(20), CustomMessage('KeepDetail'), False);
+    Top := KeepDetail.Top + KeepDetail.Height + ScaleY(12);
+    PutChoice := AddChoice(Form, Top, CustomMessage('PutBackChoice'));
+    Top := PutChoice.Top + PutChoice.Height + ScaleY(2);
+    PutDetail := AddText(Form, Top, ScaleX(20), CustomMessage('PutBackDetail'), False);
+    Top := PutDetail.Top + PutDetail.Height + ScaleY(16);
+    Note := AddText(Form, Top, 0, CustomMessage('RemoveNote'), False);
+    Top := Note.Top + Note.Height + ScaleY(18);
+
+    CancelButton := TNewButton.Create(Form);
+    CancelButton.Parent := Form;
+    CancelButton.Width := ScaleX(90);
+    CancelButton.Height := ScaleY(23);
+    CancelButton.Left := Form.ClientWidth - ScaleX(16) - CancelButton.Width;
+    CancelButton.Top := Top;
+    CancelButton.Caption := SetupMessage(msgButtonCancel);
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Cancel := True;
+
+    RemoveButton := TNewButton.Create(Form);
+    RemoveButton.Parent := Form;
+    RemoveButton.Width := ScaleX(130);
+    RemoveButton.Height := ScaleY(23);
+    RemoveButton.Left := CancelButton.Left - ScaleX(8) - RemoveButton.Width;
+    RemoveButton.Top := Top;
+    RemoveButton.Caption := CustomMessage('RemoveTitle');
+    RemoveButton.ModalResult := mrOk;
+    RemoveButton.Default := True;
+
+    Form.ClientHeight := Top + RemoveButton.Height + ScaleY(16);
+    KeepChoice.Checked := True;
+    Form.ActiveControl := KeepChoice;
+    Result := Form.ShowModal = mrOk;
+    PutBack := Result and PutChoice.Checked;
+  finally
+    Form.Free;
+  end;
+end;
+
+{ Personal settings first, as the person (the uninstaller itself is elevated),
+  then the machine part elevated. The machine part writes one plain line per
+  thing it left to a file in the uninstaller's private temp folder; the lines
+  are UTF-8. Failures never stop the removal: the person already chose it. }
+procedure PutEverythingBack;
+var
+  Lines: TArrayOfString;
+  Raw: AnsiString;
+  Output, Report: String;
+  Code, I, Shown: Integer;
+  PersonalLeft: Boolean;
+begin
+  UninstallProgressForm.StatusLabel.Caption := CustomMessage('PuttingBack');
+  SetArrayLength(Lines, 0);
+
+  PersonalLeft := True;
+  if ExecAsOriginalUser(SecblitzExe, 'uninstall-revert --user', ExpandConstant('{app}'),
+      SW_HIDE, ewWaitUntilTerminated, Code) then
+    PersonalLeft := Code <> 0;
+  Log('Secblitz put back (personal): left=' + IntToStr(Code));
+  if PersonalLeft then AddLine(Lines, CustomMessage('PersonalLeft'));
+
+  Output := ExpandConstant('{tmp}\secblitz-put-back.txt');
+  DeleteFile(Output);
+  if Exec(ExpandConstant('{sys}\cmd.exe'),
+      '/D /S /C ""' + SecblitzExe + '" uninstall-revert > "' + Output + '" 2>NUL"',
+      ExpandConstant('{sys}'), SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then begin
+    if LoadStringFromFile(Output, Raw) then AddLines(Lines, UTF8Decode(Raw));
+  end else begin
+    Log('Secblitz put back (machine) failed, code ' + IntToStr(Code));
+    AddLine(Lines, CustomMessage('SettingsLeft'));
+  end;
+  DeleteFile(Output);
+
+  if GetArrayLength(Lines) = 0 then Exit;
+  Report := CustomMessage('LeftIntro');
+  Shown := GetArrayLength(Lines);
+  if Shown > 12 then Shown := 12;
+  for I := 0 to Shown - 1 do
+    Report := Report + #13#10 + '- ' + Lines[I];
+  if not UninstallSilent then
+    SuppressibleMsgBox(Report, mbInformation, MB_OK, IDOK);
+end;
+
+{ Both choices: the current person's own Secblitz folder goes too. }
+procedure CleanUserData;
+var Code: Integer;
+begin
+  if not ExecAsOriginalUser(SecblitzExe, 'uninstall-cleanup --user', ExpandConstant('{app}'),
+      SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+    Log('Secblitz could not remove the per-user data folder, code ' + IntToStr(Code));
 end;
 
 function InitializeUninstall(): Boolean;
 begin
   Result := True;
+  UninstallPutBack := False;
   { Inno may call this once before its elevation relaunch. }
   if not IsAdmin then Exit;
+  if HasSwitch('/SECBLITZDONE') then
+    Log('Secblitz uninstall: the app already answered the question; keeping the PC as it is.')
+  else if UninstallSilent then
+    Log('Secblitz uninstall: a silent uninstall keeps the changes.')
+  else if not AskRemoveChoice(UninstallPutBack) then begin
+    Log('Secblitz uninstall: cancelled before anything was touched.');
+    Result := False;
+    Exit;
+  end;
   CloseTray;
   try
     Result := Maintain('RemoveMonitor');
@@ -398,5 +664,28 @@ begin
     Log(ExpandConstant('{cm:Failed}'));
     if not UninstallSilent then
       SuppressibleMsgBox(ExpandConstant('{cm:Failed}'), mbError, MB_OK, IDOK);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then begin
+    { The program is still in place here. Whatever fails below is logged and the
+      removal carries on. }
+    try
+      if UninstallPutBack then PutEverythingBack;
+      if not Maintain('RemoveFilter') then
+        Log('Secblitz could not fully turn off web protection.');
+      CleanUserData;
+    except
+      Log('Secblitz uninstall cleanup exception: ' + GetExceptionMessage);
+    end;
+  end else if CurUninstallStep = usPostUninstall then begin
+    try
+      if not Maintain('Purge') then
+        Log('Secblitz could not remove all of its data.');
+    except
+      Log('Secblitz uninstall data cleanup exception: ' + GetExceptionMessage);
+    end;
   end;
 end;
