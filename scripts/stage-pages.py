@@ -22,7 +22,7 @@ spec.loader.exec_module(gate)
 # No recursive asset glob, extension-only allowlist, or source-selected manifest.
 STATIC = (
     "index.html", "404.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json",
-    "assets/favicon.svg", "assets/preview-33b342ab21fb.webp",
+    "assets/favicon.svg", "assets/preview-b081691b149a.webp",
     "assets/app-home-light.webp", "assets/app-home-dark.webp",
     "assets/app-protection-light.webp", "assets/app-protection-dark.webp",
     "assets/fonts/ibm-plex-sans-400.woff2", "assets/fonts/ibm-plex-sans-500.woff2",
@@ -31,7 +31,7 @@ STATIC = (
 FONT_LICENSES = ("assets/fonts/OFL.txt", "assets/fonts/LICENSE.txt")
 # Accepted only when replacing our previous snapshot, never copied to new output.
 LEGACY_ASSETS = {
-    "assets/poster.webp", "assets/secblitz-demo.mp4", "assets/intro-6bb434a9c067.mp4",
+    "assets/poster.webp", "assets/preview-33b342ab21fb.webp", "assets/secblitz-demo.mp4", "assets/intro-6bb434a9c067.mp4",
     "assets/secblitz.svg", "assets/fonts/schibsted-grotesk-latin.woff2", "assets/fonts/OFL.txt",
 }
 # Preserve already published immutable URLs. New historical versions require review.
