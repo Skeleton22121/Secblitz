@@ -210,21 +210,31 @@ fn ask_tcp(
     dns::reply_matches(&body, id, &q.question).then_some(body)
 }
 
+/// How the asking program reached the filter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Via {
+    Udp,
+    Tcp,
+}
+
 /// The upstream answer for `packet`, or `None` when no server gave a valid one.
-/// Each server is tried once, in order. A truncated UDP answer is repeated over
-/// TCP to the same server. The caller's transaction id is put back.
+/// Each server is tried once, in order. A truncated answer goes back as it is
+/// to a UDP client (which then asks again over TCP, within the buffer size it
+/// announced); for a TCP client it is repeated over TCP to the same server.
+/// The caller's transaction id is put back.
 pub fn forward_checked(
     packet: &[u8],
     q: &Query,
     upstream: &[SocketAddr],
     timeout: Duration,
+    via: Via,
 ) -> Option<Vec<u8>> {
     for server in upstream {
         let id = random_id();
         let Some(mut reply) = ask_udp(packet, q, id, server, timeout) else {
             continue;
         };
-        if dns::truncated(&reply) {
+        if dns::truncated(&reply) && via == Via::Tcp {
             match ask_tcp(packet, q, id, server, timeout) {
                 Some(full) => reply = full,
                 None => continue,
@@ -236,18 +246,25 @@ pub fn forward_checked(
 }
 
 /// Like `forward_checked`, with a SERVFAIL answer when every server failed.
-pub fn forward(packet: &[u8], q: &Query, upstream: &[SocketAddr], timeout: Duration) -> Vec<u8> {
-    forward_checked(packet, q, upstream, timeout).unwrap_or_else(|| dns::servfail_reply(packet, q))
+pub fn forward(
+    packet: &[u8],
+    q: &Query,
+    upstream: &[SocketAddr],
+    timeout: Duration,
+    via: Via,
+) -> Vec<u8> {
+    forward_checked(packet, q, upstream, timeout, via)
+        .unwrap_or_else(|| dns::servfail_reply(packet, q))
 }
 
 /// The answer to send back, or `None` to stay silent.
-fn answer(packet: &[u8], shared: &Shared) -> Option<Vec<u8>> {
+fn answer(packet: &[u8], shared: &Shared, via: Via) -> Option<Vec<u8>> {
     let (q, action) = decide(packet, shared, unix_now())?;
     Some(match action {
         Action::Reply(reply) => reply,
         Action::Forward => {
             let upstream = read(&shared.upstream).clone();
-            forward_checked(packet, &q, &upstream, UPSTREAM_TIMEOUT).unwrap_or_else(|| {
+            forward_checked(packet, &q, &upstream, UPSTREAM_TIMEOUT, via).unwrap_or_else(|| {
                 shared.upstream_failed.store(true, Ordering::Release);
                 dns::servfail_reply(packet, &q)
             })
@@ -279,7 +296,7 @@ pub fn serve_udp(socket: UdpSocket, shared: Arc<Shared>, stop: Arc<AtomicBool>) 
             let Ok((packet, peer)) = job else {
                 return;
             };
-            if let Some(reply) = answer(&packet, &shared) {
+            if let Some(reply) = answer(&packet, &shared, Via::Udp) {
                 let _ = out.send_to(&reply, peer);
             }
         });
@@ -337,7 +354,7 @@ fn serve_connection(mut stream: TcpStream, shared: &Shared) {
         if stream.read_exact(&mut packet).is_err() {
             return;
         }
-        let Some(reply) = answer(&packet, shared) else {
+        let Some(reply) = answer(&packet, shared, Via::Tcp) else {
             return;
         };
         let mut frame = Vec::with_capacity(reply.len() + 2);
@@ -565,7 +582,7 @@ mod tests {
         });
         let packet = query_bytes("ok.example", 1, 0x4242);
         let q = dns::parse_query(&packet).unwrap();
-        let reply = forward(&packet, &q, &[addr], Duration::from_secs(3));
+        let reply = forward(&packet, &q, &[addr], Duration::from_secs(3), Via::Udp);
         assert_eq!(last_four(&reply), ANSWER_IP);
         assert_eq!(&reply[..2], &[0x42, 0x42]);
     }
@@ -601,10 +618,28 @@ mod tests {
         });
         let packet = query_bytes("big.example", 1, 0x0A0B);
         let q = dns::parse_query(&packet).unwrap();
-        let reply = forward(&packet, &q, &[addr], Duration::from_secs(3));
+        let reply = forward(&packet, &q, &[addr], Duration::from_secs(3), Via::Tcp);
         assert!(!dns::truncated(&reply));
         assert_eq!(last_four(&reply), ANSWER_IP);
         assert_eq!(&reply[..2], &[0x0A, 0x0B]);
+    }
+
+    #[test]
+    fn forward_passes_truncation_back_to_udp_clients() {
+        let upstream = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = upstream.local_addr().unwrap();
+        thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            let (n, from) = upstream.recv_from(&mut buf).unwrap();
+            let id = u16::from_be_bytes([buf[0], buf[1]]);
+            let _ = upstream.send_to(&answer_for(&buf[..n], id, [0; 4], 0x8380), from);
+        });
+        let packet = query_bytes("big.example", 1, 0x0C0D);
+        let q = dns::parse_query(&packet).unwrap();
+        let reply = forward(&packet, &q, &[addr], Duration::from_secs(3), Via::Udp);
+        // The client asks again over TCP; it never gets more than it asked for.
+        assert!(dns::truncated(&reply));
+        assert_eq!(&reply[..2], &[0x0C, 0x0D]);
     }
 
     #[test]
@@ -615,7 +650,7 @@ mod tests {
         };
         let packet = query_bytes("ok.example", 1, 0x0001);
         let q = dns::parse_query(&packet).unwrap();
-        let reply = forward(&packet, &q, &[closed], Duration::from_millis(200));
+        let reply = forward(&packet, &q, &[closed], Duration::from_millis(200), Via::Udp);
         assert_eq!(reply[3] & 0x0F, 2);
         assert_eq!(&reply[..2], &[0, 1]);
     }
