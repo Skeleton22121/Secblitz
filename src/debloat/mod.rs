@@ -12,6 +12,8 @@
 pub mod backup;
 pub mod catalog;
 pub mod vault;
+#[cfg(windows)]
+pub(crate) mod wincrypto;
 pub mod journal;
 #[cfg(windows)]
 mod windows;
