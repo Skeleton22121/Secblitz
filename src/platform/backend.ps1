@@ -52,6 +52,36 @@ function HasValues([string]$path) {
     foreach ($child in @(Get-ChildItem -LiteralPath $path -Recurse)) { if ($child.ValueCount -gt 0) { return $true } }
     return $false
 }
+function BootRenamePending {
+    # PendingFileRenameOperations lists files replaced or deleted at the next
+    # boot. App updaters (browsers, installers) queue their own clean-up there
+    # all the time; that never needs a restart before Windows servicing. Only
+    # entries positively under app or profile folders are ignored: Windows
+    # files, device paths, short names and unreadable values stay pending.
+    $windows = [Environment]::GetFolderPath('Windows').TrimEnd('\') + '\'
+    $roots = @()
+    $profiles = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList').ProfilesDirectory
+    foreach ($root in @([Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86'),
+        [Environment]::GetFolderPath('CommonApplicationData'), $profiles)) {
+        if ($root -isnot [string] -or $root -notmatch '^[A-Za-z]:\\[^\\]') { continue }
+        $root = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+        if (!$root.StartsWith($windows, [StringComparison]::OrdinalIgnoreCase) -and !$windows.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $roots += $root }
+    }
+    $key = Get-Item -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+    foreach ($name in @('PendingFileRenameOperations','PendingFileRenameOperations2')) {
+        $entries = $key.GetValue($name)
+        if ($null -eq $entries) { continue }
+        if ($entries -isnot [string[]]) { return $true }
+        foreach ($entry in $entries) {
+            if ($entry.Length -eq 0) { continue } # an empty target means delete
+            $path = $entry -replace '^[*!]\d*', ''
+            if ($path -notmatch '^\\\?\?\\[A-Za-z]:\\' -or $path.Contains('~')) { return $true }
+            try { $path = [IO.Path]::GetFullPath($path.Substring(4)) } catch { return $true }
+            if (!@($roots | Where-Object { $path.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })) { return $true }
+        }
+    }
+    return $false
+}
 function QueryMdmRegistration {
     # Documented Windows 8.1+ MDMRegistration API. Reflection.Emit creates only
     # a P/Invoke stub: unlike Add-Type on 5.1 it needs no csc.exe subprocess (the

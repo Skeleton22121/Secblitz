@@ -38,10 +38,7 @@ function PatchReboot {
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')) {
         if (Test-Path -LiteralPath $p) { $pending = $true }
     }
-    $key = Get-Item -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
-    foreach ($name in @('PendingFileRenameOperations','PendingFileRenameOperations2')) {
-        if ($null -ne $key.GetValue($name)) { $pending = $true }
-    }
+    if (BootRenamePending) { $pending = $true }
     return [bool]$pending
 }
 function PatchPower {

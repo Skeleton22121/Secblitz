@@ -120,7 +120,11 @@ pub fn friendly_error(raw: &str) -> &'static str {
         ERR_UNAVAILABLE
     } else if has(&["reboot", "restart"]) {
         "Restart your PC, then try again."
-    } else if has(&["servicing is busy"]) {
+    } else if has(&[
+        "servicing is busy",
+        "servicing process is active",
+        "engine.lock is busy",
+    ]) {
         "Windows is busy with another task. Try again in a few minutes."
     } else if has(&["not plugged in", "ac power"]) {
         "Plug your PC in, then try again."
@@ -650,8 +654,29 @@ pub fn size_phrase(bytes: u64) -> String {
     }
 }
 
+/// How long a search waits for Windows' own servicing work to finish.
+const SERVICING_WAIT: Duration = Duration::from_secs(90);
+
 /// Blocking: look for important Windows updates (reads from Windows Update).
 pub fn discover_updates() -> Result<Found, (String, &'static str)> {
+    // Windows starts its own servicing workers (update orchestrator, Defender
+    // maintenance) at any time and they usually finish within a minute. The
+    // patching interlock refuses to search meanwhile; wait instead of failing
+    // a search the person just asked for.
+    let deadline = Instant::now() + SERVICING_WAIT;
+    loop {
+        match discover_once() {
+            Err((raw, _))
+                if raw.contains("servicing process is active") && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_secs(5));
+            }
+            other => return other,
+        }
+    }
+}
+
+fn discover_once() -> Result<Found, (String, &'static str)> {
     let fail = |e: anyhow::Error| {
         let raw = format!("{e:#}");
         let note = friendly_error(&raw);
@@ -1630,6 +1655,8 @@ mod tests {
         for (raw, text) in [
             ("Deferred: Windows is waiting for a restart", "Restart your PC, then try again."),
             ("Deferred: Windows servicing is busy", "Windows is busy with another task. Try again in a few minutes."),
+            ("Deferred: a Windows servicing process is active", "Windows is busy with another task. Try again in a few minutes."),
+            ("Deferred: shared engine.lock is busy", "Windows is busy with another task. Try again in a few minutes."),
             ("Deferred: not plugged in", "Plug your PC in, then try again."),
             ("Deferred: low disk space", "Free up at least 5 GB on your system drive, then try again."),
         ] {
