@@ -15,6 +15,7 @@
 //! block in `update`/`view`.
 pub mod icons;
 pub mod pages;
+pub mod render;
 pub mod theme;
 pub mod widgets;
 
@@ -766,6 +767,8 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
 }
 
 pub fn run(options: Options) -> anyhow::Result<()> {
+    // GPU when a real adapter exists, tiny-skia otherwise (decided before iced starts).
+    let renderer = render::select();
     let mut application =
         iced::application(move || App::new(options.clone()), App::update, App::view)
             .title(|app: &App| app.ctx.t("Secblitz"))
@@ -773,7 +776,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
             .subscription(App::subscription)
             .window_size((1100.0, 720.0))
             .default_font(theme::REGULAR)
-            .antialiasing(true);
+            .antialiasing(render::use_msaa(renderer));
     for font in theme::FONT_FILES {
         application = application.font(font);
     }
