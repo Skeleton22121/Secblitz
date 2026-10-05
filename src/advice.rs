@@ -34,6 +34,9 @@ pub struct Advice {
     /// Translation source key: a noun phrase naming the concrete threat this
     /// check guards against. Empty string means no impact line is rendered.
     pub impact: &'static str,
+    /// True for a choice the person makes: never pre-selected, always shown
+    /// with its one-line consequence (`next`) before anything is changed.
+    pub ask: bool,
 }
 
 impl Advice {
@@ -85,6 +88,28 @@ pub fn control_impact(id: &str) -> &'static str {
         "permissions.service.bits" | "permissions.service.wuauserv" => {
             "Tampered or fake Windows updates reaching your PC"
         }
+        "defender.cloud_protection" => "New threats that only cloud checks can spot",
+        "defender.pua" => "Junk and adware bundled with free downloads",
+        "defender.script_nis" => "Harmful scripts and network attacks reaching your PC",
+        "defender.asr.standard" => "Attackers stealing passwords or hiding inside Windows",
+        "defender.asr.web_script_email" => {
+            "Booby-trapped scripts and email attachments starting programs"
+        }
+        "lsa.run_as_ppl" => "Password-stealing programs reading your sign-in details",
+        "net.public_sharing_exposure" => "Strangers on public Wi-Fi seeing your shared files",
+        "printer.point_and_print" => "Fake printer drivers giving attackers full control",
+        "net.llmnr" => "Strangers on your network answering lookups with fake replies",
+        "accounts.lockout_policy" => "Someone guessing your password again and again",
+        "autorun.disabled" => "Harmful programs starting from a USB stick or disc",
+        "wifi.risky_profiles" => "Rogue Wi-Fi hotspots connecting your PC without asking",
+        "lsa.restrict_anonymous" => "Strangers on the network listing your accounts and shares",
+        "remote_assistance.disabled" => "Someone taking over your PC through a help invitation",
+        "wsh.disabled" => "Harmful script files starting with a double-click",
+        "update.auto_policy_disabled" => "Security fixes never being installed",
+        "ntlm.lm_compat_level" => "Old, easily cracked sign-in methods used on your network",
+        "accounts.builtin_administrator" => "An unused powerful account being guessed or abused",
+        "privacy.activity_history" => "A record of what you did on this PC being kept and shared",
+        "privacy.advertising_id" => "Apps tracking you across other apps for ads",
         _ => "",
     }
 }
@@ -128,6 +153,26 @@ pub fn control_label(id: &str) -> &'static str {
         "wdigest.use_logon_credential" => "Sign-in secret protection",
         "permissions.service.bits" => "Update download protection",
         "permissions.service.wuauserv" => "Windows Update tamper protection",
+        "defender.cloud_protection" => "Cloud threat lookups",
+        "defender.pua" => "Junk app blocking",
+        "defender.script_nis" => "Script and network attack checks",
+        "defender.asr.standard" => "Extra shields against password theft",
+        "defender.asr.web_script_email" => "Risky script and attachment warnings",
+        "lsa.run_as_ppl" => "Sign-in process shield",
+        "net.public_sharing_exposure" => "Hide your PC on public Wi-Fi",
+        "printer.point_and_print" => "Printer driver safety",
+        "net.llmnr" => "Fake name-lookup blocking",
+        "accounts.lockout_policy" => "Password guessing lockout",
+        "autorun.disabled" => "USB stick auto-start",
+        "wifi.risky_profiles" => "Wi-Fi networks that join by themselves",
+        "lsa.restrict_anonymous" => "Anonymous account listing",
+        "remote_assistance.disabled" => "Remote Assistance invitations",
+        "wsh.disabled" => "Old script files",
+        "update.auto_policy_disabled" => "Automatic updates switched off",
+        "ntlm.lm_compat_level" => "Old sign-in methods",
+        "accounts.builtin_administrator" => "Hidden Administrator account",
+        "privacy.activity_history" => "Activity history",
+        "privacy.advertising_id" => "Ad tracking ID",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -173,11 +218,120 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
+        "defender.cloud_protection" | "defender.pua" | "defender.script_nis" => (
+            "Open Windows Security and make sure virus protection is fully turned on.",
+            OpenWindowsSecurity,
+        ),
+        "accounts.builtin_administrator" => (
+            "Check who can sign in to this PC and switch off accounts nobody uses.",
+            OpenAccounts,
+        ),
+        "update.auto_policy_disabled" => (
+            "Open Windows Update and make sure updates are allowed to install.",
+            OpenWindowsUpdate,
+        ),
+        "defender.asr.standard"
+        | "defender.asr.web_script_email"
+        | "lsa.run_as_ppl"
+        | "net.public_sharing_exposure"
+        | "printer.point_and_print"
+        | "net.llmnr"
+        | "accounts.lockout_policy"
+        | "autorun.disabled"
+        | "wifi.risky_profiles"
+        | "lsa.restrict_anonymous"
+        | "remote_assistance.disabled"
+        | "wsh.disabled"
+        | "ntlm.lm_compat_level"
+        | "privacy.activity_history"
+        | "privacy.advertising_id" => (
+            "We can't change this one safely for you. If you're not sure, leave it as it is.",
+            ReviewWithAdministrator,
+        ),
         _ => (
             "Check again in a moment. Nothing has been changed.",
             CheckAgain,
         ),
     }
+}
+
+/// True for choices the person makes themselves. They are offered with a
+/// one-line consequence and are never ticked by default.
+pub fn is_choice(id: &str) -> bool {
+    secblitz::hardening::is_ask(id)
+}
+
+/// One plain line telling the person what changes if they say yes.
+pub fn choice_consequence(id: &str) -> &'static str {
+    match id {
+        "defender.cloud_protection" => {
+            "Windows Defender will send details about suspicious files to Microsoft to catch new threats faster."
+        }
+        "defender.asr.web_script_email" => {
+            "Windows will ask before running scripts or email attachments that look risky, and you can allow them."
+        }
+        "lsa.run_as_ppl" => {
+            "Sign-in add-ons from other companies may stop working. Needs a restart."
+        }
+        "autorun.disabled" => {
+            "Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead."
+        }
+        "wifi.risky_profiles" => {
+            "Saved risky Wi-Fi networks stop joining by themselves. You can still connect by hand."
+        }
+        "lsa.restrict_anonymous" => {
+            "Very old devices may stop showing your shared folders. Needs a restart."
+        }
+        "remote_assistance.disabled" => {
+            "Nobody can invite a helper to take over this PC. Quick Assist still works."
+        }
+        "wsh.disabled" => "Old .vbs and .js script files will stop running when you open them.",
+        "update.auto_policy_disabled" => {
+            "Windows will go back to installing security updates by itself."
+        }
+        "ntlm.lm_compat_level" => {
+            "Very old network drives or scanners may stop signing in. Needs a restart."
+        }
+        "accounts.builtin_administrator" => {
+            "The hidden Administrator account is switched off. Your own account is not affected."
+        }
+        "privacy.activity_history" => "Windows stops keeping a list of what you did on this PC.",
+        "privacy.advertising_id" => "Apps will show less relevant ads. Nothing else changes.",
+        _ => "",
+    }
+}
+
+/// Exact backend reasons for "this protection is not offered on this PC right
+/// now". They are calm facts, not faults, so they never lower the score.
+fn not_offered(reason: &str) -> Option<&'static str> {
+    Some(match reason {
+        "Not offered: Secure Boot is off" => {
+            "This protection needs Secure Boot, which is off on this PC. We leave it alone."
+        }
+        "Not offered: Smart App Control is on" => {
+            "Smart App Control already guards this part of Windows, so we leave it alone."
+        }
+        "Not offered: some sign-in add-ons would stop working" => {
+            "Some sign-in add-ons would stop working, so we leave this alone."
+        }
+        "Not offered: sign-in add-ons from other companies are installed" => {
+            "Sign-in add-ons from other companies are installed, so we leave this alone."
+        }
+        "Not offered: no other administrator account is enabled"
+        | "Not offered: no other administrator account could be confirmed" => {
+            "This may be the only administrator account, so we keep it switched on."
+        }
+        "Not offered: Defender real-time protection is off" => {
+            "Turn on live virus protection first, then check again."
+        }
+        "Not offered: Defender cloud protection is off" => {
+            "Turn on cloud threat lookups first, then check again."
+        }
+        "Not offered: this PC uses Configuration Manager" => {
+            "Your organization's tools manage this, so we leave it alone."
+        }
+        _ => return None,
+    })
 }
 
 fn repair_help(id: &str) -> &'static str {
@@ -206,6 +360,21 @@ fn repair_help(id: &str) -> &'static str {
         }
         "lsa.limit_blank_password_use" => {
             "We can fix this. Accounts without a password can no longer be used over the network."
+        }
+        "defender.pua" => "We can fix this. Junk apps bundled with downloads will be blocked.",
+        "defender.script_nis" => "We can fix this. It turns scanning for harmful scripts back on.",
+        "defender.asr.standard" => {
+            "We can fix this. It blocks common tricks used to steal passwords."
+        }
+        "net.public_sharing_exposure" => {
+            "We can fix this. Your shared files and printers stay hidden on public Wi-Fi."
+        }
+        "printer.point_and_print" => {
+            "We can fix this. Printer drivers will only be installed with your permission."
+        }
+        "net.llmnr" => "We can fix this. Fake name-lookup answers will be ignored.",
+        "accounts.lockout_policy" => {
+            "We can fix this. Too many wrong passwords will lock sign-in for a few minutes."
         }
         _ => "We can fix this. It turns this protection on.",
     }
@@ -238,6 +407,7 @@ fn base(label: &'static str, status: &str, help: (&'static str, NextStep)) -> Ad
         step: help.1,
         group: Group::Choice,
         impact: "",
+        ask: false,
     };
     match status {
         "compliant" | "ok" => {
@@ -262,6 +432,18 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.next = repair_help(id);
             a.step = NextStep::Repair;
             a.group = Group::Recommended;
+            if is_choice(id) {
+                // Never pre-selected: the person decides, knowing what changes.
+                a.status = "Your choice";
+                a.next = choice_consequence(id);
+                a.ask = true;
+                // Privacy tidy-ups are optional extras, not protection gaps.
+                a.group = if id.starts_with("privacy.") {
+                    Group::Information
+                } else {
+                    Group::Choice
+                };
+            }
         }
         "applied" => {
             a.status = "Fixed";
@@ -297,6 +479,12 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.status = "Managed elsewhere";
             a.next = "This PC's owner controls this setting, so we leave it as it is.";
             a.step = NextStep::ReviewWithAdministrator;
+        }
+        "skipped" if not_offered(detail).is_some() => {
+            a.status = "Not offered";
+            a.next = not_offered(detail).unwrap_or_default();
+            a.step = NextStep::None;
+            a.group = Group::Information;
         }
         "skipped"
             if matches!(
@@ -499,6 +687,71 @@ mod tests {
                 "unexpected impact for finding: {title}"
             );
         }
+    }
+
+    #[test]
+    fn every_extended_control_has_plain_label_impact_help_and_the_right_kind_of_offer() {
+        for spec in secblitz::hardening::all() {
+            let id = spec.id;
+            assert_ne!(control_label(id), "Protection check", "{id}");
+            assert!(!control_impact(id).is_empty(), "{id}");
+            assert_eq!(is_choice(id), spec.ask, "{id}");
+            // Safe or default-safe state is protected.
+            let ok = for_control(id, "compliant", "");
+            assert_eq!(ok.group, Group::Protected, "{id}");
+            assert!(!ok.ask);
+            // Unsafe state is repairable; choices are never pre-selected.
+            let a = for_control(id, "attention", "Eligible");
+            assert_eq!(a.step, NextStep::Repair, "{id}");
+            assert_eq!(a.ask, spec.ask, "{id}");
+            if spec.ask {
+                assert_eq!(a.status, "Your choice");
+                assert_eq!(a.next, choice_consequence(id));
+                assert!(a.next.ends_with('.') && !a.next.contains('\n'));
+                assert!(a.next.len() < 130, "{id}: consequence must stay one short line");
+                assert_eq!(
+                    a.group,
+                    if id.starts_with("privacy.") { Group::Information } else { Group::Choice }
+                );
+            } else {
+                assert_eq!(a.status, "Can fix");
+                assert_eq!(a.group, Group::Recommended);
+                assert!(choice_consequence(id).is_empty());
+            }
+            // Management and capability vetoes are never offered as a fix.
+            let managed = for_control(id, "skipped", "Applied computer Group Policy: assessment only");
+            assert_eq!(managed.status, "Managed elsewhere", "{id}");
+            assert_ne!(managed.step, NextStep::Repair);
+            // Restart-needed controls say so after applying.
+            let applied = for_control(id, "applied", "Preference applied; restart required");
+            assert_eq!(applied.status, "Restart needed", "{id}");
+        }
+        assert!(!is_choice("uac.enabled") && !is_choice("unknown.id"));
+    }
+
+    #[test]
+    fn not_offered_reasons_are_calm_facts_that_never_count_against_the_score() {
+        for reason in [
+            "Not offered: Secure Boot is off",
+            "Not offered: Smart App Control is on",
+            "Not offered: some sign-in add-ons would stop working",
+            "Not offered: sign-in add-ons from other companies are installed",
+            "Not offered: no other administrator account is enabled",
+            "Not offered: no other administrator account could be confirmed",
+            "Not offered: Defender real-time protection is off",
+            "Not offered: Defender cloud protection is off",
+            "Not offered: this PC uses Configuration Manager",
+        ] {
+            let a = for_control("lsa.run_as_ppl", "skipped", reason);
+            assert_eq!(a.status, "Not offered", "{reason}");
+            assert_eq!(a.group, Group::Information);
+            assert_ne!(a.step, NextStep::Repair);
+        }
+        // Unknown reasons are not trusted as "not offered".
+        assert_ne!(
+            for_control("lsa.run_as_ppl", "skipped", "Not offered: anything").status,
+            "Not offered"
+        );
     }
 
     #[test]
