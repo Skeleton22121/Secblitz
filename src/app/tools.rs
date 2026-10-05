@@ -422,6 +422,8 @@ pub struct RepairProgress {
     pub step: usize,
     pub total: usize,
     pub elapsed: u64,
+    /// Seconds since this step started.
+    pub step_elapsed: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -557,6 +559,7 @@ fn supervise_operation(
 ) -> Result<ops::PlanRecord> {
     let started = Instant::now();
     let mut last = Instant::now() - Duration::from_secs(1);
+    let mut step = (0, Instant::now());
     let mut cancelled = false;
     loop {
         if cancel.load(Ordering::SeqCst) && !cancelled {
@@ -569,6 +572,9 @@ fn supervise_operation(
         if last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
             let index = task.progress().ok().and_then(|p| p.step).unwrap_or(0);
+            if index != step.0 {
+                step = (index, Instant::now());
+            }
             let kind = kinds
                 .get(index)
                 .or(kinds.first())
@@ -579,6 +585,7 @@ fn supervise_operation(
                 step: (done + index + 1).min(total.max(1)),
                 total: total.max(1),
                 elapsed: started.elapsed().as_secs(),
+                step_elapsed: step.1.elapsed().as_secs(),
             }));
         }
     }
