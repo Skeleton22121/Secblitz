@@ -63,7 +63,10 @@ function PatchQuiescent($session) {
     $installer = $session.CreateUpdateInstaller()
     if ($installer.IsBusy -isnot [bool] -or $installer.IsBusy) { throw 'Servicing busy or unknown' }
     # Process/service probes fail closed. Never stop an external servicing worker.
-    $workers = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -in @('dism','dismhost','sfc','TiWorker','MoUsoCoreWorker','UsoClient','msiexec','setuphost') })
+    # Not TiWorker: it is the shared servicing host that any feature query
+    # (including Secblitz's own check) starts and that then idles for minutes;
+    # an install in progress shows in IsBusy above and CBS runs one at a time.
+    $workers = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -in @('dism','dismhost','sfc','MoUsoCoreWorker','UsoClient','msiexec','setuphost') })
     if ($workers.Count -gt 0) { throw 'Another servicing worker is active' }
 }
 function PatchReady($session, [uint64]$requiredBytes) {
@@ -318,4 +321,11 @@ try {
         # Do not infer installed/reboot state from this acknowledgement.
         PatchJson @{acknowledged=$true}
     }
-} catch { [Console]::Error.WriteLine('Exact patching failed or deferred; inspect protected record and verify, never replay'); exit 1 }
+} catch {
+    # One line for the technical details: our own reason, or the WUA/COM error and its HRESULT.
+    $why = ([string]$_.Exception.Message -replace '\s+', ' ').Trim()
+    if ($why.Length -gt 200) { $why = $why.Substring(0, 200) }
+    $hr = '0x{0:X8}' -f $_.Exception.HResult
+    [Console]::Error.WriteLine("Exact patching stopped ($hr): $why; inspect protected record and verify, never replay")
+    exit 1
+}
