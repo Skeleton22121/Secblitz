@@ -6,11 +6,11 @@
 use crate::app::settings::{self as prefs_store, ThemeChoice};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Mode, Palette, Tone};
-use crate::gui::widgets::{self, ButtonKind};
+use crate::gui::widgets::{self, anim, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
 use crate::i18n::Lang;
-use iced::widget::{button, column, container, pick_list, row, text, toggler};
-use iced::{Alignment, Background, Border, Color, Element, Length, Task};
+use iced::widget::{column, container, row, space};
+use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
 
 /// A value that is read off the UI thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +59,8 @@ pub struct State {
     /// may point at).
     installed: bool,
     technical: bool,
+    /// Drives the spinner; only ticks while something is busy.
+    clock: anim::Clock,
 }
 
 impl Default for State {
@@ -72,7 +74,28 @@ impl Default for State {
             tray: prefs_store::tray_enabled(),
             installed: prefs_store::installed_exe().is_some(),
             technical: false,
+            clock: anim::Clock::new(),
         }
+    }
+}
+
+impl State {
+    #[allow(dead_code)] // used by `subscription` once the shell batches it
+    fn busy(&self) -> bool {
+        self.working
+            || matches!(self.background, Remote::Loading)
+            || matches!(self.update, Remote::Loading)
+    }
+}
+
+/// Frame ticks, only while a spinner is showing (and motion is allowed).
+/// The shell batches this into its subscriptions.
+#[allow(dead_code)] // wired by the shell (src/gui/mod.rs, not this file)
+pub fn subscription(state: &State) -> Subscription<Message> {
+    if state.busy() && !anim::reduced() {
+        iced::window::frames().map(|_| Message::Settings(Msg::Frame))
+    } else {
+        Subscription::none()
     }
 }
 
@@ -121,6 +144,9 @@ pub enum Msg {
     BackgroundDone(bool, Result<(), String>),
     TrayDone(bool, Result<(), String>),
     ToggleTechnical,
+    /// Animation frame; the redraw is the whole job.
+    #[allow(dead_code)]
+    Frame,
 }
 
 /// Call when the page opens.
@@ -141,7 +167,9 @@ fn save_prefs(ctx: &Ctx) -> Task<Message> {
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
+        Msg::Frame => Task::none(),
         Msg::Load => {
+            state.clock.restart();
             state.background = Remote::Loading;
             state.update = Remote::Loading;
             Task::perform(
@@ -201,6 +229,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.working = true;
+            state.clock.restart();
             match confirm {
                 Confirm::Background(on) => Task::perform(
                     blocking(move || {
@@ -250,9 +279,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     state.tray = on;
                     toast(
                         if on {
-                            "Secblitz will show next to the clock."
+                            "Secblitz now shows in the system tray."
                         } else {
-                            "Secblitz will no longer show next to the clock."
+                            "Secblitz no longer shows in the system tray."
                         },
                         Tone::Good,
                         ctx,
@@ -274,8 +303,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 
 // ----- view -----
 
+/// Row height: ROW plus S2, so single and two line rows align everywhere.
+const SETTING_ROW: f32 = theme::ROW + theme::S2;
+const CONTROL_WIDTH: f32 = 200.0;
+
 fn divider<'a>(p: Palette) -> Element<'a, Message> {
-    container(column![])
+    container(space::vertical())
         .width(Length::Fill)
         .height(1)
         .style(move |_| container::Style {
@@ -285,96 +318,64 @@ fn divider<'a>(p: Palette) -> Element<'a, Message> {
         .into()
 }
 
+/// One 56 px settings row: text on the left, control on the right.
 fn item<'a>(
     p: Palette,
     title: String,
     hint: Option<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut label = column![text(title)
-        .size(theme::BODY)
-        .font(theme::MEDIUM)
-        .color(p.text)]
-    .spacing(2);
+    let mut label = column![widgets::body(p, title)].spacing(theme::S1);
     if let Some(hint) = hint {
         label = label.push(widgets::small(p, hint));
     }
-    row![label.width(Length::Fill), control]
-        .spacing(theme::GAP)
-        .align_y(Alignment::Center)
-        .into()
+    container(
+        row![label.width(Length::Fill), control]
+            .spacing(theme::S4)
+            .align_y(Alignment::Center),
+    )
+    .height(Length::Fixed(SETTING_ROW))
+    .align_y(Alignment::Center)
+    .into()
 }
 
+/// Section caption above a card whose rows are separated by dividers.
 fn section<'a>(p: Palette, title: String, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-    let mut body = column![widgets::h2(p, title)].spacing(theme::GAP);
+    let mut body = column![];
     for (i, r) in rows.into_iter().enumerate() {
         if i > 0 {
             body = body.push(divider(p));
         }
         body = body.push(r);
     }
-    widgets::card(p, body).into()
-}
-
-fn switch<'a>(on: bool, msg: impl Fn(bool) -> Msg + 'a, enabled: bool) -> Element<'a, Message> {
-    toggler(on)
-        .size(24)
-        .on_toggle_maybe(enabled.then_some(move |v| Message::Settings(msg(v))))
-        .into()
-}
-
-fn segmented<'a>(p: Palette, ctx: &Ctx) -> Element<'a, Message> {
-    let current = ctx.prefs.theme;
-    let choice = |label: String, icon: Icon, value: ThemeChoice| {
-        let active = current == value;
-        let (fg, bg) = if active {
-            (p.on_brand, p.brand)
-        } else {
-            (p.text, Color::TRANSPARENT)
-        };
-        button(
-            row![
-                widgets::icon(icon, 15.0, fg),
-                text(label).size(theme::BODY).font(theme::MEDIUM)
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .padding([7, 16])
-        .on_press(Message::Settings(Msg::SetTheme(value)))
-        .style(move |_, status| button::Style {
-            background: Some(Background::Color(
-                if !active && status == button::Status::Hovered {
-                    p.surface
-                } else {
-                    bg
+    column![
+        widgets::section_label(p, title),
+        container(body)
+            .padding([0.0, theme::S6])
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.surface)),
+                border: Border {
+                    radius: theme::R_LARGE.into(),
+                    width: 1.0,
+                    color: p.border,
                 },
-            )),
-            text_color: fg,
-            border: Border {
-                radius: theme::RADIUS_SMALL.into(),
-                ..Border::default()
-            },
-            ..button::Style::default()
-        })
-    };
-    container(
-        row![
-            choice(ctx.t("Light"), Icon::Sun, ThemeChoice::Light),
-            choice(ctx.t("Dark"), Icon::Moon, ThemeChoice::Dark),
-        ]
-        .spacing(2),
-    )
-    .padding(3)
-    .style(move |_| container::Style {
-        background: Some(Background::Color(p.surface_alt)),
-        border: Border {
-            radius: theme::RADIUS_SMALL.into(),
-            width: 1.0,
-            color: p.border,
-        },
-        ..container::Style::default()
-    })
+                text_color: Some(p.text),
+                ..container::Style::default()
+            }),
+    ]
+    .spacing(theme::S3)
+    .into()
+}
+
+/// Spinner plus a short word, for anything with an unknown wait.
+fn busy<'a>(p: Palette, state: &State, label: String) -> Element<'a, Message> {
+    row![
+        anim::spinner(18.0, p.text_muted, state.clock.elapsed()),
+        widgets::muted(p, label),
+    ]
+    .spacing(theme::S2)
+    .align_y(Alignment::Center)
     .into()
 }
 
@@ -391,23 +392,21 @@ fn confirm_panel<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Mes
             "Turn off",
         ),
         Confirm::Tray(true) => (
-            "Show Secblitz next to the clock?",
-            "A small shield will appear next to the clock when you sign in. It shows whether your PC looks safe.",
+            "Show Secblitz in the system tray?",
+            "A small shield will appear in the bottom-right corner of your screen when you sign in. It shows whether your PC looks safe.",
             "Turn on",
         ),
         Confirm::Tray(false) => (
-            "Hide Secblitz next to the clock?",
+            "Hide Secblitz from the system tray?",
             "The small shield will no longer appear when you sign in. Nothing else changes.",
             "Turn off",
         ),
     };
     let body = column![
-        text(ctx.t(title))
-            .size(theme::BODY)
-            .font(theme::SEMIBOLD)
-            .color(p.text),
+        widgets::body(p, ctx.t(title)),
         widgets::muted(p, ctx.t(text_key)),
         row![
+            space::horizontal(),
             widgets::action(
                 p,
                 ButtonKind::Secondary,
@@ -423,21 +422,28 @@ fn confirm_panel<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Mes
                 Some(Message::Settings(Msg::Confirmed))
             ),
         ]
-        .spacing(10),
+        .spacing(theme::S2),
     ]
-    .spacing(12);
+    .spacing(theme::S3);
     container(body)
-        .padding(theme::PAD)
+        .padding(theme::S4)
         .width(Length::Fill)
         .style(move |_| container::Style {
             background: Some(Background::Color(p.surface_alt)),
             border: Border {
-                radius: theme::RADIUS_SMALL.into(),
+                radius: theme::R.into(),
                 width: 1.0,
                 color: p.border,
             },
             ..container::Style::default()
         })
+        .into()
+}
+
+/// A confirmation sits inside its section, spaced like the rows.
+fn confirm_row<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Message> {
+    container(confirm_panel(p, ctx, confirm))
+        .padding([theme::S3, 0.0])
         .into()
 }
 
@@ -455,50 +461,55 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     let t = |s: &str| ctx.t(s);
 
-    // Appearance
+    // Appearance: theme and language
+    let theme_options = [
+        (ThemeChoice::Light, t("Light")),
+        (ThemeChoice::Dark, t("Dark")),
+    ];
+    let selected_lang = LangItem::ALL.iter().find(|l| l.0 == ctx.lang);
     let appearance = section(
         p,
         t("Appearance"),
-        vec![item(
-            p,
-            t("Theme"),
-            Some(t("Light or dark, whichever is easier on your eyes.")),
-            segmented(p, ctx),
-        )],
-    );
-
-    // Language
-    let selected = LangItem(ctx.lang);
-    let language = section(
-        p,
-        t("Language"),
-        vec![item(
-            p,
-            t("Language"),
-            Some(t("Changes right away.")),
-            pick_list(&LangItem::ALL[..], Some(selected), |l| {
-                Message::Settings(Msg::SetLang(l))
-            })
-            .width(200)
-            .text_size(theme::BODY)
-            .into(),
-        )],
+        vec![
+            item(
+                p,
+                t("Theme"),
+                Some(t("Light or dark, whichever is easier on your eyes.")),
+                widgets::segmented(p, &theme_options, ctx.prefs.theme, |v| {
+                    Message::Settings(Msg::SetTheme(v))
+                }),
+            ),
+            item(
+                p,
+                t("Language"),
+                Some(t("Changes right away.")),
+                container(widgets::dropdown(
+                    p,
+                    &LangItem::ALL[..],
+                    selected_lang,
+                    t("Choose a language"),
+                    |l| Message::Settings(Msg::SetLang(l)),
+                ))
+                .width(CONTROL_WIDTH)
+                .into(),
+            ),
+        ],
     );
 
     // Background protection
     let background_control: Element<'a, Message> = if state.working {
-        widgets::pill(p, t("Working…"), Tone::Neutral)
+        busy(p, state, t("Working"))
     } else {
         match &state.background {
-            Remote::Loading => widgets::pill(p, t("Checking…"), Tone::Neutral),
+            Remote::Loading => busy(p, state, t("Checking…")),
             Remote::Failed => row![
                 widgets::pill(p, t("Couldn't check"), Tone::Warn),
                 refresh(p, ctx)
             ]
-            .spacing(8)
+            .spacing(theme::S2)
             .align_y(Alignment::Center)
             .into(),
-            Remote::Ready(on) => switch(*on, Msg::Ask, true),
+            Remote::Ready(on) => widgets::switch(p, *on, Some(|v| Message::Settings(Msg::Ask(v)))),
         }
     };
     let mut rows = vec![item(
@@ -509,39 +520,29 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         )),
         background_control,
     )];
-    if let Some(Confirm::Background(_)) = state.confirm {
-        rows.push(confirm_panel(
-            p,
-            ctx,
-            state.confirm.unwrap_or(Confirm::Background(true)),
-        ));
+    if let Some(c @ Confirm::Background(_)) = state.confirm {
+        rows.push(confirm_row(p, ctx, c));
     }
-    let tray_control = switch(state.tray, Msg::AskTray, state.installed && !state.working);
+    let tray_toggle = (state.installed && !state.working)
+        .then_some(|v| Message::Settings(Msg::AskTray(v)));
     rows.push(item(
         p,
-        t("Show Secblitz next to the clock"),
+        t("Show Secblitz in the system tray (bottom-right corner)"),
         Some(if state.installed {
             t("A small shield tells you at a glance if your PC looks safe.")
         } else {
             t("Available once Secblitz is installed.")
         }),
-        tray_control,
+        widgets::switch(p, state.tray, tray_toggle),
     ));
-    if let Some(Confirm::Tray(_)) = state.confirm {
-        rows.push(confirm_panel(
-            p,
-            ctx,
-            state.confirm.unwrap_or(Confirm::Tray(true)),
-        ));
+    if let Some(c @ Confirm::Tray(_)) = state.confirm {
+        rows.push(confirm_row(p, ctx, c));
     }
     let protection = section(p, t("Background protection"), rows);
 
     // Updates
-    let (pill, line) = match &state.update {
-        Remote::Loading => (
-            widgets::pill(p, t("Checking…"), Tone::Neutral),
-            t("Looking for updates."),
-        ),
+    let (status, line): (Element<'a, Message>, String) = match &state.update {
+        Remote::Loading => (busy(p, state, t("Checking…")), t("Looking for updates.")),
         Remote::Failed | Remote::Ready(UpdateView::Unknown) => (
             widgets::pill(p, t("Couldn't check"), Tone::Warn),
             t("We couldn't check for updates. We'll try again later."),
@@ -566,98 +567,78 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             p,
             line,
             Some(t("Secblitz updates itself. You don't need to do anything.")),
-            pill,
+            status,
         )],
     );
 
     // About
-    let chevron = if state.technical {
-        Icon::ChevronDown
-    } else {
-        Icon::ChevronRight
-    };
     let mut about = column![
         row![
-            widgets::icon(Icon::ShieldCheck, 28.0, p.brand),
+            widgets::icon_filled(Icon::ShieldCheck, 28.0, p.text),
             column![
-                text("Secblitz").size(theme::H2).font(theme::BOLD).color(p.text),
+                widgets::h2(p, "Secblitz"),
                 widgets::small(p, format!("{} {}", t("Version"), env!("CARGO_PKG_VERSION"))),
             ]
-            .spacing(2)
+            .spacing(theme::S1)
         ]
-        .spacing(12)
+        .spacing(theme::S3)
         .align_y(Alignment::Center),
         widgets::muted(p, t("A safer PC. Without headaches.")),
+        widgets::small(p, t("Fonts: IBM Plex Sans (SIL Open Font License).")),
+        widgets::small(p, t("Icons: Fluent UI System Icons (MIT licence).")),
         widgets::small(
             p,
-            t("Secblitz uses the IBM Plex Sans font (SIL Open Font License) and Fluent UI System Icons (MIT licence). Its app clean-up lists draw on the Win11Debloat and WinUtil projects (MIT licence).")
+            t("App clean-up lists draw on the Win11Debloat and WinUtil projects (MIT licence).")
         ),
-        button(
-            row![
-                widgets::icon(chevron, 14.0, p.text_muted),
-                text(t("Technical details")).size(theme::SMALL).font(theme::MEDIUM).color(p.text_muted)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-        )
-        .padding([4, 0])
-        .on_press(Message::Settings(Msg::ToggleTechnical))
-        .style(|_, _| button::Style::default()),
     ]
-    .spacing(10);
-    if state.technical {
-        let folder = ctx
-            .state_dir
-            .as_ref()
-            .map(|d| d.display().to_string())
-            .unwrap_or_else(|| "-".into());
-        let mut details = column![
-            widgets::small(p, format!("{}: {folder}", t("Data folder"))),
-            widgets::small(
-                p,
-                format!(
-                    "{}: {}",
-                    t("Protection checks available"),
-                    ctx.catalog.available.len()
-                )
-            ),
-            widgets::small(
-                p,
-                format!("{}: {}", t("Version"), env!("CARGO_PKG_VERSION"))
-            ),
-        ]
-        .spacing(4);
-        if let Some(error) = &ctx.engine_error {
-            details = details.push(widgets::small(p, format!("{}: {error}", t("Last problem"))));
-        }
-        about = about.push(
-            container(details)
-                .padding(12)
-                .width(Length::Fill)
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(p.surface_alt)),
-                    border: Border {
-                        radius: theme::RADIUS_SMALL.into(),
-                        ..Border::default()
-                    },
-                    ..container::Style::default()
-                }),
-        );
+    .spacing(theme::S2);
+    let mut details = column![
+        widgets::small(
+            p,
+            format!(
+                "{}: {}",
+                t("Data folder"),
+                ctx.state_dir
+                    .as_ref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "-".into())
+            )
+        ),
+        widgets::small(
+            p,
+            format!(
+                "{}: {}",
+                t("Protection checks available"),
+                ctx.catalog.available.len()
+            )
+        ),
+    ]
+    .spacing(theme::S1);
+    if let Some(error) = &ctx.engine_error {
+        details = details.push(widgets::small(p, format!("{}: {error}", t("Last problem"))));
     }
-    let about = widgets::card(
+    about = about.push(widgets::expander(
         p,
-        column![widgets::h2(p, t("About")), about].spacing(theme::GAP),
-    );
+        t("Technical details"),
+        state.technical,
+        Message::Settings(Msg::ToggleTechnical),
+        details,
+    ));
+    let about = column![
+        widgets::section_label(p, t("About")),
+        widgets::card(p, about),
+    ]
+    .spacing(theme::S3);
 
     column![
         widgets::page_header(p, t("Settings"), Some(t("Make Secblitz work your way."))),
+        space::vertical().height(theme::S2),
         appearance,
-        language,
         protection,
         updates,
         about,
     ]
-    .spacing(theme::GAP)
+    .spacing(theme::S6)
     .into()
 }
 
