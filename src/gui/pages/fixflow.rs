@@ -41,7 +41,7 @@ pub struct State {
     frames_seen: bool,
     /// Spinner clock for the working view.
     work: Clock,
-    /// Overall progress bar value while applying.
+    /// Overall progress bar value while applying or undoing.
     bar: Option<Tween>,
     /// Starts when the result appears; cleared once the draw-in is over.
     result: Option<Instant>,
@@ -52,6 +52,9 @@ pub struct State {
     plan: Vec<PlanRow>,
     /// Plain sentence about the last recorded fix (from the score log).
     undo_note: Option<String>,
+    /// How many settings the last recorded fix changed (from the score log),
+    /// so undo can show real progress when `plan` is unknown.
+    undo_count: usize,
 }
 
 impl Default for State {
@@ -66,12 +69,13 @@ impl Default for State {
             batches: Vec::new(),
             plan: Vec::new(),
             undo_note: None,
+            undo_count: 0,
         }
     }
 }
 
 /// One line of "what will change", translated once when the sheet opens.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct PlanRow {
     id: String,
     name: String,
@@ -232,6 +236,7 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         .map(|ids| ids.iter().map(|id| plan_row(ctx, id, false)).collect())
         .unwrap_or_default();
     state.undo_note = None;
+    state.undo_count = 0;
     state.stage = Stage::Review {
         ids: Vec::new(),
         undo: true,
@@ -261,6 +266,16 @@ fn close(state: &mut State) {
     state.bar = None;
 }
 
+/// How many settings the running job will touch: the reviewed list, or for
+/// an undo of an earlier session's fix, the count from the score log.
+fn planned(state: &State, undo: bool) -> usize {
+    if undo && state.plan.is_empty() {
+        state.undo_count
+    } else {
+        state.plan.len()
+    }
+}
+
 /// Share of the overall bar: each planned fix, plus one step for the check
 /// that follows.
 fn bar_target(planned: usize, finished: usize, verifying: bool) -> f32 {
@@ -288,6 +303,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::UndoInfo(found) => {
             if let (Stage::Review { undo: true, .. }, Some((t, n))) = (&state.stage, found) {
+                state.undo_count = n;
                 let when = day_title(ctx, log::local_day(t), log::local_day(log::now()));
                 let key = if n == 1 {
                     "Your last fix changed 1 setting ({when}). We'll put it back the way it was."
@@ -338,7 +354,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.now = Instant::now();
             state.work = Clock::at(state.now);
             state.result = None;
-            state.bar = (!undo).then(|| Tween::new(0.0, 0.0, anim::NORMAL));
+            // Undo shows real progress too whenever we know what it restores.
+            state.bar = (!undo || planned(state, true) > 0)
+                .then(|| Tween::new(0.0, 0.0, anim::NORMAL));
             state.stage = Stage::Working {
                 undo,
                 phase: None,
@@ -351,7 +369,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 
 pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Task<Message> {
     use worker::Event as E;
-    let planned = state.plan.len();
+    let planned = planned(state, matches!(state.stage, Stage::Working { undo: true, .. }));
     let Stage::Working {
         undo, phase, items, ..
     } = &mut state.stage
@@ -913,6 +931,18 @@ mod tests {
             total: 0,
             n,
         }
+    }
+
+    #[test]
+    fn undo_of_an_earlier_fix_counts_from_the_log() {
+        let mut state = State {
+            undo_count: 3,
+            ..State::default()
+        };
+        assert_eq!(planned(&state, true), 3);
+        assert_eq!(planned(&state, false), 0);
+        state.plan = vec![PlanRow::default()];
+        assert_eq!(planned(&state, true), 1);
     }
 
     #[test]
