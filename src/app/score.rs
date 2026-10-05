@@ -90,8 +90,10 @@ pub fn classify(r: &Outcome) -> Class {
     }
 }
 
+/// Only positive management evidence. `ReviewWithAdministrator` alone is also
+/// the fallback step of ordinary controls, so it is not proof of an owner.
 fn managed(a: &advice::Advice) -> bool {
-    a.status == "Managed elsewhere" || a.step == advice::NextStep::ReviewWithAdministrator
+    a.status == "Managed elsewhere"
 }
 
 /// Classify a diagnostic finding. `info` findings are "Good to know" notes:

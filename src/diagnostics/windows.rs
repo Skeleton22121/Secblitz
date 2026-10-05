@@ -510,7 +510,7 @@ fn modules(id: ProbeId) -> Vec<&'static str> {
         }
         ProbeId::SecureBootCerts => &["SecureBoot", "Microsoft.PowerShell.Diagnostics"],
         ProbeId::UpdatePolicy | ProbeId::Persistence => &["CimCmdlets"],
-        ProbeId::LegacyFeatures => &["Dism"],
+        ProbeId::LegacyFeatures => &["CimCmdlets"],
         ProbeId::AccountHygiene => &["Microsoft.PowerShell.LocalAccounts"],
         ProbeId::AccountSetup => &["Microsoft.PowerShell.LocalAccounts", "CimCmdlets"],
         ProbeId::DnsEncryption => &["DnsClient"],

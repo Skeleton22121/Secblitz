@@ -330,13 +330,21 @@ try {
             }
         }
         'LegacyFeatures' {
-            Load 'Dism'
+            # WMI, not DISM: Get-WindowsOptionalFeature starts DismHost.exe,
+            # which the single-process probe job forbids.
+            Load 'CimCmdlets'
             @{
                 powershell_v2_enabled=(Fact {
-                    $f = Get-WindowsOptionalFeature -Online -FeatureName 'MicrosoftWindowsPowerShellV2Root'
-                    $state = [string]$f.State
-                    if ($state -ceq 'Enabled') { return $true }
-                    if ($state -cin @('Disabled','DisabledWithPayloadRemoved')) { return $false }
+                    $f = @(Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='MicrosoftWindowsPowerShellV2Root'" -OperationTimeoutSec 30)
+                    if ($f.Count -gt 1) { throw 'Ambiguous feature state' }
+                    # Removed from Windows 11 24H2 and later: absent means off.
+                    if ($f.Count -eq 0) {
+                        if (@(Get-CimInstance -ClassName Win32_OptionalFeature -OperationTimeoutSec 60).Count -lt 5) { throw 'Unreadable feature list' }
+                        return $false
+                    }
+                    $state = [int]$f[0].InstallState
+                    if ($state -eq 1) { return $true }
+                    if ($state -in @(2,3)) { return $false }
                     throw 'Unknown feature state'
                 })
             }

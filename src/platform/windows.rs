@@ -171,7 +171,9 @@ extern "system" {
     fn SetInformationJobObject(job: HANDLE, class: i32, info: *const c_void, len: u32) -> i32;
     fn AssignProcessToJobObject(job: HANDLE, process: HANDLE) -> i32;
 }
-fn job() -> Result<Handle> {
+/// `processes` is the job's active-process limit: 1 (PowerShell only, no
+/// descendants) everywhere except the one DISM feature write.
+fn job(processes: u32) -> Result<Handle> {
     unsafe {
         let h = CreateJobObjectW(null(), null());
         ensure!(
@@ -182,7 +184,7 @@ fn job() -> Result<Handle> {
         let h = Handle(h);
         let mut limits: ExtendedLimits = zeroed();
         limits.basic.flags = 0x2000 | 0x8; // KILL_ON_JOB_CLOSE | ACTIVE_PROCESS
-        limits.basic.active_processes = 1;
+        limits.basic.active_processes = processes;
         if SetInformationJobObject(
             h.0,
             9,
@@ -224,15 +226,18 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
     );
     super::validate_request(action, id, value)?;
     if let Some(id) = id.filter(|id| crate::hardening::is_hardening(id)) {
-        // Windows feature servicing (DISM) is slow; everything else is quick.
-        let limit = if id == "ps.v2_engine" && action == "write" {
-            900
+        // Changing a Windows feature goes through DISM, which is slow and
+        // works through its own DismHost.exe helper. Only that fixed, compiled
+        // write may start helpers; every other script runs with no descendants.
+        let (limit, processes) = if id == "ps.v2_engine" && action == "write" {
+            (900, DISM_PROCESSES)
         } else {
-            90
+            (90, 1)
         };
-        return run_script(
+        return run_script_in(
             super::hardening_script(action, id, value)?,
             Duration::from_secs(limit),
+            processes,
         );
     }
     let script = format!(
@@ -276,7 +281,18 @@ pub fn support_action(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// PowerShell plus the DISM helper processes a feature change may start.
+const DISM_PROCESSES: u32 = 4;
+
 fn run_script<T: DeserializeOwned>(script: String, timeout: Duration) -> Result<T> {
+    run_script_in(script, timeout, 1)
+}
+
+fn run_script_in<T: DeserializeOwned>(
+    script: String,
+    timeout: Duration,
+    processes: u32,
+) -> Result<T> {
     let win = windows_dir()?;
     let ps = win.join("System32/WindowsPowerShell/v1.0/powershell.exe");
     // EncodedCommand is UTF-16LE, not a shell command line. All inserted data is
@@ -292,7 +308,7 @@ fn run_script<T: DeserializeOwned>(script: String, timeout: Duration) -> Result<
         .encode_utf16()
         .flat_map(u16::to_le_bytes)
         .collect();
-    let job = job()?;
+    let job = job(processes)?;
     let mut child = Command::new(ps)
         .args([
             "-NoLogo",
