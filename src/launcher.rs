@@ -463,6 +463,7 @@ mod imp {
             Request::OpenSignIn => open(Action::OpenSignInSettings),
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,
+                Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,
                 Err(_) => Reply::Failed,
             },
             Request::BlockSuggestedApps => match block_suggested_apps() {
@@ -531,7 +532,7 @@ mod imp {
             return Reply::Unavailable;
         }
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let installed = Command::new("winget")
+        let exit = Command::new("winget")
             .args([
                 "install",
                 "--id",
@@ -553,7 +554,7 @@ mod imp {
                 let deadline = std::time::Instant::now() + Duration::from_secs(14 * 60);
                 loop {
                     match child.try_wait() {
-                        Ok(Some(status)) => return Some(status.success()),
+                        Ok(Some(status)) => return Some(status.code().map(|c| c as u32)),
                         Ok(None) if std::time::Instant::now() < deadline => {
                             std::thread::sleep(Duration::from_millis(500))
                         }
@@ -564,10 +565,16 @@ mod imp {
                         }
                     }
                 }
-            })
-            .unwrap_or(false);
-        if installed {
+            });
+        // `Some(Some(0))` = installed; `Some(Some(code))` = winget failed with
+        // that code; `Some(None)`/`None` = no usable code or timed out.
+        if exit == Some(Some(0)) {
             return Reply::Done;
+        }
+        // No connection: opening the Store would only show another error.
+        let code = exit.flatten();
+        if code.is_some_and(secblitz::tools::is_offline_code) || secblitz::tools::dns_offline() {
+            return Reply::Offline;
         }
         // Fall back to the Store page so the person can install it there.
         let uri = wide(&format!("ms-windows-store://pdp/?ProductId={store_id}"));

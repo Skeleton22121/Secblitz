@@ -305,8 +305,12 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
                     | "Preserving absent or already-safe machine preference"
             ) =>
         {
-            a.next =
-                "We kept your current setting. It may already protect you, so nothing was changed.";
+            // The engine refuses to write an absent (or already-safe) value: that
+            // is Windows' own safe default, so it counts as protected.
+            a.status = "Protected by Windows";
+            a.next = "Windows' safe default is in place.";
+            a.step = NextStep::None;
+            a.group = Group::Protected;
         }
         "skipped"
             if matches!(
@@ -317,6 +321,12 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
         {
             a.next = "Undo your last fixes before making new ones.";
             a.step = NextStep::ReviewUndo;
+        }
+        "skipped" if id.starts_with("permissions.service.") && !detail.is_empty() => {
+            // The permission list could not be proven safe to edit (unusual
+            // layout, owner or device rules). We never claim it is protected.
+            a.status = "Left as it is";
+            a.next = "Nothing was changed. If you're not sure, leave it as it is.";
         }
         _ => {}
     }
@@ -640,8 +650,31 @@ mod tests {
             "skipped",
             "Preserving absent or nonzero UAC preference",
         );
-        assert_eq!(a.status, "Needs your choice");
-        assert!(a.next.contains("may already protect"));
+        assert_eq!(a.status, "Protected by Windows");
+        assert_eq!(a.group, Group::Protected);
+        assert_eq!(a.next, "Windows' safe default is in place.");
+        for id in [
+            "installer.always_install_elevated",
+            "wdigest.use_logon_credential",
+            "lsa.restrict_anonymous_sam",
+            "lsa.limit_blank_password_use",
+            "uac.consent",
+        ] {
+            let a = for_control(
+                id,
+                "skipped",
+                "Preserving absent or already-safe machine preference",
+            );
+            assert_eq!(a.group, Group::Protected, "{id}");
+            assert_eq!(a.step, NextStep::None, "{id}");
+        }
+        let p = for_control(
+            "permissions.service.bits",
+            "skipped",
+            "Service permissions preserved: Complex ACL requires manual review",
+        );
+        assert_eq!(p.group, Group::Choice);
+        assert_eq!(p.status, "Left as it is");
         assert_eq!(
             for_control(
                 "uac.enabled",

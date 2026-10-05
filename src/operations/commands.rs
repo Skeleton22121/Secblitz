@@ -102,6 +102,22 @@ pub(super) fn dism_evidence(bytes: &[u8]) -> Evidence {
 mod tests {
     use super::*;
     #[test]
+    fn servicing_gate_only_trusts_documented_repair_source_values() {
+        // Windows writes CountryCode under ...\Policies\Servicing on stock PCs;
+        // that must never be mistaken for a configured repair source.
+        let text = script(false, "probe").unwrap();
+        assert!(!text.contains("HasValues $p) { throw 'Configured servicing"));
+        assert!(text.contains("ServicingSourcePolicyConfigured $p"));
+        for name in [
+            "LocalSourcePath",
+            "RepairContentServerSource",
+            "UseWindowsUpdate",
+        ] {
+            assert!(text.contains(&format!("'{name}'")), "{name}");
+        }
+        assert!(!text.contains("'CountryCode'"));
+    }
+    #[test]
     fn exact_commands_and_no_download_restart_or_arbitrary_source() {
         for kind in [
             OperationKind::DismCheckHealth,
