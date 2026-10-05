@@ -49,6 +49,7 @@ pub struct State {
     expanded: HashSet<String>,
     open_protected: bool,
     open_cant: bool,
+    open_info: bool,
     all_attention: bool,
     all_protected: bool,
     show_error: bool,
@@ -72,6 +73,7 @@ impl Default for State {
             expanded: HashSet::new(),
             open_protected: false,
             open_cant: false,
+            open_info: false,
             all_attention: false,
             all_protected: false,
             show_error: false,
@@ -92,6 +94,7 @@ pub enum Msg {
     Expand(String),
     ShowProtected,
     ToggleCant,
+    ToggleInfo,
     AllAttention,
     AllProtected,
     ErrorDetails,
@@ -126,6 +129,8 @@ struct Att {
     why: String,
     tech: String,
     restart: bool,
+    /// A choice the person makes: shown unticked with its consequence.
+    choice: bool,
 }
 
 /// A row of the "worth a look / can't check / managed" groups.
@@ -158,6 +163,8 @@ enum Bucket {
     Look,
     Managed,
     Unavailable,
+    /// Notes and "not offered" items: never counted, no action.
+    GoodToKnow,
 }
 
 fn tech_line(id: &str, status: &str, detail: &str, lang: Lang) -> String {
@@ -175,18 +182,23 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         };
         let a = advice::for_outcome(r);
         let impact = advice::control_impact(id);
-        let line = if impact.is_empty() {
+        let choice = advice::is_choice(id);
+        // A choice always shows its one-line consequence, never a generic impact.
+        let line = if choice || impact.is_empty() {
             ctx.t(a.next)
         } else {
             format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(impact))
         };
+        let restart = ctx.catalog.restart.iter().any(|x| x == id)
+            || r.detail.to_lowercase().contains("restart");
         rows.attention.push(Att {
             id: id.clone(),
             name: lang.control(id),
             line,
             why: ctx.t(a.next),
             tech: tech_line(&r.id, &r.status, &r.detail, lang),
-            restart: ctx.catalog.restart.iter().any(|x| x == id),
+            restart,
+            choice,
         });
     }
 
@@ -212,6 +224,8 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         }
         let (bucket, tone) = if a.status == "Managed elsewhere" {
             (Bucket::Managed, Tone::Neutral)
+        } else if class == Class::Excluded {
+            (Bucket::GoodToKnow, Tone::Neutral)
         } else if class == Class::Unknown {
             (Bucket::Unavailable, Tone::Neutral)
         } else {
@@ -236,17 +250,12 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         let (bucket, tone) =
             if a.status == "Managed elsewhere" || a.step == NextStep::ReviewWithAdministrator {
                 (Bucket::Managed, Tone::Neutral)
+            } else if score::is_good_to_know(f) {
+                (Bucket::GoodToKnow, Tone::Neutral)
             } else if a.step == NextStep::CheckAgain {
                 (Bucket::Unavailable, Tone::Neutral)
             } else {
-                (
-                    Bucket::Look,
-                    if a.group == Group::Information {
-                        Tone::Neutral
-                    } else {
-                        Tone::Warn
-                    },
-                )
+                (Bucket::Look, Tone::Warn)
             };
         rows.others.push(other(
             ctx,
@@ -276,7 +285,7 @@ fn other(
     let icon = match bucket {
         Bucket::Managed => Icon::Lock,
         Bucket::Unavailable => Icon::Info,
-        Bucket::Look if a.group == Group::Information => Icon::Info,
+        Bucket::GoodToKnow => Icon::Info,
         Bucket::Look => Icon::AlertTriangle,
     };
     Other {
@@ -361,6 +370,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Expand(id) => flip(&mut state.expanded, id),
         Msg::ShowProtected => state.open_protected = !state.open_protected,
         Msg::ToggleCant => state.open_cant = !state.open_cant,
+        Msg::ToggleInfo => state.open_info = !state.open_info,
         Msg::AllAttention => state.all_attention = !state.all_attention,
         Msg::AllProtected => state.all_protected = !state.all_protected,
         Msg::Frame(now) => track_scan(state, ctx, now),
@@ -568,14 +578,18 @@ fn attention_row<'a>(
     a: &Att,
     checked: bool,
     restart_label: &str,
+    choice_label: &str,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&a.id);
-    let trailing: Element<'a, Message> = if a.restart {
-        widgets::pill(p, restart_label.to_owned(), Tone::Neutral)
-    } else {
-        nothing()
-    };
+    let mut pills = row![].spacing(theme::S1).align_y(Alignment::Center);
+    if a.choice {
+        pills = pills.push(widgets::pill(p, choice_label.to_owned(), Tone::Neutral));
+    }
+    if a.restart {
+        pills = pills.push(widgets::pill(p, restart_label.to_owned(), Tone::Neutral));
+    }
+    let trailing: Element<'a, Message> = pills.into();
     let toggle = Message::Fixes(Msg::Toggle(a.id.clone()));
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &a.id) {
@@ -768,11 +782,18 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
-    let header = widgets::page_header(
-        p,
-        ctx.t("Protection"),
-        Some(ctx.t("Everything we check on your PC, in plain words.")),
-    );
+    let to_check = ctx
+        .report
+        .as_deref()
+        .filter(|_| ctx.checking.is_none())
+        .map_or(0, score::to_check_count);
+    let subtitle = if to_check > 0 {
+        ctx.t("To check ({n})")
+            .replace("{n}", &to_check.to_string())
+    } else {
+        ctx.t("Everything we check on your PC, in plain words.")
+    };
+    let header = widgets::page_header(p, ctx.t("Protection"), Some(subtitle));
     let page = |body: Column<'a, Message>| -> Element<'a, Message> {
         column![header, space::vertical().height(theme::S6), body].into()
     };
@@ -890,11 +911,21 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         let all: Vec<String> = rows.attention.iter().map(|a| a.id.clone()).collect();
         let chosen = selection(state, ctx, &all);
         let n = chosen.len();
-        let restart_label = ctx.t("Needs restart");
+        let restart_label = ctx.t("Restart needed");
+        let choice_label = ctx.t("Your choice");
         let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
         let mut list: Vec<Element<'a, Message>> = shown
             .iter()
-            .map(|a| attention_row(state, ctx, a, chosen.contains(&a.id), &restart_label))
+            .map(|a| {
+                attention_row(
+                    state,
+                    ctx,
+                    a,
+                    chosen.contains(&a.id),
+                    &restart_label,
+                    &choice_label,
+                )
+            })
             .collect();
         if let Some(m) = more(
             ctx,
@@ -973,6 +1004,23 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             Some(count_text(ctx, cant.len())),
             state.open_cant,
             Message::Fixes(Msg::ToggleCant),
+            list,
+        ));
+    }
+
+    // Good to know: notes only, collapsed, never counted.
+    let info = bucket(Bucket::GoodToKnow);
+    if !info.is_empty() {
+        let mut list = column![].spacing(theme::S1);
+        for o in &info {
+            list = list.push(other_row(state, ctx, o));
+        }
+        body = body.push(widgets::collapsible(
+            p,
+            ctx.t("Good to know"),
+            Some(count_text(ctx, info.len())),
+            state.open_info,
+            Message::Fixes(Msg::ToggleInfo),
             list,
         ));
     }

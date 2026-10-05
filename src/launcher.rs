@@ -461,6 +461,11 @@ mod imp {
             Request::OpenWindowsSecurity => open(Action::OpenWindowsSecurity),
             Request::OpenEncryption => open(Action::OpenEncryptionSettings),
             Request::OpenSignIn => open(Action::OpenSignInSettings),
+            Request::OpenTamperProtection => open(Action::OpenTamperProtection),
+            Request::OpenProtectionHistory => open(Action::OpenProtectionHistory),
+            Request::OpenAppBrowserControl => open(Action::OpenAppBrowserControl),
+            Request::OpenOptionalFeatures => open(Action::OpenOptionalFeatures),
+            Request::OpenAccounts => open(Action::OpenAccounts),
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,
                 Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,

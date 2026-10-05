@@ -12,6 +12,11 @@ pub enum Action {
     OpenWindowsSecurity,
     OpenSignInSettings,
     OpenEncryptionSettings,
+    OpenTamperProtection,
+    OpenProtectionHistory,
+    OpenAppBrowserControl,
+    OpenOptionalFeatures,
+    OpenAccounts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -31,6 +36,11 @@ fn settings_uri(action: Action) -> Option<&'static str> {
         Action::OpenWindowsSecurity => Some("ms-settings:windowsdefender"),
         Action::OpenSignInSettings => Some("ms-settings:signinoptions"),
         Action::OpenEncryptionSettings => Some("ms-settings:deviceencryption"),
+        Action::OpenTamperProtection => Some("windowsdefender://threatsettings"),
+        Action::OpenProtectionHistory => Some("windowsdefender://threat"),
+        Action::OpenAppBrowserControl => Some("windowsdefender://appbrowser"),
+        Action::OpenOptionalFeatures => Some("ms-settings:optionalfeatures"),
+        Action::OpenAccounts => Some("ms-settings:otherusers"),
         _ => None,
     }
 }
@@ -44,6 +54,11 @@ fn validate_settings_request(uri: &str, elevated: bool) -> Result<()> {
                 | "ms-settings:windowsdefender"
                 | "ms-settings:signinoptions"
                 | "ms-settings:deviceencryption"
+                | "windowsdefender://threatsettings"
+                | "windowsdefender://threat"
+                | "windowsdefender://appbrowser"
+                | "ms-settings:optionalfeatures"
+                | "ms-settings:otherusers"
         ),
         "Unknown settings URI"
     );
@@ -111,6 +126,17 @@ mod tests {
                 Action::OpenEncryptionSettings,
                 "ms-settings:deviceencryption",
             ),
+            (
+                Action::OpenTamperProtection,
+                "windowsdefender://threatsettings",
+            ),
+            (Action::OpenProtectionHistory, "windowsdefender://threat"),
+            (
+                Action::OpenAppBrowserControl,
+                "windowsdefender://appbrowser",
+            ),
+            (Action::OpenOptionalFeatures, "ms-settings:optionalfeatures"),
+            (Action::OpenAccounts, "ms-settings:otherusers"),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
@@ -136,6 +162,11 @@ mod tests {
             "ms-settings:windowsupdate ",
             "ms-settings:windowsupdate\0",
             "ms-settings:windowsupdate & calc.exe",
+            "windowsdefender://",
+            "windowsdefender://threat/",
+            "WINDOWSDEFENDER://threat",
+            "windowsdefender://threat&calc.exe",
+            "ms-settings:otherusers ",
         ] {
             for elevated in [false, true] {
                 assert!(validate_settings_request(uri, elevated).is_err());
@@ -154,6 +185,11 @@ mod tests {
             Action::OpenWindowsSecurity,
             Action::OpenSignInSettings,
             Action::OpenEncryptionSettings,
+            Action::OpenTamperProtection,
+            Action::OpenProtectionHistory,
+            Action::OpenAppBrowserControl,
+            Action::OpenOptionalFeatures,
+            Action::OpenAccounts,
         ] {
             assert!(run(action).is_err());
         }
