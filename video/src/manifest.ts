@@ -32,3 +32,20 @@ export type Manifest = {
   sources: Source[];
   segments: Segment[];
 };
+
+/** Centre in source pixels; zoom 1 shows the whole recording width. */
+export type Camera = {x: number; y: number; zoom: number};
+
+export type LoopSegment = {
+  id: string;
+  sourceId: string;
+  sourceInSeconds: number;
+  sourceOutSeconds: number;
+  playbackRate: number;
+  outputFromFrame: number;
+  outputDurationFrames: number;
+  camera: {from: Camera; to: Camera};
+  evidence: string;
+};
+
+export type LoopManifest = Omit<Manifest, 'segments'> & {segments: LoopSegment[]};

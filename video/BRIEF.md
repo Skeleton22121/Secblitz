@@ -35,3 +35,9 @@ Create a polished, accelerated, silent website hero demo of actual SecBlitz 0.3.
 - Owned paths: video/ and final website/assets/intro-6bb434a9c067.mp4 and website/assets/preview-33b342ab21fb.webp. Filenames follow the approved content-hashed delivery; path-only changes preserve the original bytes.
 - Website HTML, CSS, JS and guest operations belong to other agents.
 - Record exact source timestamp ranges, rates, hashes and output ranges in sources.json before final rendering.
+
+## 0.7.0 website loop (SecblitzLoop070)
+- 20 s (600 frames, 1920x1080, 30 fps), silent, no text, no outro. The last frame continues into the first, so the page can loop it forever.
+- Real GUI footage from Secblitz-W11-UI-Test (takes C and D, 2026-10-05), cropped to the app's client area. Cuts and camera moves live in `scripts/plan-v070.mjs`, which writes `sources-v070.json`; `scripts/verify-v070.mjs` checks hashes, the timeline, the seam and that no password-generator footage is used.
+- Flow: Home, check, Home 33, fix sheet, fixing, result, Home 37, remove Weather (copy saved), removed, restore, Tools health tips, dark mode, back to light Home.
+- `npm run plan-v070 && npm run render-v070 && npm run deliver-v070`. Delivery names every file by the SHA-256 of its final bytes.
