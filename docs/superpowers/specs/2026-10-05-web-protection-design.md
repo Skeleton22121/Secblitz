@@ -43,7 +43,7 @@ websites") that opens the page. It is never counted in the score.
 ```
 apps and browsers
   -> Windows DNS client
-     -> NRPT rule for every name (".") -> 127.0.0.1 / ::1, last resort 9.9.9.9
+     -> NRPT rule for every name (".") -> 127.0.0.1 / ::1, then network DNS, then Quad9
         -> SecblitzFilter service (LocalService)
              blocked?  -> answers 0.0.0.0 / :: itself
              allowed?  -> forwards the query unchanged to the PC's normal DNS servers
@@ -61,22 +61,39 @@ settings, so:
 - VPNs keep working, because their more specific NRPT rules win;
 - Chrome and Edge fall back to the Windows resolver when NRPT rules exist.
 
-The rule lists three servers in order: `127.0.0.1`, `::1`, then Quad9
-`9.9.9.9`. If the filter stops answering, Windows fails over to Quad9 after
-about a second and the internet keeps working (unfiltered) until the filter is
-back. The rule carries a fixed Secblitz name, and Secblitz only ever removes
-its own rule.
+The rule lists the filter first (`127.0.0.1`, `::1`), then the current
+network's own DNS servers, then Quad9 (`9.9.9.9`, `149.112.112.112`). If the
+filter stops answering, Windows moves to the next server and the internet keeps
+working (unfiltered) until the filter is back. The network's own servers come
+before Quad9 because some networks block public DNS, and hotel Wi-Fi sign-in
+pages only resolve through the network's DNS. The rule carries a fixed
+Secblitz name, and Secblitz only ever removes its own rule.
 
-The elevated app adds the rule when the first switch goes on and removes it
-when all are off. The hourly SYSTEM update task removes it when the filter
-service is missing or stopped. The service gets restart-on-failure actions.
+`secblitz filter reconcile` (hidden subcommand, runs as SYSTEM) keeps the rule
+right:
 
-**Spike first (VM).** Before building the rest: confirm the "." NRPT rule
-routes lookups from Edge, Chrome, Firefox, Store apps and Windows services
-to a loopback listener; confirm failover to the third server when loopback is
-silent; confirm removal takes effect immediately. If NRPT fails any of these,
-fall back to per-adapter DNS (`127.0.0.1` primary, the adapter's own DHCP DNS
-read from the registry as the upstream), and revise this spec.
+- it adds or updates the rule when a switch is on and the filter service is running;
+- it rewrites the fallback servers from the active adapters;
+- it removes the rule when every switch is off, or the service is missing or stopped.
+
+It runs from a SYSTEM scheduled task, `SecblitzFilterReconcile`, triggered when
+the PC connects to a network (NetworkProfile event 10000) and every hour. The
+elevated app also runs it directly when a switch changes. The filter service
+gets restart-on-failure actions.
+
+**Spike results (VM, 2026-10-05).** Throwaway listener on `127.0.0.1:53`
+plus a "." NRPT rule. Confirmed:
+
+- lookups reach the filter from `Resolve-DnsName`, .NET `getaddrinfo`, Edge
+  (pages and Edge's own services) and Defender cloud protection
+  (`wdcp.microsoft.com`);
+- with the listener down, Windows fails over to the next server in about
+  0.3 s, then immediately;
+- when the listener is back, lookups return to it at once;
+- removing the rule restores normal DNS straight away.
+
+The VM's network blocks public DNS entirely, which is why the network's own
+servers come before Quad9.
 
 ### SecblitzFilter service
 
@@ -150,12 +167,14 @@ updates and cloud protection, Microsoft Store downloads, `secblitz.lol` and
 
 ## Install, upgrade, uninstall
 
-- The installer registers SecblitzFilter (disabled) alongside the other
-  services. It is started only when a switch goes on.
+- The installer registers SecblitzFilter (disabled) and the
+  SecblitzFilterReconcile task, using the same owned-task checks as
+  SecblitzUpdate. The service starts only when a switch goes on.
 - Upgrade stops the filter while files are replaced and starts it again
   afterwards, like ResumeMonitor. The NRPT failover covers the gap.
 - Uninstall, from the app or from Windows Settings, with either choice: remove
-  the NRPT rule first, then stop and delete the service, then delete `Filter\`.
+  the NRPT rule first, then stop and delete the service, then the reconcile
+  task, then delete `Filter\`.
   Blocking is a Secblitz feature, not a Windows setting, so "keep my PC as it
   is" still removes it.
 
