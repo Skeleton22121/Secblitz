@@ -1176,20 +1176,12 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             None,
         ));
     }
-    let list = widgets::group(p, ctx.t("Removed apps"), None, None, rows);
-    if state.saved_bytes == 0 {
-        return list;
-    }
-    column![
-        widgets::small(
-            p,
-            ctx.t("Saved copies use about {size}.")
-                .replace("{size}", &crate::app::tools::size_phrase(state.saved_bytes)),
-        ),
-        list
-    ]
-    .spacing(theme::S3)
-    .into()
+    // The saved-copies total sits under the heading, aligned with it.
+    let summary = (state.saved_bytes > 0).then(|| {
+        ctx.t("Saved copies use about {size}.")
+            .replace("{size}", &crate::app::tools::size_phrase(state.saved_bytes))
+    });
+    widgets::group(p, ctx.t("Removed apps"), summary, None, rows)
 }
 
 /// What a Removed apps row offers. Messages are real so the view can use
