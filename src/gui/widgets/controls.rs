@@ -463,7 +463,9 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
             shell.request_redraw();
         }
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
-            let a = st.progress.step(*now, anim::FAST, |t| anim::DECELERATE.at(t));
+            let a = st
+                .progress
+                .step(*now, anim::FAST, |t| anim::DECELERATE.at(t));
             let b = st.grow.step(*now, anim::FASTER, |t| anim::DECELERATE.at(t));
             let c = st.hover.step(*now, anim::FAST, |t| anim::STANDARD.at(t));
             if a || b || c || st.progress.running() || st.grow.running() || st.hover.running() {
@@ -619,7 +621,11 @@ impl Widget<Message, Theme, Renderer> for CheckGlyph {
     }
     fn state(&self) -> tree::State {
         tree::State::new(CheckGlyphState {
-            v: Track::at(if self.state == CheckState::Off { 0.0 } else { 1.0 }),
+            v: Track::at(if self.state == CheckState::Off {
+                0.0
+            } else {
+                1.0
+            }),
             state: self.state,
         })
     }
@@ -644,7 +650,11 @@ impl Widget<Message, Theme, Renderer> for CheckGlyph {
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
             if st.state != self.state {
                 st.state = self.state;
-                st.v.target(if self.state == CheckState::Off { 0.0 } else { 1.0 });
+                st.v.target(if self.state == CheckState::Off {
+                    0.0
+                } else {
+                    1.0
+                });
             }
             let on = st.v.goal() > 0.5;
             let busy = if on {
@@ -838,10 +848,7 @@ impl Widget<Message, Theme, Renderer> for Marker {
     }
     fn layout(&mut self, _: &mut Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
         let w = limits.max().width;
-        layout::Node::new(Size::new(
-            if w.is_finite() { w } else { 0.0 },
-            self.total(),
-        ))
+        layout::Node::new(Size::new(if w.is_finite() { w } else { 0.0 }, self.total()))
     }
     fn update(
         &mut self,

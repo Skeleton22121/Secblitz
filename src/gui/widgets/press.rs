@@ -396,10 +396,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
         if !enabled {
             st.pressed = false;
         }
-        if st.focused
-            && !over
-            && matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
-        {
+        if st.focused && !over && matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
             st.focused = false;
         }
 

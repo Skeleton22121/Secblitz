@@ -233,7 +233,11 @@ pub fn enter_progress(start: Instant, now: Instant) -> f32 {
 /// t = 0: invisible against `to`). iced has no whole-subtree opacity, so a
 /// page that is built from a faded palette fades cheaply: nothing is drawn
 /// off-screen and no layer is composited.
-pub fn fade_palette(p: &crate::gui::theme::Palette, to: iced::Color, t: f32) -> crate::gui::theme::Palette {
+pub fn fade_palette(
+    p: &crate::gui::theme::Palette,
+    to: iced::Color,
+    t: f32,
+) -> crate::gui::theme::Palette {
     use crate::gui::theme::mix;
     let t = t.clamp(0.0, 1.0);
     if t >= 1.0 {

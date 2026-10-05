@@ -30,13 +30,21 @@ fn track_color(p: &Palette) -> Color {
 /// Capsule from `x0` to `x1` filling the frame height `h`.
 fn capsule(x0: f32, x1: f32, h: f32) -> Path {
     let w = (x1 - x0).max(0.0);
-    Path::rounded_rectangle(Point::new(x0, 0.0), Size::new(w, h), (h.min(w) / 2.0).into())
+    Path::rounded_rectangle(
+        Point::new(x0, 0.0),
+        Size::new(w, h),
+        (h.min(w) / 2.0).into(),
+    )
 }
 
 /// Width of the filled part for `value` 0..=1 on a track of `w`; a nonzero
 /// value is never thinner than the bar is tall, so it stays a clean dot.
 pub fn fill_width(value: f32, w: f32, h: f32) -> f32 {
-    let v = if value.is_nan() { 0.0 } else { value.clamp(0.0, 1.0) };
+    let v = if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    };
     if v <= 0.0 {
         0.0
     } else {
@@ -74,7 +82,14 @@ struct Plain {
 
 impl canvas::Program<Message> for Plain {
     type State = ();
-    fn draw(&self, _: &(), r: &Renderer, _: &Theme, b: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        _: &(),
+        r: &Renderer,
+        _: &Theme,
+        b: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut f = Frame::new(r, b.size());
         paint_bar(&mut f, &self.p, self.tone, self.value);
         vec![f.into_geometry()]
@@ -150,7 +165,14 @@ impl canvas::Program<Message> for Eased {
         }
         Some(canvas::Action::request_redraw())
     }
-    fn draw(&self, s: &EasedState, r: &Renderer, _: &Theme, b: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        s: &EasedState,
+        r: &Renderer,
+        _: &Theme,
+        b: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut f = Frame::new(r, b.size());
         paint_bar(&mut f, &self.p, self.tone, s.shown);
         vec![f.into_geometry()]
@@ -194,7 +216,14 @@ impl canvas::Program<Message> for Shimmer {
         s.secs = now.saturating_duration_since(start).as_secs_f32();
         Some(canvas::Action::request_redraw())
     }
-    fn draw(&self, s: &ShimmerState, r: &Renderer, _: &Theme, b: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        s: &ShimmerState,
+        r: &Renderer,
+        _: &Theme,
+        b: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut f = Frame::new(r, b.size());
         let (w, h) = (f.width(), f.height());
         f.fill(&capsule(0.0, w, h), track_color(&self.p));
@@ -206,7 +235,10 @@ impl canvas::Program<Message> for Shimmer {
         }
         let (left, len) = shimmer_span(s.secs, w);
         // Faint trail first, then the bright head; both clipped to the track.
-        for (from, to, alpha) in [(left - len * 0.5, left + len, 0.28), (left, left + len, 1.0)] {
+        for (from, to, alpha) in [
+            (left - len * 0.5, left + len, 0.28),
+            (left, left + len, 1.0),
+        ] {
             let (x0, x1) = (from.max(0.0), to.min(w));
             if x1 - x0 > 0.5 {
                 f.fill(&capsule(x0, x1, h), color.scale_alpha(alpha));
@@ -237,7 +269,14 @@ pub fn step_fill(current: f32, i: usize) -> f32 {
 
 impl canvas::Program<Message> for Steps {
     type State = ();
-    fn draw(&self, _: &(), r: &Renderer, _: &Theme, b: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        _: &(),
+        r: &Renderer,
+        _: &Theme,
+        b: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut f = Frame::new(r, b.size());
         let n = self.total.max(1);
         let h = f.height();

@@ -50,16 +50,19 @@ struct State {
 struct Overflow {
     p: Palette,
     items: Vec<MenuItem>,
+    /// The visible trigger: a press button (hover tween, press scale).
+    button: Element<'static, Message>,
 }
 
 fn menu_size(items: &[MenuItem]) -> Size {
-    let longest = items.iter().map(|i| i.label.chars().count()).max().unwrap_or(4) as f32;
-    let w = (longest * 7.6 + theme::S3 * 2.0 + ICON + theme::S3 + theme::S2 * 2.0)
-        .clamp(168.0, 300.0);
-    Size::new(
-        w,
-        items.len() as f32 * theme::MENU_ROW + theme::S1 * 2.0,
-    )
+    let longest = items
+        .iter()
+        .map(|i| i.label.chars().count())
+        .max()
+        .unwrap_or(4) as f32;
+    let w =
+        (longest * 7.6 + theme::S3 * 2.0 + ICON + theme::S3 + theme::S2 * 2.0).clamp(168.0, 300.0);
+    Size::new(w, items.len() as f32 * theme::MENU_ROW + theme::S1 * 2.0)
 }
 
 fn row_rect(menu: Rectangle, i: usize) -> Rectangle {
@@ -78,36 +81,37 @@ impl Widget<Message, Theme, Renderer> for Overflow {
     fn state(&self) -> tree::State {
         tree::State::new(State::default())
     }
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.button)]
+    }
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.button));
+    }
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(BUTTON), Length::Fixed(BUTTON))
     }
-    fn layout(&mut self, _: &mut Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
-        layout::atomic(limits, BUTTON, BUTTON)
+    fn layout(&mut self, tree: &mut Tree, r: &Renderer, limits: &layout::Limits) -> layout::Node {
+        let child = self
+            .button
+            .as_widget_mut()
+            .layout(&mut tree.children[0], r, limits);
+        layout::Node::with_children(child.size(), vec![child])
     }
     fn draw(
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        _: &Theme,
-        _: &renderer::Style,
+        theme: &Theme,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let st = tree.state.downcast_ref::<State>();
-        let b = layout.bounds();
-        let p = self.p;
-        let bg = if st.open {
-            Some(p.selected)
-        } else if cursor.is_over(b) {
-            Some(p.hover_strong)
-        } else {
-            None
-        };
-        if let Some(c) = bg {
+        if st.open {
             renderer.fill_quad(
                 Quad {
-                    bounds: b,
+                    bounds: layout.bounds(),
                     border: Border {
                         radius: theme::R.into(),
                         ..Border::default()
@@ -115,29 +119,17 @@ impl Widget<Message, Theme, Renderer> for Overflow {
                     shadow: Shadow::default(),
                     snap: true,
                 },
-                Background::Color(c),
+                Background::Color(self.p.selected),
             );
         }
-        let fg = if st.open || cursor.is_over(b) {
-            p.text
-        } else {
-            p.text_muted
-        };
-        let ib = Rectangle {
-            x: b.center_x() - 10.0,
-            y: b.center_y() - 10.0,
-            width: 20.0,
-            height: 20.0,
-        };
-        renderer.draw_svg(
-            svg::Svg {
-                handle: svg::Handle::from_memory(MORE_SVG),
-                color: Some(fg),
-                rotation: Radians(0.0),
-                opacity: 1.0,
-            },
-            ib,
-            b,
+        self.button.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout.children().next().unwrap(),
+            cursor,
+            viewport,
         );
     }
     fn update(
@@ -146,11 +138,22 @@ impl Widget<Message, Theme, Renderer> for Overflow {
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _: &Renderer,
-        _: &mut dyn Clipboard,
+        r: &Renderer,
+        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-        _: &Rectangle,
+        viewport: &Rectangle,
     ) {
+        // The press button animates hover / press; its own message is a no-op.
+        self.button.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout.children().next().unwrap(),
+            cursor,
+            r,
+            clipboard,
+            shell,
+            viewport,
+        );
         let st = tree.state.downcast_mut::<State>();
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -245,73 +248,77 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_> {
         let p = self.p;
         let menu = layout.bounds();
         let dy = self.slide(Instant::now());
-            renderer.with_translation(Vector::new(0.0, -dy), |renderer| {
-                renderer.fill_quad(
-                    Quad {
-                        bounds: menu,
-                        border: Border {
-                            radius: theme::R.into(),
-                            width: theme::HAIRLINE,
-                            color: p.border,
-                        },
-                        shadow: Shadow::default(), // never: tiny-skia draws shadows unclipped
-                        snap: true,
+        renderer.with_translation(Vector::new(0.0, -dy), |renderer| {
+            renderer.fill_quad(
+                Quad {
+                    bounds: menu,
+                    border: Border {
+                        radius: theme::R.into(),
+                        width: theme::HAIRLINE,
+                        color: p.border,
                     },
-                    Background::Color(p.popup),
-                );
-                for (i, item) in self.items.iter().enumerate() {
-                    let r = row_rect(menu, i);
-                    if self.state.hover == Some(i) {
-                        renderer.fill_quad(
-                            Quad {
-                                bounds: r,
-                                border: Border {
-                                    radius: theme::R_SMALL.into(),
-                                    ..Border::default()
-                                },
-                                shadow: Shadow::default(),
-                                snap: true,
+                    shadow: Shadow::default(), // never: tiny-skia draws shadows unclipped
+                    snap: true,
+                },
+                Background::Color(p.popup),
+            );
+            for (i, item) in self.items.iter().enumerate() {
+                let r = row_rect(menu, i);
+                if self.state.hover == Some(i) {
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: r,
+                            border: Border {
+                                radius: theme::R_SMALL.into(),
+                                ..Border::default()
                             },
-                            Background::Color(p.hover_strong),
-                        );
-                    }
-                    let fg: Color = if item.danger { p.bad_text } else { p.text };
-                    let ig = if item.danger { p.bad_text } else { p.text_muted };
-                    let ib = Rectangle {
-                        x: r.x + theme::S3,
-                        y: r.center_y() - ICON / 2.0,
-                        width: ICON,
-                        height: ICON,
-                    };
-                    renderer.draw_svg(
-                        svg::Svg {
-                            handle: svg::Handle::from_memory(item.icon.svg()),
-                            color: Some(ig),
-                            rotation: Radians(0.0),
-                            opacity: 1.0,
+                            shadow: Shadow::default(),
+                            snap: true,
                         },
-                        ib,
-                        r,
-                    );
-                    let tx = ib.x + ICON + theme::S3;
-                    renderer.fill_text(
-                        Text {
-                            content: item.label.clone(),
-                            bounds: Size::new(r.x + r.width - tx - theme::S3, r.height),
-                            size: Pixels(theme::BODY),
-                            line_height: text::LineHeight::Absolute(Pixels(theme::LINE_BODY)),
-                            font: theme::REGULAR,
-                            align_x: text::Alignment::Left,
-                            align_y: alignment::Vertical::Center,
-                            shaping: text::Shaping::Advanced,
-                            wrapping: text::Wrapping::None,
-                        },
-                        Point::new(tx, r.center_y()),
-                        fg,
-                        r,
+                        Background::Color(p.hover_strong),
                     );
                 }
-            });
+                let fg: Color = if item.danger { p.bad_text } else { p.text };
+                let ig = if item.danger {
+                    p.bad_text
+                } else {
+                    p.text_muted
+                };
+                let ib = Rectangle {
+                    x: r.x + theme::S3,
+                    y: r.center_y() - ICON / 2.0,
+                    width: ICON,
+                    height: ICON,
+                };
+                renderer.draw_svg(
+                    svg::Svg {
+                        handle: svg::Handle::from_memory(item.icon.svg()),
+                        color: Some(ig),
+                        rotation: Radians(0.0),
+                        opacity: 1.0,
+                    },
+                    ib,
+                    r,
+                );
+                let tx = ib.x + ICON + theme::S3;
+                renderer.fill_text(
+                    Text {
+                        content: item.label.clone(),
+                        bounds: Size::new(r.x + r.width - tx - theme::S3, r.height),
+                        size: Pixels(theme::BODY),
+                        line_height: text::LineHeight::Absolute(Pixels(theme::LINE_BODY)),
+                        font: theme::REGULAR,
+                        align_x: text::Alignment::Left,
+                        align_y: alignment::Vertical::Center,
+                        shaping: text::Shaping::Advanced,
+                        wrapping: text::Wrapping::None,
+                    },
+                    Point::new(tx, r.center_y()),
+                    fg,
+                    r,
+                );
+            }
+        });
     }
     fn update(
         &mut self,
@@ -333,8 +340,7 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let h = (0..self.items.len())
-                    .find(|&i| cursor.is_over(row_rect(menu, i)));
+                let h = (0..self.items.len()).find(|&i| cursor.is_over(row_rect(menu, i)));
                 if h != self.state.hover {
                     self.state.hover = h;
                     shell.request_redraw();
@@ -400,5 +406,35 @@ pub fn overflow_menu<'a>(
             danger,
         })
         .collect();
-    super::arrow(Element::new(Overflow { p, items }))
+    let button = super::press::button(
+        iced::widget::svg(svg::Handle::from_memory(MORE_SVG))
+            .width(20)
+            .height(20)
+            .style(move |_, _| iced::widget::svg::Style {
+                color: Some(p.text_muted),
+            }),
+    )
+    .width(BUTTON)
+    .height(BUTTON)
+    .padding((BUTTON - 20.0) / 2.0)
+    .on_press(Message::Noop)
+    .style(move |_, status| iced::widget::button::Style {
+        background: match status {
+            iced::widget::button::Status::Hovered => Some(Background::Color(p.hover_strong)),
+            iced::widget::button::Status::Pressed => Some(Background::Color(p.pressed)),
+            _ => None,
+        },
+        text_color: p.text_muted,
+        border: Border {
+            radius: theme::R.into(),
+            ..Border::default()
+        },
+        shadow: Shadow::default(),
+        snap: true,
+    });
+    super::arrow(Element::new(Overflow {
+        p,
+        items,
+        button: button.into(),
+    }))
 }

@@ -162,6 +162,8 @@ pub enum Message {
     /// Open the undo review sheet.
     ReviewUndo,
     Escape,
+    /// Does nothing (animated triggers that act through their own state).
+    Noop,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
     DismissToast,
@@ -398,6 +400,7 @@ impl App {
                 self.toast_leaving = false;
                 Task::none()
             }
+            Message::Noop => Task::none(),
             Message::DismissToast => self.begin_toast_exit(),
             Message::ToastGone => {
                 if self.toast_leaving {
@@ -662,8 +665,7 @@ impl App {
     /// starts at 30% strength and reaches full colour with the rise.
     fn apply_fade(&mut self) {
         let base = Palette::of(self.ctx.palette.mode);
-        self.ctx.palette =
-            widgets::appear::fade_palette(&base, base.bg, 0.3 + 0.7 * self.enter_t);
+        self.ctx.palette = widgets::appear::fade_palette(&base, base.bg, 0.3 + 0.7 * self.enter_t);
     }
 
     /// Start the short slide-out; `ToastGone` removes the toast afterwards.

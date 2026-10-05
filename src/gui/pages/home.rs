@@ -229,7 +229,7 @@ fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Elemen
     ));
 
     let body = column![
-        anim::shield_scan(96.0, p.text, elapsed),
+        widgets::scan::check_hero(p, widgets::scan::HeroPhase::Checking, elapsed, ratio),
         column![
             widgets::h1(p, ctx.t("Checking your PC")),
             widgets::muted(p, ctx.t("This takes about a minute. Nothing is changed.")),

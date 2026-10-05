@@ -112,7 +112,13 @@ pub fn ticker_depths(entered: &[f32]) -> Vec<f32> {
 
 /// (alpha, muted 0..1) of a line at `depth`.
 pub fn ticker_style(depth: f32) -> (f32, f32) {
-    const STOPS: [(f32, f32); 5] = [(-1.0, 0.0), (0.0, 1.0), (1.0, 0.55), (2.0, 0.28), (3.0, 0.0)];
+    const STOPS: [(f32, f32); 5] = [
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (1.0, 0.55),
+        (2.0, 0.28),
+        (3.0, 0.0),
+    ];
     let mut alpha = 0.0;
     for w in STOPS.windows(2) {
         let ((d0, a0), (d1, a1)) = (w[0], w[1]);
@@ -198,7 +204,11 @@ pub fn check_hero<'a>(
     }
     if done {
         if reduced {
-            let mark = if phase == HeroPhase::Good { CHECK } else { ALERT };
+            let mark = if phase == HeroPhase::Good {
+                CHECK
+            } else {
+                ALERT
+            };
             layers.push(layer(mark, tone, 1.0));
         } else {
             layers.push(
@@ -218,12 +228,28 @@ pub fn check_hero<'a>(
 fn shield_path() -> Path {
     Path::new(|b| {
         b.move_to(Point::new(80.0, 20.0));
-        b.bezier_curve_to(Point::new(92.0, 30.0), Point::new(106.0, 35.0), Point::new(124.0, 36.0));
+        b.bezier_curve_to(
+            Point::new(92.0, 30.0),
+            Point::new(106.0, 35.0),
+            Point::new(124.0, 36.0),
+        );
         b.line_to(Point::new(124.0, 74.0));
-        b.bezier_curve_to(Point::new(124.0, 104.0), Point::new(108.0, 126.0), Point::new(80.0, 140.0));
-        b.bezier_curve_to(Point::new(52.0, 126.0), Point::new(36.0, 104.0), Point::new(36.0, 74.0));
+        b.bezier_curve_to(
+            Point::new(124.0, 104.0),
+            Point::new(108.0, 126.0),
+            Point::new(80.0, 140.0),
+        );
+        b.bezier_curve_to(
+            Point::new(52.0, 126.0),
+            Point::new(36.0, 104.0),
+            Point::new(36.0, 74.0),
+        );
         b.line_to(Point::new(36.0, 36.0));
-        b.bezier_curve_to(Point::new(54.0, 35.0), Point::new(68.0, 30.0), Point::new(80.0, 20.0));
+        b.bezier_curve_to(
+            Point::new(54.0, 35.0),
+            Point::new(68.0, 30.0),
+            Point::new(80.0, 20.0),
+        );
         b.close();
     })
 }
@@ -276,7 +302,11 @@ impl canvas::Program<Message> for Back {
 
         // Rising fill, clipped to the shield. Tone eases in when the check ends.
         let fill_col = if done {
-            let e = if reduced { 1.0 } else { DECELERATE.at(self.secs / 0.3) };
+            let e = if reduced {
+                1.0
+            } else {
+                DECELERATE.at(self.secs / 0.3)
+            };
             theme::mix(p.text, tone, e)
         } else {
             p.text
@@ -286,14 +316,23 @@ impl canvas::Program<Message> for Back {
         if shown > 0.002 {
             let h = (160.0 - ly).max(0.0);
             if h > 0.5 {
-                f.with_clip(Rectangle::new(Point::new(0.0, ly), Size::new(160.0, h)), |g| {
-                    g.fill(&shield, fill_col.scale_alpha(if done { 0.16 } else { 0.12 }));
-                });
+                f.with_clip(
+                    Rectangle::new(Point::new(0.0, ly), Size::new(160.0, h)),
+                    |g| {
+                        g.fill(
+                            &shield,
+                            fill_col.scale_alpha(if done { 0.16 } else { 0.12 }),
+                        );
+                    },
+                );
             }
             if self.phase == HeroPhase::Checking && shown < 0.995 {
-                f.with_clip(Rectangle::new(Point::new(0.0, ly), Size::new(160.0, 1.6)), |g| {
-                    g.fill(&shield, p.text.scale_alpha(0.5));
-                });
+                f.with_clip(
+                    Rectangle::new(Point::new(0.0, ly), Size::new(160.0, 1.6)),
+                    |g| {
+                        g.fill(&shield, p.text.scale_alpha(0.5));
+                    },
+                );
             }
         }
 
@@ -316,7 +355,11 @@ impl canvas::Program<Message> for Back {
                 &Path::circle(c, 72.0 * (1.0 - 0.0 * converge)),
                 stroke(p.text.scale_alpha(0.10 * alpha), 1.5),
             );
-            let base = if done { TOP } else { TOP + self.secs * TAU / 3.2 };
+            let base = if done {
+                TOP
+            } else {
+                TOP + self.secs * TAU / 3.2
+            };
             for (i, a) in [1.0f32, 0.6, 0.35].into_iter().enumerate() {
                 let ang = base + i as f32 * TAU / 3.0;
                 let pt = Point::new(c.x + radius * ang.cos(), c.y + radius * ang.sin());
@@ -340,11 +383,18 @@ impl canvas::Program<Message> for Back {
                         });
                         b.close();
                     });
-                    let max = if p.mode == theme::Mode::Dark { 0.2 } else { 0.15 };
+                    let max = if p.mode == theme::Mode::Dark {
+                        0.2
+                    } else {
+                        0.15
+                    };
                     f.fill(&wedge, p.text.scale_alpha(max * fade * alpha));
                 }
                 let tip = Point::new(c.x + 62.0 * head.cos(), c.y + 62.0 * head.sin());
-                f.stroke(&Path::line(c, tip), stroke(p.text.scale_alpha(0.28 * alpha), 1.5));
+                f.stroke(
+                    &Path::line(c, tip),
+                    stroke(p.text.scale_alpha(0.28 * alpha), 1.5),
+                );
             }
         }
         vec![f.into_geometry()]
@@ -360,7 +410,14 @@ struct Front {
 
 impl canvas::Program<Message> for Front {
     type State = ();
-    fn draw(&self, _: &(), renderer: &Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &Renderer,
+        _: &Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut f = Frame::new(renderer, bounds.size());
         let tone = tone_of(&self.p, self.phase);
         let t = ((self.secs - 0.12) / 0.5).clamp(0.0, 1.0);
@@ -372,7 +429,11 @@ impl canvas::Program<Message> for Front {
         f.translate(iced::Vector::new(-80.0, -80.0));
         let w = 6.0;
         if self.phase == HeroPhase::Good {
-            let pts = [Point::new(62.0, 82.0), Point::new(74.0, 94.0), Point::new(100.0, 66.0)];
+            let pts = [
+                Point::new(62.0, 82.0),
+                Point::new(74.0, 94.0),
+                Point::new(100.0, 66.0),
+            ];
             if let Some(path) = partial_line(&pts, DECELERATE.at(t)) {
                 f.stroke(&path, stroke(tone, w));
             }
@@ -382,7 +443,10 @@ impl canvas::Program<Message> for Front {
             if let Some(path) = partial_line(&bar, pop) {
                 f.stroke(&path, stroke(tone, w));
             }
-            f.fill(&Path::circle(Point::new(80.0, 102.0), 3.8 * pop), tone.scale_alpha(pop));
+            f.fill(
+                &Path::circle(Point::new(80.0, 102.0), 3.8 * pop),
+                tone.scale_alpha(pop),
+            );
         }
         vec![f.into_geometry()]
     }
@@ -407,7 +471,14 @@ struct Ticker<'a> {
 
 impl canvas::Program<Message> for Ticker<'_> {
     type State = ();
-    fn draw(&self, _: &(), renderer: &Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &Renderer,
+        _: &Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut f = Frame::new(renderer, bounds.size());
         let p = &self.p;
         // Only the lines that can still be visible: VISIBLE plus the one leaving.
@@ -431,10 +502,20 @@ impl canvas::Program<Message> for Ticker<'_> {
             if j == lines.len() - 1 && muted < 0.5 {
                 let age = self.now.saturating_duration_since(*at).as_secs_f32();
                 let (a0, len) = anim::spinner_arc(age);
-                f.stroke(&Path::circle(Point::new(mx, y), 5.0), stroke(col.scale_alpha(0.14), 1.75));
-                f.stroke(&arc_path(Point::new(mx, y), 5.0, a0, len), stroke(col, 1.75));
+                f.stroke(
+                    &Path::circle(Point::new(mx, y), 5.0),
+                    stroke(col.scale_alpha(0.14), 1.75),
+                );
+                f.stroke(
+                    &arc_path(Point::new(mx, y), 5.0, a0, len),
+                    stroke(col, 1.75),
+                );
             } else {
-                let pts = [Point::new(mx - 4.0, y), Point::new(mx - 1.2, y + 3.0), Point::new(mx + 4.0, y - 3.0)];
+                let pts = [
+                    Point::new(mx - 4.0, y),
+                    Point::new(mx - 1.2, y + 3.0),
+                    Point::new(mx + 4.0, y - 3.0),
+                ];
                 if let Some(tick) = partial_line(&pts, 1.0) {
                     f.stroke(&tick, stroke(p.text_muted.scale_alpha(alpha * 0.8), 1.75));
                 }
@@ -444,7 +525,11 @@ impl canvas::Program<Message> for Ticker<'_> {
                 position: Point::new(30.0, y),
                 color: col,
                 size: theme::BODY.into(),
-                font: if muted < 0.5 { theme::MEDIUM } else { theme::REGULAR },
+                font: if muted < 0.5 {
+                    theme::MEDIUM
+                } else {
+                    theme::REGULAR
+                },
                 align_x: iced::alignment::Horizontal::Left.into(),
                 align_y: iced::alignment::Vertical::Center,
                 ..Text::default()
@@ -459,7 +544,11 @@ impl canvas::Program<Message> for Ticker<'_> {
 /// emphasized decelerate) while the older ones glide up, soften and fade.
 /// Needs frames for 450 ms after each new line, or for as long as the newest
 /// line shows its small spinner.
-pub fn status_ticker<'a>(p: Palette, lines: &'a [(String, Instant)], now: Instant) -> Element<'a, Message> {
+pub fn status_ticker<'a>(
+    p: Palette,
+    lines: &'a [(String, Instant)],
+    now: Instant,
+) -> Element<'a, Message> {
     canvas::Canvas::new(Ticker { p, lines, now })
         .width(Length::Fill)
         .height(Length::Fixed(TICKER_HEIGHT))
