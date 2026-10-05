@@ -418,7 +418,8 @@ struct ChevronState {
     start: Option<Instant>,
 }
 
-/// Right chevron that eases 0 -> 90 degrees (and back) when `open` changes.
+/// Disclosure chevron that eases from right to down (and back) when `open`
+/// changes.
 /// Asks for redraws only while turning.
 struct Chevron {
     size: f32,
@@ -467,18 +468,25 @@ impl Widget<Message, Theme, Renderer> for Chevron {
         _: &Rectangle,
     ) {
         let st = tree.state.downcast_ref::<ChevronState>();
-        let a = chevron_angle(st, Instant::now());
+        let a = chevron_angle(st, Instant::now()).clamp(0.0, 1.0);
         let bounds = layout.bounds();
-        renderer.draw_svg(
-            svg::Svg {
-                handle: svg::Handle::from_memory(Icon::ChevronRight.svg()),
-                color: Some(self.color),
-                rotation: Radians(a * std::f32::consts::FRAC_PI_2),
-                opacity: 1.0,
-            },
-            bounds,
-            bounds,
-        );
+        // Cross-fade right -> down rather than rotating: the software
+        // renderer (no GPU) scales an SVG by the rotation matrix instead of
+        // turning it, so a quarter turn drew nothing at all.
+        for (glyph, opacity) in [(Icon::ChevronRight, 1.0 - a), (Icon::ChevronDown, a)] {
+            if opacity > 0.0 {
+                renderer.draw_svg(
+                    svg::Svg {
+                        handle: svg::Handle::from_memory(glyph.svg()),
+                        color: Some(self.color),
+                        rotation: Radians(0.0),
+                        opacity,
+                    },
+                    bounds,
+                    bounds,
+                );
+            }
+        }
     }
     fn update(
         &mut self,
@@ -531,9 +539,15 @@ pub fn collapsible<'a>(
     on_toggle: Message,
     body: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    // The chevron takes a row icon's slot (and carries the height spacer, so
+    // it adds no gap): it lines up with the icons of the rows inside, and the
+    // title with their titles.
     let mut head = row![
-        iced::widget::space::vertical().height(theme::CONTROL + theme::S2 - theme::S2 * 2.0),
-        chevron(16.0, p.text_muted, open),
+        row![
+            container(chevron(16.0, p.text_muted, open)).center_x(theme::ICON_ROW),
+            iced::widget::space::vertical().height(theme::CONTROL + theme::S2 - theme::S2 * 2.0),
+        ]
+        .align_y(Alignment::Center),
         text(title.into())
             .size(theme::BODY)
             .line_height(LineHeight::Absolute(Pixels(theme::LINE_BODY)))
@@ -542,7 +556,7 @@ pub fn collapsible<'a>(
             .wrapping(Wrapping::None),
         iced::widget::space::horizontal(),
     ]
-    .spacing(theme::S3)
+    .spacing(theme::S4)
     .align_y(Alignment::Center);
     if let Some(s) = summary {
         head = head.push(
