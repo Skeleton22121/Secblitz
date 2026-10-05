@@ -1,6 +1,6 @@
 # Clean up apps: offline backup and restore
 
-Date: 2026-10-05. Status: approved in conversation, awaiting spec review.
+Date: 2026-10-05. Status: implemented and verified on the UI test VM.
 
 ## Goal
 
@@ -237,6 +237,25 @@ VM (Secblitz-W11-UI-Test only), each verified on screen:
    brings it back.
 7. Low disk: fill the disk; removal is refused with the plain message.
 8. No console windows appear during any of the above.
+
+### VM results (Secblitz-W11-UI-Test, 2026-10-05, release builds)
+
+| Check | Result |
+|---|---|
+| Remove Weather through the GUI | gone from Windows; copy of 3 packages + 5 frameworks, Tester's data encrypted (no plaintext in the copy) |
+| Restore with the network off (twice, English and German) | 3 packages `Status = Ok`, `SignatureKind = Store`, not development mode; 372 data files back, owned by Tester; app launches; copy and unused framework copies deleted afterwards |
+| Junction planted in the app's data folder | marker file restored byte for byte; junction not recreated; `hosts` and the `etc` folder unchanged |
+| Dev Home (no Store listing, data for three accounts) | back and provisioned; every account's data restored at once (Windows keeps other accounts' data folders), so nothing waited in `pending.json` |
+| One byte flipped in a copied DLL | Secblitz refuses the copy, says so, and gets the app from the Store instead; the installed DLL has the original byte; the damaged copy is removed |
+| Delete saved copy | confirm sheet; copy and all five framework copies removed; row falls back to the Store |
+| 600 MB free | "Kept: not enough free space to save a copy"; app left installed; nothing left in the store |
+| Console windows during all of the above | none (Secblitz's PowerShell runs hidden) |
+
+Not testable on this VM: a missing framework at restore time (every
+framework Weather and the other catalog apps use is shared with apps that
+stay installed, and Windows refuses to remove a framework in use), and data
+waiting for an account that hasn't signed in (Windows kept every account's
+data folder). Both paths are covered by host tests with a fake Windows.
 
 ## Out of scope
 
