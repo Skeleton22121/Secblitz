@@ -42,3 +42,8 @@ tempfile = "3"
 lto = true
 codegen-units = 1
 strip = true
+
+# Local fix for iced's CPU renderer: full-frame repaint on change (see
+# vendor/iced_tiny_skia/src/window/compositor.rs, "Secblitz patch").
+[patch.crates-io]
+iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
