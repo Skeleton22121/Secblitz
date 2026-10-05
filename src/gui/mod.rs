@@ -556,7 +556,32 @@ impl App {
         let column_content = container(content)
             .max_width(PAGE_MAX_WIDTH)
             .width(Length::Fill);
-        let main = container(
+        // A page may pin an action bar below its scrolling content.
+        let footer = match self.page {
+            Page::Debloat => debloat::footer(&self.debloat, &self.ctx),
+            _ => None,
+        };
+        let footer_bar: Element<'_, Message> = match footer {
+            Some(bar) => column![
+                container(iced::widget::space::horizontal())
+                    .height(theme::HAIRLINE)
+                    .width(Length::Fill)
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(p.border)),
+                        ..container::Style::default()
+                    }),
+                container(container(bar).max_width(PAGE_MAX_WIDTH).width(Length::Fill))
+                    .center_x(Length::Fill)
+                    .padding([theme::S4, theme::S10])
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(p.surface)),
+                        ..container::Style::default()
+                    }),
+            ]
+            .into(),
+            None => iced::widget::space().into(),
+        };
+        let scroll = container(
             scrollable(
                 container(column_content)
                     .center_x(Length::Fill)
@@ -567,11 +592,14 @@ impl App {
             .style(widgets::controls::scroll_style(p)),
         )
         .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(p.bg)),
-            ..container::Style::default()
-        });
+        .height(Length::Fill);
+        let main = container(column![scroll, footer_bar])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.bg)),
+                ..container::Style::default()
+            });
         let body: Element<'_, Message> = row![self.sidebar(), main].into();
         // Constant tree shape: the page is always child 0 of one stack and each
         // overlay is its own layer (an empty Space when inactive). Opening or
