@@ -463,29 +463,27 @@ fn technical_lines(
 
 // -------------------------------------------------------------------- view
 
-/// Wrap the window body with the active sheet / working / result view.
-pub fn overlay<'a>(
-    state: &'a State,
-    ctx: &'a Ctx,
-    body: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let p = ctx.palette;
+/// Content of the active review / working / result sheet, if any.
+pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     match &state.stage {
-        Stage::Closed => body,
-        Stage::Review { ids, undo } => widgets::sheet(p, body, review_view(state, ctx, ids, *undo)),
+        Stage::Closed => None,
+        Stage::Review { ids, undo } => Some(review_view(state, ctx, ids, *undo)),
         Stage::Working { undo, phase, items } => {
-            widgets::sheet(p, body, working_view(state, ctx, *undo, *phase, items))
+            Some(working_view(state, ctx, *undo, *phase, items))
         }
         Stage::Result {
             undo,
             summary,
             technical,
             show_technical,
-        } => widgets::sheet(
-            p,
-            body,
-            result_view(state, ctx, *undo, summary, technical, *show_technical),
-        ),
+        } => Some(result_view(
+            state,
+            ctx,
+            *undo,
+            summary,
+            technical,
+            *show_technical,
+        )),
     }
 }
 

@@ -143,7 +143,9 @@ column![
 **Card with title**: `card(column![h2, S3, content])`.
 
 **List rows**: each row is `list_button(row![icon_badge, column![body, small], space, pill/chevron].spacing(S3))`,
-minimum 48 px; separate rows with `S1`, no divider lines inside a card.
+minimum 48 px; separate rows with `S1`, no divider lines inside a card. The one exception is
+the Settings page: its label-plus-control rows are `SETTING_ROW` (56 px) tall
+and separated by a `HAIRLINE` divider, so a long form stays scannable.
 
 **Card grid**: two columns = `row![card, card].spacing(S4)`, each `Length::FillPortion(1)`.
 
@@ -176,8 +178,9 @@ Read `docs/MOTION.md` and use the tokens in `widgets::anim`.
   `is_animating`. Never a permanent timer.
 - Hover/press feedback is an instant colour change from the theme (it is under
   one frame at 60 Hz and never flickers).
-- Built in: `switch` knob slide (160 ms decelerate), toast slide-up (180 ms,
-  once). `appear::decelerate(t)` is the shared easing for these.
+- Built in: `switch` knob slide (160 ms decelerate), toast slide-up (`NORMAL`
+  250 ms on `DECELERATE`) and slide-down exit (`FAST` 150 ms on `ACCELERATE`).
+  The easing curves live in `anim.rs`.
 
 ## 6. Performance rules
 

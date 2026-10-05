@@ -202,7 +202,7 @@ fn balloon(hwnd: HWND, lang: Lang) {
     copy_text(&mut nid.szInfoTitle, "Secblitz");
     copy_text(
         &mut nid.szInfo,
-        &lang.t("Something changed on your PC. Open Secblitz to check."),
+        &lang.t("Your protection dropped. Open Secblitz to see what needs attention."),
     );
     unsafe {
         Shell_NotifyIconW(NIM_MODIFY, &nid);

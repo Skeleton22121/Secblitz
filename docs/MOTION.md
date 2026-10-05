@@ -47,9 +47,9 @@ exactly 0 and 1 at the ends.
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `FASTER` | 83 ms | Hover / press feedback if it must animate (WinUI ControlFasterAnimationDuration) |
-| `FAST` | 150 ms | Toggles, chevron turn, small reveals (between WinUI 167 and Material short3 150) |
-| `NORMAL` | 250 ms | Short-distance moves, dropdown open (WinUI ControlNormalAnimationDuration) |
+| `FASTER` | 83 ms | Reserved for micro feedback (WinUI ControlFasterAnimationDuration). Not used today: hover and press are instant colour changes |
+| `FAST` | 150 ms | Toggle knob, toast exit (between WinUI 167 and Material short3 150) |
+| `NORMAL` | 250 ms | Short-distance moves such as the toast slide-up (WinUI ControlNormalAnimationDuration) |
 | `SLOW` | 400 ms | Completion moments: check draw-in, ring fill, count-up |
 
 Rule of thumb: nothing the user triggers directly takes longer than `NORMAL`.
@@ -66,6 +66,7 @@ Rule of thumb: nothing the user triggers directly takes longer than `NORMAL`.
 | `warn_draw` | Needs attention | Triangle outlines, then the mark pops with `EMPHASIZED` |
 | `ring_fill`, `Tween` | Score ring when the score changes | Old value to new value on `DECELERATE`, 400 ms; `retarget` keeps it continuous if the score changes mid-way |
 | `count_up`, `count_up_int` | Numbers beside the ring | Same tween, rounded |
+| `appear::slide_in` | Toast | Slides up 12 px on `DECELERATE` in `NORMAL`; on dismissal or time-out slides back down on `ACCELERATE` in `FAST`, then is removed |
 | `pulse_dot` | Status dot for live protection | One soft halo every 2.4 s, peak alpha 0.28 |
 
 Security and antivirus dashboards commonly use the same four moments (scan
@@ -76,6 +77,7 @@ keep each one small and short.
 
 - Page switches: no fades or slides. Content appears on the next frame.
 - Hover, press, focus, selection: instant colour change.
+- Dropdown menus and the expander chevron / body: they open instantly.
 - Lists and tables appearing, or scrolling.
 - Anything behind a modal; no animated backdrops.
 - Text, window resize, or the whole window's background.

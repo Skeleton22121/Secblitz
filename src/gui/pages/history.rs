@@ -75,9 +75,13 @@ pub enum Msg {
 
 fn refresh(ctx: &Ctx) -> Task<Message> {
     let load = match ctx.state_dir.clone() {
-        Some(dir) => Task::perform(blocking(move || log::load(&dir)), |e| {
-            Message::History(Msg::Loaded(e))
-        }),
+        Some(dir) => Task::perform(
+            blocking(move || {
+                crate::gui::wait_persisted();
+                log::load(&dir)
+            }),
+            |e| Message::History(Msg::Loaded(e)),
+        ),
         None => Task::done(Message::History(Msg::Loaded(Vec::new()))),
     };
     let engine = Task::run(ctx.worker.run(Job::History), Message::Worker);

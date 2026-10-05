@@ -64,6 +64,10 @@ pub struct Palette {
     pub warn: Color,
     pub bad: Color,
     pub neutral: Color,
+    /// Darker (light mode) variants of good/warn/bad for small text, >= 4.5:1.
+    pub good_text: Color,
+    pub warn_text: Color,
+    pub bad_text: Color,
     /// Solid destructive button fill (white text) and its hover / pressed steps.
     pub danger: Color,
     pub danger_hover: Color,
@@ -102,6 +106,9 @@ pub const LIGHT: Palette = Palette {
     warn: rgb(0xD97706),
     bad: rgb(0xDC2626),
     neutral: rgb(0x71717A),
+    good_text: rgb(0x15803D),
+    warn_text: rgb(0xB45309),
+    bad_text: rgb(0xB91C1C),
     danger: rgb(0xDC2626),
     danger_hover: rgb(0xC21F1F),
     danger_pressed: rgb(0x9F1818),
@@ -133,9 +140,12 @@ pub const DARK: Palette = Palette {
     warn: rgb(0xF59E0B),
     bad: rgb(0xEF4444),
     neutral: rgb(0xA1A1AA),
+    good_text: rgb(0x22C55E),
+    warn_text: rgb(0xF59E0B),
+    bad_text: rgb(0xEF4444),
     danger: rgb(0xDC2626),
-    danger_hover: rgb(0xEF4444),
-    danger_pressed: rgb(0xB91C1C),
+    danger_hover: rgb(0xC21F1F),
+    danger_pressed: rgb(0x9F1818),
     scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.60),
 };
 
@@ -162,6 +172,16 @@ impl Palette {
             Tone::Good => self.good,
             Tone::Warn => self.warn,
             Tone::Bad => self.bad,
+            Tone::Neutral => self.neutral,
+            Tone::Brand => self.brand,
+        }
+    }
+    /// Tone for small text on a tint: darker than `tone` in light mode.
+    pub fn tone_text(&self, tone: Tone) -> Color {
+        match tone {
+            Tone::Good => self.good_text,
+            Tone::Warn => self.warn_text,
+            Tone::Bad => self.bad_text,
             Tone::Neutral => self.neutral,
             Tone::Brand => self.brand,
         }
@@ -218,6 +238,18 @@ pub const CONTROL_SMALL: f32 = 28.0;
 pub const ROW: f32 = 48.0;
 /// Checkbox box edge.
 pub const CHECK: f32 = 18.0;
+/// Settings row height: ROW plus S2, so single and two line rows align.
+pub const SETTING_ROW: f32 = ROW + S2;
+/// Card bodies are at least this tall so neighbouring cards line up.
+pub const CARD_BODY_MIN: f32 = ROW * 2.0;
+/// Status dot (sidebar verdict).
+pub const DOT: f32 = 8.0;
+/// One-pixel divider / hairline.
+pub const HAIRLINE: f32 = 1.0;
+/// Narrow readable column for centred progress lists.
+pub const MAX_READABLE: f32 = 420.0;
+/// Tallest a scrolling details box grows before it scrolls.
+pub const DETAILS_MAX: f32 = 140.0;
 
 // Radii (px).
 pub const R_SMALL: f32 = 6.0;
