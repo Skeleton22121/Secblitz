@@ -240,11 +240,8 @@ fn timeline_card<'a>(state: &'a State, ctx: &'a Ctx, days: &'a [Day]) -> Element
             truncated = true;
             break;
         }
-        let mut rows = column![widgets::section_label(
-            p,
-            day_title(ctx, day.day, today)
-        )]
-        .spacing(theme::S1);
+        let mut rows =
+            column![widgets::section_label(p, day_title(ctx, day.day, today))].spacing(theme::S1);
         for item in &day.items {
             if budget == 0 {
                 truncated = true;

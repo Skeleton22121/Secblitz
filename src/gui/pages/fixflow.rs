@@ -150,7 +150,6 @@ impl State {
 
 // Batched into the shell's subscriptions (src/gui/mod.rs); until then it is
 // simply unused and every mark is drawn in its finished state.
-#[allow(dead_code)]
 /// Frame subscription: on only while the working spinner or a result
 /// draw-in runs, and never when Windows animations are switched off.
 pub fn subscription(state: &State) -> Subscription<Message> {
@@ -234,10 +233,11 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         undo: true,
     };
     match ctx.state_dir.clone() {
-        Some(dir) if state.plan.is_empty() => Task::perform(
-            blocking(move || last_fix(&log::load(&dir))),
-            |found| Message::Fix(Msg::UndoInfo(found)),
-        ),
+        Some(dir) if state.plan.is_empty() => {
+            Task::perform(blocking(move || last_fix(&log::load(&dir))), |found| {
+                Message::Fix(Msg::UndoInfo(found))
+            })
+        }
         _ => Task::none(),
     }
 }
@@ -274,7 +274,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Frame(at) => {
             state.now = at;
             state.frames_seen = true;
-            if state.result.is_some_and(|start| Clock::at(start).done(anim::SLOW, at)) {
+            if state
+                .result
+                .is_some_and(|start| Clock::at(start).done(anim::SLOW, at))
+            {
                 state.result = None;
             }
             Task::none()
@@ -718,7 +721,11 @@ fn working_view<'a>(
     }
     list = list.push(step(
         p,
-        if verifying { spin(MARK) } else { waiting_mark(p) },
+        if verifying {
+            spin(MARK)
+        } else {
+            waiting_mark(p)
+        },
         ctx.t("Checking the result"),
         verifying,
     ));
@@ -803,7 +810,11 @@ fn result_view<'a>(
     if !s.not_done.is_empty() {
         body = body.push(group(
             p,
-            ctx.t(if undo { "Couldn't undo" } else { "Couldn't fix" }),
+            ctx.t(if undo {
+                "Couldn't undo"
+            } else {
+                "Couldn't fix"
+            }),
             s.not_done
                 .iter()
                 .map(|(id, reason)| row_text(p, ctx.lang.control(id), Some(ctx.t(reason))))
@@ -890,11 +901,7 @@ mod tests {
         assert_eq!(last_fix(&[]), None);
         let log = [e(1, Kind::Fix, 2), e(2, Kind::Check, 0), e(3, Kind::Fix, 4)];
         assert_eq!(last_fix(&log), Some((3, 4)));
-        let log = [
-            e(1, Kind::Fix, 2),
-            e(2, Kind::Fix, 4),
-            e(3, Kind::Undo, 0),
-        ];
+        let log = [e(1, Kind::Fix, 2), e(2, Kind::Fix, 4), e(3, Kind::Undo, 0)];
         assert_eq!(last_fix(&log), Some((1, 2)));
         let log = [e(1, Kind::Fix, 2), e(3, Kind::Undo, 0)];
         assert_eq!(last_fix(&log), None);

@@ -80,7 +80,6 @@ impl Default for State {
 }
 
 impl State {
-    #[allow(dead_code)] // used by `subscription` once the shell batches it
     fn busy(&self) -> bool {
         self.working
             || matches!(self.background, Remote::Loading)
@@ -90,7 +89,6 @@ impl State {
 
 /// Frame ticks, only while a spinner is showing (and motion is allowed).
 /// The shell batches this into its subscriptions.
-#[allow(dead_code)] // wired by the shell (src/gui/mod.rs, not this file)
 pub fn subscription(state: &State) -> Subscription<Message> {
     if state.busy() && !anim::reduced() {
         iced::window::frames().map(|_| Message::Settings(Msg::Frame))
@@ -145,7 +143,6 @@ pub enum Msg {
     TrayDone(bool, Result<(), String>),
     ToggleTechnical,
     /// Animation frame; the redraw is the whole job.
-    #[allow(dead_code)]
     Frame,
 }
 
@@ -523,8 +520,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if let Some(c @ Confirm::Background(_)) = state.confirm {
         rows.push(confirm_row(p, ctx, c));
     }
-    let tray_toggle = (state.installed && !state.working)
-        .then_some(|v| Message::Settings(Msg::AskTray(v)));
+    let tray_toggle =
+        (state.installed && !state.working).then_some(|v| Message::Settings(Msg::AskTray(v)));
     rows.push(item(
         p,
         t("Show Secblitz in the system tray (bottom-right corner)"),

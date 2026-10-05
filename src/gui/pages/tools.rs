@@ -258,7 +258,6 @@ pub fn escape(state: &mut State) {
 
 /// Frames for the spinners and draw-ins, only while one is on screen.
 /// The shell merges this into its subscriptions (see `home::subscription`).
-#[allow(dead_code)]
 pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
     if state.needs_frames() && anim::animating() {
         iced::window::frames().map(|at| Message::Tools(Msg::Frame(at)))
@@ -457,7 +456,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.shots.retain(|(slot, _)| *slot != Slot::Copy);
             Task::none()
         }
-        Msg::CopyPassword => match state.password.secret.as_ref().map(|s| s.reveal().to_owned()) {
+        Msg::CopyPassword => match state
+            .password
+            .secret
+            .as_ref()
+            .map(|s| s.reveal().to_owned())
+        {
             Some(secret) => {
                 state.password.copied = true;
                 state.finish(Slot::Copy);
@@ -476,7 +480,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::Frame(now) => {
             state.now = now;
-            state.shots.retain(|(_, clock)| !clock.done(anim::SLOW, now));
+            state
+                .shots
+                .retain(|(_, clock)| !clock.done(anim::SLOW, now));
             Task::none()
         }
         Msg::TogglePassword => {
