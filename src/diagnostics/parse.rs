@@ -53,6 +53,11 @@ pub(super) fn decode(id: ProbeId, bytes: &[u8]) -> Result<Evidence, UnknownReaso
         ProbeId::AccountHygiene => parse!(AccountHygiene),
         ProbeId::Sharing => parse!(Sharing),
         ProbeId::FirewallRules => parse!(FirewallRules),
+        ProbeId::AccountSetup => parse!(AccountSetup),
+        ProbeId::WindowsHello => parse!(WindowsHello),
+        ProbeId::DnsEncryption => parse!(DnsEncryption),
+        ProbeId::WifiSecurity => parse!(WifiSecurity),
+        ProbeId::Autostart => parse!(Autostart),
     }
 }
 
@@ -216,4 +221,69 @@ pub(super) fn winre(bytes: &[u8]) -> WinRe {
         }
     };
     WinRe { enabled }
+}
+
+/// `dsregcmd /status` prints many identity lines (device, tenant, account). Only
+/// the single `NgcSet` line is read; everything else is dropped and nothing from
+/// the output is retained. A missing, duplicated or unexpected value stays Unknown,
+/// so a changed output format can never be read as "no PIN" or "PIN set".
+pub(super) fn dsreg(bytes: &[u8]) -> WindowsHello {
+    let unknown = |reason| WindowsHello {
+        pin_set: Reading::Unknown(reason),
+    };
+    if bytes.len() > MAX_OUTPUT_BYTES {
+        return unknown(UnknownReason::OutputLimit);
+    }
+    // The line is plain ASCII; other lines may hold OEM-encoded names.
+    let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes));
+    let mut values = text.lines().filter_map(|line| {
+        let (key, value) = line.trim().trim_matches('|').trim().split_once(':')?;
+        (key.trim() == "NgcSet").then(|| value.trim().to_owned())
+    });
+    let first = values.next();
+    if values.next().is_some() {
+        return unknown(UnknownReason::InvalidData);
+    }
+    WindowsHello {
+        pin_set: match first.as_deref() {
+            Some("YES") => Reading::Known(true),
+            Some("NO") => Reading::Known(false),
+            Some(_) => Reading::Unknown(UnknownReason::InvalidData),
+            None => Reading::Unknown(UnknownReason::Unavailable),
+        },
+    }
+}
+
+/// Wi-Fi security type from the two WLAN algorithm numbers (DOT11_AUTH_ALGORITHM
+/// and DOT11_CIPHER_ALGORITHM). Anything not recognised is "Other", which the
+/// rules treat as unknown, never as protected.
+pub(super) fn wifi_class(security_enabled: bool, auth: u32, cipher: u32) -> &'static str {
+    const WEP: [u32; 3] = [1, 5, 0x101];
+    match auth {
+        1 if !security_enabled || cipher == 0 => "Open",
+        1 if WEP.contains(&cipher) => "Wep",
+        2 => "Wep",
+        // WPA (version 1) and ad-hoc WPA.
+        3..=5 => "Old",
+        // WPA2: TKIP is the weak cipher, CCMP/GCMP the modern ones.
+        6 | 7 => match cipher {
+            2 => "Old",
+            4 | 8 | 9 | 0xa => "Strong",
+            _ => "Other",
+        },
+        // WPA3-Enterprise 192-bit, WPA3-SAE, WPA3-Enterprise.
+        8 | 9 | 11 => "Strong",
+        _ => "Other",
+    }
+}
+
+/// Lower is weaker; the weakest connected interface is the one reported.
+pub(super) fn wifi_rank(class: &str) -> u8 {
+    match class {
+        "Open" => 0,
+        "Wep" => 1,
+        "Old" => 2,
+        "Other" => 3,
+        _ => 4,
+    }
 }

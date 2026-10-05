@@ -66,6 +66,8 @@ fn reference(id: &str) -> RuleReference {
         "storage" => "https://learn.microsoft.com/powershell/module/storage/get-storagereliabilitycounter",
         "ntfs" => "https://learn.microsoft.com/windows/win32/cimwin32prov/win32-volume",
         "backup" => "https://learn.microsoft.com/windows-server/storage/file-server/volume-shadow-copy-service",
+        "net" => "https://learn.microsoft.com/windows/security/operating-system-security/network-security/",
+        "persistence" => "https://learn.microsoft.com/windows/win32/setupapi/run-and-runonce-registry-keys",
         "proxy" => "https://learn.microsoft.com/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration",
         "vpn" => "https://learn.microsoft.com/powershell/module/vpnclient/get-vpnconnection",
         "permissions" => "https://learn.microsoft.com/windows/win32/secauthz/accesscheck-function",
@@ -272,6 +274,7 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::Vbs(v) => {
             out.push(a("vbs.running", match v.status.known() { Some(2) => Healthy, Some(0 | 1) => Attention, _ => Unknown }, "DeviceGuard VBS status distinguishes disabled, configured but not running, and running."));
             out.push(a("vbs.memory_integrity", match v.running_services.known() { Some(s) if s.iter().any(|n| *n > 7) => Unknown, Some(s) if s.contains(&2) => Healthy, Some(_) => Attention, _ => Unknown }, "HVCI/memory integrity must be listed in running services (code 2); configured services alone are insufficient."));
+            out.extend(super::checks::kernel_stack(v));
         }
         Evidence::WinRe(v) => out.push(boolean("winre.enabled", &v.enabled, true, "REAgentC reported status only. Enabled WinRE is not evidence that recovery media boots or a restore succeeds.")),
         Evidence::Accounts(v) => {
@@ -373,6 +376,11 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::AccountHygiene(v) => out.extend(super::checks::account_hygiene(v)),
         Evidence::Sharing(v) => out.extend(super::checks::sharing(v)),
         Evidence::FirewallRules(v) => out.extend(super::checks::firewall_rules(v)),
+        Evidence::AccountSetup(v) => out.extend(super::checks::account_setup(v)),
+        Evidence::WindowsHello(v) => out.extend(super::checks::windows_hello(v)),
+        Evidence::DnsEncryption(v) => out.extend(super::checks::dns_encryption(v)),
+        Evidence::WifiSecurity(v) => out.extend(super::checks::wifi_security(v)),
+        Evidence::Autostart(v) => out.extend(super::checks::autostart(v)),
     }
     // A healthy subset must not turn a partially unreadable probe into Healthy.
     // Walk the typed serialization (never raw/native input) so newly added facts

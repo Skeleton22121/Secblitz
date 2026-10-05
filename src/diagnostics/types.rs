@@ -160,6 +160,11 @@ probe_ids! {
     AccountHygiene => "LocalAccounts: built-in Administrator RID 500 state and stale enabled account count",
     Sharing => "SmbShare: non-special share counts, broad access and server encryption setting",
     FirewallRules => "NetSecurity: enabled inbound allow rules whose program sits in a risky user folder (counts only)",
+    AccountSetup => "LocalAccounts and Win32_Battery: whether the signed-in account is an administrator, and the Find my device setting (no names or IDs)",
+    WindowsHello => "Trusted System32/dsregcmd.exe /status: the PIN / Windows Hello set-up flag only, no other line is kept",
+    DnsEncryption => "DnsClient: configured DNS server counts against registered encrypted-DNS servers (no addresses)",
+    WifiSecurity => "WLAN API: security type of the connected Wi-Fi network only (no network name or address)",
+    Autostart => "Run/RunOnce keys, Startup folders and non-Microsoft scheduled tasks: counts of risky unsigned entries only (no names or paths)",
 }
 
 macro_rules! facts {
@@ -245,7 +250,13 @@ facts!(EncryptedVolume {
     volume_status: u32,
     encryption_percentage: u32
 });
-facts!(Vbs { status: u32, configured_services: Vec<u32>, running_services: Vec<u32> });
+facts!(Vbs {
+    status: u32,
+    configured_services: Vec<u32>,
+    running_services: Vec<u32>,
+    // Kernel-mode hardware-enforced stack protection: On, Off or Absent (not reported).
+    kernel_shadow_stacks: String,
+});
 facts!(WinRe { enabled: bool });
 facts!(Accounts {
     administrator_count: u32,
@@ -382,9 +393,6 @@ facts!(SmartScreen {
     smart_app_control: String,
 });
 facts!(UpdatePolicy {
-    auto_updates_blocked: bool,
-    update_access_blocked: bool,
-    update_service_disabled: bool,
     paused: bool,
     drivers_excluded: bool,
     reboot_pending: bool,
@@ -405,7 +413,6 @@ facts!(Persistence {
     unquoted_service_paths_writable: u32,
 });
 facts!(AccountHygiene {
-    builtin_admin_enabled: bool,
     stale_enabled_accounts: u32,
 });
 facts!(Sharing {
@@ -416,6 +423,31 @@ facts!(Sharing {
 facts!(FirewallRules {
     risky_inbound_allow_rules: u32,
     user_folder_inbound_allow_rules: u32,
+});
+facts!(AccountSetup {
+    // The account running Secblitz is directly a member of local Administrators.
+    current_user_is_admin: bool,
+    // One of On, Off, NotApplicable (desktop PC or no Microsoft account).
+    find_my_device: String,
+});
+facts!(WindowsHello { pin_set: bool });
+facts!(DnsEncryption {
+    dns_servers: u32,
+    // Servers that Windows upgrades to encrypted lookups automatically.
+    encrypted_dns_servers: u32,
+    // Servers that support encrypted lookups but are not upgraded yet.
+    upgradeable_dns_servers: u32,
+});
+facts!(WifiSecurity {
+    // One of None, Open, Wep, Old, Strong, Other.
+    current_network: String
+});
+facts!(Autostart {
+    entries_checked: u32,
+    // Unsigned programs started from Temp, Downloads, Public or the Roaming root.
+    risky_unsigned: u32,
+    // Start-up commands that hide an encoded script or fetch from the internet.
+    suspicious_command: u32,
 });
 facts!(Permissions { services: Inventory<PermissionFinding> });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -462,6 +494,11 @@ pub enum Evidence {
     AccountHygiene(AccountHygiene),
     Sharing(Sharing),
     FirewallRules(FirewallRules),
+    AccountSetup(AccountSetup),
+    WindowsHello(WindowsHello),
+    DnsEncryption(DnsEncryption),
+    WifiSecurity(WifiSecurity),
+    Autostart(Autostart),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

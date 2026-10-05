@@ -108,7 +108,17 @@ try {
             $rows = @(Cim 'Win32_DeviceGuard' 'root\Microsoft\Windows\DeviceGuard')
             if ($rows.Count -ne 1) { throw 'Ambiguous DeviceGuard result' }
             $s = $rows[0]
-            @{status=(Prop $s 'VirtualizationBasedSecurityStatus');configured_services=(Prop $s 'SecurityServicesConfigured');running_services=(Prop $s 'SecurityServicesRunning')}
+            @{
+                status=(Prop $s 'VirtualizationBasedSecurityStatus');configured_services=(Prop $s 'SecurityServicesConfigured');running_services=(Prop $s 'SecurityServicesRunning')
+                # Unverified location: an absent value means "not reported", never "off".
+                kernel_shadow_stacks=(Fact {
+                    $v = HklmDword 'SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks' 'Enabled'
+                    if ($null -eq $v) { return 'Absent' }
+                    if ($v -eq 1) { return 'On' }
+                    if ($v -eq 0) { return 'Off' }
+                    throw 'Unknown value'
+                })
+            }
         }
         'Accounts' {
             Load 'Microsoft.PowerShell.LocalAccounts'
@@ -297,13 +307,6 @@ try {
             $wu = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
             $ux = 'SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
             @{
-                auto_updates_blocked=(Fact { $a = HklmDword "$wu\AU" 'NoAutoUpdate'; $o = HklmDword "$wu\AU" 'AUOptions'; (($null -ne $a) -and ($a -eq 1)) -or (($null -ne $o) -and ($o -eq 1)) })
-                update_access_blocked=(Fact { $v = HklmDword $wu 'DisableWindowsUpdateAccess'; ($null -ne $v) -and ($v -eq 1) })
-                update_service_disabled=(Fact {
-                    $off = $false
-                    foreach ($svc in @('wuauserv','UsoSvc','BITS')) { $v = HklmDword "SYSTEM\CurrentControlSet\Services\$svc" 'Start'; if (($null -ne $v) -and ($v -eq 4)) { $off = $true } }
-                    $off
-                })
                 paused=(Fact {
                     $now = [DateTime]::UtcNow; $paused = $false
                     foreach ($name in @('PauseUpdatesExpiryTime','PauseFeatureUpdatesEndTime','PauseQualityUpdatesEndTime')) {
@@ -438,7 +441,6 @@ try {
         'AccountHygiene' {
             Load 'Microsoft.PowerShell.LocalAccounts'
             @{
-                builtin_admin_enabled=(Fact { $u = @(Get-LocalUser | Where-Object { $_.SID.Value -cmatch '^S-1-5-21-[0-9-]+-500$' }); if ($u.Count -ne 1) { throw 'Built-in administrator not found' }; [bool]$u[0].Enabled })
                 stale_enabled_accounts=(Fact { $cut = (Get-Date).AddDays(-180); @(Get-LocalUser | Where-Object { $_.Enabled -and $_.SID.Value -cnotmatch '-(500|501|503|504)$' -and $null -ne $_.LastLogon -and $_.LastLogon -lt $cut }).Count })
             }
         }
@@ -484,6 +486,169 @@ try {
                 $risky = $r; $user = $u
             } catch { $risky = $null; $user = $null }
             @{ risky_inbound_allow_rules=(Counted $risky); user_folder_inbound_allow_rules=(Counted $user) }
+        }
+        'AccountSetup' {
+            Load 'Microsoft.PowerShell.LocalAccounts'
+            Load 'CimCmdlets'
+            $me = [Security.Principal.WindowsIdentity]::GetCurrent().User
+            @{
+                # Direct membership only. A nested group could grant admin rights, so it stays unknown.
+                current_user_is_admin=(Fact {
+                    if ($null -eq $me -or $me.Value -cnotmatch '^S-1-5-21-[0-9-]+$') { throw 'Not an ordinary user account' }
+                    $members = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | Select-Object -First 513)
+                    if ($members.Count -gt 512) { throw 'Member cap' }
+                    foreach ($m in $members) { if ($m.SID -eq $me) { return $true } }
+                    foreach ($m in $members) { if ([string]$m.ObjectClass -cne 'User') { throw 'Nested group membership is not followed' } }
+                    return $false
+                })
+                # Unverified setting location. Desktops and local-only accounts do not apply.
+                find_my_device=(Fact {
+                    if (@(Cim 'Win32_Battery').Count -eq 0) { return 'NotApplicable' }
+                    $microsoftAccount = @(Get-LocalUser | Where-Object { $_.SID -eq $me -and [string]$_.PrincipalSource -ceq 'MicrosoftAccount' }).Count -gt 0
+                    if (-not $microsoftAccount) { return 'NotApplicable' }
+                    $v = HklmDword 'SOFTWARE\Microsoft\Settings\FindMyDevice' 'LocationSyncEnabled'
+                    if ($null -eq $v) { return 'Unreported' }
+                    if ($v -eq 1) { return 'On' }
+                    if ($v -eq 0) { return 'Off' }
+                    throw 'Unknown value'
+                })
+            }
+        }
+        'DnsEncryption' {
+            Load 'DnsClient'
+            $servers = $null; $encrypted = $null; $upgradeable = $null
+            try {
+                $configured = @{}
+                foreach ($row in @(Get-DnsClientServerAddress | Select-Object -First 256)) {
+                    foreach ($address in @($row.ServerAddresses)) {
+                        $text = ([string]$address).Trim().ToLowerInvariant()
+                        $ip = $null
+                        if (-not [Net.IPAddress]::TryParse($text, [ref]$ip)) { continue }
+                        if ([Net.IPAddress]::IsLoopback($ip) -or $text.StartsWith('fec0:') -or $text.StartsWith('169.254.')) { continue }
+                        $configured[$ip.ToString()] = $true
+                    }
+                }
+                if ($configured.Count -gt 64) { throw 'Server cap' }
+                # Addresses that have a registered encrypted-lookup server, and whether Windows upgrades them.
+                $registered = @{}
+                foreach ($row in @(Get-DnsClientDohServerAddress | Select-Object -First 256)) {
+                    $ip = $null
+                    if (-not [Net.IPAddress]::TryParse(([string]$row.ServerAddress).Trim(), [ref]$ip)) { continue }
+                    $key = $ip.ToString()
+                    if ($row.AutoUpgrade -eq $true) { $registered[$key] = $true } elseif (-not $registered.ContainsKey($key)) { $registered[$key] = $false }
+                }
+                # Encrypted lookups chosen in Settings are stored per network connection.
+                $perInterface = @{}
+                $root = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters', $false)
+                if ($null -ne $root) {
+                    try {
+                        foreach ($name in @($root.GetSubKeyNames() | Select-Object -First 256)) {
+                            $doh = $root.OpenSubKey("$name\DohInterfaceSettings\Doh", $false)
+                            if ($null -eq $doh) { continue }
+                            try { foreach ($addr in $doh.GetSubKeyNames()) { $perInterface[$addr.ToLowerInvariant()] = $true } } finally { $doh.Dispose() }
+                        }
+                    } finally { $root.Dispose() }
+                }
+                $e = 0; $u = 0
+                foreach ($address in $configured.Keys) {
+                    if ($registered[$address] -eq $true -or $perInterface.ContainsKey($address)) { $e++ }
+                    elseif ($registered.ContainsKey($address)) { $u++ }
+                }
+                $servers = $configured.Count; $encrypted = $e; $upgradeable = $u
+            } catch { $servers = $null; $encrypted = $null; $upgradeable = $null }
+            @{ dns_servers=(Counted $servers); encrypted_dns_servers=(Counted $encrypted); upgradeable_dns_servers=(Counted $upgradeable) }
+        }
+        'Autostart' {
+            Load 'Microsoft.PowerShell.Security'
+            Load 'CimCmdlets'
+            Load 'ScheduledTasks'
+            # Read-only. Entries are examined in memory; only counts leave this script.
+            $appData = [Environment]::GetFolderPath('ApplicationData')
+            $localData = [Environment]::GetFolderPath('LocalApplicationData')
+            $userProfile = [Environment]::GetFolderPath('UserProfile')
+            $commonData = [Environment]::GetFolderPath('CommonApplicationData')
+            $publicDir = $null
+            try { $publicDir = [IO.Path]::GetDirectoryName([Environment]::GetFolderPath('CommonDocuments')) } catch {}
+            $expand = {
+                param([string]$text)
+                $t = $text.Trim()
+                foreach ($pair in @(@('%appdata%',$appData),@('%localappdata%',$localData),@('%temp%',"$localData\Temp"),@('%tmp%',"$localData\Temp"),@('%userprofile%',$userProfile),@('%programdata%',$commonData),@('%public%',$publicDir))) {
+                    if ($null -ne $pair[1]) { $t = $t -ireplace [regex]::Escape($pair[0]), $pair[1].Replace('$','$$') }
+                }
+                return [Environment]::ExpandEnvironmentVariables($t)
+            }
+            $targetOf = {
+                param([string]$command)
+                $c = (& $expand $command).Trim()
+                if ($c -match '^"(?<p>[^"]+)"') { return $Matches['p'] }
+                if ($c -match '^(?<p>[A-Za-z]:\\.*?\.(exe|dll|bat|cmd|vbs|vbe|js|jse|wsf|hta|ps1|scr|com|lnk|msi|cpl))(\s|$)') { return $Matches['p'] }
+                return $null
+            }
+            $riskyPath = '\\appdata\\local\\temp\\|\\windows\\temp\\|\\users\\public\\|\\downloads\\|\\appdata\\roaming\\[^\\]+$'
+            $scripts = '\.(bat|cmd|vbs|vbe|js|jse|wsf|hta|ps1)$'
+            $tally = @{checked=0;risky=0;suspicious=0}; $complete = $true
+            $examine = {
+                param([string]$command, [string]$exePath, [bool]$startupFolder)
+                $tally.checked++
+                $lower = $command.ToLowerInvariant()
+                if ($lower -match '(powershell|pwsh)(\.exe)?["\s].*\s-(e|ec|enc|encodedcommand)\s+[a-z0-9+/=]{40,}' -or $lower -match '(mshta|regsvr32|certutil|bitsadmin|rundll32)\b.*https?://' -or $lower -match '(powershell|pwsh)\b.*(downloadstring|downloadfile|net\.webclient|\biwr\b|\biex\b)') { $tally.suspicious++; return }
+                $path = $null
+                if ($exePath -ne '') { $path = (& $expand $exePath).Trim().Trim('"') } else { $path = & $targetOf $command }
+                if ($null -eq $path -or $path -cnotmatch '^[A-Za-z]:\\') { return }
+                $p = $path.ToLowerInvariant()
+                $here = ($p -match $riskyPath) -or ($startupFolder -and $p -match $scripts)
+                if (-not $here) { return }
+                if (-not [IO.File]::Exists($path)) { return }
+                try { $status = [string](Get-AuthenticodeSignature -LiteralPath $path).Status } catch { return }
+                if ($status -cne 'Valid') { $tally.risky++ }
+            }
+            # Run and RunOnce keys (values are read raw; nothing is expanded or executed).
+            foreach ($hive in @(@([Microsoft.Win32.Registry]::LocalMachine,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'),@([Microsoft.Win32.Registry]::LocalMachine,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'),@([Microsoft.Win32.Registry]::LocalMachine,'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'),@([Microsoft.Win32.Registry]::CurrentUser,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'),@([Microsoft.Win32.Registry]::CurrentUser,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'))) {
+                try {
+                    $key = $hive[0].OpenSubKey($hive[1], $false)
+                    if ($null -eq $key) { continue }
+                    try {
+                        $names = @($key.GetValueNames())
+                        if ($names.Count -gt 256) { throw 'Value cap' }
+                        foreach ($name in $names) {
+                            $value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                            if ($value -is [string] -and $value.Length -lt 2048) { & $examine $value '' $false }
+                        }
+                    } finally { $key.Dispose() }
+                } catch { $complete = $false }
+            }
+            # Startup folders (shortcuts are resolved in memory).
+            foreach ($dir in @([Environment]::GetFolderPath('Startup'), [Environment]::GetFolderPath('CommonStartup'))) {
+                try {
+                    if ([string]::IsNullOrEmpty($dir) -or -not [IO.Directory]::Exists($dir)) { continue }
+                    $files = @([IO.Directory]::GetFiles($dir))
+                    if ($files.Count -gt 256) { throw 'File cap' }
+                    foreach ($file in $files) {
+                        if ([IO.Path]::GetFileName($file) -ceq 'desktop.ini') { continue }
+                        if ($file.EndsWith('.lnk', [StringComparison]::OrdinalIgnoreCase)) {
+                            $shell = New-Object -ComObject WScript.Shell
+                            $link = $shell.CreateShortcut($file)
+                            & $examine ("`"" + $link.TargetPath + "`" " + $link.Arguments) '' $true
+                        } else { & $examine $file $file $true }
+                    }
+                } catch { $complete = $false }
+            }
+            # Scheduled tasks that do not belong to Microsoft.
+            try {
+                $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | Select-Object -First 2049)
+                if ($tasks.Count -gt 2048) { throw 'Task cap' }
+                foreach ($task in $tasks) {
+                    foreach ($action in @($task.Actions)) {
+                        if ($null -eq $action.PSObject.Properties['Execute'] -or [string]::IsNullOrWhiteSpace([string]$action.Execute)) { continue }
+                        & $examine (([string]$action.Execute) + ' ' + ([string]$action.Arguments)) ([string]$action.Execute) $false
+                    }
+                }
+            } catch { $complete = $false }
+            @{
+                entries_checked=$(if ($complete) { Known $tally.checked } else { Unknown })
+                risky_unsigned=(Known $tally.risky)
+                suspicious_command=(Known $tally.suspicious)
+            }
         }
         default { throw 'Invalid compiled probe' }
     }
