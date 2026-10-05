@@ -1097,15 +1097,13 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         | "update.auto_policy_disabled"
         | "update.paused"
         | "update.reboot_overdue" => Some(Action::OpenWindowsUpdate),
-        "defender.tamper_protection"
-        | "defender.threats"
-        | "defender.exclusions_risky"
-        | "defender.scan_age"
-        | "smartscreen.apps"
-        | "smartscreen.browser_policy" => Some(Action::OpenWindowsSecurity),
-        "accounts.builtin_administrator" | "accounts.stale_enabled" => {
-            Some(Action::OpenSignInSettings)
-        }
+        "defender.tamper_protection" => Some(Action::OpenTamperProtection),
+        "defender.threats" | "defender.scan_age" => Some(Action::OpenProtectionHistory),
+        "defender.exclusions_risky" => Some(Action::OpenWindowsSecurity),
+        id if id.starts_with("smartscreen.") => Some(Action::OpenAppBrowserControl),
+        "ps.v2_engine" => Some(Action::OpenOptionalFeatures),
+        "accounts.stale_enabled" => Some(Action::OpenAccounts),
+        "accounts.builtin_administrator" => Some(Action::OpenSignInSettings),
         _ => None,
     }
 }
@@ -1128,6 +1126,7 @@ pub struct Tip {
 
 #[derive(Debug, Clone)]
 pub struct TipsReport {
+    #[allow(dead_code)] // kept for the technical view
     pub profile: TipProfile,
     pub tips: Vec<Tip>,
     pub technical: String,
@@ -1662,6 +1661,29 @@ mod tests {
             Some(secblitz::actions::Action::OpenWindowsUpdate)
         );
         assert_eq!(rule_open("net.hosts_file"), None);
+        use secblitz::actions::Action as A;
+        assert_eq!(
+            rule_open("defender.tamper_protection"),
+            Some(A::OpenTamperProtection)
+        );
+        assert_eq!(
+            rule_open("defender.threats"),
+            Some(A::OpenProtectionHistory)
+        );
+        assert_eq!(
+            rule_open("defender.scan_age"),
+            Some(A::OpenProtectionHistory)
+        );
+        assert_eq!(
+            rule_open("smartscreen.apps"),
+            Some(A::OpenAppBrowserControl)
+        );
+        assert_eq!(
+            rule_open("smartscreen.browser_policy"),
+            Some(A::OpenAppBrowserControl)
+        );
+        assert_eq!(rule_open("ps.v2_engine"), Some(A::OpenOptionalFeatures));
+        assert_eq!(rule_open("accounts.stale_enabled"), Some(A::OpenAccounts));
 
         // A probe with two problems shows the first one that has an exact step.
         let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
@@ -1697,7 +1719,7 @@ mod tests {
         );
         assert_eq!(
             tip.open,
-            Some(secblitz::actions::Action::OpenWindowsSecurity)
+            Some(secblitz::actions::Action::OpenTamperProtection)
         );
     }
 
