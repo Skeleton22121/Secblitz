@@ -633,7 +633,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
     column![
         widgets::page_header(p, t("Settings"), Some(t("Make Secblitz work your way."))),
-        space::vertical().height(theme::S2),
         appearance,
         protection,
         updates,

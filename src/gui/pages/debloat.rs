@@ -555,8 +555,9 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Tab::Apps => apps_tab(state, ctx),
         Tab::Removed => removed_tab(state, ctx),
     };
-    column![header, space::vertical().height(theme::S2), tabs, body]
-        .spacing(theme::S4)
+    // Header to content is S6 on every page; tabs sit closer to their list.
+    column![header, column![tabs, body].spacing(theme::S4)]
+        .spacing(theme::S6)
         .width(Length::Fill)
         .into()
 }
@@ -622,13 +623,21 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             for (group, members) in &state.groups {
                 col = col.push(group_card(state, ctx, *group, members));
             }
-            col.push(action_bar(state, ctx)).into()
+            col.into()
         }
     }
 }
 
-/// Selected count plus the one primary action. Shown after the last group so
-/// the action is always at the end of a long list.
+/// The action bar the shell pins below the scrolling list, so Remove stays in
+/// reach however long the list is. Only shown while the app list is on screen.
+pub fn footer<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
+    let listing = state.tab == Tab::Apps
+        && !state.groups.is_empty()
+        && !matches!(state.scan, Scan::Failed(_));
+    listing.then(|| action_bar(state, ctx))
+}
+
+/// Selected count plus the one primary action.
 fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     let n = state.selected.len();
@@ -650,22 +659,19 @@ fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     } else {
         count_text(ctx, n, "{n} app selected", "{n} apps selected")
     };
-    widgets::card(
-        p,
-        row![
-            column![widgets::h2(p, title), widgets::small(p, hint)].spacing(theme::S1),
-            space::horizontal(),
-            widgets::action(
-                p,
-                ButtonKind::Primary,
-                button_label,
-                Some(Icon::Trash),
-                can.then(|| wrap(Msg::Review))
-            )
-        ]
-        .align_y(Alignment::Center)
-        .spacing(theme::S4),
-    )
+    row![
+        column![widgets::h2(p, title), widgets::small(p, hint)].spacing(theme::S1),
+        space::horizontal(),
+        widgets::action(
+            p,
+            ButtonKind::Primary,
+            button_label,
+            Some(Icon::Trash),
+            can.then(|| wrap(Msg::Review))
+        )
+    ]
+    .align_y(Alignment::Center)
+    .spacing(theme::S4)
     .into()
 }
 
