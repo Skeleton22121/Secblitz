@@ -18,8 +18,7 @@ use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{button, column, container, row, text};
 use iced::{
     mouse, window, Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
-    Radians,
-    Rectangle, Renderer, Shadow, Size, Theme, Vector,
+    Radians, Rectangle, Renderer, Shadow, Size, Theme, Vector,
 };
 use std::time::Instant;
 
@@ -259,7 +258,16 @@ pub fn row_item_tinted<'a>(
     trailing: impl Into<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    row_item_below(p, glyph, tone, title, subtitle, trailing, Vec::new(), on_press)
+    row_item_below(
+        p,
+        glyph,
+        tone,
+        title,
+        subtitle,
+        trailing,
+        Vec::new(),
+        on_press,
+    )
 }
 
 /// [`row_item_tinted`] with extra lines (a progress bar, a picker, notes)

@@ -1029,22 +1029,21 @@ impl Engine {
             // Finite raw preference domains only. An incomplete legacy ACL
             // original cannot be inferred; it requires review. COW staging has
             // an independent committed snapshot and handles ACLs below.
-            let values = if permission_control(&control.id)
-                || crate::hardening::is_hardening(&control.id)
-            {
-                Vec::new()
-            } else if target(&control.id)?.is_boolean() {
-                vec![json!(true), json!(false)]
-            } else if target(&control.id)?.is_string() {
-                vec![json!("Allow"), json!("Block"), json!("NotConfigured")]
-            } else {
-                let mut values = vec![json!({"present":false,"value":null})];
-                values.extend(
-                    (0..=if control.id == "uac.consent" { 5 } else { 1 })
-                        .map(|n| json!({"present":true,"value":n})),
-                );
-                values
-            };
+            let values =
+                if permission_control(&control.id) || crate::hardening::is_hardening(&control.id) {
+                    Vec::new()
+                } else if target(&control.id)?.is_boolean() {
+                    vec![json!(true), json!(false)]
+                } else if target(&control.id)?.is_string() {
+                    vec![json!("Allow"), json!("Block"), json!("NotConfigured")]
+                } else {
+                    let mut values = vec![json!({"present":false,"value":null})];
+                    values.extend(
+                        (0..=if control.id == "uac.consent" { 5 } else { 1 })
+                            .map(|n| json!({"present":true,"value":n})),
+                    );
+                    values
+                };
             for before in values {
                 candidates.push(Record::Prepare {
                     id: control.id.clone(),
@@ -1519,10 +1518,7 @@ impl Engine {
                                 == Some(&scope(
                                     &c.id,
                                     &o.value,
-                                    tx.entries
-                                        .iter()
-                                        .find(|e| e.id == c.id)
-                                        .map(|e| &e.before),
+                                    tx.entries.iter().find(|e| e.id == c.id).map(|e| &e.before),
                                 )) =>
                         {
                             Self::observed_outcome(
@@ -1568,12 +1564,14 @@ impl Engine {
             {
                 let expected = target_for(&c.id, &entry.before)?;
                 let result = match self.observe(&c.id) {
-                    Ok(o) if scope(&c.id, &o.value, Some(&entry.before)) == expected => Self::observed_outcome(
-                        c,
-                        "unchanged",
-                        "Target preference already present; original before image retained",
-                        &o,
-                    ),
+                    Ok(o) if scope(&c.id, &o.value, Some(&entry.before)) == expected => {
+                        Self::observed_outcome(
+                            c,
+                            "unchanged",
+                            "Target preference already present; original before image retained",
+                            &o,
+                        )
+                    }
                     Ok(o) => Self::observed_outcome(
                         c,
                         "conflict",

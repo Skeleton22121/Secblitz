@@ -252,9 +252,16 @@ mod tests {
         ]);
         assert_eq!(
             candidates(&r, &available),
-            ids(&["printer.point_and_print", "lsa.run_as_ppl", "privacy.advertising_id"])
+            ids(&[
+                "printer.point_and_print",
+                "lsa.run_as_ppl",
+                "privacy.advertising_id"
+            ])
         );
-        assert_eq!(recommended(&r, &available), ids(&["printer.point_and_print"]));
+        assert_eq!(
+            recommended(&r, &available),
+            ids(&["printer.point_and_print"])
+        );
     }
 
     fn ids(v: &[&str]) -> Vec<String> {
