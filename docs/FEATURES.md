@@ -165,6 +165,35 @@ Service repairs remove CHANGE_CONFIG, DELETE, WRITE_DAC and WRITE_OWNER from sup
 
 Historical v0.2.0 tests demonstrated four registry repairs and wuauserv DACL exact undo/access simulation; BITS was intentionally skipped for a flagged baseline ACE. Native BITS repair remains unproven. [winPEAS was blocked](winpeas-assessment.md); no zero-findings benchmark exists.
 
+### 20 extended hardening controls (catalog: `src/hardening.rs`)
+
+One compiled table drives the engine, wire validation and the PowerShell backend (`src/platform/hardening.ps1` receives the spec as JSON, so Rust and PowerShell cannot disagree). State is a slice `{"items": {key: int|null}}`; `null` is "not configured". A write may only move a key between its recorded unsafe original and its fixed value; a key that drifted to anything else blocks the write and the undo. Absent values that equal Windows' own safe default count as protected. Dynamic controls (firewall rules, saved Wi-Fi networks) are compared only on the journaled keys. No child process is started: everything uses cmdlets, .NET, ADSI, registry or Reflection.Emit P/Invoke stubs. Controls marked ask are choices: never pre-selected, always shown with a one-line consequence.
+
+| Control ID | Mode | Repair (unsafe original to fixed value) |
+| --- | --- | --- |
+| `defender.cloud_protection` | ask | MAPSReporting 0 to 2, block-at-first-sight on; strict Defender gate (tamper protection blocks) |
+| `defender.pua` | auto | PUAProtection 0 or audit to Enabled |
+| `defender.script_nis` | auto | DisableScriptScanning / DisableIntrusionPreventionSystem true to false |
+| `defender.asr.standard` | auto | Rules 56a863a9 (drivers), 9e6c4e1f (LSASS), e6db77e5 (WMI) off or audit to Block via Add-MpPreference; never replaces the list; needs real-time protection; skipped under Configuration Manager |
+| `defender.asr.web_script_email` | ask | Rules d3e037e1, 5beb7efe, be9ba2d9 off or audit to Warn; needs cloud protection |
+| `lsa.run_as_ppl` | ask | RunAsPPL absent or 0 to 2 (never 1); only with Secure Boot on, Smart App Control off, no CodeIntegrity 3033/3063/3065/3066 events in 30 days and no third-party LSA packages; restart |
+| `net.public_sharing_exposure` | auto | Built-in FPS-* / NETDIS-* inbound allow rules enabled on Public lose the Public profile (Public-only rules are disabled); no rule deleted, no network relabelled |
+| `printer.point_and_print` | auto | Remove RestrictDriverInstallationToAdministrators=0, NoWarningNoElevationOnInstall=1, UpdatePromptSettings=2; vetoed when other Point and Print policy exists; Spooler untouched |
+| `net.llmnr` | auto | Policies DNSClient EnableMulticast absent or 1 to 0; restart |
+| `accounts.lockout_policy` | auto | Local lockout threshold 0 to 10 via ADSI; duration/window untouched |
+| `autorun.disabled` | ask | NoDriveTypeAutoRun=255, NoAutorun=1; restart |
+| `wifi.risky_profiles` | ask | Saved all-user open/WEP/WPA-TKIP profiles auto to manual via WlanSetProfile; nothing deleted, keys never read |
+| `lsa.restrict_anonymous` | ask | RestrictAnonymous 1, EveryoneIncludesAnonymous 0, RestrictNullSessAccess 1; restart |
+| `remote_assistance.disabled` | ask | fAllowToGetHelp 0 |
+| `wsh.disabled` | ask | Windows Script Host Enabled 0 |
+| `update.auto_policy_disabled` | ask | Remove local NoAutoUpdate=1, AUOptions=1, DisableWindowsUpdateAccess=1; vetoed by update-server policy |
+| `ntlm.lm_compat_level` | ask | LmCompatibilityLevel to 5; restart |
+| `accounts.builtin_administrator` | ask | Disable RID-500 only when another enabled administrator exists |
+| `privacy.activity_history` | ask | Activity feed policies to 0; never counts against the score |
+| `privacy.advertising_id` | ask | DisabledByGroupPolicy=1; never counts against the score |
+
+Every control reuses the domain, MDM/enrollment, policy, RSOP and local-policy-artifact gates; preflight conditions (such as the LSA checks) apply to repairs only and never to undo. Not implemented because the value names are unconfirmed by official Microsoft documentation: `driver.vulnerable_blocklist`, `net.wpad`, `smartscreen.apps`, Nearby Sharing, KernelShadowStacks.
+
 ### 19 advisory findings
 
 | Finding | Evidence boundary |
