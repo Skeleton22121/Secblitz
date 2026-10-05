@@ -18,6 +18,44 @@ pub fn install_bitwarden() -> anyhow::Result<()> {
     anyhow::bail!("Bitwarden installation is supported only on Windows")
 }
 
+/// The PC could not reach the internet (DNS or connection failure). Distinct
+/// from every other installer failure so the UI can say "you're offline".
+#[derive(Debug)]
+pub struct Offline;
+
+impl std::fmt::Display for Offline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("network_unreachable")
+    }
+}
+
+impl std::error::Error for Offline {}
+
+/// True when an error from this module (or its context chain) means offline.
+pub fn is_offline_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<Offline>())
+}
+
+/// Exit codes WinGet passes through from WinHTTP/WinInet when there is no
+/// connection: name not resolved, timeout, cannot connect, connection
+/// error/reset, and the generic internet-disconnected code.
+pub fn is_offline_code(code: u32) -> bool {
+    matches!(
+        code,
+        0x8007_2EE7 | 0x8007_2EE2 | 0x8007_2EFD | 0x8007_2EFE | 0x8007_2EFF | 0x8007_2EE9
+    )
+}
+
+/// Name resolution for the WinGet CDN only (no data is sent). A failure after
+/// an installer failed is strong evidence the PC is offline.
+pub fn dns_offline() -> bool {
+    use std::net::ToSocketAddrs;
+    match ("cdn.winget.microsoft.com", 443).to_socket_addrs() {
+        Ok(mut addresses) => addresses.next().is_none(),
+        Err(_) => true,
+    }
+}
+
 #[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug)]
 enum Operation {
@@ -678,15 +716,24 @@ mod windows {
         let exe = winget()?;
         let deadline = Instant::now() + Duration::from_secs(600);
         let (code, source) = run(&exe, Operation::Source, deadline)?;
+        if super::is_offline_code(code) {
+            return Err(super::Offline.into());
+        }
         ensure!(code == 0, "WinGet source export failed (exit 0x{code:08X})");
         verify_source(&source)?;
         let (code, _) = run(&exe, Operation::List, deadline)?;
+        if super::is_offline_code(code) {
+            return Err(super::Offline.into());
+        }
         if list_found(code).context("Determine existing installation; no install was attempted")? {
             return Ok(());
         }
         // WinGet verifies the installer against the repository manifest SHA-256.
         // Hash/security errors propagate; there is no bypass or download fallback.
         let (code, _) = run(&exe, Operation::Install, deadline)?;
+        if super::is_offline_code(code) || (code != 0 && super::dns_offline()) {
+            return Err(super::Offline.into());
+        }
         ensure!(code == 0, "WinGet Bitwarden installation failed (exit 0x{code:08X}); installer hash verification was not bypassed");
         let (code, _) = run(&exe, Operation::List, deadline)?;
         ensure!(
@@ -700,6 +747,18 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_is_recognized_only_from_connectivity_failures() {
+        assert!(is_offline_code(0x8007_2EE7));
+        assert!(is_offline_code(0x8007_2EFD));
+        for code in [0, 1, 0x8A15_0014, 0x8A15_0008, 0x8007_0005, 0xFFFF_FFFF] {
+            assert!(!is_offline_code(code), "{code:#x}");
+        }
+        let error = anyhow::Error::new(Offline).context("Install Bitwarden");
+        assert!(is_offline_error(&error));
+        assert!(!is_offline_error(&anyhow::anyhow!("hash mismatch")));
+    }
 
     #[test]
     fn absence_is_only_the_documented_hresult() {
