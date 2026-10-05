@@ -357,7 +357,7 @@ fn confirm_row<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Messa
             space::horizontal(),
             widgets::action(
                 p,
-                ButtonKind::Ghost,
+                ButtonKind::Secondary,
                 ctx.t("Cancel"),
                 None,
                 Some(Message::Settings(Msg::CancelConfirm))

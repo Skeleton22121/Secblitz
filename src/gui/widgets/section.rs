@@ -220,11 +220,13 @@ impl Widget<Message, Theme, Renderer> for Hoverable<'_> {
 }
 
 /// Soft tonal hover behind `content` (no border, no shadow). For rows that
-/// are not buttons but hold controls, e.g. a label with a switch.
+/// are not buttons but hold controls, e.g. a label with a switch. One step
+/// quieter than `hover`, which is the secondary button's own fill, so a
+/// button on a hovered row keeps its shape.
 pub fn hoverable<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     Element::new(Hoverable {
         content: content.into(),
-        color: p.hover,
+        color: p.surface,
         radius: theme::R,
     })
 }
@@ -283,11 +285,13 @@ pub fn row_item_below<'a>(
     below: Vec<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
+    // Line up with the title: the icon and its gap, plus the gap after the
+    // zero-width spacer that sets the row's minimum height.
     let indent = if glyph.is_some() {
         theme::ICON_ROW + theme::S4
     } else {
         0.0
-    };
+    } + theme::S4;
     let mut texts = column![text(title.into())
         .size(theme::BODY)
         .line_height(LineHeight::Absolute(Pixels(theme::LINE_BODY)))
