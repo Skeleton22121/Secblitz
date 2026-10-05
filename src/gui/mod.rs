@@ -343,7 +343,10 @@ impl App {
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
         // Opening straight on a page (hidden `--self-test`) must load it too.
         let enter = app.enter_page(app.page);
-        (app, Task::batch([opened, first_check, enter]))
+        // Put back app data that was waiting for an account, silently.
+        let pending =
+            Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
+        (app, Task::batch([opened, first_check, enter, pending]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
