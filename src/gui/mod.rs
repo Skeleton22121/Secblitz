@@ -161,6 +161,7 @@ pub enum Message {
     /// Open the undo review sheet.
     ReviewUndo,
     Escape,
+    CloseRequested(iced::window::Id),
     Toast(String, Tone),
     DismissToast,
     /// Slow clock used to auto-dismiss toasts.
@@ -196,7 +197,14 @@ pub fn blocking<T: Send + 'static>(
     std::thread::spawn(move || {
         let _ = tx.send(f());
     });
-    async move { rx.await.expect("background task panicked") }
+    // A panicked closure drops the sender: keep the UI alive rather than
+    // panicking inside the executor (the page's own error handling applies).
+    async move {
+        match rx.await {
+            Ok(value) => value,
+            Err(_) => std::future::pending().await,
+        }
+    }
 }
 
 /// Run a blocking closure that reports progress through `emit`; the stream
@@ -292,6 +300,14 @@ impl App {
             Message::Worker(event) => self.on_worker(event),
             Message::ReviewFixes(ids) => fixflow::open_fixes(&mut self.fix, ids, &mut self.ctx),
             Message::ReviewUndo => fixflow::open_undo(&mut self.fix, &mut self.ctx),
+            Message::CloseRequested(id) => {
+                // A fix, undo, removal or repair must not be cut off halfway.
+                if self.ctx.busy {
+                    Task::none()
+                } else {
+                    iced::window::close(id)
+                }
+            }
             Message::Escape => {
                 if self.fix.is_open() {
                     return fixflow::escape(&mut self.fix, &mut self.ctx);
@@ -355,14 +371,32 @@ impl App {
                 self.assessed(outcome, app::history::Kind::Check, 0);
             }
             E::Applied {
-                attempted, verify, ..
+                attempted,
+                result,
+                verify,
             } => {
                 self.ctx.checking = None;
-                self.assessed(verify, app::history::Kind::Fix, attempted.len());
+                // Count only fixes that really took effect.
+                let n = match result {
+                    Ok(r) => attempted
+                        .iter()
+                        .filter(|id| {
+                            r.results.iter().any(|o| {
+                                o.id == **id && (o.status == "applied" || o.status == "unchanged")
+                            })
+                        })
+                        .count(),
+                    Err(_) => 0,
+                };
+                self.assessed(verify, app::history::Kind::Fix, n);
             }
-            E::Undone { verify, .. } => {
+            E::Undone { result, verify } => {
                 self.ctx.checking = None;
-                self.assessed(verify, app::history::Kind::Undo, 0);
+                let n = match result {
+                    Ok(r) => r.results.iter().filter(|o| o.status == "restored").count(),
+                    Err(_) => 0,
+                };
+                self.assessed(verify, app::history::Kind::Undo, n);
             }
             E::History(_) => {}
         }
@@ -374,29 +408,48 @@ impl App {
     }
 
     /// Store a fresh assessment, log the score and refresh the tray status.
+    /// Fix and undo entries are logged only when something changed (`n > 0`),
+    /// even if the post-check failed (then with the last known score).
     fn assessed(&mut self, outcome: &worker::Outcome, kind: app::history::Kind, n: usize) {
+        let operation = kind != app::history::Kind::Check;
+        let now = app::history::now();
         match outcome {
             Ok(report) => {
                 self.ctx.report = Some(report.clone());
                 self.ctx.check_error = None;
-                let now = app::history::now();
                 self.ctx.checked_at = Some(now);
                 let score = Score::of(report);
-                if let Some(dir) = &self.ctx.state_dir {
-                    let _ = app::history::record(
-                        dir,
-                        &app::history::Entry {
-                            t: now,
-                            kind,
-                            protected: score.protected,
-                            total: score.total,
-                            n,
-                        },
-                    );
+                if !operation || n > 0 {
+                    self.record(now, kind, &score, n);
                 }
                 let _ = secblitz::status::write(&status_of(report, &score, now));
             }
-            Err(e) => self.ctx.check_error = Some(e.clone()),
+            Err(e) => {
+                self.ctx.check_error = Some(e.clone());
+                if operation && n > 0 {
+                    if let Some(report) = self.ctx.report.clone() {
+                        let score = Score::of(&report);
+                        self.record(now, kind, &score, n);
+                    }
+                }
+                // A failed check must not leave the tray showing "protected".
+                let _ = secblitz::status::write(&secblitz::status::summarize(&[], false, now));
+            }
+        }
+    }
+
+    fn record(&self, t: u64, kind: app::history::Kind, score: &Score, n: usize) {
+        if let Some(dir) = &self.ctx.state_dir {
+            let _ = app::history::record(
+                dir,
+                &app::history::Entry {
+                    t,
+                    kind,
+                    protected: score.protected,
+                    total: score.total,
+                    n,
+                },
+            );
         }
     }
 
@@ -576,7 +629,12 @@ impl App {
         } else {
             Subscription::none()
         };
-        Subscription::batch([escape, toast, home::subscription(&self.home, &self.ctx)])
+        Subscription::batch([
+            escape,
+            iced::window::close_requests().map(Message::CloseRequested),
+            toast,
+            home::subscription(&self.home, &self.ctx),
+        ])
     }
 }
 
@@ -723,6 +781,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         .window(iced::window::Settings {
             size: iced::Size::new(1100.0, 720.0),
             min_size: Some(iced::Size::new(880.0, 600.0)),
+            exit_on_close_request: false,
             icon: window_icon(),
             ..Default::default()
         })

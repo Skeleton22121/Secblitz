@@ -30,6 +30,17 @@ pub struct Status {
 }
 
 impl Status {
+    /// Downgrade a stale or future-dated status to `Unknown` so a tray never
+    /// shows "protected" from old or forged data.
+    pub fn fresh(mut self, now: u64) -> Self {
+        let stale = now.saturating_sub(self.t) > MAX_AGE;
+        let future = self.t.saturating_sub(now) > MAX_FUTURE;
+        if stale || future {
+            self.state = State::Unknown;
+        }
+        self
+    }
+
     /// Parse and validate untrusted bytes (size, schema, id charset).
     pub fn parse(bytes: &[u8]) -> anyhow::Result<Self> {
         anyhow::ensure!(bytes.len() <= LIMIT, "status too large");
@@ -150,9 +161,16 @@ pub fn write_to(dir: &std::path::Path, status: &Status) -> anyhow::Result<()> {
     use std::io::Write;
     let bytes = serde_json::to_vec(status)?;
     anyhow::ensure!(bytes.len() <= LIMIT, "status too large");
-    let tmp = dir.join(format!("status.{}.tmp", std::process::id()));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let tmp = dir.join(format!("status.{}.{nonce:x}.tmp", std::process::id()));
     let result = (|| -> anyhow::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
+        // create_new: never follow or truncate a pre-planted file or link.
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         f.write_all(&bytes)?;
         f.sync_all()?;
         drop(f);
@@ -182,13 +200,30 @@ pub fn read() -> Option<Status> {
     if std::fs::metadata(&p).ok()?.len() > LIMIT as u64 {
         return None;
     }
-    Status::parse(&std::fs::read(p).ok()?).ok()
+    Status::parse(&std::fs::read(p).ok()?)
+        .ok()
+        .map(|s| s.fresh(now()))
 }
+
+/// A status older than this is no longer evidence of anything.
+pub const MAX_AGE: u64 = 2 * 60 * 60;
+/// Clock skew tolerated before a timestamp counts as forged.
+pub const MAX_FUTURE: u64 = 5 * 60;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn stale_or_future_status_becomes_unknown() {
+        let s = st(State::Ok, 1, 1, &[]);
+        assert_eq!(s.clone().fresh(s.t + 60).state, State::Ok);
+        assert_eq!(s.clone().fresh(s.t + MAX_AGE + 1).state, State::Unknown);
+        let mut f = s.clone();
+        f.t = 10_000;
+        assert_eq!(f.fresh(10_000 - MAX_FUTURE - 1).state, State::Unknown);
+    }
 
     fn st(state: State, protected: u32, total: u32, ids: &[&str]) -> Status {
         Status {

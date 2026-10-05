@@ -17,6 +17,10 @@ use windows_sys::Win32::{
         CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO,
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
     },
+    Security::{
+        Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT},
+        IsWellKnownSid, WinBuiltinAdministratorsSid, WinLocalSystemSid, OWNER_SECURITY_INFORMATION,
+    },
     System::{
         LibraryLoader::GetModuleHandleW,
         Threading::{CreateMutexW, OpenEventW, WaitForSingleObject},
@@ -40,9 +44,15 @@ use windows_sys::Win32::{
     },
 };
 
+#[link(name = "kernel32")]
+extern "system" {
+    fn LocalFree(p: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
 const MUTEX: &str = "Local\\SecblitzTray";
 const QUIESCE_EVENT: &str = "Global\\SecblitzUpdateQuiesce";
 const SYNCHRONIZE: u32 = 0x0010_0000;
+const READ_CONTROL: u32 = 0x0002_0000;
 const CALLBACK: u32 = WM_APP + 1;
 const POLL_TIMER: usize = 1;
 const QUIESCE_TIMER: usize = 2;
@@ -245,8 +255,33 @@ fn refresh(hwnd: HWND, t: &mut Tray) {
 fn quiesce_requested() -> bool {
     let name = wide(QUIESCE_EVENT);
     unsafe {
-        let h = OpenEventW(SYNCHRONIZE, 0, name.as_ptr());
+        let h = OpenEventW(SYNCHRONIZE | READ_CONTROL, 0, name.as_ptr());
         if h.is_null() {
+            return false;
+        }
+        // Any local user can create a Global event; only honour one owned by
+        // SYSTEM or Administrators (the updater).
+        let mut owner = null_mut();
+        let mut sd = null_mut();
+        let rc = GetSecurityInfo(
+            h,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut sd,
+        );
+        let trusted = rc == 0
+            && !owner.is_null()
+            && (IsWellKnownSid(owner, WinLocalSystemSid) != 0
+                || IsWellKnownSid(owner, WinBuiltinAdministratorsSid) != 0);
+        if !sd.is_null() {
+            LocalFree(sd);
+        }
+        if !trusted {
+            CloseHandle(h);
             return false;
         }
         let signalled = WaitForSingleObject(h, 0) == WAIT_OBJECT_0;

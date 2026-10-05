@@ -101,11 +101,21 @@ pub fn tray_command(exe: &Path) -> String {
 /// become a logon autostart target.
 pub fn installed_exe() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let base = std::env::var_os("ProgramFiles")?;
-    let expected = Path::new(&base).join("Secblitz").join("secblitz.exe");
-    same_path(&exe, &expected).then_some(exe)
+    #[cfg(windows)]
+    {
+        // Resolved with SHGetKnownFolderPath, never from the inherited environment.
+        crate::service::trusted_status_dir()?;
+        Some(exe)
+    }
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var_os("ProgramFiles")?;
+        let expected = Path::new(&base).join("Secblitz").join("secblitz.exe");
+        same_path(&exe, &expected).then_some(exe)
+    }
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn same_path(a: &Path, b: &Path) -> bool {
     a.to_string_lossy()
         .replace('/', "\\")
