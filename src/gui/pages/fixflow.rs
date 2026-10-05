@@ -609,7 +609,7 @@ fn review_view<'a>(
         } else {
             ButtonKind::Primary
         },
-        ctx.t(if undo { "Undo" } else { "Fix now" }),
+        ctx.t(if undo { "Undo fixes" } else { "Fix now" }),
         None,
         Some(Message::Fix(Msg::Confirm)),
     );
