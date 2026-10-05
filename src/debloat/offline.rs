@@ -24,11 +24,8 @@ pub struct Described {
     pub template_family: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Template {
-    pub dir: String,
-    pub file: String,
-}
+/// Folder and file permissions to give restored package folders.
+pub type Template = backup::Sddl;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Restored {
@@ -61,6 +58,8 @@ pub trait Host {
     fn new_key(&self) -> Result<(Box<dyn Sealer>, Vec<u8>)>;
     fn open_key(&self, sealed: &[u8]) -> Result<Box<dyn Sealer>>;
     fn template(&self, family: &str) -> Result<Template>;
+    /// Current permissions of WindowsApps\<full> (folder and a file).
+    fn package_sddl(&self, full: &str) -> Result<Template>;
     fn copy_in(
         &self,
         full: &str,
@@ -145,6 +144,7 @@ pub(crate) fn backup_family_with(
                 full_name: p.full_name.clone(),
                 kind: p.kind,
                 files,
+                sddl: recorded_sddl(host, &p.full_name),
             });
             // The size is only known once copied: keep the headroom free.
             ensure!(host.free_bytes()? >= backup::HEADROOM, LowSpace);
@@ -162,6 +162,7 @@ pub(crate) fn backup_family_with(
                     schema: SCHEMA,
                     full_name: f.clone(),
                     files,
+                    sddl: recorded_sddl(host, f),
                 };
                 std::fs::write(
                     tmp.join(backup::FRAMEWORK_MANIFEST),
@@ -244,6 +245,41 @@ pub(crate) fn backup_family_with(
     }
 }
 
+/// The package's own permissions, if they pass the same checks restore
+/// applies (otherwise restore falls back to a live app's permissions).
+fn recorded_sddl(host: &dyn Host, full: &str) -> Option<Template> {
+    let family = backup::parse_full_name(full).ok()?.family();
+    let s = host.package_sddl(full).ok()?;
+    Some(Template {
+        dir: backup::own_sddl(&s.dir, &family).ok()?,
+        file: backup::own_sddl(&s.file, &family).ok()?,
+    })
+}
+
+/// Permissions for restoring `full`: its own recorded ones when they still
+/// pass the checks, else the live-app template (computed once, on demand).
+fn permissions_for(
+    host: &dyn Host,
+    full: &str,
+    recorded: &Option<Template>,
+    app_family: &str,
+    fallback: &mut Option<Template>,
+) -> Result<Template> {
+    let family = backup::parse_full_name(full)?.family();
+    if let Some(r) = recorded {
+        if let (Ok(dir), Ok(file)) = (
+            backup::own_sddl(&r.dir, &family),
+            backup::own_sddl(&r.file, &family),
+        ) {
+            return Ok(Template { dir, file });
+        }
+    }
+    if fallback.is_none() {
+        *fallback = Some(host.template(app_family)?);
+    }
+    Ok(fallback.clone().expect("set above"))
+}
+
 fn ensure_or(ok: bool, why: &str) -> std::result::Result<(), Kept> {
     if ok {
         Ok(())
@@ -285,7 +321,7 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
             outcome = Restored::AlreadyThere;
             continue;
         }
-        let template = host.template(&m.family)?;
+        let mut fallback: Option<Template> = None;
         let dir = store.family_dir(&m.family);
         let mut copied: Vec<String> = Vec::new();
         let mut order: Vec<String> = Vec::new();
@@ -297,6 +333,7 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
                 let copy = store
                     .load_framework(f)?
                     .context("A part the app needs is missing")?;
+                let template = permissions_for(host, f, &copy.sddl, &m.family, &mut fallback)?;
                 host.copy_in(
                     f,
                     &store.framework_dir(f).join("files"),
@@ -307,6 +344,8 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
                 order.push(f.clone());
             }
             for p in &m.packages {
+                let template =
+                    permissions_for(host, &p.full_name, &p.sddl, &m.family, &mut fallback)?;
                 host.copy_in(
                     &p.full_name,
                     &dir.join(backup::PACKAGES).join(&p.full_name),
@@ -636,6 +675,15 @@ impl Host for WindowsHost {
             file: backup::template_sddl(&super::winfs::security_sddl(&file)?, &from, family)?,
         })
     }
+    fn package_sddl(&self, full: &str) -> Result<Template> {
+        backup::parse_full_name(full)?;
+        let dir = super::winfs::windows_apps()?.join(full);
+        // Every package (bundle, main, resource, framework) has a block map.
+        Ok(Template {
+            dir: super::winfs::security_sddl(&dir)?,
+            file: super::winfs::security_sddl(&dir.join("AppxBlockMap.xml"))?,
+        })
+    }
     fn copy_in(
         &self,
         full: &str,
@@ -761,8 +809,10 @@ mod tests {
         fail_register: bool,
         fail_data_restore: bool,
         fail_save: bool,
-        data: RefCell<BTreeMap<String, Vec<u8>>>, // sid -> plaintext marker
-        signed_out: RefCell<BTreeSet<String>>,    // accounts with no data folder yet
+        sddls: RefCell<BTreeMap<String, Template>>, // full name -> permissions
+        used: RefCell<BTreeMap<String, Template>>,  // permissions given on restore
+        data: RefCell<BTreeMap<String, Vec<u8>>>,   // sid -> plaintext marker
+        signed_out: RefCell<BTreeSet<String>>,      // accounts with no data folder yet
         me: RefCell<String>,
     }
 
@@ -806,9 +856,12 @@ mod tests {
             full: &str,
             _src: &Path,
             _files: &[FileEntry],
-            _template: &Template,
+            template: &Template,
         ) -> Result<()> {
             self.log.borrow_mut().push(format!("in {full}"));
+            self.used
+                .borrow_mut()
+                .insert(full.to_owned(), template.clone());
             self.installed.borrow_mut().insert(full.to_owned());
             Ok(())
         }
@@ -822,6 +875,13 @@ mod tests {
                 dir: "D".into(),
                 file: "F".into(),
             })
+        }
+        fn package_sddl(&self, full: &str) -> Result<Template> {
+            self.sddls
+                .borrow()
+                .get(full)
+                .cloned()
+                .context("no permissions")
         }
         fn register(&self, fulls: &[String], provision: Option<&str>) -> Result<()> {
             self.log.borrow_mut().push(format!(
@@ -1197,6 +1257,47 @@ mod tests {
         .unwrap();
         forget_with(&store, index()).unwrap();
         assert!(store.family_dir(FAMILY).exists());
+    }
+
+    #[test]
+    fn restore_gives_each_package_its_own_permissions() {
+        const APP: &str = "O:SYG:SYD:AI(XA;OICI;0x1200a9;;;BU;(WIN://SYSAPPID Contains \"Microsoft.BingWeather_8wekyb3d8bbwe\"))(A;OICIID;FA;;;SY)";
+        const SHARED: &str =
+            "O:BAG:SYD:AI(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;AC)(A;OICIID;FA;;;SY)";
+        let own = |dir: &str| Template {
+            dir: dir.into(),
+            file: dir.replace("OICI", ""),
+        };
+        let (_d, store) = store();
+        let host = weather();
+        host.sddls.borrow_mut().insert(MAIN.into(), own(APP));
+        host.sddls.borrow_mut().insert(FW.into(), own(SHARED));
+        // The bundle's recorded permissions grant everyone write: not kept.
+        host.sddls
+            .borrow_mut()
+            .insert(BUNDLE.into(), own("O:SYG:SYD:(A;;FA;;;WD)"));
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        let m = store.load(FAMILY, index()).unwrap().unwrap();
+        assert!(m
+            .packages
+            .iter()
+            .find(|p| p.full_name == BUNDLE)
+            .unwrap()
+            .sddl
+            .is_none());
+        host.installed.borrow_mut().clear();
+        restore_with(&host, &store, index()).unwrap();
+        let used = host.used.borrow();
+        assert_eq!(used[MAIN], own(APP));
+        assert_eq!(
+            used[FW],
+            own(SHARED),
+            "a shared part keeps its open permissions"
+        );
+        assert_eq!(
+            used[BUNDLE].dir, "D",
+            "no usable record: the live-app template"
+        );
     }
 
     #[test]

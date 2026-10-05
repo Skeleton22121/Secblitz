@@ -222,7 +222,11 @@ fn program_data() -> Result<PathBuf> {
     }
 }
 
-fn secure_tree(path: &Path, handles: &mut Vec<Handle>, depth: usize) -> Result<()> {
+/// Inspect every entry under `path`. `opaque` (the saved app copies) is
+/// itself inspected but not walked: it holds thousands of app files, it
+/// inherits this folder's SYSTEM/Administrators-only ACL, and its own code
+/// refuses links. Only an administrator could plant anything inside it.
+fn secure_tree(path: &Path, opaque: &Path, handles: &mut Vec<Handle>, depth: usize) -> Result<()> {
     ensure!(
         depth <= 8 && handles.len() < 4096,
         "Journal directory exceeds inspection limits"
@@ -233,8 +237,8 @@ fn secure_tree(path: &Path, handles: &mut Vec<Handle>, depth: usize) -> Result<(
         let directory = inspect(&h, true, false)
             .with_context(|| format!("Untrusted journal entry {}", path.display()))?;
         handles.push(h);
-        if directory {
-            secure_tree(&path, handles, depth + 1)?;
+        if directory && path != opaque {
+            secure_tree(&path, opaque, handles, depth + 1)?;
         }
         ensure!(handles.len() < 4096, "Too many journal entries");
     }
@@ -353,7 +357,8 @@ pub fn state_dir() -> Result<PathBuf> {
     );
     held.push(root);
     let mut entries = Vec::new();
-    secure_tree(&path, &mut entries, 0)?;
+    let opaque = path.join("App").join(crate::platform::APP_BACKUPS);
+    secure_tree(&path, &opaque, &mut entries, 0)?;
     // Keep one set of non-delete-sharing root/ancestor handles for process
     // lifetime. This prevents directory replacement after returning PathBuf.
     static PINNED: OnceLock<PathBuf> = OnceLock::new();
