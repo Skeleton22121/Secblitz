@@ -80,8 +80,8 @@ executable defaults to apply and must not be paired with this installer for rele
   The app's asInvoker manifest and guided flow own elevation. Guided entry checks
   for a terminal first, then may request its initial UAC elevation to read protected
   state; this is not consent to apply fixes. Fixes require a subsequent user choice.
-* The finish page offers **Open Secblitz - start the guided setup**, checked by
-  default. It invokes the fixed installed executable with explicit `guide`, never
+* The finish page offers **Open Secblitz**, checked by
+  default. It invokes the fixed installed executable with no arguments, never
   `apply`, using `nowait postinstall skipifsilent runasoriginaluser`. Silent setup
   never launches this action. A `CanLaunchSecblitz` check also blocks launch when
   post-install maintenance has failed; the latched failure still returns exit 20
@@ -92,8 +92,13 @@ executable defaults to apply and must not be paired with this installer for rele
   prompt: Inno retains the original user context for the finish launch. If Setup
   is started already elevated (including “Run as administrator” or an elevated
   shell), `runasoriginaluser` cannot de-elevate the app. Normal unelevated installer
-  invocation is required for an unelevated finish launch; `guide` remains explicit
-  in either case.
+  invocation is required for an unelevated finish launch.
+* The default-checked **Show the Secblitz shield in the taskbar corner** task writes
+  the HKLM Run value `SecblitzTray` (`"{app}\secblitz.exe" tray`, removed on
+  uninstall) and starts the unelevated tray for the person running Setup. Setup
+  closes a running tray through Restart Manager and a `WM_CLOSE` to its window;
+  the update worker instead signals `Global\SecblitzUpdateQuiesce` and relaunches
+  the tray afterwards. Uninstall removes the fixed `{app}\Status` directory.
 * Monitor registration is an explicit unchecked task. Task selection is not
   remembered across upgrades. Silent setup defaults to the desktop shortcut and
   no monitor. `/TASKS=monitor` opts into the monitor and out of the desktop shortcut;
