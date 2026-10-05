@@ -414,6 +414,7 @@ impl App {
                 match self.page {
                     Page::Debloat => debloat::escape(&mut self.debloat),
                     Page::Tools => tools::escape(&mut self.tools),
+                    Page::Settings => settings::escape(&mut self.settings),
                     _ => {}
                 }
                 Task::none()
@@ -810,6 +811,7 @@ impl App {
         let modal = match self.page {
             Page::Debloat => debloat::modal(&self.debloat, &self.ctx),
             Page::Tools => tools::modal(&self.tools, &self.ctx),
+            Page::Settings => settings::modal(&self.settings, &self.ctx),
             _ => None,
         };
         let modal_layer = match modal {

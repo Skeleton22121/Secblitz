@@ -5,6 +5,7 @@
 //! the page shows calm "Checking…" labels with a Refresh button.
 use crate::app::settings::{self as prefs_store, ThemeChoice};
 use crate::gui::icons::Icon;
+use crate::gui::pages::remove;
 use crate::gui::theme::{self, Mode, Palette, Tone};
 use crate::gui::widgets::{self, anim, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
@@ -85,6 +86,8 @@ pub struct State {
     technical: bool,
     /// Drives the spinner; only ticks while something is busy.
     clock: anim::Clock,
+    /// The Remove Secblitz sheet.
+    remove: remove::State,
 }
 
 impl Default for State {
@@ -100,6 +103,7 @@ impl Default for State {
             installed: prefs_store::installed_exe().is_some(),
             technical: false,
             clock: anim::Clock::new(),
+            remove: remove::State::default(),
         }
     }
 }
@@ -115,11 +119,22 @@ impl State {
 /// Frame ticks, only while a spinner is showing (and motion is allowed).
 /// The shell batches this into its subscriptions.
 pub fn subscription(state: &State) -> Subscription<Message> {
-    if state.busy() && !anim::reduced() {
+    let spinner = if state.busy() && !anim::reduced() {
         iced::window::frames().map(|_| Message::Settings(Msg::Frame))
     } else {
         Subscription::none()
-    }
+    };
+    Subscription::batch([spinner, remove::subscription(&state.remove)])
+}
+
+/// The Remove Secblitz sheet, drawn by the shell above the whole window.
+pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
+    remove::modal(&state.remove, ctx)
+}
+
+/// Escape closes the Remove Secblitz sheet when no work is running.
+pub fn escape(state: &mut State) {
+    remove::escape(&mut state.remove);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +185,7 @@ pub enum Msg {
     ToggleTechnical,
     /// Animation frame; the redraw is the whole job.
     Frame,
+    Remove(remove::Msg),
 }
 
 /// Call when the page opens.
@@ -191,6 +207,7 @@ fn save_prefs(ctx: &Ctx) -> Task<Message> {
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Frame => Task::none(),
+        Msg::Remove(m) => remove::update(&mut state.remove, m, ctx),
         Msg::Load => {
             state.clock.restart();
             state.background = Remote::Loading;
@@ -592,11 +609,34 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         container(details).padding([theme::S2, theme::S4 + theme::ICON_ROW + theme::S4]),
     );
 
+    // Remove Secblitz: one button, the choices are in the sheet.
+    let removal = widgets::group(
+        p,
+        t(remove::SECTION_TITLE),
+        None,
+        None,
+        vec![widgets::row_item(
+            p,
+            Some(Icon::Trash),
+            t(remove::SECTION_ROW),
+            Some(t(remove::SECTION_HELP)),
+            widgets::action(
+                p,
+                ButtonKind::Danger,
+                t(remove::SECTION_TITLE),
+                None,
+                (!ctx.busy).then(|| Message::Settings(Msg::Remove(remove::Msg::Open))),
+            ),
+            None,
+        )],
+    );
+
     column![
         widgets::page_header(p, t("Settings"), Some(t("Make Secblitz work your way."))),
         appearance,
         protection,
         updates,
+        removal,
         about,
     ]
     .spacing(theme::S8)
