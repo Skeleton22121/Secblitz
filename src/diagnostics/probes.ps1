@@ -197,6 +197,294 @@ try {
             })
             @{connections=(Known (Items $items ($rows.Count -gt 512)))}
         }
+        'OsSupport' {
+            $version = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+            @{
+                display_version=(Fact { $v = HklmValue $version 'DisplayVersion'; if ($v -isnot [string] -or $v -cnotmatch '^[0-9A-Za-z]{2,8}$') { throw 'Invalid version' }; $v })
+                build=(Fact { $v = HklmValue $version 'CurrentBuildNumber'; if ($v -isnot [string] -or $v -cnotmatch '^[0-9]{4,6}$') { throw 'Invalid build' }; [int]$v })
+                edition_id=(Fact { $v = HklmValue $version 'EditionID'; if ($v -isnot [string] -or $v -cnotmatch '^[0-9A-Za-z]{2,40}$') { throw 'Invalid edition' }; $v })
+            }
+        }
+        'SecureBootCerts' {
+            Load 'SecureBoot'
+            Load 'Microsoft.PowerShell.Diagnostics'
+            # Event ids only: message text can carry firmware or device details and is never read.
+            $ids = $null
+            try {
+                $rows = @()
+                try { $rows = @(Get-WinEvent -FilterHashtable @{LogName='System';Id=@(1795,1796,1797,1798,1801,1808);StartTime=[DateTime]::Now.AddDays(-400)} -MaxEvents 64) }
+                catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw } }
+                $ids = @($rows | ForEach-Object { [int]$_.Id })
+            } catch { $ids = $null }
+            $sb = $false
+            try { $sb = [bool](Confirm-SecureBootUEFI) } catch { $sb = $false }
+            $flag = { param($wanted) if ($null -eq $ids) { return (Unknown) }; $hit = $false; foreach ($i in $ids) { if ($i -in $wanted) { $hit = $true } }; return (Known $hit) }
+            @{
+                update_completed_event=(& $flag @(1808))
+                update_staged_event=(& $flag @(1801))
+                update_error_event=(& $flag @(1795,1796,1797,1798))
+                servicing_status=(Fact {
+                    $v = HklmValue 'SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing' 'UEFICA2023Status'
+                    if ($null -eq $v) { return 'Absent' }
+                    if ($v -isnot [string]) { throw 'Wrong registry type' }
+                    if ($v -cin @('NotStarted','InProgress','Updated')) { return $v }
+                    return 'Other'
+                })
+                ca2023_in_db=(Fact {
+                    if (-not $sb) { return $false }
+                    $db = Get-SecureBootUEFI -Name db
+                    [Text.Encoding]::ASCII.GetString($db.Bytes).Contains('Windows UEFI CA 2023')
+                })
+                secure_boot_enabled=(Known $sb)
+            }
+        }
+        'DefenderProtection' {
+            Load 'Defender'
+            $s = Get-MpComputerStatus
+            $p = Get-MpPreference
+            # Counts only. Exclusion paths, extensions and process names are never emitted.
+            $total = $null; $risky = $null
+            try {
+                $paths = @($p.ExclusionPath | Where-Object { $null -ne $_ })
+                $extensions = @($p.ExclusionExtension | Where-Object { $null -ne $_ })
+                $processes = @($p.ExclusionProcess | Where-Object { $null -ne $_ })
+                if ($paths.Count + $extensions.Count + $processes.Count -gt 4096) { throw 'Exclusion cap' }
+                foreach ($entry in @($paths + $extensions + $processes)) { if ([string]$entry -like 'N/A*') { throw 'Exclusions masked' } }
+                $n = 0
+                foreach ($entry in $paths) {
+                    $x = ([string]$entry).Trim().ToLowerInvariant().TrimEnd('\')
+                    if ($x -match '^[a-z]:$|^\*$|^[a-z]:\\(windows(\\(temp|system32|syswow64))?|programdata|users(\\public.*|\\[^\\]+(\\(downloads|desktop|documents|appdata(\\local(\\temp)?|\\roaming)?))?)?)?$|(^|\\)temp$|^%(userprofile|temp|tmp|appdata|localappdata|public|systemroot|windir|systemdrive|homedrive)%(\\(downloads|desktop|documents|temp))?$') { $n++ }
+                }
+                foreach ($entry in $extensions) {
+                    $x = ([string]$entry).Trim().ToLowerInvariant().TrimStart('.')
+                    if ($x -cin @('exe','dll','ps1','bat','cmd','js','vbs','vbe','scr','msi','com','hta','jar','*')) { $n++ }
+                }
+                foreach ($entry in $processes) {
+                    $x = ([string]$entry).Trim().ToLowerInvariant()
+                    $leaf = $x.Substring($x.LastIndexOf('\') + 1)
+                    if ($leaf -cin @('powershell.exe','pwsh.exe','cmd.exe','wscript.exe','cscript.exe','mshta.exe','rundll32.exe','regsvr32.exe','*')) { $n++ }
+                }
+                $total = $paths.Count + $extensions.Count + $processes.Count
+                $risky = $n
+            } catch { $total = $null; $risky = $null }
+            @{
+                running_mode=(Prop $s 'AMRunningMode')
+                tamper_protected=(Prop $s 'IsTamperProtected')
+                tamper_feature_value=(Fact { $v = HklmDword 'SOFTWARE\Microsoft\Windows Defender\Features' 'TamperProtection'; if ($null -eq $v) { return 0 }; if ($v -lt 0 -or $v -gt 255) { throw 'Unknown tamper value' }; $v })
+                active_threats=(Fact { @(Get-MpThreat | Where-Object { $_.IsActive }).Count })
+                recent_detections=(Fact { $cut = (Get-Date).AddDays(-30); @(Get-MpThreatDetection | Where-Object { $_.InitialDetectionTime -gt $cut }).Count })
+                quick_scan_age_days=(Prop $s 'QuickScanAge')
+                full_scan_age_days=(Prop $s 'FullScanAge')
+                exclusion_count=(Counted $total)
+                risky_exclusion_count=(Counted $risky)
+            }
+        }
+        'SmartScreen' {
+            $explorer = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer'
+            @{
+                apps_off_local=(Fact { $v = HklmValue $explorer 'SmartScreenEnabled'; if ($null -eq $v) { return $false }; if ($v -isnot [string]) { throw 'Wrong registry type' }; $v -ceq 'Off' })
+                apps_off_policy=(Fact { $v = HklmDword 'SOFTWARE\Policies\Microsoft\Windows\System' 'EnableSmartScreen'; ($null -ne $v) -and ($v -eq 0) })
+                edge_off_policy=(Fact { $v = HklmDword 'SOFTWARE\Policies\Microsoft\Edge' 'SmartScreenEnabled'; ($null -ne $v) -and ($v -eq 0) })
+                chrome_off_policy=(Fact { $v = HklmDword 'SOFTWARE\Policies\Google\Chrome' 'SafeBrowsingProtectionLevel'; $w = HklmDword 'SOFTWARE\Policies\Google\Chrome' 'SafeBrowsingEnabled'; (($null -ne $v) -and ($v -eq 0)) -or (($null -ne $w) -and ($w -eq 0)) })
+                smart_app_control=(Fact {
+                    $v = HklmDword 'SYSTEM\CurrentControlSet\Control\CI\Policy' 'VerifiedAndReputablePolicyState'
+                    if ($null -eq $v) { return 'Absent' }
+                    switch ($v) { 0 { return 'Off' } 1 { return 'On' } 2 { return 'Evaluation' } default { throw 'Unknown state' } }
+                })
+            }
+        }
+        'UpdatePolicy' {
+            $wu = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+            $ux = 'SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
+            @{
+                auto_updates_blocked=(Fact { $a = HklmDword "$wu\AU" 'NoAutoUpdate'; $o = HklmDword "$wu\AU" 'AUOptions'; (($null -ne $a) -and ($a -eq 1)) -or (($null -ne $o) -and ($o -eq 1)) })
+                update_access_blocked=(Fact { $v = HklmDword $wu 'DisableWindowsUpdateAccess'; ($null -ne $v) -and ($v -eq 1) })
+                update_service_disabled=(Fact {
+                    $off = $false
+                    foreach ($svc in @('wuauserv','UsoSvc','BITS')) { $v = HklmDword "SYSTEM\CurrentControlSet\Services\$svc" 'Start'; if (($null -ne $v) -and ($v -eq 4)) { $off = $true } }
+                    $off
+                })
+                paused=(Fact {
+                    $now = [DateTime]::UtcNow; $paused = $false
+                    foreach ($name in @('PauseUpdatesExpiryTime','PauseFeatureUpdatesEndTime','PauseQualityUpdatesEndTime')) {
+                        $v = HklmValue $ux $name
+                        if ($v -is [string]) {
+                            $when = [DateTime]::MinValue
+                            if ([DateTime]::TryParse($v, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$when) -and $when -gt $now) { $paused = $true }
+                        }
+                    }
+                    $paused
+                })
+                drivers_excluded=(Fact { $v = HklmDword $wu 'ExcludeWUDriversInQualityUpdate'; ($null -ne $v) -and ($v -eq 1) })
+                reboot_pending=(Fact { (HklmKeyExists 'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') -or (HklmKeyExists 'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') })
+                uptime_days=(Fact {
+                    $boot = (Cim 'Win32_OperatingSystem')[0].LastBootUpTime
+                    if ($boot -isnot [DateTime]) { throw 'Missing boot time' }
+                    $days = [Math]::Floor(([DateTime]::Now - $boot).TotalDays)
+                    if ($days -lt 0) { $days = 0 }
+                    [int][Math]::Min($days, 36500)
+                })
+            }
+        }
+        'LegacyFeatures' {
+            Load 'Dism'
+            @{
+                powershell_v2_enabled=(Fact {
+                    $f = Get-WindowsOptionalFeature -Online -FeatureName 'MicrosoftWindowsPowerShellV2Root'
+                    $state = [string]$f.State
+                    if ($state -ceq 'Enabled') { return $true }
+                    if ($state -cin @('Disabled','DisabledWithPayloadRemoved')) { return $false }
+                    throw 'Unknown feature state'
+                })
+            }
+        }
+        'HostsFile' {
+            $hosts = [IO.Path]::Combine($env:SystemRoot, 'System32\drivers\etc\hosts')
+            $size = $null
+            try { $info = New-Object IO.FileInfo $hosts; $size = $(if ($info.Exists) { [long]$info.Length } else { [long]0 }) } catch { $size = $null }
+            $redirects = $null; $sensitiveRedirects = $null; $sensitiveBlocks = $null
+            try {
+                if ($null -eq $size -or $size -gt 4194304) { throw 'Hosts file too large to inspect' }
+                $r = 0; $sr = 0; $sb = 0
+                if ($size -gt 0) {
+                    $lines = [IO.File]::ReadAllLines($hosts)
+                    if ($lines.Count -gt 20000) { throw 'Line cap' }
+                    foreach ($line in $lines) {
+                        $text = $line; $hash = $text.IndexOf('#'); if ($hash -ge 0) { $text = $text.Substring(0, $hash) }
+                        $parts = @($text.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+                        if ($parts.Count -lt 2) { continue }
+                        $address = $null
+                        if (-not [Net.IPAddress]::TryParse($parts[0], [ref]$address)) { continue }
+                        $loop = $parts[0] -cin @('127.0.0.1','::1','0.0.0.0','::')
+                        $names = @($parts[1..($parts.Count - 1)] | ForEach-Object { $_.ToLowerInvariant() })
+                        $broad = $false; $update = $false
+                        foreach ($h in $names) {
+                            if ($h -match '(^|\.)(microsoft|windowsupdate|windows|live|office|office365|msedge|xbox)\.(com|net)$|defender|kaspersky|avast|avg\.com|norton|symantec|mcafee|malwarebytes|bitdefender|eset\.|sophos|trendmicro|avira|webroot|paypal|bank|chase\.com|wellsfargo|citibank|hsbc|barclays|santander|capitalone|americanexpress|revolut') { $broad = $true }
+                            if ($h -match 'windowsupdate\.com$|(^|\.)update\.microsoft\.com$|(^|\.)download\.microsoft\.com$|(^|\.)smartscreen[^.]*\.microsoft\.com$|(^|\.)wdcp\.microsoft\.com$|defender|kaspersky|avast|norton|symantec|mcafee|malwarebytes|bitdefender|eset\.|sophos|trendmicro|avira|webroot') { $update = $true }
+                        }
+                        if ($loop) { if ($update) { $sb++ } }
+                        else { $r++; if ($broad) { $sr++ } }
+                    }
+                }
+                $redirects = $r; $sensitiveRedirects = $sr; $sensitiveBlocks = $sb
+            } catch { $redirects = $null; $sensitiveRedirects = $null; $sensitiveBlocks = $null }
+            @{
+                size_bytes=$(if ($null -eq $size) { Unknown } else { Known $size })
+                redirect_count=(Counted $redirects)
+                sensitive_redirect_count=(Counted $sensitiveRedirects)
+                sensitive_block_count=(Counted $sensitiveBlocks)
+            }
+        }
+        'Persistence' {
+            $unquoted = $null; $writable = $null
+            try {
+                $broadWriters = @('S-1-1-0','S-1-5-11','S-1-5-32-545')
+                $dirCache = @{}
+                $isWritable = {
+                    param($dir)
+                    if ($dirCache.ContainsKey($dir)) { return $dirCache[$dir] }
+                    $result = $false
+                    try {
+                        if ([IO.Directory]::Exists($dir)) {
+                            $acl = (New-Object IO.DirectoryInfo $dir).GetAccessControl([Security.AccessControl.AccessControlSections]::Access)
+                            foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+                                if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+                                if ($rule.IdentityReference.Value -cnotin $broadWriters) { continue }
+                                if (([int]$rule.PropagationFlags -band 2) -ne 0) { continue }
+                                if ((([int]$rule.FileSystemRights) -band (2 -bor 262144 -bor 524288)) -ne 0) { $result = $true }
+                            }
+                        }
+                    } catch { $result = $false }
+                    $dirCache[$dir] = $result
+                    return $result
+                }
+                $root = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services', $false)
+                if ($null -eq $root) { throw 'No services key' }
+                $count = 0; $risky = 0
+                try {
+                    $names = $root.GetSubKeyNames()
+                    if ($names.Count -gt 4096) { throw 'Service cap' }
+                    foreach ($name in $names) {
+                        $key = $root.OpenSubKey($name, $false)
+                        if ($null -eq $key) { continue }
+                        try {
+                            $type = $key.GetValue('Type', $null)
+                            $image = $key.GetValue('ImagePath', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                            if ($type -isnot [int] -or ($type -band 0x30) -eq 0 -or $image -isnot [string]) { continue }
+                            $image = $image.Trim()
+                            if ($image.StartsWith('"') -or $image -notmatch '^(?<exe>[A-Za-z]:\\.*?\.exe)(\s|$)') { continue }
+                            $exe = $Matches['exe']
+                            if (-not $exe.Contains(' ')) { continue }
+                            $count++
+                            $hit = $false
+                            $at = $exe.IndexOf(' ')
+                            while ($at -ge 0) {
+                                $dir = [IO.Path]::GetDirectoryName($exe.Substring(0, $at))
+                                if ($null -ne $dir -and (& $isWritable $dir)) { $hit = $true }
+                                $at = $exe.IndexOf(' ', $at + 1)
+                            }
+                            if ($hit) { $risky++ }
+                        } finally { $key.Dispose() }
+                    }
+                } finally { $root.Dispose() }
+                $unquoted = $count; $writable = $risky
+            } catch { $unquoted = $null; $writable = $null }
+            @{
+                wmi_consumers=(Fact { $n = 0; foreach ($class in @('CommandLineEventConsumer','ActiveScriptEventConsumer')) { $n += @(Cim $class 'root\subscription').Count }; $n })
+                unquoted_service_paths=(Counted $unquoted)
+                unquoted_service_paths_writable=(Counted $writable)
+            }
+        }
+        'AccountHygiene' {
+            Load 'Microsoft.PowerShell.LocalAccounts'
+            @{
+                builtin_admin_enabled=(Fact { $u = @(Get-LocalUser | Where-Object { $_.SID.Value -cmatch '^S-1-5-21-[0-9-]+-500$' }); if ($u.Count -ne 1) { throw 'Built-in administrator not found' }; [bool]$u[0].Enabled })
+                stale_enabled_accounts=(Fact { $cut = (Get-Date).AddDays(-180); @(Get-LocalUser | Where-Object { $_.Enabled -and $_.SID.Value -cnotmatch '-(500|501|503|504)$' -and $null -ne $_.LastLogon -and $_.LastLogon -lt $cut }).Count })
+            }
+        }
+        'Sharing' {
+            Load 'SmbShare'
+            $server = $null
+            try { $server = Get-SmbServerConfiguration } catch {}
+            $shares = $null
+            try { $shares = @(Get-SmbShare | Where-Object { -not $_.Special } | Select-Object -First 65); if ($shares.Count -gt 64) { throw 'Share cap' } } catch { $shares = $null }
+            @{
+                share_count=$(if ($null -eq $shares) { Unknown } else { Known $shares.Count })
+                broad_access_shares=(Fact {
+                    if ($null -eq $shares) { throw 'No shares' }
+                    $broad = @()
+                    foreach ($sid in @('S-1-1-0','S-1-5-7','S-1-5-32-546')) { $broad += ([Security.Principal.SecurityIdentifier]$sid).Translate([Security.Principal.NTAccount]).Value }
+                    $n = 0
+                    foreach ($share in $shares) {
+                        $hit = $false
+                        foreach ($access in @(Get-SmbShareAccess -Name $share.Name)) {
+                            if ([string]$access.AccessControlType -ceq 'Allow' -and [string]$access.AccessRight -cin @('Change','Full') -and ([string]$access.AccountName) -in $broad) { $hit = $true }
+                        }
+                        if ($hit) { $n++ }
+                    }
+                    $n
+                })
+                encrypt_data=(Prop $server 'EncryptData')
+            }
+        }
+        'FirewallRules' {
+            Load 'NetSecurity'
+            $risky = $null; $user = $null
+            try {
+                $rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow | Select-Object -First 1025)
+                if ($rules.Count -gt 1024) { throw 'Rule cap' }
+                $r = 0; $u = 0
+                foreach ($rule in $rules) {
+                    $filter = $rule | Get-NetFirewallApplicationFilter
+                    $program = ([string]$filter.Program).ToLowerInvariant()
+                    if ($program -eq '' -or $program -ceq 'any') { continue }
+                    if ($program -match '\\users\\|%userprofile%|%appdata%|%localappdata%|%public%|%temp%') { $u++ }
+                    if ($program -match '\\users\\[^\\]+\\(downloads|desktop|appdata\\local\\temp)\\|\\users\\public\\|\\windows\\temp\\|%userprofile%\\(downloads|desktop)\\|%temp%\\|%public%\\') { $r++ }
+                }
+                $risky = $r; $user = $u
+            } catch { $risky = $null; $user = $null }
+            @{ risky_inbound_allow_rules=(Counted $risky); user_folder_inbound_allow_rules=(Counted $user) }
+        }
         default { throw 'Invalid compiled probe' }
     }
     ConvertTo-Json -InputObject $result -Depth 16 -Compress

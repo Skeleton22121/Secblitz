@@ -71,6 +71,7 @@ fn reference(id: &str) -> RuleReference {
         "permissions" => "https://learn.microsoft.com/windows/win32/secauthz/accesscheck-function",
         _ => "https://learn.microsoft.com/windows/security/",
     };
+    let url = super::checks::documentation(id).unwrap_or(url);
     RuleReference {
         id: id.into(),
         revision: 1,
@@ -78,7 +79,7 @@ fn reference(id: &str) -> RuleReference {
         documentation: vec![url.into()],
     }
 }
-fn a(id: &str, status: Status, detail: impl Into<String>) -> Assessment {
+pub(super) fn a(id: &str, status: Status, detail: impl Into<String>) -> Assessment {
     Assessment {
         status,
         detail: detail.into(),
@@ -95,7 +96,7 @@ pub(super) fn unavailable_assessment(probe: &Diagnostic) -> Assessment {
         ),
     )
 }
-fn boolean(id: &str, value: &Reading<bool>, desired: bool, detail: &str) -> Assessment {
+pub(super) fn boolean(id: &str, value: &Reading<bool>, desired: bool, detail: &str) -> Assessment {
     a(
         id,
         match value.known() {
@@ -213,7 +214,7 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
             out.push(a("update.failed_install", status, "Failed, aborted or partially successful installation entries need review, including entries with a quality-update title hint. A later success may supersede a failure; unresolved failure is not inferred."));
         }
         Evidence::DefenderHealth(v) => {
-            for (id, fact) in [("service", &v.service_enabled), ("antivirus", &v.antivirus_enabled), ("realtime", &v.realtime_enabled), ("behavior", &v.behavior_enabled), ("ioav", &v.ioav_enabled), ("network_inspection", &v.nis_enabled), ("tamper", &v.tamper_protected)] {
+            for (id, fact) in [("service", &v.service_enabled), ("antivirus", &v.antivirus_enabled), ("realtime", &v.realtime_enabled), ("behavior", &v.behavior_enabled), ("ioav", &v.ioav_enabled), ("network_inspection", &v.nis_enabled)] {
                 out.push(boolean(&format!("defender.{id}"), fact, true, "Reported Defender effective health. Passive mode or a third-party provider must be reviewed before interpreting disabled components; nothing is enabled automatically."));
             }
             out.push(a("defender.mode", match v.running_mode.known().map(String::as_str) {
@@ -360,6 +361,18 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
             }
             out.push(a("permissions.effective_access", Unknown, "Effective permissions depend on tokens, deny/conditional ACEs, ownership and other objects; no complete effective-access claim is made."));
         }
+        // Detect-only checks live in checks.rs to keep this file's merge surface small.
+        Evidence::OsSupport(v) => out.extend(super::checks::os_support(v)),
+        Evidence::SecureBootCerts(v) => out.extend(super::checks::secure_boot_certs(v)),
+        Evidence::DefenderProtection(v) => out.extend(super::checks::defender_protection(v)),
+        Evidence::SmartScreen(v) => out.extend(super::checks::smartscreen(v)),
+        Evidence::UpdatePolicy(v) => out.extend(super::checks::update_policy(v)),
+        Evidence::LegacyFeatures(v) => out.extend(super::checks::legacy_features(v)),
+        Evidence::HostsFile(v) => out.extend(super::checks::hosts_file(v)),
+        Evidence::Persistence(v) => out.extend(super::checks::persistence(v)),
+        Evidence::AccountHygiene(v) => out.extend(super::checks::account_hygiene(v)),
+        Evidence::Sharing(v) => out.extend(super::checks::sharing(v)),
+        Evidence::FirewallRules(v) => out.extend(super::checks::firewall_rules(v)),
     }
     // A healthy subset must not turn a partially unreadable probe into Healthy.
     // Walk the typed serialization (never raw/native input) so newly added facts
@@ -412,7 +425,7 @@ pub(super) fn recommendation(
     needs: &CompatibilityNeeds,
 ) -> Recommendation {
     let area = a.rule.id.split('.').next().unwrap_or("");
-    let guidance = match area {
+    let area_guidance = match area {
         "update" => "Review Windows Update history and the organization's update channel; a separately authorized online check is needed for current applicability. Do not reset services or policy based on cached evidence.",
         "defender" => "Review Windows Security and the active provider's supported health console. Reconcile passive mode, tamper protection and management before proposing any change.",
         "asr" | "cfa" => "Review rule applicability and effective policy with the security owner; stage audit and compatibility testing before approved enforcement. Do not automatically enable rules or add broad exclusions.",
@@ -426,6 +439,7 @@ pub(super) fn recommendation(
         "browser" => "Review the original user's installed extension publishers, necessity and permissions; remove unwanted extensions only with explicit user authorization.",
         _ => "Resolve the missing or ambiguous evidence with the relevant Windows or vendor console before making a security claim or proposing changes.",
     };
+    let guidance = super::checks::guidance(&a.rule.id).unwrap_or(area_guidance);
     Recommendation {
         rule: a.rule.clone(), profile, reason: a.detail.clone(),
         guidance: format!("{guidance} {}", match management {
