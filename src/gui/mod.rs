@@ -258,7 +258,7 @@ impl App {
             checking: Some(CheckProgress::default()),
             busy: false,
             broker,
-            state_dir: secblitz::platform::state_dir().ok(),
+            state_dir: secblitz::platform::app_dir().ok(),
             prefs,
             toast: None,
         };

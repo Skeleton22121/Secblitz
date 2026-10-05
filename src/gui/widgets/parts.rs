@@ -4,7 +4,7 @@ use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
 use iced::widget::{button, column, container, progress_bar, row, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Vector};
+use iced::{Alignment, Background, Border, Color, Element, Length, Shadow};
 
 /// Small caption that introduces a group of rows or cards.
 pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
@@ -280,11 +280,7 @@ pub fn toast<'a>(p: Palette, message: impl Into<String>, tone: Tone) -> Element<
             radius: theme::RADIUS.into(),
             ..Border::default()
         },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
-            offset: Vector::new(0.0, 6.0),
-            blur_radius: 18.0,
-        },
+        shadow: Shadow::default(), // no shadows: tiny-skia draws them unclipped and slow
         text_color: Some(p.on_brand),
         snap: true,
     })

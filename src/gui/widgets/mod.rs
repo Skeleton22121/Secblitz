@@ -11,7 +11,7 @@ use super::icons::Icon;
 use super::theme::{self, Palette, Tone};
 use super::Message;
 use iced::widget::{button, column, container, opaque, row, stack, svg, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Vector};
+use iced::{Alignment, Background, Border, Color, Element, Length, Shadow};
 
 pub fn h1<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
@@ -98,20 +98,7 @@ pub fn card<'a>(
                 width: 1.0,
                 color: p.border,
             },
-            shadow: Shadow {
-                color: Color::from_rgba(
-                    0.0,
-                    0.0,
-                    0.0,
-                    if p.mode == theme::Mode::Dark {
-                        0.30
-                    } else {
-                        0.05
-                    },
-                ),
-                offset: Vector::new(0.0, 1.0),
-                blur_radius: 3.0,
-            },
+            shadow: Shadow::default(), // no shadows: tiny-skia draws them unclipped and slow
             text_color: Some(p.text),
             snap: true,
         })
@@ -222,11 +209,7 @@ pub fn sheet<'a>(
                 width: 1.0,
                 color: p.border,
             },
-            shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                offset: Vector::new(0.0, 12.0),
-                blur_radius: 32.0,
-            },
+            shadow: Shadow::default(), // no shadows: tiny-skia draws them unclipped and slow
             text_color: Some(p.text),
             snap: true,
         });

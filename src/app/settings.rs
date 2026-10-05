@@ -28,7 +28,7 @@ const FILE: &str = "gui-prefs.json";
 const LIMIT: u64 = 8 * 1024;
 
 fn path() -> anyhow::Result<PathBuf> {
-    Ok(secblitz::platform::state_dir()?.join(FILE))
+    Ok(secblitz::platform::app_dir()?.join(FILE))
 }
 
 /// Parse untrusted bytes. Unknown fields and bad values fall back to defaults

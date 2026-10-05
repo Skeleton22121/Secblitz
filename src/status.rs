@@ -141,13 +141,13 @@ pub fn now() -> u64 {
 
 /// Directory holding the shared status file: the trusted
 /// `<Program Files>\Secblitz\Status` when running from the installed location,
-/// otherwise (portable/dev) the engine state directory.
+/// otherwise (portable/dev) the app namespace of the state directory.
 fn dir() -> anyhow::Result<std::path::PathBuf> {
     #[cfg(windows)]
     if let Some(d) = crate::service::trusted_status_dir() {
         return Ok(d);
     }
-    crate::platform::state_dir()
+    crate::platform::app_dir()
 }
 
 /// Path of the shared status file (`<Program Files>\Secblitz\Status\status.json`).
@@ -191,7 +191,7 @@ pub fn write(status: &Status) -> anyhow::Result<()> {
         let d = crate::service::ensure_status_dir()?;
         return write_to(&d, status);
     }
-    write_to(&crate::platform::state_dir()?, status)
+    write_to(&crate::platform::app_dir()?, status)
 }
 
 /// Read the shared status file, if present and valid.
