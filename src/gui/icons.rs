@@ -1,4 +1,4 @@
-//! Icon set: Microsoft Fluent UI System Icons, 24px (MIT licence, see
+//! Icon set: Microsoft Fluent UI System Icons, 24px (MIT license, see
 //! assets/ICONS-LICENSE.txt). https://github.com/microsoft/fluentui-system-icons
 //!
 //! `svg()` returns the Regular (outline) artwork, `svg_filled()` the Filled

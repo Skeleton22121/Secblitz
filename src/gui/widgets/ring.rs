@@ -20,7 +20,9 @@ pub struct Ring {
     pub caption: String,
 }
 
-type RingKey = (u32, Tone, String, String, theme::Mode);
+/// Shown ratio bits, tone, hash of label + caption, theme mode. The text is
+/// hashed, not cloned, so an idle redraw allocates nothing.
+type RingKey = (u32, Tone, u64, theme::Mode);
 
 /// Canvas state: the cached geometry and the inputs it was built from.
 #[derive(Default)]
@@ -75,13 +77,11 @@ impl canvas::Program<Message> for Ring {
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let key = (
-            state.shown.to_bits(),
-            self.tone,
-            self.label.clone(),
-            self.caption.clone(),
-            self.p.mode,
-        );
+        use std::hash::{Hash, Hasher};
+        let mut text = std::collections::hash_map::DefaultHasher::new();
+        self.label.hash(&mut text);
+        self.caption.hash(&mut text);
+        let key = (state.shown.to_bits(), self.tone, text.finish(), self.p.mode);
         if state.key.borrow().as_ref() != Some(&key) {
             state.cache.clear();
             *state.key.borrow_mut() = Some(key);

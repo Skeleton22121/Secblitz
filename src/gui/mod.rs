@@ -167,6 +167,8 @@ pub enum Message {
     DismissToast,
     /// Slow clock used to auto-dismiss toasts.
     ToastTick(std::time::Instant),
+    /// The toast's exit animation has finished: remove it.
+    ToastGone,
     Home(home::Msg),
     Fixes(fixes::Msg),
     Fix(fixflow::Msg),
@@ -188,6 +190,41 @@ pub struct App {
     pub settings: settings::State,
     /// The toast currently shown and when it was first seen (auto-dismiss).
     toast_seen: Option<(String, std::time::Instant)>,
+    /// The toast is sliding out; it is removed on `ToastGone`.
+    toast_leaving: bool,
+}
+
+/// Write the history entry and the tray status off the UI thread: both fsync
+/// and rename, which can stall for a visible moment on slow disks or under a
+/// virus scanner. The lock keeps the history read-modify-write in order.
+fn persist(
+    dir: Option<PathBuf>,
+    entry: Option<app::history::Entry>,
+    status: secblitz::status::Status,
+) {
+    static ORDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // Counted before the thread starts so a reader never misses a pending write.
+    PENDING_WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    std::thread::spawn(move || {
+        {
+            let _guard = ORDER.lock().unwrap_or_else(|e| e.into_inner());
+            if let (Some(dir), Some(entry)) = (&dir, &entry) {
+                let _ = app::history::record(dir, entry);
+            }
+            let _ = secblitz::status::write(&status);
+        }
+        PENDING_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+}
+
+static PENDING_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Block (on a worker thread, never the UI thread) until queued history and
+/// status writes have landed, so a reload sees the newest entry.
+pub fn wait_persisted() {
+    while PENDING_WRITES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// Run a blocking closure on a fresh thread and await its result.
@@ -263,7 +300,7 @@ impl App {
             prefs,
             toast: None,
         };
-        let app = App {
+        let mut app = App {
             page: options.start.unwrap_or_default(),
             ctx,
             home: Default::default(),
@@ -274,22 +311,20 @@ impl App {
             history: Default::default(),
             settings: Default::default(),
             toast_seen: None,
+            toast_leaving: false,
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
-        (app, Task::batch([opened, first_check]))
+        // Opening straight on a page (hidden `--self-test`) must load it too.
+        let enter = app.enter_page(app.page);
+        (app, Task::batch([opened, first_check, enter]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Navigate(page) => {
                 self.page = page;
-                match page {
-                    Page::History => history::on_enter(&mut self.history, &mut self.ctx),
-                    Page::Debloat => debloat::on_enter(&mut self.debloat, &mut self.ctx),
-                    Page::Settings => settings::on_enter(&mut self.settings, &mut self.ctx),
-                    _ => Task::none(),
-                }
+                self.enter_page(page)
             }
             Message::CheckNow => {
                 if self.ctx.checking.is_some() || self.ctx.busy {
@@ -322,11 +357,16 @@ impl App {
             }
             Message::Toast(text, tone) => {
                 self.ctx.toast = Some((text, tone));
+                self.toast_leaving = false;
                 Task::none()
             }
-            Message::DismissToast => {
-                self.ctx.toast = None;
-                self.toast_seen = None;
+            Message::DismissToast => self.begin_toast_exit(),
+            Message::ToastGone => {
+                if self.toast_leaving {
+                    self.ctx.toast = None;
+                    self.toast_seen = None;
+                    self.toast_leaving = false;
+                }
                 Task::none()
             }
             Message::ToastTick(now) => {
@@ -337,10 +377,12 @@ impl App {
                     (Some(text), Some((seen, _))) if *seen == text => {}
                     (Some(text), _) => self.toast_seen = Some((text, now)),
                 }
+                if self.toast_leaving {
+                    return Task::none();
+                }
                 if let Some((_, since)) = &self.toast_seen {
                     if now.duration_since(*since).as_secs() >= TOAST_SECONDS {
-                        self.ctx.toast = None;
-                        self.toast_seen = None;
+                        return self.begin_toast_exit();
                     }
                 }
                 Task::none()
@@ -420,38 +462,84 @@ impl App {
                 self.ctx.check_error = None;
                 self.ctx.checked_at = Some(now);
                 let score = Score::of(report);
-                if !operation || n > 0 {
-                    self.record(now, kind, &score, n);
-                }
-                let _ = secblitz::status::write(&status_of(report, &score, now));
+                let entry = (!operation || n > 0).then(|| self.entry(now, kind, &score, n));
+                persist(
+                    self.ctx.state_dir.clone(),
+                    entry,
+                    status_of(report, &score, now),
+                );
             }
             Err(e) => {
                 self.ctx.check_error = Some(e.clone());
-                if operation && n > 0 {
-                    if let Some(report) = self.ctx.report.clone() {
-                        let score = Score::of(&report);
-                        self.record(now, kind, &score, n);
-                    }
-                }
+                let entry = if operation && n > 0 {
+                    self.ctx
+                        .report
+                        .as_deref()
+                        .map(|report| self.entry(now, kind, &Score::of(report), n))
+                } else {
+                    None
+                };
                 // A failed check must not leave the tray showing "protected".
-                let _ = secblitz::status::write(&secblitz::status::summarize(&[], false, now));
+                persist(
+                    self.ctx.state_dir.clone(),
+                    entry,
+                    secblitz::status::summarize(&[], false, now),
+                );
             }
         }
     }
 
-    fn record(&self, t: u64, kind: app::history::Kind, score: &Score, n: usize) {
-        if let Some(dir) = &self.ctx.state_dir {
-            let _ = app::history::record(
-                dir,
-                &app::history::Entry {
-                    t,
-                    kind,
-                    protected: score.protected,
-                    total: score.total,
-                    n,
-                },
-            );
+    fn entry(
+        &self,
+        t: u64,
+        kind: app::history::Kind,
+        score: &Score,
+        n: usize,
+    ) -> app::history::Entry {
+        app::history::Entry {
+            t,
+            kind,
+            protected: score.protected,
+            total: score.total,
+            n,
         }
+    }
+
+    /// `sub` only while `page` is the visible page.
+    fn on_page(&self, page: Page, sub: Subscription<Message>) -> Subscription<Message> {
+        if self.page == page {
+            sub
+        } else {
+            Subscription::none()
+        }
+    }
+
+    /// Load whatever a page needs when it becomes the visible one.
+    fn enter_page(&mut self, page: Page) -> Task<Message> {
+        match page {
+            Page::History => history::on_enter(&mut self.history, &mut self.ctx),
+            Page::Debloat => debloat::on_enter(&mut self.debloat, &mut self.ctx),
+            Page::Settings => settings::on_enter(&mut self.settings, &mut self.ctx),
+            _ => Task::none(),
+        }
+    }
+
+    /// Start the short slide-out; `ToastGone` removes the toast afterwards.
+    fn begin_toast_exit(&mut self) -> Task<Message> {
+        if self.ctx.toast.is_none() || self.toast_leaving {
+            return Task::none();
+        }
+        if widgets::anim::reduced() {
+            self.ctx.toast = None;
+            self.toast_seen = None;
+            return Task::none();
+        }
+        self.toast_leaving = true;
+        // A little longer than the exit so the last frame is drawn.
+        let wait = widgets::anim::FAST + std::time::Duration::from_millis(40);
+        Task::perform(blocking(move || std::thread::sleep(wait)), |_| {
+            Message::ToastGone
+        })
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -485,29 +573,40 @@ impl App {
             ..container::Style::default()
         });
         let body: Element<'_, Message> = row![self.sidebar(), main].into();
+        // Constant tree shape: the page is always child 0 of one stack and each
+        // overlay is its own layer (an empty Space when inactive). Opening or
+        // closing a sheet or toast therefore never rebuilds the page, so its
+        // scroll position and animation state survive.
+        let none = || -> Element<'_, Message> { iced::widget::space().into() };
         // Page sheets (clean-up apps, tools) sit above the whole window.
         let modal = match self.page {
             Page::Debloat => debloat::modal(&self.debloat, &self.ctx),
             Page::Tools => tools::modal(&self.tools, &self.ctx),
             _ => None,
         };
-        let body = match modal {
-            Some(content) => widgets::sheet(p, body, content),
-            None => body,
+        let modal_layer = match modal {
+            Some(content) => widgets::sheet_layer(p, content),
+            None => none(),
         };
         // The fix flow (review sheet / working / result) draws over any page.
-        let base = fixflow::overlay(&self.fix, &self.ctx, body);
-        match &self.ctx.toast {
-            Some((message, tone)) => stack![
-                base,
-                container(widgets::toast(p, message.clone(), *tone))
-                    .center_x(Length::Fill)
-                    .align_bottom(Length::Fill)
-                    .padding(theme::S6)
-            ]
+        let fix_layer = match fixflow::overlay_content(&self.fix, &self.ctx) {
+            Some(content) => widgets::sheet_layer(p, content),
+            None => none(),
+        };
+        let toast_layer = match &self.ctx.toast {
+            Some((message, tone)) => container(widgets::toast(
+                p,
+                message.clone(),
+                *tone,
+                self.toast_leaving,
+            ))
+            .center_x(Length::Fill)
+            .align_bottom(Length::Fill)
+            .padding(theme::S6)
             .into(),
-            None => base,
-        }
+            None => none(),
+        };
+        stack![body, modal_layer, fix_layer, toast_layer].into()
     }
 
     /// Colour of the small status dot next to Home.
@@ -561,12 +660,12 @@ impl App {
                 let dot = p.tone(self.verdict_tone());
                 item = item.push(
                     container(iced::widget::space::horizontal())
-                        .width(8)
-                        .height(8)
+                        .width(theme::DOT)
+                        .height(theme::DOT)
                         .style(move |_| container::Style {
                             background: Some(Background::Color(dot)),
                             border: Border {
-                                radius: 4.0.into(),
+                                radius: theme::R_PILL.into(),
                                 ..Border::default()
                             },
                             ..container::Style::default()
@@ -626,8 +725,8 @@ impl App {
             } => Some(Message::Escape),
             _ => None,
         });
-        let toast = if self.ctx.toast.is_some() {
-            ticks_500ms().map(Message::ToastTick)
+        let toast = if self.ctx.toast.is_some() && !self.toast_leaving {
+            ticks_100ms().map(Message::ToastTick)
         } else {
             Subscription::none()
         };
@@ -635,11 +734,14 @@ impl App {
             escape,
             iced::window::close_requests().map(Message::CloseRequested),
             toast,
-            home::subscription(&self.home, &self.ctx),
+            // Frame clocks run only for the page on screen: a job started on
+            // Tools must not keep the whole window redrawing from another page.
+            // Each page catches up on its next frame when it is shown again.
+            self.on_page(Page::Home, home::subscription(&self.home, &self.ctx)),
             fixflow::subscription(&self.fix),
-            debloat::subscription(&self.debloat),
-            tools::subscription(&self.tools, &self.ctx),
-            settings::subscription(&self.settings),
+            self.on_page(Page::Debloat, debloat::subscription(&self.debloat)),
+            self.on_page(Page::Tools, tools::subscription(&self.tools, &self.ctx)),
+            self.on_page(Page::Settings, settings::subscription(&self.settings)),
         ])
     }
 }
@@ -661,9 +763,10 @@ fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant>
     rx
 }
 
-/// Slow tick used for time-outs such as toast dismissal.
-pub fn ticks_500ms() -> Subscription<std::time::Instant> {
-    Subscription::run(|| ticker(std::time::Duration::from_millis(500)))
+/// Tick used for time-outs such as toast dismissal (fine enough that the
+/// visible time is within a tenth of a second).
+pub fn ticks_100ms() -> Subscription<std::time::Instant> {
+    Subscription::run(|| ticker(std::time::Duration::from_millis(100)))
 }
 
 /// Draw the application icon (white shield with a check on a dark tile) as RGBA.

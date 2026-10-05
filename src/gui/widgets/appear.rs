@@ -1,8 +1,10 @@
 //! One-shot "slide in" for small overlays such as toasts.
 //!
 //! The child is drawn `distance` px lower and eases up to its place over
-//! `SLIDE_MS` with the shared emphasized curve (`anim::EMPHASIZED`). It asks for a redraw only while the
-//! slide runs (no subscription, no timer): when it ends the window is idle.
+//! `NORMAL` (250 ms) on `anim::DECELERATE`. When `leaving` is set it slides back
+//! down over `FAST` (150 ms) on `anim::ACCELERATE` (leave faster than enter).
+//! It asks for a redraw only while a slide runs (no subscription, no timer):
+//! when it ends the window is idle.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{tree, Operation, Tree};
@@ -14,20 +16,37 @@ use super::anim;
 
 /// Slide duration: the shared "normal" motion token.
 const SLIDE_MS: f32 = anim::NORMAL.as_millis() as f32;
+/// Exit duration: the shared "fast" token.
+const LEAVE_MS: f32 = anim::FAST.as_millis() as f32;
 
 #[derive(Default)]
 struct State {
     start: Option<Instant>,
     done: bool,
+    /// When the exit began (set on the first redraw with `leaving`).
+    leave_start: Option<Instant>,
 }
 
 struct SlideIn<'a, Message> {
     content: Element<'a, Message>,
     distance: f32,
+    leaving: bool,
 }
 
-fn offset(state: &State, distance: f32, now: Option<Instant>) -> f32 {
-    if state.done || anim::reduced() {
+fn offset(state: &State, distance: f32, leaving: bool, now: Option<Instant>) -> f32 {
+    if anim::reduced() {
+        return 0.0;
+    }
+    if leaving {
+        let Some(start) = state.leave_start else {
+            return 0.0;
+        };
+        let elapsed = now
+            .map(|n| n.saturating_duration_since(start).as_secs_f32() * 1000.0)
+            .unwrap_or(0.0);
+        return distance * anim::ACCELERATE.at(elapsed / LEAVE_MS);
+    }
+    if state.done {
         return 0.0;
     }
     let Some(start) = state.start else {
@@ -36,7 +55,7 @@ fn offset(state: &State, distance: f32, now: Option<Instant>) -> f32 {
     let elapsed = now
         .map(|n| n.saturating_duration_since(start).as_secs_f32() * 1000.0)
         .unwrap_or(0.0);
-    distance * (1.0 - anim::EMPHASIZED.at(elapsed / SLIDE_MS))
+    distance * (1.0 - anim::DECELERATE.at(elapsed / SLIDE_MS))
 }
 
 impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {
@@ -79,7 +98,7 @@ impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<State>();
-        let dy = offset(state, self.distance, Some(Instant::now()));
+        let dy = offset(state, self.distance, self.leaving, Some(Instant::now()));
         let child = &tree.children[0];
         if dy.abs() < 0.5 {
             self.content
@@ -117,7 +136,15 @@ impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {
     ) {
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
             let state = tree.state.downcast_mut::<State>();
-            if !state.done {
+            if self.leaving {
+                let start = *state.leave_start.get_or_insert(*now);
+                if now.saturating_duration_since(start).as_secs_f32() * 1000.0 < LEAVE_MS {
+                    shell.request_redraw();
+                }
+            } else if state.leave_start.take().is_some() {
+                // A new toast arrived mid-exit: stay put.
+                state.done = true;
+            } else if !state.done {
                 let start = *state.start.get_or_insert(*now);
                 if now.saturating_duration_since(start).as_secs_f32() * 1000.0 >= SLIDE_MS {
                     state.done = true;
@@ -171,13 +198,16 @@ impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {
     }
 }
 
-/// Slide `content` up by `distance` px once, when it first appears.
+/// Slide `content` up by `distance` px once, when it first appears, and back
+/// down when `leaving` is set.
 pub fn slide_in<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
     distance: f32,
+    leaving: bool,
 ) -> Element<'a, Message> {
     Element::new(SlideIn {
         content: content.into(),
         distance,
+        leaving,
     })
 }

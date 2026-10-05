@@ -140,7 +140,7 @@ impl Curve {
 
 /// Hover / press feedback (WinUI "faster").
 pub const FASTER: Duration = Duration::from_millis(83);
-/// Small state changes: toggles, chevrons, tooltips.
+/// Small state changes: toggles, toast exit.
 pub const FAST: Duration = Duration::from_millis(150);
 /// Default for anything that moves a short distance.
 pub const NORMAL: Duration = Duration::from_millis(250);

@@ -125,7 +125,7 @@ pub fn card<'a>(
 
 /// Small status label, e.g. "Needs attention".
 pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
-    let fg = p.tone(tone);
+    let fg = p.tone_text(tone);
     let bg = p.tint(tone);
     container(
         text(label.into())
@@ -289,12 +289,11 @@ pub fn icon_button<'a>(
     )
 }
 
-/// Modal sheet centred over `base`. The scrim is one static flat colour (no
+/// Modal sheet layer (scrim + panel) to stack above the page. The scrim is one static flat colour (no
 /// blur), the panel has a 1 px border, R_LARGE corners and S6 padding. Esc
 /// handling is done by the shell via `Message::Escape`.
-pub fn sheet<'a>(
+pub fn sheet_layer<'a>(
     p: Palette,
-    base: impl Into<Element<'a, Message>>,
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let panel = container(content)
@@ -311,19 +310,15 @@ pub fn sheet<'a>(
             text_color: Some(p.text),
             snap: true,
         });
-    stack![
-        base.into(),
-        opaque(
-            container(panel)
-                .center(Length::Fill)
-                .padding(theme::S6)
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(p.scrim)),
-                    ..container::Style::default()
-                })
-        )
-    ]
-    .into()
+    opaque(
+        container(panel)
+            .center(Length::Fill)
+            .padding(theme::S6)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.scrim)),
+                ..container::Style::default()
+            }),
+    )
 }
 
 /// Page header: title + optional subtitle (S1 apart). Put S6 below it.

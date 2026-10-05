@@ -236,8 +236,8 @@ fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Elemen
         ]
         .spacing(theme::S1)
         .align_x(Alignment::Center),
-        container(widgets::bar(p, ratio, Tone::Neutral)).max_width(420),
-        container(list).max_width(420),
+        container(widgets::bar(p, ratio, Tone::Neutral)).max_width(theme::MAX_READABLE),
+        container(list).max_width(theme::MAX_READABLE),
     ]
     .spacing(theme::S6)
     .align_x(Alignment::Center)
@@ -446,10 +446,14 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
                 ),
                 if fixable == 0 {
                     ctx.t("These need a change in Windows Settings. We will show you where.")
+                } else if attention == 1 {
+                    ctx.t("We can fix it for you. You can undo any change later.")
+                } else if fixable == attention {
+                    ctx.t("We can fix all of them for you. You can undo any change later.")
                 } else {
                     count_text(
                         ctx,
-                        "We can fix it for you. You can undo any change later.",
+                        "We can fix 1 of them for you. You can undo any change later.",
                         "We can fix {n} of them for you. You can undo any change later.",
                         fixable,
                     )

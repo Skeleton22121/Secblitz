@@ -251,7 +251,12 @@ pub fn expander<'a>(
 
 /// Small floating confirmation message with a close button; the shell places
 /// it bottom-centre. It slides up once when it appears (no timers after).
-pub fn toast<'a>(p: Palette, message: impl Into<String>, tone: Tone) -> Element<'a, Message> {
+pub fn toast<'a>(
+    p: Palette,
+    message: impl Into<String>,
+    tone: Tone,
+    leaving: bool,
+) -> Element<'a, Message> {
     let accent = if matches!(tone, Tone::Neutral | Tone::Brand) {
         p.on_brand
     } else {
@@ -300,7 +305,7 @@ pub fn toast<'a>(p: Palette, message: impl Into<String>, tone: Tone) -> Element<
         text_color: Some(p.on_brand),
         snap: true,
     });
-    slide_in(card, theme::S3)
+    slide_in(card, theme::S3, leaving)
 }
 
 /// Convenience: a secondary "See all"-style ghost button.

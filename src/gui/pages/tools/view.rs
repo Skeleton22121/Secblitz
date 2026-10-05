@@ -20,7 +20,7 @@ use iced::{Alignment, Element, Font, Length};
 type El<'a> = Element<'a, Message>;
 
 /// Every card body is at least this tall, so neighbouring cards line up.
-const BODY_MIN: f32 = theme::ROW * 2.0;
+const BODY_MIN: f32 = theme::CARD_BODY_MIN;
 /// Size of the spinners and result marks inside cards.
 const MARK: f32 = 20.0;
 
@@ -183,10 +183,15 @@ fn working<'a>(state: &State, p: Palette, label: String) -> El<'a> {
 
 fn elapsed_phrase(ctx: &Ctx, secs: u64) -> String {
     if secs < 60 {
-        format!("{secs} {}", ctx.t("sec"))
+        ctx.t("{n} sec").replace("{n}", &secs.to_string())
     } else {
-        format!("{} {}", secs / 60, ctx.t("min"))
+        ctx.t("{n} min").replace("{n}", &(secs / 60).to_string())
     }
+}
+
+fn running_for(ctx: &Ctx, secs: u64) -> String {
+    ctx.t("Running for {time}")
+        .replace("{time}", &elapsed_phrase(ctx, secs))
 }
 
 /// Collapsed "More details" for people who want the raw evidence.
@@ -341,7 +346,7 @@ fn busy_hint<'a>(ctx: &Ctx) -> El<'a> {
     widgets::inline_notice(
         ctx.palette,
         Tone::Neutral,
-        ctx.t("Another job is running. Please wait for it to finish."),
+        ctx.t("Another task is running. Please wait for it to finish."),
     )
 }
 
@@ -401,13 +406,11 @@ fn repair_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     repair_ratio(pr),
                     ctx.t(pr.label),
                     format!(
-                        "{} {} {} {}  ·  {} {}",
-                        ctx.t("Step"),
-                        pr.step,
-                        ctx.t("of"),
-                        pr.total,
-                        ctx.t("Running for"),
-                        elapsed_phrase(ctx, pr.elapsed)
+                        "{}  ·  {}",
+                        ctx.t("Step {a} of {b}")
+                            .replace("{a}", &pr.step.to_string())
+                            .replace("{b}", &pr.total.to_string()),
+                        running_for(ctx, pr.elapsed)
                     ),
                 ),
                 None => (0.03, ctx.t("Getting ready…"), String::new()),
@@ -528,7 +531,11 @@ fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             let tail = if size.is_empty() {
                 restart
             } else {
-                format!("{size}. {restart}")
+                format!(
+                    "{} {restart}",
+                    ctx.t("The download is about {size}.")
+                        .replace("{size}", &size)
+                )
             };
             stack(vec![
                 widgets::inline_notice(
@@ -573,10 +580,7 @@ fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             let mut items = vec![
                 job_header(state, p, count_installing(ctx, *count), stage_ratio(*stage)),
                 widgets::muted(p, ctx.t(stage.label())),
-                widgets::small(
-                    p,
-                    format!("{} {}", ctx.t("Running for"), elapsed_phrase(ctx, *elapsed)),
-                ),
+                widgets::small(p, running_for(ctx, *elapsed)),
                 widgets::small(
                     p,
                     ctx.t("You can keep using your PC. Please don't turn it off."),
@@ -646,7 +650,8 @@ fn count_line(ctx: &Ctx, n: usize) -> String {
     if n == 1 {
         ctx.t("1 important update is ready to install.")
     } else {
-        format!("{n} {}", ctx.t("important updates are ready to install."))
+        ctx.t("{n} important updates are ready to install.")
+            .replace("{n}", &n.to_string())
     }
 }
 
@@ -654,7 +659,8 @@ fn count_installing(ctx: &Ctx, n: usize) -> String {
     if n == 1 {
         ctx.t("Installing 1 update")
     } else {
-        format!("{} {n} {}", ctx.t("Installing"), ctx.t("updates"))
+        ctx.t("Installing {n} updates")
+            .replace("{n}", &n.to_string())
     }
 }
 
@@ -694,7 +700,7 @@ fn tips_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             let look = report.count(TipState::Look);
             let mut summary = row![widgets::pill(
                 p,
-                format!("{good} {}", ctx.t("look good")),
+                ctx.t("{n} look good").replace("{n}", &good.to_string()),
                 Tone::Good
             )]
             .spacing(theme::S2)
@@ -702,7 +708,7 @@ fn tips_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             if look > 0 {
                 summary = summary.push(widgets::pill(
                     p,
-                    format!("{look} {}", ctx.t("worth a look")),
+                    ctx.t("{n} worth a look").replace("{n}", &look.to_string()),
                     Tone::Warn,
                 ));
             }
@@ -1052,7 +1058,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                 if n == 1 {
                     ctx.t("Install 1 update?")
                 } else {
-                    format!("{} {n} {}", ctx.t("Install"), ctx.t("updates?"))
+                    ctx.t("Install {n} updates?").replace("{n}", &n.to_string())
                 },
                 vec![
                     ctx.t("These updates come from Microsoft and protect your PC."),
@@ -1103,12 +1109,8 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             if found.updates.len() > 5 {
                 list = list.push(widgets::small(
                     p,
-                    format!(
-                        "{} {} {}",
-                        ctx.t("and"),
-                        found.updates.len() - 5,
-                        ctx.t("more")
-                    ),
+                    ctx.t("and {n} more")
+                        .replace("{n}", &(found.updates.len() - 5).to_string()),
                 ));
             }
             content = content.push(list);

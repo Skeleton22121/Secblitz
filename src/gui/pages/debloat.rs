@@ -1210,6 +1210,6 @@ fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a
                 .direction(widgets::controls::scrollbar())
                 .style(widgets::controls::scroll_style(p)),
         )
-        .max_height(140.0),
+        .max_height(theme::DETAILS_MAX),
     )
 }

@@ -74,9 +74,19 @@ impl std::fmt::Debug for Secret {
 // ---------------------------------------------------------------------------
 
 /// Map a raw engine error to one calm sentence (translation key).
+///
+/// Short words are matched as whole words, so "lock" does not fire on
+/// "blocked" or "clock" and "source" does not fire on "resource". Policy is
+/// checked before busy/network because a message such as "blocked by policy"
+/// will never succeed on a retry.
 pub fn friendly_error(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
+    let words: Vec<&str> = r
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let word = |needles: &[&str]| words.iter().any(|w| needles.contains(w));
     if has(&["requires windows", "not implemented", "unsupported"]) {
         "This isn't available on this PC."
     } else if has(&["reboot", "restart"]) {
@@ -84,21 +94,26 @@ pub fn friendly_error(raw: &str) -> &'static str {
     } else if has(&["deferred", "readiness", "not ready", "stale", "ac/storage"]) {
         "Your PC isn't ready for this right now. Plug it in, save your work, restart if Windows is waiting, then try again."
     } else if has(&["unresolved", "independent verification", "interrupted"]) {
-        "An earlier job still needs to be checked. Restart Secblitz and try again."
-    } else if has(&["busy", "lock", "contention", "another"]) {
-        "Windows is busy with another job. Try again in a few minutes."
-    } else if has(&[
-        "network",
-        "offline",
-        "internet",
-        "0x8024",
-        "0x8007",
-        "timed out",
-        "source",
-    ]) {
-        "We couldn't reach Windows Update. Check your internet connection and try again."
-    } else if has(&["policy", "opt-in", "not enabled", "managed", "ownership"]) {
+        "An earlier repair or update still needs to be checked. Restart Secblitz and try again."
+    } else if word(&["policy", "opt-in", "managed", "ownership"]) || has(&["not enabled"]) {
         "Your PC's settings don't allow this."
+    } else if word(&["busy", "lock", "locked", "contention"])
+        || has(&[
+            "another operation",
+            "another install",
+            "another update",
+            "another instance",
+            "already running",
+        ])
+    {
+        "Windows is busy with another task. Try again in a few minutes."
+    } else if word(&["network", "offline", "internet", "source"])
+        || words
+            .iter()
+            .any(|w| w.starts_with("0x8024") || w.starts_with("0x8007"))
+        || has(&["timed out"])
+    {
+        "We couldn't reach Windows Update. Check your internet connection and try again."
     } else if has(&["elevation", "elevated", "administrator", "interactive"]) {
         "Reopen Secblitz from its shortcut and try again."
     } else {
@@ -248,7 +263,7 @@ impl RepairResult {
             Self::ProblemsFound => "Some problems were found",
             Self::Repaired => "Problems were repaired",
             Self::NeedsRestart => "Almost done. Please restart your PC.",
-            Self::Stopped => "You stopped the job",
+            Self::Stopped => "You stopped the repair",
             Self::CouldNotFinish => "We couldn't finish",
         }
     }
@@ -434,7 +449,7 @@ fn repair_steps(
     records: &mut Vec<ops::PlanRecord>,
     total: usize,
 ) -> Result<()> {
-    // An earlier job that was cut short must be verified before a new one.
+    // An earlier repair or update that was cut short must be verified before a new one.
     for old in ops::list()? {
         if old.consumed && old.steps.iter().any(step_unresolved) {
             let kinds: Vec<Op> = old.plan.steps.iter().map(|s| s.operation.kind).collect();
@@ -624,7 +639,7 @@ impl InstallResult {
             Self::Installed => "Your updates are installed",
             Self::NeedsRestart => "Almost done. Please restart your PC.",
             Self::NotConfirmed => "We couldn't confirm every update",
-            Self::Stopped => "You stopped the job",
+            Self::Stopped => "You stopped the update",
             Self::CouldNotFinish => "We couldn't finish",
         }
     }
@@ -919,10 +934,10 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
         P::DefenderPolicy => "Extra virus shields",
         P::SecurityProviders => "Security apps and firewall",
         P::Management => "Who manages this PC",
-        P::SecureBoot => "Safe start-up",
+        P::SecureBoot => "Startup protection",
         P::Tpm => "Security chip",
         P::BitLocker => "Disk encryption",
-        P::Vbs => "Memory protection",
+        P::Vbs => "Core system protection",
         P::WinRe => "Recovery tools",
         P::Accounts => "Sign-in accounts",
         P::RemoteAccess => "Access from other PCs",
@@ -946,11 +961,11 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::UpdateCache | P::UpdateHistory => "Install the latest Windows updates.",
         P::DefenderHealth | P::DefenderPolicy => "Turn on and update Windows virus protection.",
         P::SecurityProviders => "Make sure one virus protection and the firewall are on.",
-        P::Management => "Your PC is managed by an organisation. Ask them before changing it.",
-        P::SecureBoot => "Turn on Secure Boot in your PC's start-up settings.",
+        P::Management => "Your PC is managed by an organization. Ask them before changing it.",
+        P::SecureBoot => "Turn on Secure Boot (startup protection) in your PC's start-up settings.",
         P::Tpm => "Your security chip is off or not ready. Check your PC's start-up settings.",
         P::BitLocker => "Turn on disk encryption so your files stay private if the PC is lost.",
-        P::Vbs => "Turn on memory protection in Windows Security.",
+        P::Vbs => "Turn on Memory integrity (core system protection) in Windows Security.",
         P::WinRe => "Recovery tools are off. They help if Windows ever stops starting.",
         P::Accounts => "Use a normal account every day, and switch off the guest account.",
         P::RemoteAccess => "Switch off remote access if you don't use it.",
@@ -1335,6 +1350,8 @@ mod tests {
             "Maintenance execution requires Windows x64",
             "The remote name could not be resolved: network offline",
             "something unexpected",
+            "Request blocked by policy",
+            "Not enough resource on the clock",
         ] {
             let text = friendly_error(raw);
             assert!(text.len() > 10);
@@ -1343,6 +1360,19 @@ mod tests {
         assert_eq!(
             friendly_error("Owner-initiated reboot has not occurred"),
             "Restart your PC, then try again."
+        );
+        // Whole-word matching and policy first: no busy or network advice.
+        assert_eq!(
+            friendly_error("Request blocked by policy"),
+            "Your PC's settings don't allow this."
+        );
+        assert_eq!(
+            friendly_error("Not enough resource on the clock"),
+            "We couldn't finish this. Try again in a few minutes."
+        );
+        assert_eq!(
+            friendly_error("The file is locked by another operation"),
+            "Windows is busy with another task. Try again in a few minutes."
         );
     }
 

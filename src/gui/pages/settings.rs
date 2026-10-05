@@ -300,14 +300,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 
 // ----- view -----
 
-/// Row height: ROW plus S2, so single and two line rows align everywhere.
-const SETTING_ROW: f32 = theme::ROW + theme::S2;
 const CONTROL_WIDTH: f32 = 200.0;
 
 fn divider<'a>(p: Palette) -> Element<'a, Message> {
     container(space::vertical())
         .width(Length::Fill)
-        .height(1)
+        .height(theme::HAIRLINE)
         .style(move |_| container::Style {
             background: Some(Background::Color(p.border)),
             ..container::Style::default()
@@ -331,7 +329,7 @@ fn item<'a>(
             .spacing(theme::S4)
             .align_y(Alignment::Center),
     )
-    .height(Length::Fixed(SETTING_ROW))
+    .height(Length::Fixed(theme::SETTING_ROW))
     .align_y(Alignment::Center)
     .into()
 }
@@ -563,7 +561,13 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         vec![item(
             p,
             line,
-            Some(t("Secblitz updates itself. You don't need to do anything.")),
+            // Only reassure when updates actually work; otherwise it would
+            // contradict the status line above.
+            matches!(
+                state.update,
+                Remote::Ready(UpdateView::UpToDate | UpdateView::Ready)
+            )
+            .then(|| t("Secblitz updates itself. You don't need to do anything.")),
             status,
         )],
     );
@@ -582,10 +586,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         .align_y(Alignment::Center),
         widgets::muted(p, t("A safer PC. Without headaches.")),
         widgets::small(p, t("Fonts: IBM Plex Sans (SIL Open Font License).")),
-        widgets::small(p, t("Icons: Fluent UI System Icons (MIT licence).")),
+        widgets::small(p, t("Icons: Fluent UI System Icons (MIT license).")),
         widgets::small(
             p,
-            t("App clean-up lists draw on the Win11Debloat and WinUtil projects (MIT licence).")
+            t("App clean-up lists draw on the Win11Debloat and WinUtil projects (MIT license).")
         ),
     ]
     .spacing(theme::S2);
