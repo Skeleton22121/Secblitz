@@ -2,28 +2,69 @@
 //! Undo last fixes; Restore removed apps. OWNER: fixes agent.
 //!
 //! Restoring individual apps is owned by the "Clean up apps" page; the card
-//! here only leads there.
+//! here only leads there. Everything shown is derived once, when the log
+//! arrives (`Msg::Loaded`), so `view()` only builds widgets and the trend
+//! chart is drawn once into a `canvas::Cache`.
+use super::fixes::{banner, row_text};
 use crate::app::history::{self as log, Day, Entry, Kind};
 use crate::app::worker::{self, Job};
 use crate::gui::icons::Icon;
-use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::theme::{self, Mode, Palette, Tone};
 use crate::gui::widgets::{self, ButtonKind};
 use crate::gui::{blocking, Ctx, Message, Page};
-use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, row, space, text};
+use iced::widget::canvas::{self, Cache, Frame, Geometry, Path, Stroke};
+use iced::widget::{column, container, row};
 use iced::{mouse, Alignment, Element, Length, Point, Rectangle, Renderer, Task, Theme};
+use std::cell::Cell;
 
 const TREND_POINTS: usize = 30;
 const PAGE_SIZE: usize = 40;
+/// Height of the trend chart.
+const CHART_HEIGHT: f32 = 140.0;
+/// Padding inside the chart, around the guide lines.
+const CHART_INSET: f32 = theme::S2;
 
 #[derive(Debug, Default)]
 pub struct State {
     visited: bool,
     /// `None` until the log has been read.
-    entries: Option<Vec<Entry>>,
+    data: Option<Data>,
     /// `None` until the engine answered.
     engine: Option<Result<Vec<String>, String>>,
     shown: usize,
+    /// Trend chart geometry; cleared when the data or the theme changes.
+    chart: Cache,
+    chart_mode: Cell<Option<Mode>>,
+}
+
+/// Everything the page shows, derived from the score log in `update()`.
+#[derive(Debug)]
+struct Data {
+    points: Vec<f32>,
+    /// (protected, total) of the latest check.
+    latest: Option<(usize, usize)>,
+    /// Apps removed so far.
+    removed: usize,
+    days: Vec<Day>,
+}
+
+impl Data {
+    fn of(entries: &[Entry]) -> Self {
+        Self {
+            points: log::trend(entries, TREND_POINTS),
+            latest: entries
+                .iter()
+                .rev()
+                .find(|e| e.total > 0)
+                .map(|e| (e.protected, e.total)),
+            removed: entries
+                .iter()
+                .filter(|e| e.kind == Kind::Debloat)
+                .map(|e| e.n)
+                .sum(),
+            days: log::timeline(entries),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,7 +106,10 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     let _ = ctx;
     match msg {
-        Msg::Loaded(entries) => state.entries = Some(entries),
+        Msg::Loaded(entries) => {
+            state.data = Some(Data::of(&entries));
+            state.chart.clear();
+        }
         Msg::ShowMore => state.shown += PAGE_SIZE,
     }
     Task::none()
@@ -76,12 +120,14 @@ fn can_undo(state: &State) -> bool {
     matches!(&state.engine, Some(Ok(lines)) if lines.iter().any(|l| l.ends_with(" applied")))
 }
 
-struct Trend {
+/// Score trend line, drawn once per data / theme / size change.
+struct Trend<'a> {
     p: Palette,
-    points: Vec<f32>,
+    points: &'a [f32],
+    cache: &'a Cache,
 }
 
-impl canvas::Program<Message> for Trend {
+impl canvas::Program<Message> for Trend<'_> {
     type State = ();
     fn draw(
         &self,
@@ -91,81 +137,61 @@ impl canvas::Program<Message> for Trend {
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let (w, h) = (bounds.width, bounds.height);
-        let pad = 8.0;
-        let (top, bottom) = (pad, h - pad);
-        let y_of = |ratio: f32| bottom - (bottom - top) * ratio.clamp(0.0, 1.0);
-        for guide in [0.0, 0.5, 1.0] {
-            let y = y_of(guide);
-            frame.stroke(
-                &Path::line(Point::new(pad, y), Point::new(w - pad, y)),
-                Stroke::default().with_width(1.0).with_color(self.p.border),
-            );
-        }
-        let n = self.points.len();
-        if n == 0 {
-            return vec![frame.into_geometry()];
-        }
-        let x_of = |i: usize| {
-            if n == 1 {
-                w / 2.0
-            } else {
-                pad + (w - 2.0 * pad) * i as f32 / (n - 1) as f32
-            }
-        };
-        if n > 1 {
-            let area = Path::new(|b| {
-                b.move_to(Point::new(x_of(0), bottom));
-                for (i, r) in self.points.iter().enumerate() {
-                    b.line_to(Point::new(x_of(i), y_of(*r)));
+        let geometry = self
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let p = self.p;
+                let (w, h) = (frame.width(), frame.height());
+                let (top, bottom) = (CHART_INSET, h - CHART_INSET);
+                let y_of = |ratio: f32| bottom - (bottom - top) * ratio.clamp(0.0, 1.0);
+                for guide in [0.0, 0.5, 1.0] {
+                    let y = y_of(guide);
+                    frame.stroke(
+                        &Path::line(Point::new(CHART_INSET, y), Point::new(w - CHART_INSET, y)),
+                        Stroke::default().with_width(1.0).with_color(p.border),
+                    );
                 }
-                b.line_to(Point::new(x_of(n - 1), bottom));
-                b.close();
-            });
-            frame.fill(&area, self.p.tint(Tone::Good));
-            let line = Path::new(|b| {
-                b.move_to(Point::new(x_of(0), y_of(self.points[0])));
-                for (i, r) in self.points.iter().enumerate().skip(1) {
-                    b.line_to(Point::new(x_of(i), y_of(*r)));
+                let n = self.points.len();
+                if n == 0 {
+                    return;
                 }
+                let x_of = |i: usize| {
+                    if n == 1 {
+                        w / 2.0
+                    } else {
+                        CHART_INSET + (w - 2.0 * CHART_INSET) * i as f32 / (n - 1) as f32
+                    }
+                };
+                if n > 1 {
+                    let area = Path::new(|b| {
+                        b.move_to(Point::new(x_of(0), bottom));
+                        for (i, r) in self.points.iter().enumerate() {
+                            b.line_to(Point::new(x_of(i), y_of(*r)));
+                        }
+                        b.line_to(Point::new(x_of(n - 1), bottom));
+                        b.close();
+                    });
+                    frame.fill(&area, p.tint(Tone::Good));
+                    let line = Path::new(|b| {
+                        b.move_to(Point::new(x_of(0), y_of(self.points[0])));
+                        for (i, r) in self.points.iter().enumerate().skip(1) {
+                            b.line_to(Point::new(x_of(i), y_of(*r)));
+                        }
+                    });
+                    frame.stroke(
+                        &line,
+                        Stroke::default()
+                            .with_width(2.5)
+                            .with_color(p.good)
+                            .with_line_join(canvas::LineJoin::Round),
+                    );
+                }
+                let last = Point::new(x_of(n - 1), y_of(self.points[n - 1]));
+                frame.fill(&Path::circle(last, 5.0), p.good);
+                frame.fill(&Path::circle(last, 2.5), p.surface);
             });
-            frame.stroke(
-                &line,
-                Stroke::default()
-                    .with_width(2.5)
-                    .with_color(self.p.good)
-                    .with_line_join(canvas::LineJoin::Round),
-            );
-        }
-        let last = Point::new(x_of(n - 1), y_of(self.points[n - 1]));
-        frame.fill(&Path::circle(last, 5.0), self.p.good);
-        frame.fill(&Path::circle(last, 2.5), self.p.surface);
-        vec![frame.into_geometry()]
+        vec![geometry]
     }
-}
-
-fn card_with_action<'a>(
-    p: Palette,
-    icon: Icon,
-    tone: Tone,
-    title: String,
-    body: String,
-    button: Element<'a, Message>,
-) -> Element<'a, Message> {
-    widgets::card(
-        p,
-        row![
-            widgets::icon_badge(p, icon, tone),
-            column![widgets::h2(p, title), widgets::muted(p, body)]
-                .spacing(4)
-                .width(Length::Fill),
-            button,
-        ]
-        .spacing(14)
-        .align_y(Alignment::Center),
-    )
-    .into()
 }
 
 fn kind_icon(kind: Kind) -> (Icon, Tone) {
@@ -178,7 +204,7 @@ fn kind_icon(kind: Kind) -> (Icon, Tone) {
     }
 }
 
-fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
+pub(super) fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
     if day == today {
         return ctx.t("Today");
     }
@@ -192,25 +218,39 @@ fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
     format!("{} {} {}", d, ctx.t(MONTHS[(m as usize - 1) % 12]), y)
 }
 
-fn timeline_card<'a>(state: &'a State, ctx: &'a Ctx, days: &[Day]) -> Element<'a, Message> {
+/// Sentence for the removed-apps card ("1 app" / "{n} apps").
+fn removed_text(ctx: &Ctx, removed: usize) -> String {
+    match removed {
+        0 => ctx.t("You haven't removed any apps yet."),
+        1 => ctx.t("You've removed 1 app so far. You can bring it back at any time."),
+        n => ctx
+            .t("You've removed {n} apps so far. You can bring one back at any time.")
+            .replace("{n}", &n.to_string()),
+    }
+}
+
+fn timeline_card<'a>(state: &'a State, ctx: &'a Ctx, days: &'a [Day]) -> Element<'a, Message> {
     let p = ctx.palette;
     let today = log::local_day(log::now());
-    let mut c = column![widgets::h2(p, ctx.t("What happened"))].spacing(theme::GAP);
+    let mut c = column![widgets::h2(p, ctx.t("What happened"))].spacing(theme::S3);
     let mut budget = state.shown.max(PAGE_SIZE);
     let mut truncated = false;
-    'days: for day in days {
+    for day in days {
         if budget == 0 {
             truncated = true;
             break;
         }
-        c = c.push(widgets::small(p, day_title(ctx, day.day, today)));
+        let mut rows = column![widgets::section_label(
+            p,
+            day_title(ctx, day.day, today)
+        )]
+        .spacing(theme::S1);
         for item in &day.items {
             if budget == 0 {
                 truncated = true;
-                break 'days;
+                break;
             }
             budget -= 1;
-            c = c.push(super::fixes::divider(p));
             let (icon, tone) = kind_icon(item.kind);
             let label = ctx
                 .t(log::label(item.kind, item.n))
@@ -229,79 +269,93 @@ fn timeline_card<'a>(state: &'a State, ctx: &'a Ctx, days: &[Day]) -> Element<'a
                         .replace("{n}", &item.repeats.to_string()),
                 );
             }
-            let mut texts = column![text(label)
-                .size(theme::BODY)
-                .font(theme::MEDIUM)
-                .color(p.text)]
-            .spacing(2)
-            .width(Length::Fill);
-            if !detail.is_empty() {
-                texts = texts.push(widgets::small(p, detail.join(" · ")));
-            }
-            c = c.push(
-                row![widgets::icon_badge(p, icon, tone), texts]
-                    .spacing(12)
-                    .align_y(Alignment::Center),
+            let line = (!detail.is_empty()).then(|| detail.join(" · "));
+            rows = rows.push(
+                container(
+                    row![widgets::icon_badge(p, icon, tone), row_text(p, label, line)]
+                        .spacing(theme::S3)
+                        .align_y(Alignment::Center),
+                )
+                .padding([theme::S3, theme::S4])
+                .width(Length::Fill),
             );
+        }
+        c = c.push(rows);
+        if truncated {
+            break;
         }
     }
     if truncated {
-        c = c.push(widgets::action(
-            p,
-            ButtonKind::Ghost,
-            ctx.t("Show more"),
-            None,
-            Some(Message::History(Msg::ShowMore)),
-        ));
+        c = c.push(
+            container(widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Show more"),
+                None,
+                Some(Message::History(Msg::ShowMore)),
+            ))
+            .center_x(Length::Fill),
+        );
     }
     widgets::card(p, c).into()
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
-    let mut page = column![widgets::page_header(
+    let header = widgets::page_header(
         p,
         ctx.t("History"),
         Some(ctx.t("How your protection has changed over time.")),
-    )]
-    .spacing(theme::GAP);
+    );
+    let spacer = iced::widget::space::vertical().height(theme::S6);
+    let mut page = column![].spacing(theme::S4);
 
-    let Some(entries) = &state.entries else {
-        return page
-            .push(widgets::card(
+    let Some(data) = &state.data else {
+        return column![
+            header,
+            spacer,
+            widgets::card(
                 p,
                 column![
                     widgets::h2(p, ctx.t("Loading your history")),
                     widgets::muted(p, ctx.t("This only takes a moment.")),
                 ]
-                .spacing(4),
-            ))
-            .into();
+                .spacing(theme::S1),
+            )
+        ]
+        .into();
     };
 
     // Trend.
-    let points = log::trend(entries, TREND_POINTS);
-    let trend_body: Element<'a, Message> = if points.len() < 2 {
+    if state.chart_mode.get() != Some(p.mode) {
+        state.chart.clear();
+        state.chart_mode.set(Some(p.mode));
+    }
+    let trend_body: Element<'a, Message> = if data.points.len() < 2 {
         widgets::muted(
             p,
             ctx.t("Check your PC a few times and we'll draw how your protection changes."),
         )
     } else {
-        let latest = entries.iter().rev().find(|e| e.total > 0);
-        let summary = latest
-            .map(|e| {
+        let summary = data
+            .latest
+            .map(|(a, b)| {
                 ctx.t("{a} of {b} protected")
-                    .replace("{a}", &e.protected.to_string())
-                    .replace("{b}", &e.total.to_string())
+                    .replace("{a}", &a.to_string())
+                    .replace("{b}", &b.to_string())
             })
             .unwrap_or_default();
         column![
             widgets::muted(p, summary),
-            canvas::Canvas::new(Trend { p, points })
-                .width(Length::Fill)
-                .height(Length::Fixed(140.0)),
+            canvas::Canvas::new(Trend {
+                p,
+                points: &data.points,
+                cache: &state.chart,
+            })
+            .width(Length::Fill)
+            .height(Length::Fixed(CHART_HEIGHT)),
         ]
-        .spacing(8)
+        .spacing(theme::S3)
         .into()
     };
     page = page.push(widgets::card(
@@ -310,7 +364,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             widgets::h2(p, ctx.t("Your protection over time")),
             trend_body
         ]
-        .spacing(10),
+        .spacing(theme::S3),
     ));
 
     // Undo.
@@ -326,72 +380,53 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ),
         Some(Ok(_)) => (ctx.t("There's nothing to undo yet."), false),
     };
-    page = page.push(card_with_action(
+    page = page.push(banner(
         p,
         Icon::Undo,
         Tone::Neutral,
         ctx.t("Undo your last fixes"),
         undo_body,
-        widgets::action(
+        Some(widgets::action(
             p,
             ButtonKind::Secondary,
             ctx.t("Undo…"),
             None,
             (undo_enabled && !ctx.busy).then_some(Message::ReviewUndo),
-        ),
+        )),
     ));
 
     // Removed apps (restoring happens on the Clean up apps page).
-    let removed: usize = entries
-        .iter()
-        .filter(|e| e.kind == Kind::Debloat)
-        .map(|e| e.n)
-        .sum();
-    let removed_body = if removed == 0 {
-        ctx.t("You haven't removed any apps yet.")
-    } else {
-        ctx.t("You've removed {n} apps so far. You can bring one back at any time.")
-            .replace("{n}", &removed.to_string())
-    };
-    page = page.push(card_with_action(
+    page = page.push(banner(
         p,
         Icon::Package,
         Tone::Neutral,
         ctx.t("Removed apps"),
-        removed_body,
-        widgets::action(
+        removed_text(ctx, data.removed),
+        Some(widgets::action(
             p,
             ButtonKind::Secondary,
             ctx.t("Manage removed apps"),
             None,
             Some(Message::Navigate(Page::Debloat)),
-        ),
+        )),
     ));
 
     // Timeline.
-    let days = log::timeline(entries);
-    if days.is_empty() {
+    if data.days.is_empty() {
         page = page.push(widgets::card(
             p,
-            row![
-                widgets::icon_badge(p, Icon::History, Tone::Neutral),
-                column![
-                    widgets::h2(p, ctx.t("Nothing here yet")),
-                    widgets::muted(
-                        p,
-                        ctx.t("When you check your PC or fix something, it will show up here."),
-                    ),
-                ]
-                .spacing(4),
-                space::horizontal(),
-            ]
-            .spacing(14)
-            .align_y(Alignment::Center),
+            widgets::empty_state(
+                p,
+                Icon::History,
+                ctx.t("Nothing here yet"),
+                ctx.t("When you check your PC or fix something, it will show up here."),
+                None,
+            ),
         ));
     } else {
-        page = page.push(timeline_card(state, ctx, &days));
+        page = page.push(timeline_card(state, ctx, &data.days));
     }
-    page.into()
+    column![header, spacer, page].into()
 }
 
 #[cfg(test)]
@@ -408,5 +443,25 @@ mod tests {
         assert!(can_undo(&s));
         s.engine = Some(Err("x".into()));
         assert!(!can_undo(&s));
+    }
+
+    #[test]
+    fn data_is_derived_once_from_the_log() {
+        let e = |t, kind, protected, total, n| Entry {
+            t,
+            kind,
+            protected,
+            total,
+            n,
+        };
+        let d = Data::of(&[
+            e(1, Kind::Check, 3, 5, 0),
+            e(2, Kind::Debloat, 0, 0, 2),
+            e(3, Kind::Debloat, 0, 0, 1),
+            e(4, Kind::Check, 4, 5, 0),
+        ]);
+        assert_eq!(d.removed, 3);
+        assert_eq!(d.latest, Some((4, 5)));
+        assert_eq!(d.points.len(), 2);
     }
 }
