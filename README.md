@@ -4,7 +4,9 @@
 
 **A safer PC, without the headaches.**
 
-A one-minute security checkup for Windows. Plain words, your choice on every fix, and an undo button for all of it.
+Security, privacy and cleanup for Windows, all in one app.
+
+Secblitz checks your Windows PC, tells you in plain language what needs fixing, and fixes it when you say yes. You don't need to know anything about computers.
 
 [**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.7.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](#security) · [Contributing](#contributing)
 
@@ -19,7 +21,7 @@ A one-minute security checkup for Windows. Plain words, your choice on every fix
 
 ## Why Secblitz
 
-Windows has strong protection built in, but some of it ships switched off, and the settings that matter are spread across a dozen menus written for IT staff. Secblitz puts them in one calm window:
+Windows has strong security and privacy settings, but many are turned off by default and spread across menus written for IT professionals. Secblitz brings security, privacy and PC upkeep together in one app made for people without technical knowledge:
 
 1. **Check.** One click looks at your antivirus, firewall, sign-in, updates and more. About a minute, and nothing is changed.
 2. **Choose.** Every check says what it does, what could go wrong without it and what you'll notice once it's on, downsides included.
