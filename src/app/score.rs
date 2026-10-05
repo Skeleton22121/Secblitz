@@ -75,6 +75,48 @@ pub fn classify(r: &Outcome) -> Class {
     }
 }
 
+/// Classify a diagnostic finding. `info` findings are "Good to know" notes:
+/// `Class::Excluded` means they are never counted as something to check.
+#[allow(dead_code)] // consumed by the GUI integration
+pub fn classify_finding(f: &secblitz::model::Finding) -> Class {
+    match f.status.as_str() {
+        "error" | "unknown" | "unsupported" => return Class::Unknown,
+        "info" | "compliant" | "ok" | "attention" | "review" | "pending" => {}
+        _ => return Class::Unknown,
+    }
+    match advice::for_finding(&f.title, &f.status, &f.detail).group {
+        Group::Protected => Class::Protected,
+        Group::Recommended => Class::Fixable,
+        Group::Choice => Class::Review,
+        Group::Information => Class::Excluded,
+    }
+}
+
+/// True for notes that are only "Good to know" (never counted, never a problem).
+#[allow(dead_code)] // consumed by the GUI integration
+pub fn is_good_to_know(f: &secblitz::model::Finding) -> bool {
+    classify_finding(f) == Class::Excluded
+}
+
+/// How many things the person should look at: control results that need a fix
+/// or a choice, plus findings that are actual tips. Informational findings and
+/// protected items are never included; unverifiable items are counted apart
+/// (`Score::unknown`).
+#[allow(dead_code)] // consumed by the GUI integration
+pub fn to_check_count(report: &Report) -> usize {
+    let controls = report
+        .results
+        .iter()
+        .filter(|r| matches!(classify(r), Class::Fixable | Class::Review))
+        .count();
+    let findings = report
+        .findings
+        .iter()
+        .filter(|f| matches!(classify_finding(f), Class::Fixable | Class::Review))
+        .count();
+    controls + findings
+}
+
 impl Score {
     pub fn of(report: &Report) -> Self {
         let mut s = Score::default();
@@ -185,6 +227,38 @@ mod tests {
             ..verified
         };
         assert_eq!(classify(&managed), Class::Unknown);
+    }
+
+    #[test]
+    fn informational_findings_are_good_to_know_not_to_check() {
+        let find = |title: &str, status: &str| secblitz::model::Finding {
+            title: title.into(),
+            status: status.into(),
+            detail: String::new(),
+        };
+        let mut r = rep(vec![out("uac.consent", "attention")]);
+        for t in ["Windows updates", "Secure Boot", "Local accounts", "SMB1"] {
+            r.findings.push(find(t, "info"));
+        }
+        r.findings.push(find("Remote Desktop", "attention"));
+        assert!(is_good_to_know(&r.findings[0]));
+        assert!(!is_good_to_know(&r.findings[4]));
+        assert_eq!(to_check_count(&r), 2);
+        assert_eq!(classify_finding(&find("SMB1", "error")), Class::Unknown);
+    }
+
+    #[test]
+    fn safe_default_skips_are_protected_in_the_score() {
+        let o = Outcome {
+            detail: "Preserving absent or already-safe machine preference".into(),
+            ..out("wdigest.use_logon_credential", "skipped")
+        };
+        assert_eq!(classify(&o), Class::Protected);
+        let u = Outcome {
+            detail: "Preserving absent or nonzero UAC preference".into(),
+            ..out("uac.enabled", "skipped")
+        };
+        assert_eq!(classify(&u), Class::Protected);
     }
 
     #[test]

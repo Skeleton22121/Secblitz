@@ -227,8 +227,108 @@ fn empty_offline_update_cache_is_not_up_to_date() {
         assessment(&p, "update.cached_quality").status,
         Status::Informational
     );
-    assert_eq!(assessment(&p, "update.freshness").status, Status::Unknown);
-    assert_eq!(p.status, Status::Unknown);
+    // Freshness is judged from install history, never from the offline cache.
+    assert!(!p
+        .assessments
+        .iter()
+        .any(|a| a.rule.id == "update.freshness"));
+    assert_eq!(p.status, Status::Informational);
+}
+
+fn event(op: u32, result: u32, age_days: u64, now: u64, hint: bool) -> UpdateEvent {
+    UpdateEvent {
+        operation: op,
+        result_code: result,
+        hresult: 0,
+        date_unix_seconds: now - age_days * 86_400,
+        quality_title_hint: hint,
+    }
+}
+
+#[test]
+fn update_freshness_is_judged_from_the_latest_successful_quality_install() {
+    let now = 1_800_000_000u64;
+    let fresh = [event(1, 2, 10, now, true), event(1, 2, 90, now, true)];
+    assert_eq!(
+        rules::update_freshness(Some(&fresh), Some(now)).0,
+        Status::Healthy
+    );
+    let edge = [event(1, 2, 35, now, true)];
+    assert_eq!(
+        rules::update_freshness(Some(&edge), Some(now)).0,
+        Status::Healthy
+    );
+    let stale = [event(1, 2, 36, now, true)];
+    assert_eq!(
+        rules::update_freshness(Some(&stale), Some(now)).0,
+        Status::Attention
+    );
+    // Failed installs, uninstalls and non-quality titles never count as fresh.
+    let not_fresh = [
+        event(1, 4, 1, now, true),
+        event(2, 2, 1, now, true),
+        event(1, 2, 1, now, false),
+    ];
+    let (status, detail) = rules::update_freshness(Some(&not_fresh), Some(now));
+    assert_eq!(status, Status::Attention);
+    assert!(detail.contains("No recent security update found"));
+    assert_eq!(
+        rules::update_freshness(Some(&[]), Some(now)).0,
+        Status::Attention
+    );
+    // Unreadable history or clock stays honestly unknown.
+    assert_eq!(rules::update_freshness(None, Some(now)).0, Status::Unknown);
+    assert_eq!(
+        rules::update_freshness(Some(&fresh), None).0,
+        Status::Unknown
+    );
+    // A clock-skewed future entry is not trusted as "fresh".
+    let future = [UpdateEvent {
+        date_unix_seconds: now + 30 * 86_400,
+        ..event(1, 2, 0, now, true)
+    }];
+    assert_eq!(
+        rules::update_freshness(Some(&future), Some(now)).0,
+        Status::Attention
+    );
+}
+
+#[test]
+fn history_probe_reports_freshness_and_attention_for_no_updates() {
+    let p = assessed(
+        ProbeId::UpdateHistory,
+        json!({"entries":k(json!({"items":[],"truncated":false}))}),
+    );
+    assert_eq!(assessment(&p, "update.freshness").status, Status::Attention);
+    assert_eq!(p.status, Status::Attention);
+}
+
+#[test]
+fn backup_coverage_reports_found_stale_and_missing_backups() {
+    let now = 1_800_000_000u64;
+    let ev = |age: u64| BackupEvent {
+        date_unix_seconds: now - age * 86_400,
+    };
+    assert_eq!(
+        rules::backup_coverage(Some(&[ev(3)]), Some(0), Some(now)).0,
+        Status::Healthy
+    );
+    assert_eq!(
+        rules::backup_coverage(Some(&[ev(80)]), Some(2), Some(now)).0,
+        Status::Attention
+    );
+    let (status, detail) = rules::backup_coverage(Some(&[]), Some(4), Some(now));
+    assert_eq!(status, Status::Attention);
+    assert!(detail.starts_with("No backup found"));
+    // Shadow copies alone are same-drive restore points, not a backup.
+    assert_ne!(
+        rules::backup_coverage(Some(&[]), Some(4), Some(now)).0,
+        Status::Healthy
+    );
+    assert_eq!(
+        rules::backup_coverage(None, Some(4), Some(now)).0,
+        Status::Unknown
+    );
 }
 
 #[test]
@@ -411,7 +511,17 @@ fn backups_never_claim_verified_restore_or_data_coverage() {
         assessment(&p, "backup.events").status,
         Status::Informational
     );
-    assert_eq!(assessment(&p, "backup.coverage").status, Status::Unknown);
+    // A 2023 success event is stale, so it is a calm "no recent backup" note,
+    // never a verified restore or a data-coverage claim.
+    assert_eq!(assessment(&p, "backup.coverage").status, Status::Attention);
+    assert!(
+        assessment(&p, "backup.coverage")
+            .detail
+            .contains("not tested")
+            || assessment(&p, "backup.coverage")
+                .detail
+                .contains("No recent backup")
+    );
     assert!(!p.assessments.iter().any(|a| a.status == Status::Healthy));
 }
 
