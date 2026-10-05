@@ -69,13 +69,6 @@ fn command(lang: Lang) -> Command {
                 .subcommand(Command::new("install-staged").hide(true)),
         )
         .subcommand(
-            // Started by the service manager only; never shown in help.
-            Command::new("filter")
-                .hide(true)
-                .subcommand_required(true)
-                .subcommand(Command::new("run").hide(true)),
-        )
-        .subcommand(
             sub("service", "Manage the optional service")
                 .subcommand_required(true)
                 .subcommand(sub("install", "Install the service"))
@@ -97,6 +90,17 @@ fn command(lang: Lang) -> Command {
                     .action(ArgAction::SetTrue)
                     .required(true),
             ),
+        )
+        .subcommand(
+            // Web protection plumbing for the installer, the scheduled task
+            // and the service manager. Hidden, never elevates.
+            Command::new("filter")
+                .hide(true)
+                .subcommand_required(true)
+                .subcommand(Command::new("run").hide(true))
+                .subcommand(Command::new("reconcile").hide(true))
+                .subcommand(Command::new("install").hide(true))
+                .subcommand(Command::new("uninstall").hide(true)),
         );
     fn localize(cmd: Command, lang: Lang, parent: &str) -> Command {
         let path = if parent.is_empty() {
@@ -225,7 +229,11 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
                 secblitz::filter::service::run()?;
                 Ok(0)
             }
-            _ => unreachable!(),
+            _ => match filter_command(matches) {
+                // Web protection plumbing: no UI, no UAC prompt, no wrappers.
+                Some(action) => run_filter_request(action, platform::is_elevated, run_filter),
+                None => unreachable!(),
+            },
         };
     }
     let json = matches.get_flag("json");
@@ -276,6 +284,56 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
         _ => unreachable!(),
     }
     Ok(0)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FilterCommand {
+    Reconcile,
+    Install,
+    Uninstall,
+}
+
+fn filter_command(matches: &ArgMatches) -> Option<FilterCommand> {
+    match matches.subcommand_matches("filter")?.subcommand_name()? {
+        "reconcile" => Some(FilterCommand::Reconcile),
+        "install" => Some(FilterCommand::Install),
+        "uninstall" => Some(FilterCommand::Uninstall),
+        // `run` is the service itself, handled before this.
+        "run" => None,
+        _ => unreachable!(),
+    }
+}
+
+/// Runs only for an administrator or SYSTEM; anyone else gets exit code 2
+/// and nothing happens (these commands never ask for elevation).
+fn run_filter_request(
+    action: FilterCommand,
+    elevated: impl FnOnce() -> Result<bool>,
+    run: impl FnOnce(FilterCommand) -> Result<()>,
+) -> Result<i32> {
+    if !elevated()? {
+        return Ok(2);
+    }
+    run(action)?;
+    Ok(0)
+}
+
+fn run_filter(action: FilterCommand) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use secblitz::filter::control;
+        match action {
+            FilterCommand::Reconcile => control::reconcile(),
+            FilterCommand::Install => control::install_all(),
+            FilterCommand::Uninstall => control::remove_everything(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Only Windows has web protection; reuse the platform's own refusal.
+        let _ = action;
+        platform::backend().map(|_| ())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -688,6 +746,53 @@ mod tests {
             execute(&no_json, Lang::En).unwrap_err().to_string(),
             "update-health-requires-json"
         );
+    }
+
+    #[test]
+    fn filter_commands_are_hidden_and_never_elevate() {
+        let root = command(Lang::En);
+        let filter = root.find_subcommand("filter").unwrap();
+        assert!(filter.is_hide_set());
+        for (word, expected) in [
+            ("reconcile", FilterCommand::Reconcile),
+            ("install", FilterCommand::Install),
+            ("uninstall", FilterCommand::Uninstall),
+        ] {
+            assert!(filter.find_subcommand(word).unwrap().is_hide_set());
+            let matches = command(Lang::En)
+                .try_get_matches_from(["secblitz", "filter", word])
+                .unwrap();
+            assert_eq!(filter_command(&matches), Some(expected));
+            assert!(!json_allowed(&matches));
+            // Not elevated: exit code 2, nothing runs, no UAC.
+            let code = run_filter_request(
+                expected,
+                || Ok(false),
+                |_| panic!("an unelevated caller must not run web protection changes"),
+            )
+            .unwrap();
+            assert_eq!(code, 2);
+            let mut ran = None;
+            let code = run_filter_request(
+                expected,
+                || Ok(true),
+                |a| {
+                    ran = Some(a);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!((code, ran), (0, Some(expected)));
+        }
+        assert!(command(Lang::En)
+            .try_get_matches_from(["secblitz", "filter"])
+            .is_err());
+        assert!(command(Lang::En)
+            .try_get_matches_from(["secblitz", "filter", "unknown"])
+            .is_err());
+        // Hidden from the help listing.
+        let help = command(Lang::En).render_help().to_string();
+        assert!(!help.contains("filter"), "{help}");
     }
 
     #[test]

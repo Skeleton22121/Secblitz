@@ -19,7 +19,7 @@ pub mod vault;
 #[cfg(windows)]
 pub(crate) mod wincrypto;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 #[cfg(windows)]
 pub(crate) mod winfs;
 

@@ -25,13 +25,36 @@ pub const REGISTER: &str = include_str!("scripts/register.ps1");
 /// Runs before every script: only inbox modules, imported by absolute path,
 /// and no autoloading, so a module planted in the user's Documents folder can
 /// never answer for `Get-AppxPackage` in this elevated process.
-const PRELUDE: &str = r#"$moduleRoot = [IO.Path]::Combine($env:SystemRoot, 'System32\WindowsPowerShell\v1.0\Modules')
+fn prelude(modules: &[&str]) -> Result<String> {
+    for m in modules {
+        ensure!(
+            !m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || c == '.'),
+            "Unsupported module name"
+        );
+    }
+    let list = modules
+        .iter()
+        .map(|m| format!("'{m}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!(
+        "{}foreach ($m in {list}) {{\n    $null = Import-Module ([IO.Path]::Combine($moduleRoot, \"$m\\$m.psd1\")) -ErrorAction Stop\n}}\n",
+        PRELUDE_HEAD
+    ))
+}
+
+const PRELUDE_HEAD: &str = r#"$moduleRoot = [IO.Path]::Combine($env:SystemRoot, 'System32\WindowsPowerShell\v1.0\Modules')
 $env:PSModulePath = $moduleRoot
 $PSModuleAutoLoadingPreference = 'None'
-foreach ($m in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility', 'Appx', 'Dism') {
-    $null = Import-Module ([IO.Path]::Combine($moduleRoot, "$m\$m.psd1")) -ErrorAction Stop
-}
 "#;
+
+/// Inbox modules every script gets unless the caller names its own.
+const DEFAULT_MODULES: &[&str] = &[
+    "Microsoft.PowerShell.Management",
+    "Microsoft.PowerShell.Utility",
+    "Appx",
+    "Dism",
+];
 
 fn windows_dir() -> Result<PathBuf> {
     let mut buffer = vec![0u16; 32768];
@@ -52,6 +75,18 @@ fn base64(bytes: &[u8]) -> String {
 
 /// Run `script` and return its last non-empty stdout line.
 pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Result<String> {
+    run_with_modules(script, DEFAULT_MODULES, env, timeout)
+}
+
+/// Like `run`, with the inbox modules the script needs (names only, imported
+/// from System32 by absolute path).
+pub fn run_with_modules(
+    script: &'static str,
+    modules: &[&str],
+    env: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<String> {
+    let prelude = prelude(modules)?;
     let win = windows_dir()?;
     let ps = win.join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let bootstrap = "$global:ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
@@ -91,7 +126,7 @@ pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Res
     let mut input = child.stdin.take().context("Missing stdin")?;
     let mut output = child.stdout.take().context("Missing stdout")?;
     std::thread::spawn(move || {
-        let _ = input.write_all(PRELUDE.as_bytes());
+        let _ = input.write_all(prelude.as_bytes());
         let _ = input.write_all(script.as_bytes());
     });
     let (tx, rx) = mpsc::channel();
