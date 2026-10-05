@@ -636,9 +636,32 @@ fn supervise(
     }
     ensure!(
         code == Some(0) && err.is_empty() && !overflow && !timed_out,
-        "Patching subprocess failed/timed out; verification only"
+        "Patching subprocess {}; verification only (exit {}{}): {}",
+        if timed_out { "timed out" } else { "failed" },
+        code.map_or_else(|| "none".to_owned(), |c| format!("{c:#x}")),
+        if overflow { ", output overflow" } else { "" },
+        stderr_excerpt(&err)
     );
     Ok(out)
+}
+
+/// The start of the subprocess's error output as one printable line, for the
+/// technical details (never parsed).
+fn stderr_excerpt(err: &[u8]) -> String {
+    let text = String::from_utf8_lossy(err);
+    let line: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect();
+    if line.is_empty() {
+        "no error output".to_owned()
+    } else {
+        line
+    }
 }
 
 #[cfg(test)]

@@ -122,10 +122,14 @@ pub fn friendly_error(raw: &str) -> &'static str {
         "Restart your PC, then try again."
     } else if has(&["servicing is busy"]) {
         "Windows is busy with another task. Try again in a few minutes."
-    } else if has(&["not plugged in"]) {
+    } else if has(&["not plugged in", "ac power"]) {
         "Plug your PC in, then try again."
-    } else if has(&["low disk space"]) {
+    } else if has(&["low disk space", "insufficient system storage"]) {
         "Free up at least 5 GB on your system drive, then try again."
+    } else if has(&["metered"]) {
+        "You're on a connection with a data limit. Connect to a network without one, then try again."
+    } else if has(&["update source", "user update policy"]) {
+        ERR_SETTINGS_BLOCK
     } else if has(&["deferred", "readiness", "not ready", "stale", "ac/storage"]) {
         "Your PC isn't ready for this right now. Plug it in, save your work, restart if Windows is waiting, then try again."
     } else if has(&["unresolved", "independent verification", "interrupted"]) {
@@ -138,6 +142,7 @@ pub fn friendly_error(raw: &str) -> &'static str {
             "another install",
             "another update",
             "another instance",
+            "another servicing",
             "already running",
         ])
     {
@@ -1563,6 +1568,23 @@ mod tests {
         );
         let text = technical_lines(&r);
         assert!(text.contains("dism_check_health") && text.contains("sfc_verify"));
+    }
+
+    #[test]
+    fn update_check_reasons_get_their_own_next_step() {
+        let wrap = |why: &str| {
+            format!("Patching subprocess failed; verification only (exit 0x1): Exact patching stopped (0x80131501): {why}; inspect protected record and verify, never replay")
+        };
+        for (why, want) in [
+            ("Another servicing worker is active", "Windows is busy with another task. Try again in a few minutes."),
+            ("AC power not confirmed", "Plug your PC in, then try again."),
+            ("Insufficient system storage", "Free up at least 5 GB on your system drive, then try again."),
+            ("Metered/unknown network", "You're on a connection with a data limit. Connect to a network without one, then try again."),
+            ("Default update source is not unmanaged Windows Update", ERR_SETTINGS_BLOCK),
+            ("Pending reboot; owner action required", "Restart your PC, then try again."),
+        ] {
+            assert_eq!(friendly_error(&wrap(why)), want, "{why}");
+        }
     }
 
     #[test]
