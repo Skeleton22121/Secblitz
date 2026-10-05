@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Secblitz</title>
+  <desc id="desc">A lightning bolt cut through a mint shield on an ink rounded square.</desc>
+  <rect width="256" height="256" rx="56" fill="#101E29"/>
+  <path fill="#79F2C0" fill-rule="evenodd" d="M 128 34 L 202 62 L 202 120 Q 202 184 128 222 Q 54 184 54 120 L 54 62 Z M 137 65 L 91 137 L 120 137 L 108 188 L 165 111 L 133 111 L 149 65 Z"/>
+</svg>

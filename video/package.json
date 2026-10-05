@@ -1,0 +1,31 @@
+{
+  "name": "secblitz-remotion-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets": "node scripts/assets.mjs",
+    "dev": "remotion studio",
+    "check": "tsc --noEmit",
+    "verify": "node scripts/verify.mjs",
+    "verify-v060": "node scripts/verify-v060.mjs",
+    "browser": "remotion browser ensure",
+    "preview": "npm run verify && remotion still src/index.ts SecblitzDemo out/preview.png --frame=90",
+    "preview-v060": "npm run verify-v060 && remotion still src/index.ts SecblitzDemoV060 out/preview-v060.png --frame=90",
+    "render": "npm run verify && remotion render src/index.ts SecblitzDemo out/secblitz-demo.mp4",
+    "render-v060": "npm run verify-v060 && remotion render src/index.ts SecblitzDemoV060 out/secblitz-demo-v060.mp4",
+    "deliver": "node scripts/deliver.mjs",
+    "deliver-v060": "node scripts/deliver-v060.mjs"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.532",
+    "@remotion/fonts": "4.0.532",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

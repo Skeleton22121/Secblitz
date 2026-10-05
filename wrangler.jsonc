@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Run scripts/stage-pages.py first; never deploy the website source tree.
+  "name": "secblitz",
+  "pages_build_output_dir": "./dist/pages",
+  "compatibility_date": "2026-10-02"
+}
