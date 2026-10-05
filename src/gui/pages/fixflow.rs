@@ -9,7 +9,7 @@
 //! draw-in as each item finishes, the overall bar easing to each new value and
 //! one check draw on the result. Frames are requested by `subscription()` only
 //! while one of these runs; the shell must batch it into its subscriptions.
-use super::fixes::{row_text, sanitize, well};
+use super::fixes::{row_text, sanitize};
 use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
 use crate::app::history::{self as log, Entry, Kind};
@@ -18,16 +18,18 @@ use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim::{self, Clock, Tween};
 use crate::gui::widgets::controls::{scroll_style, scrollbar};
-use crate::gui::widgets::{self, ButtonKind};
+use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
-use iced::{Alignment, Border, Element, Length, Subscription, Task};
+use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
 use std::time::Instant;
 
 /// Tallest the list inside a sheet grows before it scrolls.
 const LIST_MAX_HEIGHT: f32 = 300.0;
 /// Status mark size in working rows (matches the row icon size).
-const MARK: f32 = 18.0;
+const MARK: f32 = theme::ICON_ROW;
+/// Edge of the quiet dot shown for items that have not started.
+const WAIT_DOT: f32 = 6.0;
 
 #[derive(Debug)]
 pub struct State {
@@ -531,7 +533,7 @@ fn plan_list<'a>(p: Palette, plan: &[PlanRow], restart_label: &str) -> Element<'
         }
         list = list.push(line);
     }
-    well(p, bounded(p, list.into())).into()
+    bounded(p, list.into())
 }
 
 fn review_view<'a>(
@@ -601,7 +603,7 @@ fn review_view<'a>(
         .push(footer(vec![
             widgets::action(
                 p,
-                ButtonKind::Secondary,
+                ButtonKind::Ghost,
                 ctx.t("Cancel"),
                 None,
                 Some(Message::Fix(Msg::Cancel)),
@@ -613,18 +615,21 @@ fn review_view<'a>(
 
 /// Waiting dot for items that have not started.
 fn waiting_mark<'a>(p: Palette) -> Element<'a, Message> {
-    container(space::horizontal())
-        .width(MARK)
-        .height(MARK)
-        .style(move |_| container::Style {
-            border: Border {
-                radius: (MARK / 2.0).into(),
-                width: 1.5,
-                color: p.border_strong,
-            },
-            ..container::Style::default()
-        })
-        .into()
+    container(
+        container(space::horizontal())
+            .width(WAIT_DOT)
+            .height(WAIT_DOT)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.disabled_fg)),
+                border: Border {
+                    radius: (WAIT_DOT / 2.0).into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            }),
+    )
+    .center(MARK)
+    .into()
 }
 
 /// Animated mark for one finished item.
@@ -684,7 +689,9 @@ fn working_view<'a>(
     ]
     .spacing(theme::S3);
     if let Some(bar) = &state.bar {
-        c = c.push(widgets::bar(p, bar.value(state.now), Tone::Brand));
+        c = c.push(progress::bar(p, bar, Tone::Brand, state.now));
+    } else if undo {
+        c = c.push(progress::indeterminate(p, Tone::Brand));
     }
 
     let verifying = phase == Some(Phase::Verifying);
@@ -727,7 +734,7 @@ fn working_view<'a>(
         ctx.t("Checking the result"),
         verifying,
     ));
-    c.push(well(p, bounded(p, list.into()))).into()
+    c.push(bounded(p, list.into())).into()
 }
 
 fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
@@ -740,7 +747,7 @@ fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
     .into()
 }
 
-fn group<'a>(p: Palette, label: String, lines: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+fn block<'a>(p: Palette, label: String, lines: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     let mut c = column![widgets::section_label(p, label)].spacing(theme::S2);
     for l in lines {
         c = c.push(l);
@@ -776,7 +783,7 @@ fn result_view<'a>(
 
     let mut body = column![].spacing(theme::S4);
     if !s.protected_now.is_empty() {
-        body = body.push(group(
+        body = body.push(block(
             p,
             ctx.t("You're now protected from:"),
             s.protected_now
@@ -786,7 +793,7 @@ fn result_view<'a>(
         ));
     }
     if !s.after_restart.is_empty() {
-        body = body.push(group(
+        body = body.push(block(
             p,
             ctx.t("After you restart, you'll also be protected from:"),
             s.after_restart
@@ -796,7 +803,7 @@ fn result_view<'a>(
         ));
     }
     if undo && !s.done.is_empty() {
-        body = body.push(group(
+        body = body.push(block(
             p,
             ctx.t("Put back:"),
             s.done
@@ -806,7 +813,7 @@ fn result_view<'a>(
         ));
     }
     if !s.not_done.is_empty() {
-        body = body.push(group(
+        body = body.push(block(
             p,
             ctx.t(if undo {
                 "Couldn't undo"
