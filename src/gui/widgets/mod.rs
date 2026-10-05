@@ -108,14 +108,6 @@ pub fn icon_badge<'a>(p: Palette, i: Icon, tone: Tone) -> Element<'a, Message> {
         .into()
 }
 
-/// Borderless tonal block. Adapter for [`region`]; prefer `region`/`group`.
-pub fn card<'a>(
-    p: Palette,
-    content: impl Into<Element<'a, Message>>,
-) -> container::Container<'a, Message> {
-    region(p, content)
-}
-
 /// Small status label, e.g. "Needs attention".
 pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
     let fg = p.tone_text(tone);
