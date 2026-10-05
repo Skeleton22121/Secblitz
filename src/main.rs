@@ -657,10 +657,15 @@ fn main() {
     let json_requested = args.iter().any(|a| a == "--json");
     let mut update = false;
     let mut gui_entry = false;
+    let mut plumbing = false;
     let result = match command(lang).try_get_matches_from(args) {
         Ok(matches) => {
             update = update_command(&matches).is_some();
             gui_entry = matches.subcommand_name().is_none();
+            plumbing = matches!(
+                matches.subcommand_name(),
+                Some("filter" | "uninstall-revert" | "uninstall-cleanup")
+            );
             execute(&matches, lang)
         }
         Err(error)
@@ -702,6 +707,10 @@ fn main() {
                     "{}",
                     serde_json::json!({"error":{"code":"operation_failed", "message":lang.t("Operation failed")}})
                 );
+            } else if plumbing {
+                // Run by the installer or a scheduled task, never seen by a
+                // person: the full reason goes to the log that captures stderr.
+                eprintln!("{}: {error:#}", lang.t("Operation failed"));
             } else if !update {
                 // Hidden service commands run unattended (installer): no dialogs.
                 eprintln!("{}", lang.t("Operation failed"));

@@ -670,7 +670,9 @@ pub fn install() -> Result<()> {
             account_name: Some(ACCOUNT.into()),
             account_password: None,
         },
+        // START: Windows requires it to set restart-on-failure actions.
         ServiceAccess::CHANGE_CONFIG
+            | ServiceAccess::START
             | ServiceAccess::DELETE
             | ServiceAccess::WRITE_DAC
             | ServiceAccess::WRITE_OWNER,

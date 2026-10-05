@@ -99,7 +99,11 @@ pub const NEVER_BLOCK: &[&str] = &[
     "wdcpalt.microsoft.com",
     "definitionupdates.microsoft.com",
     "go.microsoft.com",
-    "cp.wd.microsoft.com",
+    // Defender cloud protection also answers on these (HaGeZi's Windows
+    // tracker list carries them as telemetry; protection wins).
+    "wd.microsoft.com",
+    "spynet2.microsoft.com",
+    "spynetalt.microsoft.com",
     "smartscreen-prod.microsoft.com",
     "smartscreen.microsoft.com",
     "checkappexec.microsoft.com",
@@ -449,5 +453,32 @@ mod tests {
         for n in NEVER_BLOCK {
             assert!(valid_hostname(n), "{n}");
         }
+    }
+
+    #[test]
+    fn defender_cloud_protection_is_never_blocked() {
+        // HaGeZi's Windows tracker list carries these; they must still resolve.
+        let windows = "||spynet2.microsoft.com^\n||spynetalt.microsoft.com^\n||wdcp.microsoft.com^\n||unitedstates.cp.wd.microsoft.com^\n||telemetry.example^\n";
+        let filter = build(&Inputs {
+            dns: None,
+            windows: Some(windows),
+            threats: None,
+            tracking_classifiers: Vec::new(),
+            ad_classifiers: Vec::new(),
+        });
+        let on = Switches {
+            ads: true,
+            tracking: true,
+            dangerous: true,
+        };
+        for name in [
+            "spynet2.microsoft.com",
+            "spynetalt.microsoft.com",
+            "wdcp.microsoft.com",
+            "unitedstates.cp.wd.microsoft.com",
+        ] {
+            assert_eq!(filter.decide(name, on), None, "{name}");
+        }
+        assert_eq!(filter.decide("telemetry.example", on), Some(Kind::Tracking));
     }
 }
