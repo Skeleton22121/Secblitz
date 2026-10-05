@@ -1,14 +1,16 @@
 // GUI program: no console window is ever created.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 pub(crate) mod advice;
-#[allow(dead_code)] // wired into the pages as the catalogs fill in
-pub(crate) mod explain;
 mod app;
 mod broker;
+#[allow(dead_code)] // wired into the pages as the catalogs fill in
+pub(crate) mod explain;
 mod gui;
 mod i18n;
 mod launcher;
 mod tray;
+mod user_apps;
+mod user_settings;
 
 use anyhow::{bail, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};

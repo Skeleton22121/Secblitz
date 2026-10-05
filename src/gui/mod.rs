@@ -593,6 +593,7 @@ impl App {
             Page::History => self.revisit(WARM_HISTORY),
             Page::Debloat => self.revisit(WARM_DEBLOAT),
             Page::Settings => self.revisit(WARM_SETTINGS),
+            Page::Tools => tools::on_enter(&mut self.tools, &mut self.ctx),
             _ => Task::none(),
         }
     }

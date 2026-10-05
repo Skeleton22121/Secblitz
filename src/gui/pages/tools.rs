@@ -7,6 +7,8 @@
 //! review sheet; the sheet's Cancel button is the safe way out.
 mod view;
 
+use super::personal;
+
 use crate::app::tools::{
     self as logic, Found, InstallEvent, InstallResult, InstallStage, RepairEvent, RepairKind,
     RepairProgress, RepairResult, Secret, TipProfile, TipsReport,
@@ -106,6 +108,7 @@ pub enum Msg {
     OpenSecurity,
     Opened(Result<broker::Reply, String>),
     ToggleDetail(Detail),
+    Personal(personal::Msg),
 }
 
 #[derive(Debug)]
@@ -204,6 +207,7 @@ pub struct State {
     password: Password,
     bitwarden: Run<Result<(), String>>,
     open_details: Vec<Detail>,
+    personal: personal::State,
     /// Time of the latest animation frame (never read from the clock in `view`).
     now: Instant,
     /// Zero point for the endless spinners.
@@ -235,6 +239,7 @@ impl Default for State {
             },
             bitwarden: Run::Idle,
             open_details: Vec::new(),
+            personal: Default::default(),
             now: Instant::now(),
             epoch: Instant::now(),
             shots: Vec::new(),
@@ -266,6 +271,11 @@ pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
     } else {
         Subscription::none()
     }
+}
+
+/// The Tools page was opened: read the account settings once.
+pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    personal::on_enter(&mut state.personal, ctx)
 }
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
@@ -513,6 +523,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Tone::Warn,
             )),
         },
+        Msg::Personal(msg) => personal::update(&mut state.personal, msg, ctx),
         Msg::ToggleDetail(detail) => {
             if state.open_details.contains(&detail) {
                 state.close_detail(detail);
