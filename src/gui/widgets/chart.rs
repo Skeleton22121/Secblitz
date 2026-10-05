@@ -185,7 +185,11 @@ impl Trend<'_> {
         let plot = Plot::of(size);
         let domain = y_domain(self.points.iter().map(|(_, v)| *v));
         let tone = p.tone(self.tone);
-        let guide = p.text.scale_alpha(if p.mode == theme::Mode::Dark { 0.09 } else { 0.07 });
+        let guide = p.text.scale_alpha(if p.mode == theme::Mode::Dark {
+            0.09
+        } else {
+            0.07
+        });
         let mid = (plot.top + plot.bottom) / 2.0;
         for y in [plot.top, mid, plot.bottom] {
             f.stroke(
@@ -193,27 +197,52 @@ impl Trend<'_> {
                 Stroke::default().with_width(1.0).with_color(guide),
             );
         }
-        let small = |content: String, x: f32, y: f32, ax: iced::alignment::Horizontal, a: f32| Text {
-            content,
-            position: Point::new(x, y),
-            color: p.text_muted.scale_alpha(a),
-            size: (theme::SMALL - 1.0).into(),
-            font: theme::REGULAR,
-            align_x: ax.into(),
-            align_y: iced::alignment::Vertical::Center,
-            ..Text::default()
-        };
+        let small =
+            |content: String, x: f32, y: f32, ax: iced::alignment::Horizontal, a: f32| Text {
+                content,
+                position: Point::new(x, y),
+                color: p.text_muted.scale_alpha(a),
+                size: (theme::SMALL - 1.0).into(),
+                font: theme::REGULAR,
+                align_x: ax.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..Text::default()
+            };
         let n = self.points.len();
         if n == 0 {
             return;
         }
         use iced::alignment::Horizontal::{Left, Right};
-        f.fill_text(small(percent(domain.1), plot.left - 8.0, plot.top, Right, 0.8));
-        f.fill_text(small(percent(domain.0), plot.left - 8.0, plot.bottom, Right, 0.8));
+        f.fill_text(small(
+            percent(domain.1),
+            plot.left - 8.0,
+            plot.top,
+            Right,
+            0.8,
+        ));
+        f.fill_text(small(
+            percent(domain.0),
+            plot.left - 8.0,
+            plot.bottom,
+            Right,
+            0.8,
+        ));
         let ly = size.height - LABEL_H / 2.0 + 2.0;
-        f.fill_text(small((self.date)(self.points[0].0), plot.left, ly, Left, 1.0));
+        f.fill_text(small(
+            (self.date)(self.points[0].0),
+            plot.left,
+            ly,
+            Left,
+            1.0,
+        ));
         if n > 1 {
-            f.fill_text(small((self.date)(self.points[n - 1].0), plot.right, ly, Right, 1.0));
+            f.fill_text(small(
+                (self.date)(self.points[n - 1].0),
+                plot.right,
+                ly,
+                Right,
+                1.0,
+            ));
         }
 
         let px = self.pixels(&plot, domain);
@@ -221,7 +250,10 @@ impl Trend<'_> {
         if n == 1 {
             // One check so far: a quiet level line and the value, not a slab.
             f.stroke(
-                &Path::line(Point::new(plot.left, last.y), Point::new(plot.right, last.y)),
+                &Path::line(
+                    Point::new(plot.left, last.y),
+                    Point::new(plot.right, last.y),
+                ),
                 Stroke::default()
                     .with_width(1.5)
                     .with_color(tone.scale_alpha(0.35 * reveal)),
@@ -234,7 +266,10 @@ impl Trend<'_> {
                 for k in 0..n - 1 {
                     b.bezier_curve_to(
                         Point::new(px[k].x + step / 3.0, px[k].y + tangents[k] / 3.0),
-                        Point::new(px[k + 1].x - step / 3.0, px[k + 1].y - tangents[k + 1] / 3.0),
+                        Point::new(
+                            px[k + 1].x - step / 3.0,
+                            px[k + 1].y - tangents[k + 1] / 3.0,
+                        ),
                         px[k + 1],
                     );
                 }
@@ -249,7 +284,11 @@ impl Trend<'_> {
             // Entrance: everything is revealed left to right through a clip.
             let reveal_x = plot.left + (plot.right - plot.left) * reveal + 2.0;
             let top_y = px.iter().map(|q| q.y).fold(f32::MAX, f32::min) - 2.0;
-            let band_alpha = if p.mode == theme::Mode::Dark { 0.05 } else { 0.045 };
+            let band_alpha = if p.mode == theme::Mode::Dark {
+                0.05
+            } else {
+                0.045
+            };
             for k in 0..BANDS {
                 let frac = (BANDS - k) as f32 / (BANDS + 1) as f32;
                 let h = (plot.bottom - top_y) * frac;
@@ -259,7 +298,10 @@ impl Trend<'_> {
                 );
                 f.with_clip(clip, |c| c.fill(&area, tone.scale_alpha(band_alpha)));
             }
-            let clip = Rectangle::new(Point::new(0.0, 0.0), Size::new(reveal_x.min(size.width), size.height));
+            let clip = Rectangle::new(
+                Point::new(0.0, 0.0),
+                Size::new(reveal_x.min(size.width), size.height),
+            );
             f.with_clip(clip, |c| {
                 c.stroke(
                     &line,
@@ -303,7 +345,9 @@ impl Trend<'_> {
         let pt = Point::new(plot.x(i, n), self.y_of(&plot, domain, v));
         f.stroke(
             &Path::line(Point::new(pt.x, plot.top), Point::new(pt.x, plot.bottom)),
-            Stroke::default().with_width(1.0).with_color(p.text.scale_alpha(0.14)),
+            Stroke::default()
+                .with_width(1.0)
+                .with_color(p.text.scale_alpha(0.14)),
         );
         f.fill(&Path::circle(pt, 9.0), tone.scale_alpha(0.16));
         f.fill(&Path::circle(pt, 4.5), tone);
@@ -312,7 +356,11 @@ impl Trend<'_> {
         let w = label.chars().count() as f32 * 6.8 + 20.0;
         let h = 26.0;
         let x = (pt.x - w / 2.0).clamp(2.0, (size.width - w - 2.0).max(2.0));
-        let y = if pt.y - h - 12.0 < 0.0 { pt.y + 12.0 } else { pt.y - h - 12.0 };
+        let y = if pt.y - h - 12.0 < 0.0 {
+            pt.y + 12.0
+        } else {
+            pt.y - h - 12.0
+        };
         f.fill(
             &Path::rounded_rectangle(Point::new(x, y), Size::new(w, h), 6.0.into()),
             p.text,
@@ -391,7 +439,10 @@ impl canvas::Program<Message> for Trend<'_> {
         }
         let mut out = Vec::with_capacity(2);
         if st.entered {
-            out.push(self.cache.draw(renderer, bounds.size(), |f| self.paint_static(f, 1.0)));
+            out.push(
+                self.cache
+                    .draw(renderer, bounds.size(), |f| self.paint_static(f, 1.0)),
+            );
         } else {
             // While the line draws in, bypass the cache (it would store a partial frame).
             let mut f = Frame::new(renderer, bounds.size());
@@ -406,7 +457,12 @@ impl canvas::Program<Message> for Trend<'_> {
         out
     }
 
-    fn mouse_interaction(&self, _: &TrendState, _: Rectangle, _: mouse::Cursor) -> mouse::Interaction {
+    fn mouse_interaction(
+        &self,
+        _: &TrendState,
+        _: Rectangle,
+        _: mouse::Cursor,
+    ) -> mouse::Interaction {
         mouse::Interaction::None
     }
 }
@@ -444,7 +500,13 @@ mod tests {
         let mut out = vec![];
         for k in 0..ys.len() - 1 {
             for s in 0..=per {
-                out.push(hermite(ys[k], ys[k + 1], m[k], m[k + 1], s as f32 / per as f32));
+                out.push(hermite(
+                    ys[k],
+                    ys[k + 1],
+                    m[k],
+                    m[k + 1],
+                    s as f32 / per as f32,
+                ));
             }
         }
         out

@@ -290,7 +290,9 @@ pub fn row_item_tinted<'a>(
         .center_y(Length::Shrink);
     match on_press {
         Some(m) => arrow(
-            button(inner)
+            super::press::button(inner)
+                .scale(false)
+                .focus_color(p.focus_ring)
                 .padding(0)
                 .width(Length::Fill)
                 .on_press(m)
@@ -502,12 +504,14 @@ pub fn collapsible<'a>(
         );
     }
     let header = arrow(
-        button(
+        super::press::button(
             container(head)
                 .padding([theme::S2, theme::S4])
                 .center_y(Length::Shrink)
                 .width(Length::Fill),
         )
+        .scale(false)
+        .focus_color(p.focus_ring)
         .padding(0)
         .width(Length::Fill)
         .on_press(on_toggle)
