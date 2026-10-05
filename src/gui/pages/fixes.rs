@@ -49,6 +49,7 @@ pub struct State {
     expanded: HashSet<String>,
     open_protected: bool,
     open_cant: bool,
+    open_managed: bool,
     open_info: bool,
     all_attention: bool,
     all_protected: bool,
@@ -73,6 +74,7 @@ impl Default for State {
             expanded: HashSet::new(),
             open_protected: false,
             open_cant: false,
+            open_managed: false,
             open_info: false,
             all_attention: false,
             all_protected: false,
@@ -94,6 +96,7 @@ pub enum Msg {
     Expand(String),
     ShowProtected,
     ToggleCant,
+    ToggleManaged,
     ToggleInfo,
     AllAttention,
     AllProtected,
@@ -377,6 +380,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Expand(id) => flip(&mut state.expanded, id),
         Msg::ShowProtected => state.open_protected = !state.open_protected,
         Msg::ToggleCant => state.open_cant = !state.open_cant,
+        Msg::ToggleManaged => state.open_managed = !state.open_managed,
         Msg::ToggleInfo => state.open_info = !state.open_info,
         Msg::AllAttention => state.all_attention = !state.all_attention,
         Msg::AllProtected => state.all_protected = !state.all_protected,
@@ -1001,9 +1005,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Can't check (unavailable + managed): collapsed.
-    let mut cant = bucket(Bucket::Unavailable);
-    cant.extend(bucket(Bucket::Managed));
+    // Can't check right now: collapsed.
+    let cant = bucket(Bucket::Unavailable);
     if !cant.is_empty() {
         let mut list = column![].spacing(theme::S1);
         for o in &cant {
@@ -1015,6 +1018,23 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             Some(count_text(ctx, cant.len())),
             state.open_cant,
             Message::Fixes(Msg::ToggleCant),
+            list,
+        ));
+    }
+
+    // Settings this PC's owner controls: checked, but not ours to change.
+    let managed = bucket(Bucket::Managed);
+    if !managed.is_empty() {
+        let mut list = column![].spacing(theme::S1);
+        for o in &managed {
+            list = list.push(other_row(state, ctx, o));
+        }
+        body = body.push(widgets::collapsible(
+            p,
+            ctx.t("Managed elsewhere"),
+            Some(count_text(ctx, managed.len())),
+            state.open_managed,
+            Message::Fixes(Msg::ToggleManaged),
             list,
         ));
     }
