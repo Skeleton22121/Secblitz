@@ -25,7 +25,6 @@ extern "system" {
         size: u32,
         returned: *mut u32,
     ) -> i32;
-    fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *mut i32) -> i32;
     fn CreatePipe(
         read: *mut HANDLE,
         write: *mut HANDLE,
@@ -178,15 +177,19 @@ pub(super) fn spawn(
     permit: Option<&core::LaunchPermit>,
     control: Option<&core::Control>,
 ) -> Result<Child> {
+    // An inherited enclosing job can impose termination/resource limits even
+    // when our own job has none. Never gamble with OS servicing: start outside
+    // it when it allows that (Windows' compatibility assistant job does), else
+    // refuse. The child joins our job atomically at creation, still suspended.
+    let mut breakaway = 0;
     if !read_only {
-        // An inherited enclosing job can impose termination/resource limits
-        // even when our own job has none. Never gamble with OS servicing.
-        let mut in_job = 0;
-        check(unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) })?;
-        ensure!(
-            in_job == 0,
-            "Servicing cannot inherit an enclosing process job"
-        );
+        match crate::platform::enclosing_job()? {
+            crate::platform::EnclosingJob::None => {}
+            crate::platform::EnclosingJob::Breakaway => breakaway = CREATE_BREAKAWAY_FROM_JOB,
+            crate::platform::EnclosingJob::Locked => {
+                bail!("Servicing cannot inherit an enclosing process job")
+            }
+        }
     }
     let application = wide(command.get_program())?;
     // All arguments are compiled switches/base64. Reject quoting ambiguity
@@ -312,7 +315,11 @@ pub(super) fn spawn(
             null(),
             null(),
             1,
-            CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | 0x00080000,
+            CREATE_NO_WINDOW
+                | CREATE_SUSPENDED
+                | CREATE_UNICODE_ENVIRONMENT
+                | 0x00080000
+                | breakaway,
             environment.as_ptr().cast(),
             cwd.as_ptr(),
             &startup.base,
@@ -322,6 +329,12 @@ pub(super) fn spawn(
     let process = Handle(info.hProcess);
     let thread = Handle(info.hThread);
     let ready = (|| -> Result<()> {
+        if breakaway != 0 {
+            ensure!(
+                !crate::platform::enclosing_job_contains(info.dwProcessId)?,
+                "Servicing process stayed in the enclosing job"
+            );
+        }
         if let Some(permit) = permit {
             let time = now()?;
             ensure!(

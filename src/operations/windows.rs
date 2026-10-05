@@ -448,12 +448,15 @@ fn busy_processes() -> Result<bool> {
             .position(|c| *c == 0)
             .context("Invalid process name")?;
         let name = String::from_utf16(&entry.exe[..end])?.to_ascii_lowercase();
+        // Servicing clients only. TiWorker.exe is the shared servicing host:
+        // our own DISM/SFC steps start it and it then idles for minutes, and
+        // Windows' servicing stack already serializes sessions inside it. As a
+        // gate it only ever blocked the step after our own.
         if matches!(
             name.as_str(),
             "dism.exe"
                 | "dismhost.exe"
                 | "sfc.exe"
-                | "tiworker.exe"
                 | "mpcmdrun.exe"
                 | "usoclient.exe"
                 | "mousocoreworker.exe"
