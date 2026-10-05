@@ -40,6 +40,31 @@ if ($OwnershipFixtures) {
         if (-not $rejected) { throw "Ownership mutation accepted: $($mutation[0])" }
     }
     Write-Host "PASS: 3 accepted ownership fixtures, $($mutations.Count) rejected mutations."
+    # The web protection reconcile task: SYSTEM running our executable with the
+    # fixed arguments is ours; the triggers only decide when it runs.
+    $reconcileValidator = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-OwnedReconcileXml' }, $true)
+    . ([scriptblock]::Create($reconcileValidator.Extent.Text))
+    $reconcile = '<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task" version="1.2"><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger><TimeTrigger><Repetition><Interval>PT1H</Interval></Repetition><StartBoundary>2026-10-03T12:00:00</StartBoundary></TimeTrigger><EventTrigger><Subscription>&lt;QueryList /&gt;</Subscription></EventTrigger></Triggers><Principals><Principal id="Reconcile"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Actions Context="Reconcile"><Exec><Command>"C:\Program Files\Secblitz\secblitz.exe"</Command><Arguments>filter reconcile</Arguments><WorkingDirectory>C:\Program Files\Secblitz</WorkingDirectory></Exec></Actions></Task>'
+    Assert-OwnedReconcileXml ([xml]$reconcile) $exe $root
+    Assert-OwnedReconcileXml ([xml]$reconcile.Replace('"C:\Program Files\Secblitz\secblitz.exe"', $exe)) $exe $root
+    Assert-OwnedReconcileXml ([xml]$reconcile.Replace('<LogonType>ServiceAccount</LogonType>', '')) $exe $root
+    $reconcileMutations = @(
+        @('filter reconcile', 'filter run'), @('filter reconcile', 'filter reconcile --other'),
+        @('secblitz.exe', 'foreign.exe'), @('HighestAvailable', 'LeastPrivilege'),
+        @('ServiceAccount', 'InteractiveToken'), @('S-1-5-18', 'S-1-5-19'),
+        @('</Exec>', '<Other /></Exec>'), @('</Actions>', '<Exec /></Actions>'),
+        @('<Arguments>filter reconcile</Arguments>', '<Arguments> filter reconcile</Arguments>'),
+        @('<WorkingDirectory>C:\Program Files\Secblitz</WorkingDirectory>', '<WorkingDirectory>C:\Windows</WorkingDirectory>'),
+        @('</Principals>', '<Principal id="Other" /></Principals>'),
+        @('<Exec>', '<ComHandler><ClassId>{00000000-0000-0000-0000-000000000000}</ClassId></ComHandler><Exec>')
+    )
+    foreach ($mutation in $reconcileMutations) {
+        $rejected = $false
+        try { Assert-OwnedReconcileXml ([xml]$reconcile.Replace($mutation[0], $mutation[1])) $exe $root }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Reconcile ownership mutation accepted: $($mutation[0])" }
+    }
+    Write-Host "PASS: 3 accepted reconcile fixtures, $($reconcileMutations.Count) rejected mutations."
     exit 0
 }
 if (-not $SetupPath) { throw 'SetupPath is required for native lifecycle testing.' }
@@ -61,10 +86,19 @@ if ((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $data) -or (Get-Se
 }
 $logs = Join-Path ([IO.Path]::GetTempPath()) ('SecblitzLifecycle-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $logs
-$null = New-Item -ItemType Directory -Path $data
-$journal = Join-Path $data 'journal-preservation-sentinel.json'
-[IO.File]::WriteAllText($journal, '{"installer-test":"must survive upgrade and uninstall"}')
-$journalHash = (Get-FileHash -LiteralPath $journal).Hash
+$journal = Join-Path $data 'journal-sentinel.json'
+$journalHash = ''
+function New-Journal {
+    # Stands in for the journals and app copies: a protected data folder, like the
+    # real one, that setup and upgrades must keep and removing Secblitz deletes.
+    $null = New-Item -ItemType Directory -Path $data
+    $acl = Get-Acl -LiteralPath $data
+    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+    Set-Acl -LiteralPath $data -AclObject $acl
+    [IO.File]::WriteAllText($journal, '{"installer-test":"must survive upgrade, not removal"}')
+    $script:journalHash = (Get-FileHash -LiteralPath $journal).Hash
+}
+New-Journal
 function Run-Setup([string]$Exe, [string[]]$Arguments, [int]$ExpectedExit = 0, [int]$TimeoutMs = 240000) {
     $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -PassThru
     try {
@@ -76,6 +110,38 @@ function Run-Setup([string]$Exe, [string[]]$Arguments, [int]$ExpectedExit = 0, [
 }
 function Assert-Journal {
     if ((Get-FileHash -LiteralPath $journal).Hash -ne $journalHash) { throw 'Journal sentinel changed.' }
+}
+function Assert-Removed {
+    # Removing Secblitz leaves none of its background parts, data or settings.
+    if (Get-Service SecblitzMonitor -ErrorAction SilentlyContinue) { throw 'Monitor service survived removal.' }
+    if (Get-Service SecblitzFilter -ErrorAction SilentlyContinue) { throw 'Web protection service survived removal.' }
+    if (Get-ScheduledTask -TaskName SecblitzFilterReconcile -TaskPath '\' -ErrorAction SilentlyContinue) { throw 'Reconcile task survived removal.' }
+    if (Get-ScheduledTask -TaskName SecblitzUpdate -TaskPath '\' -ErrorAction SilentlyContinue) { throw 'Update task survived removal.' }
+    if (Test-Path -LiteralPath $data) { throw 'The data folder survived removal.' }
+    if (Test-Path -LiteralPath (Join-Path $app 'Monitor')) { throw 'The monitor folder survived removal.' }
+    if ($null -ne [Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\Software\Secblitz', 'AutoUpdatesEnabled', $null)) { throw 'The settings key survived removal.' }
+    if ($null -ne [Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run', 'SecblitzTray', $null)) { throw 'The tray Run value survived removal.' }
+    if (Test-Path -LiteralPath (Join-Path $app 'secblitz.exe')) { throw 'The application binary survived removal.' }
+}
+function Assert-LogHas([string]$Name, [string]$Text) {
+    if (-not (Select-String -LiteralPath (Join-Path $logs $Name) -SimpleMatch $Text -Quiet)) { throw "$Name does not say: $Text" }
+}
+function Assert-NoPutBack([string]$Name) {
+    # A silent removal keeps the changes: it must never run the put-back.
+    if (Select-String -LiteralPath (Join-Path $logs $Name) -SimpleMatch 'Secblitz put back' -Quiet) { throw "$Name ran the put-back." }
+}
+function Assert-Filter {
+    # Registered turned off, as LocalService; the reconcile task runs as SYSTEM.
+    $service = Get-CimInstance Win32_Service -Filter "Name='SecblitzFilter'"
+    if ($null -eq $service) { throw 'Web protection service was not registered.' }
+    if ($service.StartName -ine 'NT AUTHORITY\LocalService' -or $service.ServiceType -ne 'Own Process' -or
+        $service.PathName -cne ('"' + (Join-Path $app 'secblitz.exe') + '" filter run')) { throw 'Wrong web protection service account or image path.' }
+    $task = Get-ScheduledTask -TaskName SecblitzFilterReconcile -TaskPath '\' -ErrorAction SilentlyContinue
+    if ($null -eq $task -or @($task.Actions).Count -ne 1 -or
+        $task.Actions[0].Execute -cne ('"' + (Join-Path $app 'secblitz.exe') + '"') -or
+        $task.Actions[0].Arguments -cne 'filter reconcile' -or $task.Actions[0].WorkingDirectory -cne $app -or
+        $task.Principal.UserId -notin @('SYSTEM', 'S-1-5-18') -or $task.Principal.RunLevel -ne 'Highest' -or
+        @($task.Triggers).Count -ne 3) { throw 'Unexpected web protection reconcile task.' }
 }
 function Assert-NoAppLaunch {
     # Source checks also enforce skipifsilent; this runtime check catches a surviving UI process.
@@ -131,6 +197,25 @@ if (Get-Service SecblitzMonitor -ErrorAction SilentlyContinue) { throw 'Default 
 Assert-NoAppLaunch
 Assert-Journal
 Assert-Updates $true
+Assert-Filter
+$filterService = Get-CimInstance Win32_Service -Filter "Name='SecblitzFilter'"
+if ($filterService.StartMode -ne 'Disabled' -or $filterService.State -ne 'Stopped') { throw 'Web protection must be registered turned off.' }
+if ($null -eq [Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run', 'SecblitzTray', $null)) { throw 'The default install omitted the tray Run value.' }
+# An upgrade stops a running web protection service while files are replaced and
+# starts it again afterwards. (Started by hand: no switch is on, so it just idles.)
+& sc.exe config SecblitzFilter start= demand | Out-Null
+if ($LASTEXITCODE) { throw 'Cannot prepare the web protection upgrade fixture.' }
+$filterController = Get-Service SecblitzFilter
+try {
+    $filterController.Start()
+    $filterController.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(30))
+    Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', '/SECBLITZUPDATE=1', "/LOG=`"$logs\filter-upgrade.log`"")
+    $filterController.Refresh()
+    if ($filterController.Status -ne 'Running') { throw 'Upgrade did not start web protection again.' }
+    $filterController.Stop()
+    $filterController.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(30))
+} finally { $filterController.Dispose() }
+Assert-Filter
 # The verified worker's empty task list must retain the updater preference.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', '/SECBLITZUPDATE=1', "/LOG=`"$logs\automatic-upgrade.log`"")
 Assert-Updates $true
@@ -173,10 +258,14 @@ foreach ($variant in @('command', 'arguments', 'directory', 'principal', 'extra-
 }
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($folder)
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($scheduler)
+# A silent removal without /SECBLITZDONE keeps the changes: no prompt, no put-back,
+# yet every background part, the data and the settings go.
 Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$logs\default-uninstall.log`"")
-Assert-Updates $false
+Assert-LogHas 'default-uninstall.log' 'a silent uninstall keeps the changes'
+Assert-NoPutBack 'default-uninstall.log'
+Assert-Removed
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Uninstall retained the owned desktop shortcut.' }
-Assert-Journal
+New-Journal
 # Start-Process joins arguments into a Windows command line: keep literal double
 # quotes for the empty list. PowerShell single quotes alone are not passed onward.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', "/LOG=`"$logs\no-tasks-install.log`"")
@@ -191,8 +280,12 @@ Assert-Updates $false
 Assert-NoAppLaunch
 Assert-Journal
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Default upgrade lost the saved desktop opt-out.' }
-Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$logs\no-tasks-uninstall.log`"")
-Assert-Journal
+# /SECBLITZDONE: the app already answered the question; nothing is asked or put back.
+Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SECBLITZDONE', "/LOG=`"$logs\no-tasks-uninstall.log`"")
+Assert-LogHas 'no-tasks-uninstall.log' 'already answered the question'
+Assert-NoPutBack 'no-tasks-uninstall.log'
+Assert-Removed
+New-Journal
 # Explicit task list opts out of desktopicon while opting into the monitor.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=monitor', "/LOG=`"$logs\install.log`"")
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Desktop opt-out was ignored.' }
@@ -246,14 +339,14 @@ try {
     try {
         if ($service.Status -ne 'Running') { throw 'Rejected uninstall changed the running service.' }
     } finally { $service.Dispose() }
+    # A refused removal touches nothing else either.
+    Assert-Filter
+    Assert-Journal
 } finally { $locked.Dispose() }
 Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$logs\uninstall.log`"")
-if (Get-Service SecblitzMonitor -ErrorAction SilentlyContinue) { throw 'Service registration survived uninstall.' }
-Assert-Updates $false
-if (Test-Path -LiteralPath (Join-Path $app 'secblitz.exe')) { throw 'Uninstall retained the application binary.' }
+Assert-NoPutBack 'uninstall.log'
+Assert-Removed
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Uninstall retained the owned desktop shortcut.' }
-if (-not (Test-Path -LiteralPath $report)) { throw 'Uninstall deleted the monitor report.' }
-Assert-Journal
 if ((Get-FileHash -LiteralPath $unrelated).Hash -ne $unrelatedHash) { throw 'Uninstall changed unrelated application data.' }
 if ((Get-FileHash -LiteralPath $lookalike).Hash -ne $lookalikeHash) { throw 'Uninstall changed unrelated lookalike data.' }
-Write-Host "PASS: hourly updater/ACL/delayed start, preserved update choice, foreign-task rejection, default desktop shortcut/removal, desktop opt-out, silent no-UI checks, fresh monitor opt-in, running upgrade/resume, quiet uninstall rejection/retry, running uninstall, report/journal/unrelated-file preservation. Logs: $logs"
+Write-Host "PASS: hourly updater/ACL/delayed start, preserved update choice, foreign-task rejection, default desktop shortcut/removal, desktop opt-out, silent no-UI checks, fresh monitor opt-in, running upgrade/resume, web protection registration/upgrade resume, quiet uninstall rejection/retry, silent and /SECBLITZDONE removal keeping the changes, full cleanup of services, tasks, data, settings and Run value, unrelated-file preservation. Logs: $logs"

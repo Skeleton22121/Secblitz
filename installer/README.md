@@ -118,9 +118,53 @@ executable defaults to apply and must not be paired with this installer for rele
   checks ownership again. Failure or pending deletion aborts uninstall before
   file removal. A same-named foreign service is never stopped or deleted.
 * Uninstall removes installer-owned files and shortcuts, including the desktop
-  shortcut when installed. There is no recursive cleanup
-  and no ProgramData deletion: rollback journals, monitor reports and other
-  runtime data remain. Uninstall does not revert previously applied settings.
+  shortcut when installed, then the full cleanup below. Applied settings are
+  reverted only when the person chooses "Put everything back the way it was".
+### Web protection (0.8.0)
+
+* Setup always runs `InstallFilter`: `secblitz.exe filter install` registers the
+  `SecblitzFilter` service (LocalService, own process, **disabled**, never started
+  by Setup) and creates `ProgramData\Secblitz\Filter`; maintenance then registers
+  the `SecblitzFilterReconcile` task (SYSTEM, `"{app}\secblitz.exe" filter reconcile`;
+  triggers: startup, hourly, and NetworkProfile event 10000 when the PC joins a
+  network). The service and task get the same ownership checks as the monitor and
+  `SecblitzUpdate`: a same-named foreign service or task is refused, never changed.
+* `Prepare` stops a running filter next to the monitor and reports what was running
+  through its exit code (10 monitor, 11 filter, 12 both); `ResumeFilter` starts the
+  filter again after the files are replaced, and cancellation/rollback resumes it.
+  While it is down Windows resolves through the next server of the routing rule.
+* Maintenance owns the reconcile task. `RemoveFilter` deletes the task first, then
+  runs `filter uninstall` (routing rule, service, `Filter` folder).
+
+### Removing Secblitz (0.8.0)
+
+Two choices, wherever the person starts it. The app's sheet answers the question
+itself and starts `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SECBLITZDONE`;
+the Windows Settings entry asks it on a plain form (radio buttons, Cancel / Remove
+Secblitz) before anything changes. Cancel stops the uninstall untouched.
+
+* **Keep my PC as it is now**: no put-back.
+* **Put everything back the way it was**: the uninstaller's status line reads
+  "Putting your settings back"; `secblitz.exe uninstall-revert --user` runs as the
+  original user (it refuses to run elevated; its exit code is the number of personal
+  settings left), then `secblitz.exe uninstall-revert` runs elevated and prints one
+  plain line per thing left (captured through a file in the uninstaller's private
+  temp folder and read as UTF-8, so no newer Inno Setup function is needed). Anything
+  left is shown in one message box and the removal goes on. Removed apps without a
+  saved copy are not reinstalled here (no broker); the app's sheet does that.
+* A **silent** uninstall without `/SECBLITZDONE` (scripts, IT tools) and one with
+  `/SECBLITZDONE` never ask and never put anything back.
+* Both choices then run the full cleanup, in this order: the existing monitor and
+  update task removal (the only step that can refuse the uninstall), `RemoveFilter`,
+  `secblitz.exe uninstall-cleanup --user` as the original user (the person's
+  `%LOCALAPPDATA%\Secblitz`), the Inno file removal, then `Purge` from
+  `usPostUninstall`: the `SecblitzTray` Run value (only if it starts our
+  executable), `{app}\Monitor`, `%ProgramData%\Secblitz` and
+  `HKLM\Software\Secblitz`. Paths are fixed. Nothing is deleted unless the whole
+  tree passes the checks (no reparse point, no hard link, trusted owner, no
+  untrusted write access; the filter's LocalService may hold its own write rights),
+  otherwise the data stays and the failure is logged.
+
 * Maintenance is embedded into both Setup and Uninstall and extracted into
   Inno's protected temporary directory. No installed or caller-supplied script
   is executed. PowerShell runs by absolute system path with `-NoProfile`, a
@@ -205,7 +249,7 @@ claims that every variant has passed:
    remains stopped, then starts after reboot and produces read-only observations.
 5. Upgrade with a running owned monitor: stop completes before replacement;
    it resumes afterward and reports/journals remain. Uninstall stops and unregisters it before removing
-   the app, preserving reports/journals and applied settings.
+   the app and then deletes reports and journals (see "Removing Secblitz").
 6. Test foreign same-name service, locked/stopping service, broad-writable root,
    reparse point, `/DIR` override and pending service deletion: fail closed.
 7. Inspect the extracted app, setup and installed uninstaller signatures for a
@@ -218,6 +262,11 @@ Automated Windows checks:
   finish-launch flags and the failure-latch callback. Mutation regressions verify
   missing translations and unsafe launch/task edits are rejected. This is source
   coverage, not a substitute for compiled-installer or token-level acceptance.
+* `installer/test-maintenance.ps1` also exercises the full-cleanup checks (junction,
+  hard link, writable and foreign-owner trees are refused and left whole), the Run
+  value ownership rule and the fixed filter commands.
+* `installer/test-lifecycle.ps1 -OwnershipFixtures` also checks the reconcile task
+  ownership validator with accepted and mutated XML.
 * `installer/test-maintenance.ps1` exercises production ACL/path helpers with
   the production no-autoload module bootstrap and isolated temporary fixtures
   (requires elevation).
@@ -230,8 +279,11 @@ Automated Windows checks:
 * `installer/test-lifecycle.ps1 -SetupPath <absolute-built-setup-path>` checks
   default desktop creation/target/removal, fresh empty-task and monitor-only desktop opt-outs, absence of
   surviving unexpected app processes after silent setup, fresh monitor opt-in,
-  running upgrade/resume, running uninstall and preservation of
-  the report and a ProgramData journal sentinel. It also verifies that a different
+  running upgrade/resume, web protection registration and upgrade resume, silent
+  and `/SECBLITZDONE` removal (keeps the changes; no service, task, Run value,
+  settings key, `Monitor` folder or ProgramData folder left), preservation of a
+  ProgramData journal sentinel across upgrades only, and a refused removal leaving
+  everything in place. It also verifies that a different
   locked Inno-lookalike file causes prompt-free silent rejection, then succeeds
   after unlocking it while preserving both unrelated-file fixtures. It refuses an existing app or
    data directory, desktop shortcut or app process; use a disposable runner.
@@ -243,8 +295,8 @@ Actual rollback journals now contain schema-1 exact service descriptor snapshots
 as well as registry/preferences: **128 KiB line bound, 1 MiB WAL bound**. They
 contain sensitive local SID/permission history, not collected password secrets.
 Keep their restricted ACLs and local retention; never publish raw descriptors,
-copy them into the installer, or delete them on uninstall. Installer preservation
-does not itself undo settings, and restores can reintroduce unsafe original
+copy them into the installer. Removing Secblitz deletes them after the person's
+choice (they are only needed to put settings back). Restores can reintroduce unsafe original
 grants. BITS/wuauserv are the only automatic service-DACL repair targets; no
 arbitrary Windows file or third-party software permission reset is bundled.
 
