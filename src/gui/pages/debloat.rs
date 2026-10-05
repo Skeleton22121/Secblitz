@@ -10,7 +10,8 @@ use crate::gui::widgets::{anim, progress};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Subscription, Task};
-use secblitz::debloat::{self, Batch, Group, Installed, ItemResult, Progress};
+use secblitz::debloat::offline::Restored;
+use secblitz::debloat::{self, Batch, Group, Installed, ItemResult, Kept, Progress};
 use std::collections::BTreeSet;
 use std::time::Instant;
 
@@ -32,6 +33,7 @@ enum Scan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Step {
     Waiting,
+    Saving,
     Working,
     Done(ItemResult, Instant),
 }
@@ -43,6 +45,8 @@ enum Sheet {
     Review,
     Working(Vec<(u16, Step)>),
     Done(Box<Finished>),
+    /// Asking before a saved copy is deleted.
+    Delete(u16),
 }
 
 #[derive(Debug)]
@@ -54,6 +58,8 @@ struct Finished {
     /// Per-user setting written through the launcher (None = not yet known).
     user_ok: Option<bool>,
     asked_to_block: bool,
+    /// Apps left installed because no copy could be saved first.
+    kept: Vec<(u16, Kept)>,
     /// When the result appeared (drives the check draw-in).
     at: Instant,
 }
@@ -66,6 +72,7 @@ impl Default for Finished {
             policy_ok: None,
             user_ok: None,
             asked_to_block: false,
+            kept: Vec::new(),
             at: Instant::now(),
         }
     }
@@ -89,6 +96,12 @@ pub struct State {
     expanded: Vec<Group>,
     journal: Vec<Batch>,
     restoring: Option<u16>,
+    /// The restore in progress uses the saved copy (not the Store).
+    restoring_copy: bool,
+    /// Catalog indices that have a saved copy.
+    copies: BTreeSet<u16>,
+    /// Total size of all saved copies.
+    saved_bytes: u64,
     /// App whose restore failed because the PC is offline (shows Retry).
     offline: Option<u16>,
     /// Machine-wide setting result, arrives just before the batch result.
@@ -118,6 +131,9 @@ impl Default for State {
             expanded: Vec::new(),
             journal: Vec::new(),
             restoring: None,
+            restoring_copy: false,
+            copies: BTreeSet::new(),
+            saved_bytes: 0,
             offline: None,
             policy: None,
             groups: Vec::new(),
@@ -157,7 +173,14 @@ pub enum Msg {
     ToggleDetails,
     CloseResult,
     Restore(u16),
+    /// Restore from the Microsoft Store even when a saved copy exists.
+    RestoreStore(u16),
     Restored(u16, Result<crate::broker::Reply, String>),
+    RestoredOffline(u16, Result<Restored, String>),
+    AskDelete(u16),
+    Delete(u16),
+    Deleted(Result<(), String>),
+    Copies(BTreeSet<u16>, u64),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -175,10 +198,27 @@ fn inventory_task(state: &mut State) -> Task<Message> {
     )
 }
 
-/// Inventory plus the removal journal.
+/// Which apps have a saved copy, and how much room the copies use.
+fn copies_task() -> Task<Message> {
+    Task::perform(
+        blocking(|| {
+            let copies = debloat::catalog()
+                .iter()
+                .enumerate()
+                .map(|(i, _)| i as u16)
+                .filter(|i| debloat::offline::has_copy(*i))
+                .collect::<BTreeSet<u16>>();
+            (copies, debloat::offline::saved_bytes())
+        }),
+        |(c, b)| wrap(Msg::Copies(c, b)),
+    )
+}
+
+/// Inventory plus the removal journal and the saved copies.
 fn scan_task(state: &mut State) -> Task<Message> {
     Task::batch([
         inventory_task(state),
+        copies_task(),
         Task::perform(blocking(debloat::journal::load), |j| {
             wrap(Msg::JournalLoaded(j))
         }),
@@ -247,7 +287,10 @@ fn refresh_removed(state: &mut State) {
 
 /// Close the review sheet or the result with Escape. Working cannot be dismissed.
 pub fn escape(state: &mut State) {
-    if matches!(state.sheet, Sheet::Review | Sheet::Done(_)) {
+    if matches!(
+        state.sheet,
+        Sheet::Review | Sheet::Done(_) | Sheet::Delete(_)
+    ) {
         state.sheet = Sheet::None;
     }
 }
@@ -357,7 +400,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Cancel => {
-            if matches!(state.sheet, Sheet::Review) {
+            if matches!(state.sheet, Sheet::Review | Sheet::Delete(_)) {
                 state.sheet = Sheet::None;
             }
             Task::none()
@@ -382,56 +425,82 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Restore(index) => {
-            if state.restoring.is_some() || ctx.busy || app_of(index).store_id.is_none() {
+            if state.restoring.is_some() || ctx.busy {
                 return Task::none();
             }
-            state.restoring = Some(index);
-            state.offline = None;
-            ctx.broker_task(crate::broker::Request::ReinstallStoreApp(index), move |r| {
-                wrap(Msg::Restored(index, r))
-            })
+            if state.copies.contains(&index) {
+                state.restoring = Some(index);
+                state.restoring_copy = true;
+                state.offline = None;
+                state.now = Instant::now();
+                state.spin = anim::Clock::at(state.now);
+                return Task::perform(
+                    blocking(move || {
+                        debloat::offline::restore_index(index).map_err(|e| format!("{e:#}"))
+                    }),
+                    move |r| wrap(Msg::RestoredOffline(index, r)),
+                );
+            }
+            store_restore(state, ctx, index)
+        }
+        Msg::RestoreStore(index) => {
+            if state.restoring.is_some() || ctx.busy {
+                return Task::none();
+            }
+            store_restore(state, ctx, index)
+        }
+        Msg::RestoredOffline(index, result) => on_restored_offline(state, ctx, index, result),
+        Msg::AskDelete(index) => {
+            if matches!(state.sheet, Sheet::None)
+                && !ctx.busy
+                && state.restoring.is_none()
+                && state.copies.contains(&index)
+            {
+                state.sheet = Sheet::Delete(index);
+            }
+            Task::none()
+        }
+        Msg::Delete(index) => {
+            if !matches!(state.sheet, Sheet::Delete(i) if i == index) {
+                return Task::none();
+            }
+            state.sheet = Sheet::None;
+            if ctx.busy || state.restoring.is_some() {
+                return Task::none();
+            }
+            Task::perform(
+                blocking(move || {
+                    debloat::offline::delete_index(index).map_err(|e| format!("{e:#}"))
+                }),
+                move |r| wrap(Msg::Deleted(r)),
+            )
+        }
+        Msg::Deleted(result) => match result {
+            Ok(()) => Task::batch([
+                copies_task(),
+                toast(ctx.t("Saved copy deleted."), Tone::Neutral),
+            ]),
+            Err(_) => Task::batch([
+                copies_task(),
+                toast(
+                    ctx.t("We couldn't delete the saved copy. Please try again later."),
+                    Tone::Bad,
+                ),
+            ]),
+        },
+        Msg::Copies(copies, bytes) => {
+            state.copies = copies;
+            state.saved_bytes = bytes;
+            Task::none()
         }
         Msg::Restored(index, result) => {
             state.restoring = None;
+            state.restoring_copy = false;
             let name = ctx.t(app_of(index).name);
             match result {
                 Ok(crate::broker::Reply::Done) => {
-                    for batch in &mut state.journal {
-                        for r in batch.removed.iter_mut().filter(|r| r.index == index) {
-                            r.restored = true;
-                        }
-                    }
-                    refresh_removed(state);
-                    if let Some(dir) = &ctx.state_dir {
-                        let score = ctx.score().unwrap_or_default();
-                        let _ = crate::app::history::record(
-                            dir,
-                            &crate::app::history::Entry {
-                                t: crate::app::history::now(),
-                                kind: crate::app::history::Kind::Restore,
-                                protected: score.protected,
-                                total: score.total,
-                                n: 1,
-                            },
-                        );
-                    }
-                    Task::batch([
-                        Task::perform(
-                            blocking(move || {
-                                let _ = debloat::journal::mark_restored(index);
-                                debloat::journal::load()
-                            }),
-                            |j| wrap(Msg::JournalLoaded(j)),
-                        ),
-                        // The app is installed again: list it under "Apps to
-                        // remove" without a loading state (the journal is
-                        // reloaded above, after it is marked).
-                        inventory_task(state),
-                        toast(
-                            format!("{name} {}", ctx.t("is back on your PC.")),
-                            Tone::Good,
-                        ),
-                    ])
+                    let text = format!("{name} {}", ctx.t("is back on your PC."));
+                    restored_ok(state, ctx, index, text, Tone::Good)
                 }
                 Ok(crate::broker::Reply::Offline) => {
                     state.offline = Some(index);
@@ -444,16 +513,127 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     ),
                     Tone::Neutral,
                 ),
-                _ => toast(
-                    format!(
-                        "{} {name}. {}",
-                        ctx.t("We couldn't bring back"),
-                        ctx.t("Please try again later.")
-                    ),
-                    Tone::Bad,
-                ),
+                _ => couldnt_bring_back(ctx, &name),
             }
         }
+    }
+}
+
+fn couldnt_bring_back(ctx: &Ctx, name: &str) -> Task<Message> {
+    toast(
+        format!(
+            "{} {name}. {}",
+            ctx.t("We couldn't bring back"),
+            ctx.t("Please try again later.")
+        ),
+        Tone::Bad,
+    )
+}
+
+/// Bring an app back through the Microsoft Store.
+fn store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
+    if app_of(index).store_id.is_none() {
+        return Task::none();
+    }
+    state.restoring = Some(index);
+    state.restoring_copy = false;
+    state.offline = None;
+    state.now = Instant::now();
+    state.spin = anim::Clock::at(state.now);
+    ctx.broker_task(crate::broker::Request::ReinstallStoreApp(index), move |r| {
+        wrap(Msg::Restored(index, r))
+    })
+}
+
+/// The app is installed again: mark it, record it, refresh the lists, tell
+/// the person.
+fn restored_ok(
+    state: &mut State,
+    ctx: &mut Ctx,
+    index: u16,
+    text: String,
+    tone: Tone,
+) -> Task<Message> {
+    for batch in &mut state.journal {
+        for r in batch.removed.iter_mut().filter(|r| r.index == index) {
+            r.restored = true;
+        }
+    }
+    refresh_removed(state);
+    if let Some(dir) = &ctx.state_dir {
+        let score = ctx.score().unwrap_or_default();
+        let _ = crate::app::history::record(
+            dir,
+            &crate::app::history::Entry {
+                t: crate::app::history::now(),
+                kind: crate::app::history::Kind::Restore,
+                protected: score.protected,
+                total: score.total,
+                n: 1,
+            },
+        );
+    }
+    Task::batch([
+        Task::perform(
+            blocking(move || {
+                let _ = debloat::journal::mark_restored(index);
+                debloat::journal::load()
+            }),
+            |j| wrap(Msg::JournalLoaded(j)),
+        ),
+        // The app is installed again: list it under "Apps to remove" without
+        // a loading state (the journal is reloaded above, after it is marked).
+        inventory_task(state),
+        copies_task(),
+        toast(text, tone),
+    ])
+}
+
+fn on_restored_offline(
+    state: &mut State,
+    ctx: &mut Ctx,
+    index: u16,
+    result: Result<Restored, String>,
+) -> Task<Message> {
+    state.restoring = None;
+    state.restoring_copy = false;
+    let name = ctx.t(app_of(index).name);
+    let can_use_store = app_of(index).store_id.is_some();
+    match result {
+        Ok(Restored::Back) => {
+            let text = format!("{name} {}", ctx.t("is back on your PC."));
+            restored_ok(state, ctx, index, text, Tone::Good)
+        }
+        Ok(Restored::BackWithoutSomeData) => {
+            let text = ctx
+                .t("{name} is back. Some of its saved data couldn't be put back.")
+                .replace("{name}", &name);
+            restored_ok(state, ctx, index, text, Tone::Neutral)
+        }
+        Ok(Restored::AlreadyThere) => {
+            let text = ctx
+                .t("{name} is already on your PC.")
+                .replace("{name}", &name);
+            restored_ok(state, ctx, index, text, Tone::Neutral)
+        }
+        Ok(Restored::Damaged) => {
+            let text = ctx
+                .t("The saved copy of {name} is damaged, so it can't be brought back from Secblitz.")
+                .replace("{name}", &name);
+            let mut tasks = vec![toast(text, Tone::Warn), copies_task()];
+            if can_use_store {
+                tasks.push(store_restore(state, ctx, index));
+            }
+            Task::batch(tasks)
+        }
+        Ok(Restored::NoCopy) => {
+            if can_use_store {
+                Task::batch([copies_task(), store_restore(state, ctx, index)])
+            } else {
+                Task::batch([copies_task(), couldnt_bring_back(ctx, &name)])
+            }
+        }
+        Err(_) => couldnt_bring_back(ctx, &name),
     }
 }
 
@@ -497,13 +677,12 @@ fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 
 fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
     match run {
-        // Task 7 gives saving its own wording; until then it shows as working.
-        Run::Step(Progress::Saving(i) | Progress::Started(i)) => {
-            if let Sheet::Working(items) = &mut state.sheet {
-                if let Some(item) = items.iter_mut().find(|(n, _)| *n == i) {
-                    item.1 = Step::Working;
-                }
-            }
+        Run::Step(Progress::Saving(i)) => {
+            set_step(state, i, Step::Saving);
+            Task::none()
+        }
+        Run::Step(Progress::Started(i)) => {
+            set_step(state, i, Step::Working);
             Task::none()
         }
         Run::Step(Progress::Finished(i, result)) => {
@@ -522,8 +701,19 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
             ctx.busy = false;
             let policy_ok = state.policy.take();
             let asked = state.block_again && result.is_ok();
+            let kept = match &state.sheet {
+                Sheet::Working(items) => items
+                    .iter()
+                    .filter_map(|(i, step)| match step {
+                        Step::Done(ItemResult::Kept(k), _) => Some((*i, k.clone())),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
             let mut done = Finished {
                 asked_to_block: asked,
+                kept,
                 policy_ok,
                 ..Finished::default()
             };
@@ -555,6 +745,14 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
             state.sheet = Sheet::Done(Box::new(done));
             tasks.push(scan_task(state));
             Task::batch(tasks)
+        }
+    }
+}
+
+fn set_step(state: &mut State, i: u16, step: Step) {
+    if let Sheet::Working(items) = &mut state.sheet {
+        if let Some(item) = items.iter_mut().find(|(n, _)| *n == i) {
+            item.1 = step;
         }
     }
 }
@@ -624,6 +822,7 @@ pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>>
         Sheet::Review => Some(review_sheet(state, ctx)),
         Sheet::Working(items) => Some(working_sheet(state, items, ctx)),
         Sheet::Done(done) => Some(result_sheet(state, done, ctx)),
+        Sheet::Delete(index) => Some(delete_sheet(*index, ctx)),
     }
 }
 
@@ -890,8 +1089,41 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for &(index, t) in &state.removed {
         let app = app_of(index);
-        let restoring = state.restoring == Some(index);
-        let (subtitle, trailing): (String, Element<'a, Message>) = if app.store_id.is_none() {
+        let has_copy = state.copies.contains(&index);
+        let enabled = state.restoring.is_none() && !ctx.busy;
+        let (subtitle, trailing): (String, Element<'a, Message>) = if state.restoring == Some(index)
+        {
+            let text = if state.restoring_copy {
+                ctx.t("Bringing back {name}…")
+                    .replace("{name}", &ctx.t(app.name))
+            } else {
+                ctx.t("Restoring…")
+            };
+            (
+                text,
+                anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
+            )
+        } else if state.offline == Some(index) {
+            (
+                ctx.t("You're offline. Connect to the internet and try again."),
+                widgets::action(
+                    p,
+                    widgets::ButtonKind::Secondary,
+                    ctx.t("Retry"),
+                    Some(Icon::Refresh),
+                    enabled.then(|| wrap(Msg::RestoreStore(index))),
+                ),
+            )
+        } else if has_copy {
+            (
+                format!(
+                    "{} · {}",
+                    ago(ctx, t),
+                    ctx.t("Can be brought back without internet")
+                ),
+                actions_view(p, ctx, row_actions(state, index, enabled)),
+            )
+        } else if app.store_id.is_none() {
             (
                 format!(
                     "{} · {}",
@@ -900,36 +1132,11 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 ),
                 widgets::icon(Icon::Info, 16.0, p.text_muted),
             )
-        } else if restoring {
-            (
-                ctx.t("Restoring…"),
-                anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
-            )
-        } else if state.offline == Some(index) {
-            let enabled = state.restoring.is_none() && !ctx.busy;
-            (
-                ctx.t("You're offline. Connect to the internet and try again."),
-                widgets::action(
-                    p,
-                    widgets::ButtonKind::Secondary,
-                    ctx.t("Retry"),
-                    Some(Icon::Refresh),
-                    enabled.then(|| wrap(Msg::Restore(index))),
-                ),
-            )
         } else {
-            let enabled = state.restoring.is_none() && !ctx.busy;
-            let items = if enabled {
-                vec![(
-                    Icon::Undo,
-                    ctx.t("Restore"),
-                    wrap(Msg::Restore(index)),
-                    false,
-                )]
-            } else {
-                Vec::new()
-            };
-            (ago(ctx, t), widgets::overflow_menu(p, items))
+            (
+                ago(ctx, t),
+                actions_view(p, ctx, row_actions(state, index, enabled)),
+            )
         };
         rows.push(widgets::row_item(
             p,
@@ -940,7 +1147,114 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             None,
         ));
     }
-    widgets::group(p, ctx.t("Removed apps"), None, None, rows)
+    let list = widgets::group(p, ctx.t("Removed apps"), None, None, rows);
+    if state.saved_bytes == 0 {
+        return list;
+    }
+    column![
+        widgets::small(
+            p,
+            ctx.t("Saved copies use about {size}.")
+                .replace("{size}", &crate::app::tools::size_phrase(state.saved_bytes)),
+        ),
+        list
+    ]
+    .spacing(theme::S3)
+    .into()
+}
+
+/// What a Removed apps row offers. Messages are real so the view can use
+/// them directly; tests compare their debug text.
+struct RowActions {
+    /// The main button (Restore).
+    primary: Option<Msg>,
+    /// Extra choices for the overflow menu: label, message, danger.
+    menu: Vec<(Icon, &'static str, Msg, bool)>,
+}
+
+fn row_actions(state: &State, index: u16, enabled: bool) -> RowActions {
+    let mut actions = RowActions {
+        primary: None,
+        menu: Vec::new(),
+    };
+    if !enabled {
+        return actions;
+    }
+    if state.copies.contains(&index) {
+        actions.primary = Some(Msg::Restore(index));
+        if app_of(index).store_id.is_some() {
+            actions.menu.push((
+                Icon::Undo,
+                "Get it from the Microsoft Store",
+                Msg::RestoreStore(index),
+                false,
+            ));
+        }
+        actions.menu.push((
+            Icon::Trash,
+            "Delete saved copy",
+            Msg::AskDelete(index),
+            true,
+        ));
+    } else if app_of(index).store_id.is_some() {
+        actions.primary = Some(Msg::Restore(index));
+    }
+    actions
+}
+
+fn actions_view<'a>(p: Palette, ctx: &Ctx, actions: RowActions) -> Element<'a, Message> {
+    let mut trailing = row![].spacing(theme::S2).align_y(Alignment::Center);
+    if let Some(m) = actions.primary {
+        trailing = trailing.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Restore"),
+            None,
+            Some(wrap(m)),
+        ));
+    }
+    let items = actions
+        .menu
+        .into_iter()
+        .map(|(icon, label, m, danger)| (icon, ctx.t(label), wrap(m), danger))
+        .collect();
+    trailing.push(widgets::overflow_menu(p, items)).into()
+}
+
+fn delete_sheet<'a>(index: u16, ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = pal(ctx);
+    let name = ctx.t(app_of(index).name);
+    let body = if app_of(index).store_id.is_some() {
+        ctx.t("{name} can then only come back from the Microsoft Store.")
+    } else {
+        ctx.t("{name} can't come back after this.")
+    }
+    .replace("{name}", &name);
+    column![
+        widgets::h2(p, ctx.t("Delete the saved copy?")),
+        widgets::muted(p, body),
+        space::vertical().height(theme::S1),
+        row![
+            space::horizontal(),
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Cancel"),
+                None,
+                Some(wrap(Msg::Cancel))
+            ),
+            widgets::action(
+                p,
+                ButtonKind::Danger,
+                ctx.t("Delete"),
+                Some(Icon::Trash),
+                Some(wrap(Msg::Delete(index))),
+            ),
+        ]
+        .spacing(theme::S2),
+    ]
+    .spacing(theme::S3)
+    .into()
 }
 
 // ---- sheets --------------------------------------------------------------
@@ -1001,6 +1315,11 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         .map(|i| ctx.t(app_of(*i).name))
         .collect();
     // Where to restore: name the tab whenever something can come back.
+    col = col.push(widgets::inline_notice(
+        p,
+        Tone::Neutral,
+        ctx.t("Secblitz keeps a copy, so you can bring these apps back any time, even without internet."),
+    ));
     if manual.len() < n {
         col = col.push(widgets::inline_notice(
             p,
@@ -1099,6 +1418,7 @@ fn working_sheet<'a>(
                 widgets::icon(Icon::Package, 18.0, p.text_muted),
                 ctx.t("Waiting"),
             ),
+            Step::Saving => (anim::spinner(20.0, p.text, spin), ctx.t("Saving a copy…")),
             Step::Working => (anim::spinner(20.0, p.text, spin), ctx.t("Removing…")),
             Step::Done(ItemResult::Removed, at) => (
                 anim::check_draw(
@@ -1112,8 +1432,11 @@ fn working_sheet<'a>(
                 widgets::icon(Icon::Info, 18.0, p.text_muted),
                 ctx.t("Windows protects this app"),
             ),
-            // Task 7 gives "left installed" its own wording.
-            Step::Done(ItemResult::Failed(_) | ItemResult::Kept(_), at) => (
+            Step::Done(ItemResult::Kept(kept), _) => (
+                widgets::icon(Icon::Info, 18.0, p.text_muted),
+                ctx.t(kept_text(kept)),
+            ),
+            Step::Done(ItemResult::Failed(_), at) => (
                 anim::cross_draw(
                     18.0,
                     p.bad,
@@ -1149,6 +1472,14 @@ fn working_sheet<'a>(
     ]
     .spacing(theme::S3)
     .into()
+}
+
+/// Plain reason an app was left installed.
+fn kept_text(kept: &Kept) -> &'static str {
+    match kept {
+        Kept::NoSpace => "Kept: not enough free space to save a copy",
+        Kept::NoCopy(_) => "Kept: couldn't save a copy",
+    }
 }
 
 fn names(ctx: &Ctx, indices: impl Iterator<Item = u16>) -> Vec<String> {
@@ -1188,20 +1519,25 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             let removed = names(ctx, batch.removed.iter().map(|r| r.index));
             let protected = names(ctx, batch.skipped.iter().copied());
             let failed = names(ctx, batch.failed.iter().map(|f| f.index));
-            let title = if batch.removed.is_empty() && failed.is_empty() && protected.is_empty() {
+            let title = if batch.removed.is_empty()
+                && failed.is_empty()
+                && protected.is_empty()
+                && done.kept.is_empty()
+            {
                 ctx.t("Nothing needed removing")
             } else if removed.is_empty() {
                 ctx.t("No apps were removed")
             } else {
                 count_text(ctx, removed.len(), "{n} app removed", "{n} apps removed")
             };
-            let lead: Element<'a, Message> = if failed.is_empty() && !removed.is_empty() {
-                anim::check_draw(40.0, p.good, t)
-            } else if failed.is_empty() {
-                widgets::icon(Icon::Info, 32.0, p.text_muted)
-            } else {
-                anim::warn_draw(40.0, p.warn, t)
-            };
+            let lead: Element<'a, Message> =
+                if failed.is_empty() && done.kept.is_empty() && !removed.is_empty() {
+                    anim::check_draw(40.0, p.good, t)
+                } else if failed.is_empty() && done.kept.is_empty() {
+                    widgets::icon(Icon::Info, 32.0, p.text_muted)
+                } else {
+                    anim::warn_draw(40.0, p.warn, t)
+                };
             col = col.push(lead).push(widgets::h2(p, title));
             if !removed.is_empty() {
                 col = col.push(result_block(
@@ -1221,6 +1557,26 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     protected,
                 ));
             }
+            for reason in [Kept::NoSpace, Kept::NoCopy(String::new())] {
+                let list = names(
+                    ctx,
+                    done.kept
+                        .iter()
+                        .filter(|(_, k)| {
+                            std::mem::discriminant(k) == std::mem::discriminant(&reason)
+                        })
+                        .map(|(i, _)| *i),
+                );
+                if !list.is_empty() {
+                    col = col.push(result_block(
+                        p,
+                        Icon::Info,
+                        Tone::Neutral,
+                        ctx.t(kept_text(&reason)),
+                        list,
+                    ));
+                }
+            }
             if !failed.is_empty() {
                 col = col.push(result_block(
                     p,
@@ -1236,6 +1592,11 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             }
             for f in &batch.failed {
                 technical.push(format!("{}: {}", app_of(f.index).family, f.reason));
+            }
+            for (i, k) in &done.kept {
+                if let Kept::NoCopy(reason) = k {
+                    technical.push(format!("kept {}: {}", app_of(*i).family, reason));
+                }
             }
             for r in &batch.removed {
                 technical.push(format!("removed {} {}", r.package, r.version));
@@ -1341,4 +1702,47 @@ pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         start_scan(state);
     }
     scan_task(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn debug(m: &Option<Msg>) -> Option<String> {
+        m.as_ref().map(|m| format!("{m:?}"))
+    }
+
+    #[test]
+    fn saved_copy_rows_offer_restore_and_delete() {
+        let index = debloat::catalog::owner("Microsoft.BingWeather").unwrap();
+        let mut state = State::default();
+        state.copies.insert(index);
+        let actions = row_actions(&state, index, true);
+        assert_eq!(
+            debug(&actions.primary),
+            Some(format!("{:?}", Msg::Restore(index)))
+        );
+        let menu: Vec<String> = actions.menu.iter().map(|m| format!("{:?}", m.2)).collect();
+        assert!(menu.iter().any(|m| m.contains("AskDelete")));
+        assert!(menu.iter().any(|m| m.contains("RestoreStore")));
+        state.copies.clear();
+        let actions = row_actions(&state, index, true);
+        assert!(!actions
+            .menu
+            .iter()
+            .any(|m| format!("{:?}", m.2).contains("AskDelete")));
+        assert_eq!(
+            debug(&actions.primary),
+            Some(format!("{:?}", Msg::Restore(index)))
+        );
+    }
+
+    #[test]
+    fn rows_offer_nothing_while_busy() {
+        let index = debloat::catalog::owner("Microsoft.BingWeather").unwrap();
+        let mut state = State::default();
+        state.copies.insert(index);
+        let actions = row_actions(&state, index, false);
+        assert!(actions.primary.is_none() && actions.menu.is_empty());
+    }
 }
