@@ -206,6 +206,12 @@ pub fn elevate(args: &[String]) -> Result<()> {
 /// Saved copies of removed apps, inside `app_dir()`. The state directory
 /// check inspects this folder but does not walk its (many) files.
 pub const APP_BACKUPS: &str = "AppBackups";
+/// Web protection's folder, inside the state directory. The filter service
+/// (LocalService) must read it and write in its `Data` folder, so it cannot
+/// have the journal's administrators-only permissions. The state directory
+/// check makes sure it is a real folder owned by administrators and then
+/// leaves it alone: no journal is ever read from or written to it.
+pub const WEB_PROTECTION: &str = "Filter";
 
 pub fn app_dir() -> Result<PathBuf> {
     let dir = state_dir()?.join("App");

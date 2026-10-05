@@ -124,7 +124,9 @@ pub fn fresh(status: &Status, now: u64) -> bool {
 /// known-folder API, never from the inherited environment; the `ProgramData`
 /// variable is only the fallback for the portable (test) build.
 pub fn dir() -> Result<PathBuf> {
-    Ok(program_data()?.join("Secblitz").join("Filter"))
+    Ok(program_data()?
+        .join("Secblitz")
+        .join(crate::platform::WEB_PROTECTION))
 }
 
 #[cfg(windows)]

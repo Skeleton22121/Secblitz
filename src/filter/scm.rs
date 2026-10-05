@@ -47,8 +47,6 @@ const WAIT: Duration = Duration::from_secs(10);
 
 const RX: u32 = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
 const LS_MODIFY: u32 = 0x1301bf;
-/// `Secblitz` folder in ProgramData, only if nobody has made it yet.
-const ROOT_SD: &str = "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
 /// Settings: administrators write, the filter and everyone else may only read.
 const FILTER_SD: &str =
     "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;LS)(A;OICI;0x1200a9;;;BU)";
@@ -508,7 +506,10 @@ pub fn ensure_dirs() -> Result<()> {
     let root = filter.parent().context("Missing Secblitz folder")?;
     let program_data = root.parent().context("Missing ProgramData folder")?;
     let _held = pin_path(program_data)?;
-    create_dir(root, ROOT_SD)?;
+    // The `Secblitz` folder belongs to the change journal, which creates it
+    // with administrators-only permissions and refuses it otherwise.
+    let state = crate::platform::state_dir()?;
+    ensure!(state == root, "Unexpected web protection folder");
     let root_pin = open_dir(root)?;
     check_ancestor(&root_pin)?;
     create_dir(&filter, FILTER_SD)?;

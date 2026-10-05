@@ -896,7 +896,10 @@ impl Engine {
             if name == LOCK_NAME {
                 continue;
             }
-            if matches!(name.as_str(), "Updates" | "operations" | "Patching" | "App") {
+            if matches!(
+                name.as_str(),
+                "Updates" | "operations" | "Patching" | "App" | crate::platform::WEB_PROTECTION
+            ) {
                 // Module-owned protected namespaces, never journal payloads.
                 // Production platform validation supplies ACL/owner protection.
                 metadata_safe(&fs::symlink_metadata(entry.path())?, true)?;
