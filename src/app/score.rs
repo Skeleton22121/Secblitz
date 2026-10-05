@@ -16,6 +16,9 @@ pub struct Score {
     pub attention: usize,
     /// Results that could not be checked.
     pub unknown: usize,
+    /// Results this PC's owner (Group Policy, MDM) controls: not protected by
+    /// us and not something the person can act on.
+    pub managed: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,8 +37,10 @@ pub enum Class {
     Protected,
     /// Can be fixed here.
     Fixable,
-    /// Needs the person's own choice (or their organization's).
+    /// Needs the person's own choice or step.
     Review,
+    /// Controlled by this PC's owner (Group Policy, MDM): nothing to do here.
+    Managed,
     /// Could not be checked right now.
     Unknown,
     /// Not part of the score.
@@ -69,12 +74,20 @@ pub fn classify(r: &Outcome) -> Class {
     {
         return Class::Unknown;
     }
-    match advice::for_outcome(r).group {
+    let a = advice::for_outcome(r);
+    if managed(&a) {
+        return Class::Managed;
+    }
+    match a.group {
         Group::Protected => Class::Protected,
         Group::Recommended => Class::Fixable,
         Group::Choice => Class::Review,
         Group::Information => Class::Excluded,
     }
+}
+
+fn managed(a: &advice::Advice) -> bool {
+    a.status == "Managed elsewhere" || a.step == advice::NextStep::ReviewWithAdministrator
 }
 
 /// Classify a diagnostic finding. `info` findings are "Good to know" notes:
@@ -86,7 +99,11 @@ pub fn classify_finding(f: &secblitz::model::Finding) -> Class {
         "info" | "compliant" | "ok" | "attention" | "review" | "pending" => {}
         _ => return Class::Unknown,
     }
-    match advice::for_finding(&f.title, &f.status, &f.detail).group {
+    let a = advice::for_finding(&f.title, &f.status, &f.detail);
+    if managed(&a) {
+        return Class::Managed;
+    }
+    match a.group {
         Group::Protected => Class::Protected,
         Group::Recommended => Class::Fixable,
         Group::Choice => Class::Review,
@@ -100,23 +117,68 @@ pub fn is_good_to_know(f: &secblitz::model::Finding) -> bool {
     classify_finding(f) == Class::Excluded
 }
 
-/// How many things the person should look at: control results that need a fix
-/// or a choice, plus findings that are actual tips. Informational findings and
-/// protected items are never included; unverifiable items are counted apart
-/// (`Score::unknown`).
-#[allow(dead_code)] // consumed by the GUI integration
-pub fn to_check_count(report: &Report) -> usize {
+/// One thing the person should look at.
+#[derive(Debug, Clone, Copy)]
+pub enum ToCheck<'a> {
+    Control(&'a Outcome),
+    Finding(&'a secblitz::model::Finding),
+}
+
+/// What the person should look at, in report order: control results that need
+/// a fix, a choice or a step, then findings that are actual tips. Protected,
+/// informational, owner-managed and unverifiable items are never included.
+/// Home and Protection both count and list exactly this.
+pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
     let controls = report
         .results
         .iter()
         .filter(|r| matches!(classify(r), Class::Fixable | Class::Review))
-        .count();
+        .map(ToCheck::Control);
     let findings = report
         .findings
         .iter()
         .filter(|f| matches!(classify_finding(f), Class::Fixable | Class::Review))
-        .count();
-    controls + findings
+        .map(ToCheck::Finding);
+    controls.chain(findings).collect()
+}
+
+pub fn to_check_count(report: &Report) -> usize {
+    to_check(report).len()
+}
+
+/// The verdict shown everywhere (Home, sidebar dot, tray): the control score,
+/// except that a tip still to check is never shown as "protected".
+pub fn overall(report: &Report) -> Verdict {
+    match Score::of(report).verdict() {
+        Verdict::Protected if to_check_count(report) > 0 => Verdict::Attention,
+        v => v,
+    }
+}
+
+/// Stable ids of the things to check, for the tray status file: control ids,
+/// and `finding.<slug>` for tips (titles are fixed English catalog keys).
+pub fn to_check_ids(report: &Report) -> Vec<String> {
+    to_check(report)
+        .into_iter()
+        .map(|item| match item {
+            ToCheck::Control(r) => r.id.clone(),
+            ToCheck::Finding(f) => {
+                let slug: String = f
+                    .title
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() {
+                            c.to_ascii_lowercase()
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect();
+                format!("finding.{slug}")
+            }
+        })
+        .map(|id| id.chars().take(64).collect())
+        .collect()
 }
 
 impl Score {
@@ -127,6 +189,7 @@ impl Score {
                 Class::Protected => s.protected += 1,
                 Class::Fixable | Class::Review => s.attention += 1,
                 Class::Unknown => s.unknown += 1,
+                Class::Managed => s.managed += 1,
                 Class::Excluded => continue,
             }
             s.total += 1;
@@ -140,8 +203,11 @@ impl Score {
             Verdict::Protected
         } else if self.attention > 0 {
             Verdict::Attention
-        } else {
+        } else if self.unknown > 0 {
             Verdict::Unknown
+        } else {
+            // Only owner-managed settings are left: nothing for the person to do.
+            Verdict::Protected
         }
     }
     /// 0.0..=1.0 for the ring.
@@ -275,12 +341,20 @@ mod tests {
     }
 
     #[test]
-    fn managed_is_review_and_applied_restart_is_review() {
+    fn managed_is_apart_and_applied_restart_is_review() {
         let managed = Outcome {
             detail: "Domain-managed machine: assessment only".into(),
             ..out("uac.enabled", "skipped")
         };
-        assert_eq!(classify(&managed), Class::Review);
+        assert_eq!(classify(&managed), Class::Managed);
+        let again = || Outcome {
+            detail: "Domain-managed machine: assessment only".into(),
+            ..out("uac.enabled", "skipped")
+        };
+        let s = Score::of(&rep(vec![out("uac.consent", "compliant"), again()]));
+        assert_eq!((s.attention, s.managed, s.total), (0, 1, 2));
+        assert_eq!(s.verdict(), Verdict::Protected);
+        assert_eq!(to_check_count(&rep(vec![again()])), 0);
         let restart = Outcome {
             detail: "Preference applied; restart required".into(),
             ..out("uac.enabled", "applied")

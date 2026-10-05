@@ -532,7 +532,11 @@ fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a
             .spacing(theme::S3)
             .align_y(Alignment::Center);
         if r.restart {
-            line = line.push(widgets::pill(p, restart_label.to_owned(), Tone::Neutral));
+            line = line.push(widgets::tag(
+                p,
+                Some(Icon::Restart),
+                restart_label.to_owned(),
+            ));
         }
         if let Some(info) = widgets::explain::toggle(ctx, "plan", &r.id) {
             line = line.push(info);

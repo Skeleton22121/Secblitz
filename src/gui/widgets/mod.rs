@@ -97,6 +97,10 @@ pub fn icon_filled<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message>
 
 /// Small status label, e.g. "Needs attention".
 pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
+    if tone == Tone::Neutral {
+        // A grey filled capsule reads as a button; plain states are text.
+        return tag(p, None, label);
+    }
     let fg = p.tone_text(tone);
     let bg = p.tint(tone);
     container(
@@ -117,6 +121,23 @@ pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a,
         ..container::Style::default()
     })
     .into()
+}
+
+/// A quiet status label (optional icon + small muted text, no fill), e.g.
+/// "Restart needed". Never looks pressable.
+pub fn tag<'a>(p: Palette, glyph: Option<Icon>, label: impl Into<String>) -> Element<'a, Message> {
+    let label = text(label.into())
+        .size(theme::SMALL)
+        .line_height(LineHeight::Absolute(Pixels(theme::LINE_SMALL)))
+        .wrapping(Wrapping::None)
+        .color(p.text_muted);
+    match glyph {
+        Some(g) => row![icon(g, 14.0, p.text_muted), label]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into(),
+        None => label.into(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
