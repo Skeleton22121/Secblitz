@@ -37,6 +37,9 @@ pub struct Key {
     pub name: &'static str,
     /// PowerShell registry path (registry-backed keys only).
     pub path: &'static str,
+    /// Registry value name when it differs from `name` ("" = same as `name`).
+    /// Lets one control hold the same value under several keys.
+    pub value: &'static str,
     pub rule: Rule,
     /// Highest value this key can legally hold.
     pub max: u32,
@@ -60,6 +63,10 @@ pub enum Source {
     FirewallExposure,
     /// Dynamic: saved Wi-Fi profiles with a weak or no security type.
     WifiProfiles,
+    /// Dynamic: NetBIOS-over-TCP/IP setting of each network adapter.
+    NetbiosAdapters,
+    /// One named outbound firewall rule owned by Secblitz (1 = present).
+    FirewallOutbound,
 }
 
 /// Management and capability evidence the backend must find clean.
@@ -113,6 +120,7 @@ const fn set(
     Key {
         name,
         path,
+        value: "",
         rule: Rule::Set {
             safe,
             absent_safe,
@@ -135,6 +143,7 @@ const fn asr(guid: &'static str, fix: u32) -> Key {
     Key {
         name: guid,
         path: "",
+        value: "",
         rule: Rule::Set {
             safe: &[1, 6],
             absent_safe: false,
@@ -144,6 +153,74 @@ const fn asr(guid: &'static str, fix: u32) -> Key {
         allowed: ASR_ACTIONS,
     }
 }
+
+/// A rule that must be Block (1) to count as protected.
+const fn asr_block(guid: &'static str) -> Key {
+    Key {
+        name: guid,
+        path: "",
+        value: "",
+        rule: Rule::Set {
+            safe: &[1],
+            absent_safe: false,
+            fix: Some(1),
+        },
+        max: 6,
+        allowed: ASR_ACTIONS,
+    }
+}
+
+const SSL3_CLIENT: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Client";
+const SSL3_SERVER: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server";
+const TLS10_CLIENT: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client";
+const TLS10_SERVER: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server";
+const TLS11_CLIENT: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client";
+const TLS11_SERVER: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server";
+const TLS_ENABLED_VALUES: &[u32] = &[0, 1, u32::MAX];
+/// SCHANNEL `Enabled` is a DWORD where 0 is off and any other value (often
+/// 0xFFFFFFFF) is on. Only 0 is safe; the exact original is journaled.
+const fn tls_enabled(name: &'static str, path: &'static str) -> Key {
+    Key {
+        name,
+        path,
+        value: "Enabled",
+        rule: Rule::Set {
+            safe: &[0],
+            absent_safe: false,
+            fix: Some(0),
+        },
+        max: u32::MAX,
+        allowed: TLS_ENABLED_VALUES,
+    }
+}
+const fn tls_default_off(name: &'static str, path: &'static str) -> Key {
+    Key {
+        name,
+        path,
+        value: "DisabledByDefault",
+        rule: Rule::Set {
+            safe: &[1],
+            absent_safe: false,
+            fix: Some(1),
+        },
+        max: 1,
+        allowed: &[],
+    }
+}
+/// Cloud extended timeout in seconds (Defender accepts 0 to 50).
+const CLOUD_TIMEOUT_SAFE: &[u32] = &[
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+    44, 45, 46, 47, 48, 49, 50,
+];
+
+const TCPIP: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
+const TCPIP6: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters";
 
 static SPECS: &[Spec] = &[
     Spec {
@@ -236,6 +313,7 @@ static SPECS: &[Spec] = &[
         keys: &[Key {
             name: "*",
             path: "",
+            value: "",
             rule: Rule::Exposure,
             max: 15,
             allowed: &[],
@@ -491,6 +569,168 @@ static SPECS: &[Spec] = &[
             ..NO_GATE
         },
     },
+    Spec {
+        id: "defender.asr.office",
+        title: "Defender Office attack rules",
+        description: "Block Office from starting other programs, writing risky files, injecting code or having its apps launch child programs. Only offered when Office is installed. Rules are added, never replaced as a list.",
+        source: Source::DefenderAsr,
+        reboot: false,
+        ask: true,
+        keys: &[
+            asr_block("d4f940ab-401b-4efc-aadc-ad5f3c50688a"),
+            asr_block("3b576869-a4ec-4529-8536-b80a7769e899"),
+            asr_block("75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84"),
+            asr_block("26190899-1602-49e8-8b27-eb1d0a1ce869"),
+        ],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
+    },
+    Spec {
+        id: "defender.asr.ransomware_usb",
+        title: "Defender ransomware and USB rules",
+        description: "Ask before unknown programs from USB drives run and use extra ransomware protection (Warn mode, the person can allow each time). Needs cloud protection. Rules are added, never replaced as a list.",
+        source: Source::DefenderAsr,
+        reboot: false,
+        ask: true,
+        keys: &[
+            asr("c1db55ab-c21a-4637-bb3f-a12568109d35", 6),
+            asr("b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4", 6),
+        ],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
+    },
+    Spec {
+        id: "defender.network_protection",
+        title: "Defender network protection",
+        description: "Turn on Defender network protection so programs cannot reach known harmful websites and servers. Windows Pro and Enterprise only; the original value is restored on undo.",
+        source: Source::DefenderPref,
+        reboot: false,
+        ask: true,
+        keys: &[set("EnableNetworkProtection", "", &[1], false, Some(1), 2)],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
+    },
+    Spec {
+        id: "defender.cloud_block_level",
+        title: "Defender stricter cloud blocking",
+        description: "Set the Defender cloud block level to High and allow up to 20 extra seconds for a cloud verdict on unknown files. Zero tolerance is never set. Original values are restored on undo.",
+        source: Source::DefenderPref,
+        reboot: false,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1, 2, 4, 6],
+                ..set("CloudBlockLevel", "", &[2, 4, 6], false, Some(2), 6)
+            },
+            set("CloudExtendedTimeout", "", CLOUD_TIMEOUT_SAFE, false, Some(20), 50),
+        ],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
+    },
+    Spec {
+        id: "net.stack_hardening",
+        title: "Harden how this PC handles network traffic",
+        description: "Ignore ICMP redirects, refuse source-routed packets (IPv4 and IPv6) and stop answering name-release requests. Undo restores the original values. Restart required.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            set("EnableICMPRedirect", TCPIP, &[0], false, Some(0), 1),
+            set("DisableIPSourceRouting", TCPIP, &[2], false, Some(2), 2),
+            Key {
+                value: "DisableIPSourceRouting",
+                ..set("DisableIPSourceRouting6", TCPIP6, &[2], false, Some(2), 2)
+            },
+            set(
+                "NoNameReleaseOnDemand",
+                r"HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters",
+                &[1],
+                false,
+                Some(1),
+                1,
+            ),
+        ],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "net.netbios",
+        title: "Turn off the old NetBIOS name service",
+        description: "Set NetBIOS over TCP/IP to Disabled on each network adapter. Only offered when the old file-sharing version is off and no mapped drive or shared folder uses a bare computer name. Undo restores every adapter.",
+        source: Source::NetbiosAdapters,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2],
+            ..set("*", "", &[2], false, Some(2), 2)
+        }],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "net.mdns",
+        title: "Turn off multicast name lookups (mDNS)",
+        description: "Set EnableMDNS to 0 so this PC neither asks nor answers local-network name lookups. Casting, AirPrint and some smart-home devices may stop being found. Undo restores the original value. Restart required.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[set(
+            "EnableMDNS",
+            r"HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters",
+            &[0],
+            false,
+            Some(0),
+            1,
+        )],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "net.wpad",
+        title: "Stop automatic proxy discovery (WPAD)",
+        description: "Set DisableWpad to 1 so Windows no longer searches the network for a proxy script. The proxy service itself is left running. Undo restores the original value. Restart required.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[set(
+            "DisableWpad",
+            r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp",
+            &[1],
+            false,
+            Some(1),
+            1,
+        )],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "firewall.outbound_smb_internet",
+        title: "Block file sharing to the internet",
+        description: "Add one firewall rule, \"Secblitz: block outbound file sharing to the internet\", that blocks TCP ports 445 and 139 to internet addresses. Home-network file sharing is unaffected. Undo removes the rule.",
+        source: Source::FirewallOutbound,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1],
+            ..set("RulePresent", "", &[1], false, Some(1), 1)
+        }],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "tls.legacy_protocols",
+        title: "Turn off old secure-connection versions",
+        description: "Turn off SSL 3.0, TLS 1.0 and TLS 1.1 (client and server) in Windows. Current browsers are unaffected; very old apps or devices may fail to connect. Undo restores the original values. Restart required.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            tls_enabled("ssl3.client.enabled", SSL3_CLIENT),
+            tls_default_off("ssl3.client.default_off", SSL3_CLIENT),
+            tls_enabled("ssl3.server.enabled", SSL3_SERVER),
+            tls_default_off("ssl3.server.default_off", SSL3_SERVER),
+            tls_enabled("tls10.client.enabled", TLS10_CLIENT),
+            tls_default_off("tls10.client.default_off", TLS10_CLIENT),
+            tls_enabled("tls10.server.enabled", TLS10_SERVER),
+            tls_default_off("tls10.server.default_off", TLS10_SERVER),
+            tls_enabled("tls11.client.enabled", TLS11_CLIENT),
+            tls_default_off("tls11.client.default_off", TLS11_CLIENT),
+            tls_enabled("tls11.server.enabled", TLS11_SERVER),
+            tls_default_off("tls11.server.default_off", TLS11_SERVER),
+        ],
+        gate: NO_GATE,
+    },
 ];
 
 pub fn all() -> &'static [Spec] {
@@ -540,6 +780,16 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
         }
+        Source::NetbiosAdapters => {
+            // Adapter SettingID: a braced GUID.
+            name.len() == 38
+                && name.starts_with('{')
+                && name.ends_with('}')
+                && name[1..37]
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() || c == '-')
+                && name[1..37].matches('-').count() == 4
+        }
         Source::WifiProfiles => {
             !name.is_empty()
                 && name.chars().count() <= 64
@@ -554,7 +804,7 @@ impl Spec {
     pub fn dynamic(&self) -> bool {
         matches!(
             self.source,
-            Source::FirewallExposure | Source::WifiProfiles
+            Source::FirewallExposure | Source::WifiProfiles | Source::NetbiosAdapters
         )
     }
 
@@ -640,10 +890,9 @@ impl Spec {
     /// Any key that is not safe, i.e. there is something to repair.
     pub fn any_unsafe(&self, value: &Value) -> bool {
         self.parse(value).is_ok_and(|items| {
-            items.iter().any(|(n, v)| {
-                self.key(n)
-                    .is_some_and(|k| !is_safe(k.rule, *v))
-            })
+            items
+                .iter()
+                .any(|(n, v)| self.key(n).is_some_and(|k| !is_safe(k.rule, *v)))
         })
     }
 
@@ -652,10 +901,7 @@ impl Spec {
         let mut items = Map::new();
         for (name, v) in self.parse(before)? {
             let key = self.key(&name).expect("parsed key exists");
-            items.insert(
-                name,
-                fix_of(key.rule, v).map_or(Value::Null, Value::from),
-            );
+            items.insert(name, fix_of(key.rule, v).map_or(Value::Null, Value::from));
         }
         Ok(json!({ "items": items }))
     }
@@ -697,7 +943,9 @@ impl Spec {
                     Rule::Exposure => ("exposure", vec![], false, None),
                 };
                 json!({
-                    "name": k.name, "path": k.path, "rule": kind, "safe": safe,
+                    "name": k.name, "path": k.path,
+                    "valueName": if k.value.is_empty() { k.name } else { k.value },
+                    "rule": kind, "safe": safe,
                     "absentSafe": absent_safe, "fix": fix, "max": k.max,
                 })
             })
@@ -730,6 +978,15 @@ mod tests {
             m.insert(k.name.into(), v.map_or(Value::Null, Value::from));
         }
         json!({ "items": m })
+    }
+
+    /// Every legal value of a key (bounded: huge DWORD keys list `allowed`).
+    fn candidate_values(k: &Key) -> Vec<u32> {
+        if k.allowed.is_empty() {
+            (0..=k.max).collect()
+        } else {
+            k.allowed.to_vec()
+        }
     }
 
     #[test]
@@ -780,7 +1037,15 @@ mod tests {
         for s in all().iter().filter(|s| !s.dynamic()) {
             // Every key unsafe in turn, with the others at a safe value.
             for (i, k) in s.keys.iter().enumerate() {
-                let Rule::Set { safe, absent_safe, fix, .. } = k.rule else { continue };
+                let Rule::Set {
+                    safe,
+                    absent_safe,
+                    fix,
+                    ..
+                } = k.rule
+                else {
+                    continue;
+                };
                 let safe_vals: Vec<Option<u32>> = s
                     .keys
                     .iter()
@@ -789,8 +1054,9 @@ mod tests {
                         Rule::Exposure => Some(0),
                     })
                     .collect();
-                let mut unsafe_candidates: Vec<Option<u32>> = (0..=k.max)
-                    .filter(|n| (k.allowed.is_empty() || k.allowed.contains(n)) && !safe.contains(n))
+                let mut unsafe_candidates: Vec<Option<u32>> = candidate_values(k)
+                    .into_iter()
+                    .filter(|n| !safe.contains(n))
                     .map(Some)
                     .collect();
                 if !absent_safe {
@@ -854,7 +1120,12 @@ mod tests {
             items(pnp, &[Some(1), None, Some(1)])
         );
         // Absent is unsafe where Windows' default is unprotected.
-        for id in ["net.llmnr", "lsa.run_as_ppl", "wsh.disabled", "defender.asr.standard"] {
+        for id in [
+            "net.llmnr",
+            "lsa.run_as_ppl",
+            "wsh.disabled",
+            "defender.asr.standard",
+        ] {
             let s = spec(id).unwrap();
             let vals = vec![None; s.keys.len()];
             assert!(s.any_unsafe(&items(s, &vals)), "{id}");
@@ -886,7 +1157,10 @@ mod tests {
         ] {
             assert!(ppl.validate(&bad).is_err(), "accepted {bad}");
         }
-        for ok in [json!({"items": {"RunAsPPL": null}}), json!({"items": {"RunAsPPL": 0}})] {
+        for ok in [
+            json!({"items": {"RunAsPPL": null}}),
+            json!({"items": {"RunAsPPL": 0}}),
+        ] {
             ppl.validate(&ok).unwrap();
         }
         let asr = spec("defender.asr.standard").unwrap();
@@ -896,8 +1170,11 @@ mod tests {
             "e6db77e5-3df2-4cf1-b95a-636979351e5b": 1}});
         assert!(asr.validate(&bad_action).is_err());
         let lock = spec("accounts.lockout_policy").unwrap();
-        assert!(lock.validate(&json!({"items": {"LockoutThreshold": 1000}})).is_err());
-        lock.validate(&json!({"items": {"LockoutThreshold": 0}})).unwrap();
+        assert!(lock
+            .validate(&json!({"items": {"LockoutThreshold": 1000}}))
+            .is_err());
+        lock.validate(&json!({"items": {"LockoutThreshold": 0}}))
+            .unwrap();
     }
 
     #[test]
@@ -923,7 +1200,8 @@ mod tests {
             json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
         );
         // Undo of recorded rules ignores rules that appeared later.
-        let now = json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7, "FPS-NEW": 15}});
+        let now =
+            json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7, "FPS-NEW": 15}});
         assert_eq!(
             fw.view(&now, &before),
             json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
@@ -931,7 +1209,8 @@ mod tests {
         assert_eq!(fw.catalog_target(), json!("derived-items-v1"));
 
         let wifi = spec("wifi.risky_profiles").unwrap();
-        wifi.validate(&json!({"items": {"Cafe Guest": 1, "John's WiFi": 0}})).unwrap();
+        wifi.validate(&json!({"items": {"Cafe Guest": 1, "John's WiFi": 0}}))
+            .unwrap();
         for bad in [
             json!({"items": {"": 1}}),
             json!({"items": {"a\"b": 1}}),
@@ -942,7 +1221,8 @@ mod tests {
             assert!(wifi.validate(&bad).is_err(), "accepted {bad}");
         }
         assert_eq!(
-            wifi.derive_target(&json!({"items": {"Open": 1, "Done": 0}})).unwrap(),
+            wifi.derive_target(&json!({"items": {"Open": 1, "Done": 0}}))
+                .unwrap(),
             json!({"items": {"Open": 0, "Done": 0}})
         );
         // Fixed controls are never narrowed.
@@ -951,18 +1231,167 @@ mod tests {
         assert_eq!(ppl.view(&v, &json!({"items": {}})), v);
     }
 
+    #[test]
+    fn network_and_defender_extensions_follow_the_research_specs() {
+        // Every new control is a choice, never pre-selected.
+        for id in [
+            "defender.asr.office",
+            "defender.asr.ransomware_usb",
+            "defender.network_protection",
+            "defender.cloud_block_level",
+            "net.stack_hardening",
+            "net.netbios",
+            "net.mdns",
+            "net.wpad",
+            "firewall.outbound_smb_internet",
+            "tls.legacy_protocols",
+        ] {
+            assert!(spec(id).unwrap().ask, "{id} must be an ASK item");
+        }
+        // Defender extensions use the add-only ASR source and tamper-exempt strengthening.
+        for id in ["defender.asr.office", "defender.asr.ransomware_usb"] {
+            assert_eq!(spec(id).unwrap().source, Source::DefenderAsr);
+            assert!(spec(id).unwrap().gate.tamper_exempt);
+        }
+        // Office rules must be Block; Warn is not enough for them.
+        let office = spec("defender.asr.office").unwrap();
+        let mut vals = vec![Some(1); 4];
+        assert!(!office.any_unsafe(&items(office, &vals)));
+        vals[2] = Some(6);
+        assert!(office.any_unsafe(&items(office, &vals)));
+        // Ransomware and USB rules are offered in Warn mode.
+        let usb = spec("defender.asr.ransomware_usb").unwrap();
+        let before = items(usb, &[Some(0), None]);
+        assert_eq!(
+            usb.derive_target(&before).unwrap(),
+            items(usb, &[Some(6), Some(6)])
+        );
+        assert!(!usb.any_unsafe(&items(usb, &[Some(1), Some(6)])));
+        // Network protection: Enabled only; audit mode is not protection.
+        let np = spec("defender.network_protection").unwrap();
+        assert!(np.any_unsafe(&items(np, &[Some(2)])));
+        assert_eq!(
+            np.derive_target(&items(np, &[Some(0)])).unwrap(),
+            items(np, &[Some(1)])
+        );
+        // Cloud block level: High and 20 seconds, never zero tolerance; stronger is kept.
+        let cbl = spec("defender.cloud_block_level").unwrap();
+        assert_eq!(
+            cbl.derive_target(&items(cbl, &[Some(0), Some(0)])).unwrap(),
+            items(cbl, &[Some(2), Some(20)])
+        );
+        assert!(!cbl.any_unsafe(&items(cbl, &[Some(6), Some(35)])));
+        assert!(!cbl.any_unsafe(&items(cbl, &[Some(4), Some(20)])));
+        assert!(cbl.any_unsafe(&items(cbl, &[Some(2), Some(10)])));
+        for k in cbl.keys {
+            if let Rule::Set { fix, .. } = k.rule {
+                assert_ne!(fix, Some(6));
+            }
+        }
+        // Stack hardening: both IP versions, one registry value name.
+        let stack = spec("net.stack_hardening").unwrap();
+        let ver: Vec<Value> = serde_json::from_str::<Value>(&stack.script_json()).unwrap()["keys"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let by_name = |n: &str| ver.iter().find(|k| k["name"] == n).unwrap().clone();
+        assert_eq!(
+            by_name("DisableIPSourceRouting")["valueName"],
+            "DisableIPSourceRouting"
+        );
+        assert_eq!(
+            by_name("DisableIPSourceRouting6")["valueName"],
+            "DisableIPSourceRouting"
+        );
+        assert!(by_name("DisableIPSourceRouting6")["path"]
+            .as_str()
+            .unwrap()
+            .contains("Tcpip6"));
+        assert_eq!(by_name("EnableICMPRedirect")["fix"], 0);
+        assert_eq!(by_name("NoNameReleaseOnDemand")["fix"], 1);
+        assert!(stack.reboot);
+        // TLS: the six protocol sides, Enabled 0 and DisabledByDefault 1; 0xFFFFFFFF is a legal original.
+        let tls = spec("tls.legacy_protocols").unwrap();
+        assert_eq!(tls.keys.len(), 12);
+        let names: std::collections::HashSet<_> = tls.keys.iter().map(|k| k.name).collect();
+        assert_eq!(names.len(), 12);
+        for proto in ["SSL 3.0", "TLS 1.0", "TLS 1.1"] {
+            for side in ["Client", "Server"] {
+                let path_end = format!("{proto}\\{side}");
+                assert_eq!(
+                    tls.keys
+                        .iter()
+                        .filter(|k| k.path.ends_with(&path_end))
+                        .count(),
+                    2,
+                    "{path_end}"
+                );
+            }
+        }
+        let mut m = Map::new();
+        for k in tls.keys {
+            m.insert(
+                k.name.into(),
+                if k.value == "Enabled" {
+                    json!(u32::MAX)
+                } else {
+                    Value::Null
+                },
+            );
+        }
+        let before = json!({ "items": m });
+        tls.validate(&before).unwrap();
+        let target = tls.derive_target(&before).unwrap();
+        for k in tls.keys {
+            let want = if k.value == "Enabled" { 0 } else { 1 };
+            assert_eq!(target["items"][k.name], want);
+        }
+        assert!(tls
+            .validate(&json!({"items": {"ssl3.client.enabled": 2}}))
+            .is_err());
+        // NetBIOS: per adapter, id must be a braced GUID, Disabled (2) is the fix.
+        let nb = spec("net.netbios").unwrap();
+        assert!(nb.dynamic());
+        let a = "{11111111-1111-1111-1111-111111111111}";
+        let b = "{abcdefAB-2222-2222-2222-222222222222}";
+        nb.validate(&json!({"items": {a: 0, b: 1}})).unwrap();
+        for bad in [
+            json!({"items": {"Ethernet": 1}}),
+            json!({"items": {"{1111}": 1}}),
+            json!({"items": {"{1111111g-1111-1111-1111-111111111111}": 1}}),
+            json!({"items": {"{11111111-1111-1111-1111-111111111111}'; x": 1}}),
+            json!({"items": {a: 3}}),
+        ] {
+            assert!(nb.validate(&bad).is_err(), "accepted {bad}");
+        }
+        assert_eq!(
+            nb.derive_target(&json!({"items": {a: 0, b: 2}})).unwrap(),
+            json!({"items": {a: 2, b: 2}})
+        );
+        // Outbound SMB rule: present is safe; its absence is the repairable state.
+        let fw = spec("firewall.outbound_smb_internet").unwrap();
+        assert!(fw.any_unsafe(&json!({"items": {"RulePresent": 0}})));
+        assert!(!fw.any_unsafe(&json!({"items": {"RulePresent": 1}})));
+        // The research [K] values: ASK, readable in the descriptions.
+        assert!(spec("net.mdns").unwrap().keys[0].name == "EnableMDNS");
+        assert!(spec("net.wpad").unwrap().keys[0].name == "DisableWpad");
+    }
+
     /// When SECBLITZ_PARITY_OUT names a file, write every spec with the Rust
     /// verdict (safe / fix) for each candidate value. The PowerShell fixture
     /// replays it so both implementations of the rules provably agree.
     #[test]
     fn export_rule_parity_fixture_for_powershell() {
-        let Ok(path) = std::env::var("SECBLITZ_PARITY_OUT") else { return };
+        let Ok(path) = std::env::var("SECBLITZ_PARITY_OUT") else {
+            return;
+        };
         let mut out = Vec::new();
         for s in all() {
             let mut cases = Vec::new();
             for k in s.keys {
                 let mut values: Vec<Option<u32>> = vec![None];
                 values.extend((0..=k.max.min(16)).map(Some));
+                values.push(Some(k.max));
                 values.extend(k.allowed.iter().map(|n| Some(*n)));
                 values.extend(match k.rule {
                     Rule::Set { safe, .. } => safe.iter().map(|n| Some(*n)).collect::<Vec<_>>(),

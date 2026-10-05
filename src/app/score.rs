@@ -45,7 +45,9 @@ pub enum Class {
 /// Classify a result using stable statuses and typed evidence only.
 pub fn classify(r: &Outcome) -> Class {
     let unavailable = r.authority == Some(Authority::Unknown)
-        || (r.id.starts_with("firewall.") && (r.effective.is_none() || r.authority.is_none()));
+        || (r.id.starts_with("firewall.")
+            && !secblitz::hardening::is_hardening(&r.id)
+            && (r.effective.is_none() || r.authority.is_none()));
     let known = matches!(
         r.status.as_str(),
         "compliant"
