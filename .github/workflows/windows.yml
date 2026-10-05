@@ -1,0 +1,83 @@
+name: Windows release build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned official RustSec cargo-audit
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo +stable install cargo-audit --version 0.22.2 --locked --root "$RUNNER_TEMP/cargo-audit"
+      - name: Audit the actual Cargo lockfile against current RustSec advisories
+        run: '"$RUNNER_TEMP/cargo-audit/bin/cargo-audit" audit --file Cargo.lock'
+
+  windows:
+    needs: dependency-audit
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Initialize x64 MSVC tools
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+      - name: Install Rust checks
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustup default stable
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Check installer locales and launch contracts
+        shell: pwsh
+        run: |
+          python installer/check-locales.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          foreach ($file in @('scripts/build-release.ps1', 'installer/maintenance.ps1', 'installer/test-maintenance.ps1', 'installer/test-lifecycle.ps1', 'installer/test-setup-exit.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+      - name: Test installer path and ACL validation (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./installer/test-maintenance.ps1
+      - name: Test, lint, build static-CRT executable and compile installer
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -DownloadInno
+      - name: Test setup failure exit codes with isolated harnesses
+        shell: powershell
+        run: ./installer/test-setup-exit.ps1 -IsccPath "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+      - name: Test running monitor upgrade and uninstall preservation
+        shell: powershell
+        run: |
+          $setup = @(Get-ChildItem dist/secblitz-*-windows-x64-setup.exe)
+          if ($setup.Count -ne 1) { throw 'Expected exactly one built installer.' }
+          ./installer/test-lifecycle.ps1 -SetupPath $setup[0].FullName
+      - name: Upload unsigned build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: secblitz-windows-x64-unsigned
+          path: |
+            dist/secblitz-*-windows-x64.exe
+            dist/secblitz-*-windows-x64-setup.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

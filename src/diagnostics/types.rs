@@ -1,0 +1,438 @@
+use serde::{Deserialize, Deserializer, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Status {
+    Healthy,
+    Attention,
+    Unknown,
+    Unsupported,
+    Informational,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Profile {
+    #[default]
+    Everyday,
+    Gaming,
+    Development,
+    HigherSecurity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Scope {
+    Machine,
+    OriginalUser,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OriginalUserScope {
+    #[default]
+    Omit,
+    VerifyCurrentDesktopUser,
+}
+
+/// Declared needs inform advice, never authorize disabling a protection.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompatibilityNeeds {
+    pub printers: bool,
+    pub nas: bool,
+    pub vpn: bool,
+    pub games: bool,
+    pub development: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Context {
+    pub original_user: OriginalUserScope,
+    pub compatibility: CompatibilityNeeds,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnknownReason {
+    NotCollected,
+    NotRequested,
+    OriginalUserNotVerified,
+    PlatformUnsupported,
+    Unavailable,
+    MissingData,
+    InvalidData,
+    Timeout,
+    CollectionDeadline,
+    OutputLimit,
+    ProcessFailed,
+    NotAssessed,
+    Busy,
+}
+
+/// A malformed or missing individual fact remains Unknown. Deserialization does
+/// not coerce strings, integers or null into booleans, or failures into empty lists.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "state", content = "value")]
+pub enum Reading<T> {
+    Known(T),
+    Unknown(UnknownReason),
+}
+
+impl<T> Default for Reading<T> {
+    fn default() -> Self {
+        Self::Unknown(UnknownReason::MissingData)
+    }
+}
+impl<T> Reading<T> {
+    pub fn known(&self) -> Option<&T> {
+        match self {
+            Self::Known(value) => Some(value),
+            Self::Unknown(_) => None,
+        }
+    }
+}
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Reading<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "state", content = "value", deny_unknown_fields)]
+        enum Wire<T> {
+            Known(T),
+            Unknown(UnknownReason),
+        }
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(match serde_json::from_value::<Wire<T>>(value) {
+            Ok(Wire::Known(v)) => Self::Known(v),
+            Ok(Wire::Unknown(r)) => Self::Unknown(r),
+            Err(_) => Self::Unknown(UnknownReason::InvalidData),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Inventory<T> {
+    pub items: Vec<T>,
+    pub truncated: bool,
+}
+
+macro_rules! probe_ids {
+    ($($name:ident => $source:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum ProbeId { $($name),+ }
+        impl ProbeId {
+            pub const ALL: &'static [Self] = &[$(Self::$name),+];
+            pub fn source(self) -> &'static str { match self { $(Self::$name => $source),+ } }
+            pub fn scope(self) -> Scope {
+                if self == Self::BrowserExtensions { Scope::OriginalUser } else { Scope::Machine }
+            }
+        }
+    };
+}
+probe_ids! {
+    UpdateCache => "Windows Update Agent: offline software-update search (cached metadata)",
+    UpdateHistory => "Windows Update Agent: last 256 local history entries",
+    DefenderHealth => "Defender/Get-MpComputerStatus",
+    DefenderPolicy => "Defender/Get-MpPreference: ASR and CFA only",
+    SecurityProviders => "root/SecurityCenter2: AntiVirusProduct and FirewallProduct",
+    Management => "Win32_ComputerSystem, MDMRegistration API and scoped HKLM policy indicators",
+    SecureBoot => "SecureBoot/Confirm-SecureBootUEFI",
+    Tpm => "TrustedPlatformModule/Get-Tpm",
+    BitLocker => "Win32_EncryptableVolume: GetProtectionStatus/GetConversionStatus only, no key protectors",
+    Vbs => "root/Microsoft/Windows/DeviceGuard: Win32_DeviceGuard",
+    WinRe => "Trusted System32/reagentc.exe /info: reported Windows RE status only",
+    Accounts => "LocalAccounts: built-in Administrators membership and Guest RID 501",
+    RemoteAccess => "HKLM RDP settings, SmbShare configuration and local TCP listeners",
+    Software => "Read-only HKLM uninstall registration, Registry64 and Registry32",
+    BrowserExtensions => "Verified original desktop user's bounded Chrome/Edge manifests and Firefox extensions.json",
+    Storage => "Storage/Get-PhysicalDisk and Get-StorageReliabilityCounter",
+    Ntfs => "Win32_Volume: fixed-volume filesystem/dirty bit/capacity",
+    Backup => "Win32_ShadowCopy and bounded Microsoft-Windows-Backup success event metadata",
+    Adapters => "NetAdapter/Get-NetAdapter: operational state only",
+    Dns => "DnsClient/Get-DnsClientServerAddress: configured server counts only",
+    Proxy => "WinHTTP/WinHttpGetDefaultProxyConfiguration: access type only",
+    Vpn => "VpnClient/Get-VpnConnection -AllUserConnection: status only",
+    Permissions => "permissions::audit: bounded fixed-service broad-principal DACL audit",
+}
+
+macro_rules! facts {
+    ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
+        #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct $name { $(#[serde(default)] pub $field: Reading<$ty>),* }
+    };
+}
+facts!(Updates { result_code: u32, missing: Inventory<MissingUpdate> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissingUpdate {
+    pub quality_classification: bool,
+    pub kb: Vec<String>,
+    #[serde(default)]
+    pub hidden: Reading<bool>,
+}
+facts!(UpdateHistory { entries: Inventory<UpdateEvent> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateEvent {
+    pub operation: u32,
+    pub result_code: u32,
+    pub hresult: i32,
+    pub date_unix_seconds: u64,
+    /// History lacks category metadata. A title hint is not a proven classification.
+    pub quality_title_hint: bool,
+}
+facts!(DefenderHealth {
+    service_enabled: bool,
+    antivirus_enabled: bool,
+    realtime_enabled: bool,
+    behavior_enabled: bool,
+    ioav_enabled: bool,
+    nis_enabled: bool,
+    signatures_age_days: u32,
+    signatures_out_of_date: bool,
+    tamper_protected: bool,
+    running_mode: String,
+});
+facts!(DefenderPolicy { asr: Inventory<AsrRule>, cfa_mode: u32 });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsrRule {
+    pub id: String,
+    pub mode: u32,
+}
+facts!(Providers { antivirus: Inventory<SecurityProvider>, firewall: Inventory<SecurityProvider> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityProvider {
+    pub name: String,
+    pub instance_guid: String,
+    /// Preserved, not decoded using undocumented productState bit heuristics.
+    pub product_state: u32,
+}
+facts!(Management {
+    domain_joined: bool,
+    mdm_registered: bool,
+    cloud_join_indicator: bool,
+    defender_policy_values: bool,
+    update_policy_values: bool,
+    policy_manager_values: bool,
+});
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ManagementStatus {
+    Managed,
+    PolicyPresent,
+    NoIndicatorsObserved,
+    Unknown,
+}
+facts!(SecureBoot { enabled: bool });
+facts!(Tpm {
+    present: bool,
+    ready: bool,
+    enabled: bool,
+    activated: bool
+});
+facts!(BitLocker { volumes: Inventory<EncryptedVolume> });
+facts!(EncryptedVolume {
+    protection_status: u32,
+    volume_status: u32,
+    encryption_percentage: u32
+});
+facts!(Vbs { status: u32, configured_services: Vec<u32>, running_services: Vec<u32> });
+facts!(WinRe { enabled: bool });
+facts!(Accounts {
+    administrator_count: u32,
+    guest_enabled: bool
+});
+facts!(RemoteAccess {
+    rdp_denied: bool,
+    rdp_nla_required: bool,
+    rdp_listener: bool,
+    smb_listener: bool,
+    smb1_enabled: bool,
+    smb2_enabled: bool,
+    smb_server_signing_required: bool,
+    smb_client_signing_required: bool,
+    smb_guest_logons_enabled: bool,
+});
+facts!(Software { applications: Inventory<Application> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Application {
+    pub name: String,
+    pub publisher: String,
+    pub version: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SupportAssessment {
+    KnownEndOfSupport { ended_on: String, reference: String },
+    NotAssessed,
+}
+facts!(BrowserInventory { extensions: Inventory<BrowserExtension>, profiles_examined: u32 });
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Browser {
+    Chrome,
+    Edge,
+    Firefox,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserExtension {
+    pub browser: Browser,
+    /// Local ordinal only; profile names and paths never leave the collector.
+    pub profile_index: u32,
+    pub id: String,
+    pub version: String,
+    pub enabled: Reading<bool>,
+    pub broad_host_access: Reading<bool>,
+    pub native_messaging: Reading<bool>,
+}
+facts!(Storage { disks: Inventory<PhysicalDisk> });
+facts!(PhysicalDisk {
+    health_status: u32,
+    temperature_celsius: i32,
+    wear_percent: u32,
+    read_errors_uncorrected: u64,
+    write_errors_uncorrected: u64,
+});
+facts!(Ntfs { volumes: Inventory<Volume> });
+facts!(Volume {
+    filesystem: String,
+    dirty: bool,
+    capacity_bytes: u64,
+    free_bytes: u64
+});
+facts!(Backup { shadow_copy_count: u32, success_events: Inventory<BackupEvent> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupEvent {
+    pub date_unix_seconds: u64,
+}
+facts!(Adapters { adapters: Inventory<Adapter> });
+facts!(Adapter {
+    operational_status: u32,
+    hardware_interface: bool
+});
+facts!(Dns { interfaces: Inventory<DnsInterface> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DnsInterface {
+    pub address_family: u32,
+    pub server_count: u32,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProxyMode {
+    Direct,
+    NamedProxy,
+    Automatic,
+}
+facts!(Proxy {
+    default_mode: ProxyMode
+});
+facts!(Vpn { connections: Inventory<VpnConnection> });
+facts!(VpnConnection {
+    connected: bool,
+    split_tunneling: bool
+});
+facts!(Permissions { services: Inventory<PermissionFinding> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionFinding {
+    pub service: String,
+    pub status: Status,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+pub enum Evidence {
+    UpdateCache(Updates),
+    UpdateHistory(UpdateHistory),
+    DefenderHealth(DefenderHealth),
+    DefenderPolicy(DefenderPolicy),
+    SecurityProviders(Providers),
+    Management(Management),
+    SecureBoot(SecureBoot),
+    Tpm(Tpm),
+    BitLocker(BitLocker),
+    Vbs(Vbs),
+    WinRe(WinRe),
+    Accounts(Accounts),
+    RemoteAccess(RemoteAccess),
+    Software(Software),
+    BrowserExtensions(BrowserInventory),
+    Storage(Storage),
+    Ntfs(Ntfs),
+    Backup(Backup),
+    Adapters(Adapters),
+    Dns(Dns),
+    Proxy(Proxy),
+    Vpn(Vpn),
+    Permissions(Permissions),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub id: ProbeId,
+    pub scope: Scope,
+    pub observed_at_unix_seconds: Option<u64>,
+    pub source: String,
+    pub status: Status,
+    pub evidence: Option<Evidence>,
+    pub failure: Option<UnknownReason>,
+    pub assessments: Vec<Assessment>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuleReference {
+    pub id: String,
+    pub revision: u32,
+    pub mapping_version: String,
+    pub documentation: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Assessment {
+    pub status: Status,
+    pub detail: String,
+    pub rule: RuleReference,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Recommendation {
+    pub rule: RuleReference,
+    pub profile: Profile,
+    pub reason: String,
+    pub guidance: String,
+    pub management: ManagementStatus,
+    pub compatibility_notes: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Coverage {
+    pub total_probes: usize,
+    pub probes_with_evidence: usize,
+    pub probes_without_evidence: usize,
+    pub assessments_unknown: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Omission {
+    pub scope: Scope,
+    pub area: String,
+    pub reason: String,
+}
+impl Omission {
+    pub(super) fn new(scope: Scope, area: &str, reason: &str) -> Self {
+        Self {
+            scope,
+            area: area.into(),
+            reason: reason.into(),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Report {
+    pub schema_version: u32,
+    pub rule_mapping_version: String,
+    pub collected_at_unix_seconds: Option<u64>,
+    pub scope: Scope,
+    pub profile: Profile,
+    pub compatibility: CompatibilityNeeds,
+    pub management: ManagementStatus,
+    pub status: Status,
+    pub probes: Vec<Diagnostic>,
+    pub recommendations: Vec<Recommendation>,
+    pub coverage: Coverage,
+    pub omissions: Vec<Omission>,
+}

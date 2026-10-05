@@ -1,0 +1,161 @@
+//! Explicit user-selected advisory actions, separate from reversible controls.
+//! Calling `run` is the authorization boundary: callers obtain consent first.
+use anyhow::{Context, Result};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    UpdateDefender,
+    QuickScan,
+    StartMonitoring,
+    OpenWindowsUpdate,
+    OpenWindowsSecurity,
+    OpenSignInSettings,
+    OpenEncryptionSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ActionResult {
+    pub status: String,
+    pub detail: String,
+}
+
+#[cfg(windows)]
+#[path = "actions/windows.rs"]
+mod windows;
+
+// No user-supplied URI, arguments, executable, or PowerShell is accepted.
+fn settings_uri(action: Action) -> Option<&'static str> {
+    match action {
+        Action::OpenWindowsUpdate => Some("ms-settings:windowsupdate"),
+        Action::OpenWindowsSecurity => Some("ms-settings:windowsdefender"),
+        Action::OpenSignInSettings => Some("ms-settings:signinoptions"),
+        Action::OpenEncryptionSettings => Some("ms-settings:deviceencryption"),
+        _ => None,
+    }
+}
+
+#[cfg(any(windows, test))]
+fn validate_settings_request(uri: &str, elevated: bool) -> Result<()> {
+    anyhow::ensure!(
+        matches!(
+            uri,
+            "ms-settings:windowsupdate"
+                | "ms-settings:windowsdefender"
+                | "ms-settings:signinoptions"
+                | "ms-settings:deviceencryption"
+        ),
+        "Unknown settings URI"
+    );
+    // An allowlisted URI still resolves through user-writable protocol handlers.
+    // Never dispatch it with the elevated worker's token.
+    anyhow::ensure!(
+        !elevated,
+        "Open Settings from the non-elevated interactive application"
+    );
+    Ok(())
+}
+
+/// Blocking, explicitly selected action. Errors never imply that in-flight
+/// Defender work stopped. Settings dispatch does not verify remediation.
+pub fn run(action: Action) -> Result<ActionResult> {
+    if let Some(uri) = settings_uri(action) {
+        #[cfg(windows)]
+        windows::open_settings(uri)?;
+        #[cfg(not(windows))]
+        {
+            let _ = uri;
+            anyhow::bail!("Settings actions require Windows");
+        }
+        #[cfg(windows)]
+        return Ok(ActionResult {
+            status: "opened".into(),
+            detail: "Windows accepted the settings-page request. Page availability and security settings are not verified; no fix is claimed.".into(),
+        });
+    }
+    let (status, detail) = match action {
+        Action::UpdateDefender => {
+            crate::platform::support_action("defender_update")?;
+            ("returned", "Defender's signature-update command returned successfully using its configured sources. This does not establish that signatures are the latest available.")
+        }
+        Action::QuickScan => {
+            crate::platform::support_action("defender_quickscan")?;
+            ("returned", "Defender's quick-scan command returned successfully. Completion and threat status are not independently verified; review Windows Security for results.")
+        }
+        Action::StartMonitoring => {
+            if crate::service::query_status()?.state == crate::service::MonitorState::NotInstalled {
+                crate::service::install()?;
+            }
+            crate::service::start().context("Monitor startup failed; the installed service was retained. Check service status before retrying")?;
+            ("running", "SCM reports SecblitzMonitor Running. Monitoring is read-only; this does not verify report freshness or machine health.")
+        }
+        _ => anyhow::bail!("Settings actions require Windows"),
+    };
+    Ok(ActionResult {
+        status: status.into(),
+        detail: detail.into(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_allowlist_is_closed() {
+        for (action, uri) in [
+            (Action::OpenWindowsUpdate, "ms-settings:windowsupdate"),
+            (Action::OpenWindowsSecurity, "ms-settings:windowsdefender"),
+            (Action::OpenSignInSettings, "ms-settings:signinoptions"),
+            (
+                Action::OpenEncryptionSettings,
+                "ms-settings:deviceencryption",
+            ),
+        ] {
+            assert_eq!(settings_uri(action), Some(uri));
+            validate_settings_request(uri, false).unwrap();
+            assert!(validate_settings_request(uri, true).is_err());
+        }
+        for action in [
+            Action::UpdateDefender,
+            Action::QuickScan,
+            Action::StartMonitoring,
+        ] {
+            assert_eq!(settings_uri(action), None);
+        }
+    }
+
+    #[test]
+    fn settings_boundary_rejects_executables_and_unlisted_uris() {
+        for uri in [
+            "",
+            "cmd.exe",
+            "https://example.com",
+            "ms-settings:",
+            "MS-SETTINGS:windowsupdate",
+            "ms-settings:windowsupdate ",
+            "ms-settings:windowsupdate\0",
+            "ms-settings:windowsupdate & calc.exe",
+        ] {
+            for elevated in [false, true] {
+                assert!(validate_settings_request(uri, elevated).is_err());
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unsupported_actions_fail_without_claiming_success() {
+        for action in [
+            Action::UpdateDefender,
+            Action::QuickScan,
+            Action::StartMonitoring,
+            Action::OpenWindowsUpdate,
+            Action::OpenWindowsSecurity,
+            Action::OpenSignInSettings,
+            Action::OpenEncryptionSettings,
+        ] {
+            assert!(run(action).is_err());
+        }
+    }
+}
