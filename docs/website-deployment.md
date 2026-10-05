@@ -1,5 +1,17 @@
 # Secblitz website
 
+## Published 0.7.0 release
+
+Deployed from `dist/pages` (35 allowlisted files) to production on 2026-10-05. Deployment: https://b5736d75.secblitz.pages.dev. After upload, https://secblitz.lol and the legacy https://beacons.lol feed returned the exact signed local bytes with `Cache-Control: no-store`, and `prepare-pages.py --verify-feed` accepted both feeds plus the downloaded installer against the pinned key. The live installer, portable binary and hero video matched the hashes below; the homepage links and displayed checksum identify the 0.7.0 installer. Downloads are served with `max-age=14400` (a zone browser-cache setting overriding `_headers`); the versioned filenames make this harmless.
+
+- Installer: `dist/secblitz-0.7.0-windows-x64-setup.exe`, 8,152,862 bytes, SHA-256 `2d01dba23210c797c9f99bc56c9b4c72a0d6325905288786564570e9bc21770b`.
+- Executable: `dist/secblitz.exe` / `secblitz-0.7.0-windows-x64.exe`, 19,878,400 bytes, SHA-256 `fd9b4bff5900c64adbb23a6135d7414dde6254d630cbb7ee5e0dbe30e8625ee8` (cross-built GNU, `target/windows-release`).
+- Change: the iced desktop GUI replaces the terminal UI; Clean up apps keeps an offline copy of every removed app.
+- Installer compiled with ISCC in the UI clone. Native checks: silent upgrade over 0.7.0 with the monitor service running exited 0; `update health --json` reported version 0.7.0, task ready, monitor running. After publication, the installed 0.7.0 client's `update check --json` returned `up_to_date` against the live feed and Settings showed "Up to date". No live automatic upgrade from 0.6.1 is claimed.
+- Before publication, a 0.7.0 client reported "Couldn't check": `newer()` rejects a feed older than the installed version ("Update downgrade rejected"). That is the anti-rollback guard working; only pre-release builds can hit it.
+- Website: the hero plays a 20-second seamless loop of real 0.7.0 footage (`assets/intro-a18b68fac12f.mp4`, 3,140,150 bytes, 1920x1080, H.264, no audio; source and cut list in `video/sources-v070.json`) over a themed 16:9 still (`assets/preview-541ff80cb74f.webp` light, `assets/home-dark-1215a72074e4.webp` dark). Reduced motion, Save-Data and media errors keep the still.
+- 0.6.1 bytes, feed and checksums are archived in `dist/archive/0.6.1`; its download URLs remain published. Windows publisher signing is still absent. `scripts/test-video.py` and `scripts/test-web-security.py` still pin older releases and were not rerun; the browser checks for this release covered light, dark, reduced motion and 390 px width.
+
 ## Published 0.6.1 release
 
 Deployed from `dist/pages` (26 allowlisted files) to production on 2026-10-04. Deployment: https://654011b6.secblitz.pages.dev. After upload, the https://secblitz.lol and legacy https://beacons.lol feeds returned the exact signed local bytes with `Cache-Control: no-store`; the live 0.6.1 installer, 0.6.1 portable binary and retained 0.6.0 installer matched the hashes below; the homepage links and displayed checksum identify the 0.6.1 installer. No live client automatic-upgrade test is claimed.
