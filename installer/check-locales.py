@@ -3,6 +3,12 @@ import pathlib
 import re
 
 
+INSTALL_KEYS = ("Monitor", "Failed", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon")
+# The keep-or-put-back question and its results, shown by the uninstaller.
+REMOVE_KEYS = ("RemoveTitle", "RemoveQuestion", "KeepChoice", "KeepDetail", "PutBackChoice",
+               "PutBackDetail", "RemoveNote", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft")
+
+
 def check(source):
     sections = {}
     current = None
@@ -32,7 +38,7 @@ def check(source):
             assert value.strip(), f"Empty message: {locale}.{key}"
             messages[locale, key] = value
     keys = {key for _, key in messages} | set(re.findall(r"\{cm:([\w]+)\}", source))
-    assert {"Monitor", "Failed", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon"} == keys
+    assert set(INSTALL_KEYS) | set(REMOVE_KEYS) == keys
     for locale in languages:
         for key in keys:
             assert (locale, key) in messages, f"Missing message: {locale}.{key}"
@@ -104,16 +110,46 @@ def check(source):
         'Uninstall removes only the fixed Status directory beyond its owned-file log'
     latch = code.index('PostInstallFailed := True;')
     clear = code.index('PostInstallFailed := False;')
-    for action in ('Secure', 'InstallMonitor', 'ResumeMonitor', 'PreserveUpdates', 'EnableUpdates', 'DisableUpdates'):
+    for action in ('Secure', 'InstallFilter', 'InstallMonitor', 'ResumeMonitor', 'ResumeFilter',
+                   'PreserveUpdates', 'EnableUpdates', 'DisableUpdates'):
         assert latch < code.index(f"Maintain('{action}')", latch) < clear, action
     assert re.search(r'Result := \(PageID = wpFinished\) and PostInstallFailed;', code)
+    uninstall_contract(code)
     return len(languages), len(keys)
+
+
+def uninstall_contract(code):
+    """Removing Secblitz: the question, the silent default and the order of the steps."""
+    initialize = re.search(r'function InitializeUninstall\(\): Boolean;.*?\nend;', code, re.DOTALL)
+    assert initialize, 'InitializeUninstall is missing'
+    body = initialize[0]
+    # /SECBLITZDONE and any silent uninstall keep the changes and never ask.
+    assert "HasSwitch('/SECBLITZDONE')" in body
+    assert body.index("HasSwitch('/SECBLITZDONE')") < body.index('UninstallSilent') < body.index('AskRemoveChoice(UninstallPutBack)')
+    assert re.search(r'else if not AskRemoveChoice\(UninstallPutBack\) then begin\s*Log\([^;]*\);\s*Result := False;\s*Exit;\s*end;', body), \
+        'Cancel must stop the uninstall before anything is touched'
+    # Cancel comes before the first thing that changes anything.
+    assert body.index('AskRemoveChoice(UninstallPutBack)') < body.index("Maintain('RemoveMonitor')")
+    put_back = re.search(r'procedure PutEverythingBack;.*?\nend;', code, re.DOTALL)
+    assert put_back, 'PutEverythingBack is missing'
+    # Personal part as the person, machine part elevated; neither the other way round.
+    assert re.search(r"ExecAsOriginalUser\(SecblitzExe, 'uninstall-revert --user'", put_back[0])
+    assert "uninstall-revert > " in put_back[0] and "uninstall-revert --user >" not in put_back[0]
+    assert put_back[0].index("'uninstall-revert --user'") < put_back[0].index('uninstall-revert > ')
+    steps = re.search(r'procedure CurUninstallStepChanged\(.*?\nend;', code, re.DOTALL)
+    assert steps, 'CurUninstallStepChanged is missing'
+    text = steps[0]
+    assert text.index('usUninstall') < text.index('if UninstallPutBack then PutEverythingBack;') \
+        < text.index("Maintain('RemoveFilter')") < text.index('CleanUserData') < text.index('usPostUninstall') \
+        < text.index("Maintain('Purge')")
+    assert "uninstall-cleanup --user" in code
+    assert "if IsUninstaller and ((Action = 'RemoveMonitor') or (Action = 'RemoveFilter') or (Action = 'Purge')) then" in code
 
 
 def regression_checks(source):
     mutations = []
     for locale in ('en', 'es', 'fr', 'de', 'pt', 'it'):
-        for key in ('Monitor', 'Failed', 'DesktopIcon', 'LaunchSecblitz', 'AutoUpdates', 'TrayIcon'):
+        for key in INSTALL_KEYS + REMOVE_KEYS:
             mutations.append(re.sub(rf'^{locale}\.{key}=.*$', '', source, flags=re.MULTILINE))
     for before, after in (
         ('Flags: nowait postinstall', 'Flags: unchecked nowait postinstall'),
@@ -140,6 +176,15 @@ def regression_checks(source):
         ('PostInstallFailed := True;', 'PostInstallFailed := False;'),
         ('PostInstallFailed := False;', 'PostInstallFailed := True;'),
         ('(PageID = wpFinished) and PostInstallFailed', 'False'),
+        ("HasSwitch('/SECBLITZDONE')", "HasSwitch('/SOMETHINGELSE')"),
+        ("else if UninstallSilent then", "else if False then"),
+        ('Result := False;\n    Exit;\n  end;\n  CloseTray;', 'Result := True;\n    Exit;\n  end;\n  CloseTray;'),
+        ("ExecAsOriginalUser(SecblitzExe, 'uninstall-revert --user'", "Exec(SecblitzExe, 'uninstall-revert --user'"),
+        ("if UninstallPutBack then PutEverythingBack;", "PutEverythingBack;"),
+        ("Maintain('RemoveFilter')", "Maintain('RemoveMonitor')"),
+        ("Maintain('Purge')", "Maintain('Secure')"),
+        ("Maintain('InstallFilter')", "Maintain('Secure')"),
+        ("(Action = 'Purge')", "(Action = 'Nothing')"),
     ):
         assert before in source, before
         mutations.append(source.replace(before, after))
