@@ -4,6 +4,8 @@
 //! No strings cross the boundary. The launcher (standard user) serves the
 //! pipe; the elevated GUI is the only client.
 
+use crate::user_apps;
+use crate::user_settings::{Op, Setting};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +24,16 @@ pub enum Request {
     OpenAppBrowserControl,
     OpenOptionalFeatures,
     OpenAccounts,
+    /// Read, apply or undo one per-user (HKCU) setting; see `user_settings`.
+    UserSetting(Setting, Op),
+    /// Run `winget upgrade` once as the signed-in user and remember which
+    /// allowlisted programs have a newer version.
+    AppUpdatesScan,
+    /// Ask about one allowlisted program (index into `user_apps::APPS`) from
+    /// the last scan.
+    AppUpdateQuery(u16),
+    /// Upgrade one allowlisted program (index into `user_apps::APPS`).
+    AppUpdate(u16),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,10 +46,37 @@ pub enum Reply {
     Unavailable,
     /// No internet connection (install could not download). Nothing was opened.
     Offline,
+    /// A per-user setting is already in its safer state.
+    Safe,
+    /// ... and Secblitz made it so: undo is available.
+    SafeByUs,
+    /// A per-user setting is in its weaker state.
+    NeedsAttention,
+    /// Nothing to do on this PC (not installed, not applicable).
+    NotApplicable,
+    /// Could not be read, or the answer was not trustworthy.
+    Unknown,
+    /// A newer version of the program is available.
+    UpdateAvailable,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Reply {
+    /// The GUI's answer for a per-user setting request.
+    pub fn from_result(result: crate::user_settings::HandleResult) -> Self {
+        use crate::user_settings::{HandleResult, Outcome, Report};
+        match result {
+            HandleResult::Report(Report::Safe) => Reply::Safe,
+            HandleResult::Report(Report::SafeByUs) => Reply::SafeByUs,
+            HandleResult::Report(Report::Unsafe) => Reply::NeedsAttention,
+            HandleResult::Report(Report::NotApplicable) => Reply::NotApplicable,
+            HandleResult::Report(Report::Unknown) => Reply::Unknown,
+            HandleResult::Outcome(Outcome::Done) => Reply::Done,
+            HandleResult::Outcome(Outcome::Failed) => Reply::Failed,
+            HandleResult::Outcome(Outcome::Blocked) => Reply::Unavailable,
+        }
+    }
+
     pub fn encode(self) -> u8 {
         match self {
             Reply::Done => 1,
@@ -45,6 +84,12 @@ impl Reply {
             Reply::OpenedStore => 3,
             Reply::Unavailable => 4,
             Reply::Offline => 5,
+            Reply::Safe => 6,
+            Reply::SafeByUs => 7,
+            Reply::NeedsAttention => 8,
+            Reply::NotApplicable => 9,
+            Reply::Unknown => 10,
+            Reply::UpdateAvailable => 11,
         }
     }
     pub fn decode(byte: u8) -> Option<Self> {
@@ -54,6 +99,12 @@ impl Reply {
             3 => Reply::OpenedStore,
             4 => Reply::Unavailable,
             5 => Reply::Offline,
+            6 => Reply::Safe,
+            7 => Reply::SafeByUs,
+            8 => Reply::NeedsAttention,
+            9 => Reply::NotApplicable,
+            10 => Reply::Unknown,
+            11 => Reply::UpdateAvailable,
             _ => return None,
         })
     }
@@ -75,6 +126,14 @@ impl Request {
             Request::OpenAppBrowserControl => (10, 0),
             Request::OpenOptionalFeatures => (11, 0),
             Request::OpenAccounts => (12, 0),
+            // One byte for the setting, one for the operation.
+            Request::UserSetting(setting, op) => (
+                13,
+                u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
+            ),
+            Request::AppUpdatesScan => (14, 0),
+            Request::AppUpdateQuery(i) => (15, i),
+            Request::AppUpdate(i) => (16, i),
         };
         let [lo, hi] = arg.to_le_bytes();
         [kind, lo, hi]
@@ -90,9 +149,10 @@ impl Request {
     pub fn decode_with(bytes: [u8; 3], catalog_len: usize) -> Option<Self> {
         let [kind, lo, hi] = bytes;
         let arg = u16::from_le_bytes([lo, hi]);
-        if kind != 7 && arg != 0 {
+        if !matches!(kind, 7 | 13 | 15 | 16) && arg != 0 {
             return None;
         }
+        let apps = user_apps::APPS.len();
         Some(match kind {
             1 => Request::OpenWindowsUpdate,
             2 => Request::OpenWindowsSecurity,
@@ -106,6 +166,10 @@ impl Request {
             10 => Request::OpenAppBrowserControl,
             11 => Request::OpenOptionalFeatures,
             12 => Request::OpenAccounts,
+            13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
+            14 => Request::AppUpdatesScan,
+            15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
+            16 if usize::from(arg) < apps => Request::AppUpdate(arg),
             _ => return None,
         })
     }
@@ -114,9 +178,11 @@ impl Request {
     pub fn timeout(self) -> Duration {
         match self {
             // winget can take minutes (download + install).
-            Request::ReinstallStoreApp(_) | Request::InstallBitwarden => {
+            Request::ReinstallStoreApp(_) | Request::InstallBitwarden | Request::AppUpdate(_) => {
                 Duration::from_secs(15 * 60)
             }
+            // WinGet may refresh its sources first.
+            Request::AppUpdatesScan => Duration::from_secs(4 * 60),
             _ => Duration::from_secs(30),
         }
     }
@@ -415,7 +481,19 @@ mod tests {
             Request::OpenAppBrowserControl,
             Request::OpenOptionalFeatures,
             Request::OpenAccounts,
+            Request::AppUpdatesScan,
+            Request::AppUpdateQuery(0),
+            Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
+            Request::AppUpdate(0),
+            Request::AppUpdate(user_apps::APPS.len() as u16 - 1),
         ]
+        .into_iter()
+        .chain(Setting::ALL.iter().flat_map(|s| {
+            [Op::Query, Op::Apply, Op::Undo]
+                .into_iter()
+                .map(|op| Request::UserSetting(*s, op))
+        }))
+        .collect()
     }
 
     #[test]
@@ -427,12 +505,32 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 13, 14, 100, 255] {
+        for kind in [0u8, 17, 18, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         for kind in (1..=6u8).chain(8..=12) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
+        }
+        // User settings: unknown setting or operation bytes are rejected.
+        assert!(Request::decode_with([13, 0, 0], 100).is_some());
+        assert_eq!(
+            Request::decode_with([13, Setting::ALL.len() as u8, 0], 100),
+            None
+        );
+        assert_eq!(Request::decode_with([13, 0, 3], 100), None);
+        assert_eq!(Request::decode_with([13, 255, 255], 100), None);
+        assert!(Request::decode_with([13, 0, 0], 0).is_some());
+        // Scan takes no argument.
+        assert_eq!(Request::decode_with([14, 1, 0], 100), None);
+        assert_eq!(Request::decode_with([14, 0, 1], 100), None);
+        // App indices stay inside the allowlist.
+        let n = user_apps::APPS.len() as u8;
+        for kind in [15u8, 16] {
+            assert!(Request::decode_with([kind, n - 1, 0], 100).is_some());
+            assert_eq!(Request::decode_with([kind, n, 0], 100), None);
+            assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
+            assert_eq!(Request::decode_with([kind, 255, 255], 100), None);
         }
         assert_eq!(Request::decode_with([7, 0, 0], 0), None);
         assert_eq!(Request::decode_with([7, 5, 0], 5), None);
@@ -452,12 +550,41 @@ mod tests {
             Reply::OpenedStore,
             Reply::Unavailable,
             Reply::Offline,
+            Reply::Safe,
+            Reply::SafeByUs,
+            Reply::NeedsAttention,
+            Reply::NotApplicable,
+            Reply::Unknown,
+            Reply::UpdateAvailable,
         ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
-        for byte in [0u8, 6, 255] {
+        for byte in [0u8, 12, 13, 100, 255] {
             assert_eq!(Reply::decode(byte), None);
         }
+    }
+
+    #[test]
+    fn setting_results_map_to_distinct_calm_replies() {
+        use crate::user_settings::{HandleResult as H, Outcome, Report};
+        assert_eq!(
+            Reply::from_result(H::Report(Report::Unsafe)),
+            Reply::NeedsAttention
+        );
+        assert_eq!(Reply::from_result(H::Report(Report::Safe)), Reply::Safe);
+        assert_eq!(
+            Reply::from_result(H::Report(Report::SafeByUs)),
+            Reply::SafeByUs
+        );
+        assert_eq!(
+            Reply::from_result(H::Report(Report::Unknown)),
+            Reply::Unknown
+        );
+        assert_eq!(
+            Reply::from_result(H::Outcome(Outcome::Blocked)),
+            Reply::Unavailable
+        );
+        assert_eq!(Reply::from_result(H::Outcome(Outcome::Done)), Reply::Done);
     }
 
     #[test]
@@ -484,5 +611,11 @@ mod tests {
     fn long_operations_get_long_timeouts() {
         assert!(Request::ReinstallStoreApp(0).timeout() >= Duration::from_secs(900));
         assert_eq!(Request::OpenSignIn.timeout(), Duration::from_secs(30));
+        assert!(Request::AppUpdate(0).timeout() >= Duration::from_secs(900));
+        assert!(Request::AppUpdatesScan.timeout() > Duration::from_secs(150));
+        assert_eq!(
+            Request::UserSetting(Setting::ShowExtensions, Op::Apply).timeout(),
+            Duration::from_secs(30)
+        );
     }
 }
