@@ -79,6 +79,18 @@ impl Stats {
         self.blocked[Self::index(kind)].fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Picks up today's counts from before a restart (the last status file),
+    /// so "blocked today" does not drop to zero after a crash or a reboot.
+    pub fn resume(&self, day: u64, counts: [u64; 3], now: u64) {
+        if day != now / SECONDS_PER_DAY {
+            return;
+        }
+        self.day.store(day, Ordering::Relaxed);
+        for (counter, count) in self.blocked.iter().zip(counts) {
+            counter.store(count, Ordering::Relaxed);
+        }
+    }
+
     /// `(day, [ads, tracking, dangerous])`; zeros when nothing was counted today.
     pub fn snapshot(&self, now: u64) -> (u64, [u64; 3]) {
         let today = now / SECONDS_PER_DAY;
@@ -700,6 +712,18 @@ mod tests {
     fn garbage_is_dropped() {
         let shared = Shared::new(Filter::empty(), Config::default(), vec![]);
         assert!(decide(&[1, 2, 3], &shared, 1000).is_none());
+    }
+
+    #[test]
+    fn counts_resume_only_for_the_same_day() {
+        let now = 20_000 * SECONDS_PER_DAY + 3_600;
+        let stats = Stats::default();
+        stats.resume(20_000, [5, 6, 7], now);
+        stats.record(Kind::Ads, now);
+        assert_eq!(stats.snapshot(now), (20_000, [6, 6, 7]));
+        let fresh = Stats::default();
+        fresh.resume(19_999, [5, 6, 7], now);
+        assert_eq!(fresh.snapshot(now), (20_000, [0, 0, 0]));
     }
 
     #[test]
