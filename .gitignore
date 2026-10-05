@@ -2,3 +2,10 @@
 *.exe
 *.pdb
 /dist/
+# local tooling and generated output
+/.claude/
+/.wrangler/
+/.website-backup/
+video/node_modules/
+video/out/
+__pycache__/
