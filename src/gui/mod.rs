@@ -1,6 +1,6 @@
 //! The Secblitz window (iced, CPU renderer).
 //!
-//! OWNER: shell agent (routing below is the shared contract; page agents add
+//! OWNER: design-system agent (routing below is the shared contract; page agents add
 //! variants only inside their own `pages::<page>::Msg`).
 //!
 //! Conventions for every page module `pages::<name>`:
@@ -468,12 +468,16 @@ impl App {
         let column_content = container(content)
             .max_width(PAGE_MAX_WIDTH)
             .width(Length::Fill);
-        let main = container(scrollable(
-            container(column_content)
-                .center_x(Length::Fill)
-                .padding([32, 40])
-                .width(Length::Fill),
-        ))
+        let main = container(
+            scrollable(
+                container(column_content)
+                    .center_x(Length::Fill)
+                    .padding([theme::S8, theme::S10])
+                    .width(Length::Fill),
+            )
+            .direction(widgets::controls::scrollbar())
+            .style(widgets::controls::scroll_style(p)),
+        )
         .width(Length::Fill)
         .height(Length::Fill)
         .style(move |_| container::Style {
@@ -499,7 +503,7 @@ impl App {
                 container(widgets::toast(p, message.clone(), *tone))
                     .center_x(Length::Fill)
                     .align_bottom(Length::Fill)
-                    .padding(28)
+                    .padding(theme::S6)
             ]
             .into(),
             None => base,
@@ -518,19 +522,31 @@ impl App {
     fn sidebar(&self) -> Element<'_, Message> {
         let p = self.ctx.palette;
         let brand = row![
-            widgets::brand_mark(26.0, p.text),
-            text("Secblitz").size(20).font(theme::BOLD).color(p.text)
+            widgets::brand_mark(24.0, p.text),
+            text("Secblitz")
+                .size(theme::H2)
+                .font(theme::SEMIBOLD)
+                .color(p.text)
         ]
-        .spacing(10)
-        .align_y(Alignment::Center);
-        let mut nav = column![].spacing(4);
+        .spacing(theme::S3)
+        .align_y(Alignment::Center)
+        .padding([0.0, theme::S3]);
+        let mut nav = column![].spacing(theme::S1);
         for page in Page::ALL {
             let active = self.page == page;
             let fg = if active { p.text } else { p.text_muted };
+            let glyph = if active {
+                widgets::icon_filled(page.icon(), 18.0, fg)
+            } else {
+                widgets::icon(page.icon(), 18.0, fg)
+            };
             let mut item = row![
-                widgets::icon(page.icon(), 18.0, fg),
+                glyph,
                 text(self.ctx.t(page.label()))
                     .size(theme::BODY)
+                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                        theme::LINE_BODY
+                    )))
                     .font(if active {
                         theme::SEMIBOLD
                     } else {
@@ -539,7 +555,7 @@ impl App {
                     .color(fg),
                 iced::widget::space::horizontal(),
             ]
-            .spacing(12)
+            .spacing(theme::S3)
             .align_y(Alignment::Center);
             if page == Page::Home && self.ctx.checking.is_none() && self.ctx.report.is_some() {
                 let dot = p.tone(self.verdict_tone());
@@ -557,64 +573,51 @@ impl App {
                         }),
                 );
             }
-            let indicator = container(iced::widget::space::horizontal())
-                .width(3)
-                .height(18)
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(if active {
-                        p.brand
-                    } else {
-                        iced::Color::TRANSPARENT
-                    })),
-                    border: Border {
-                        radius: 2.0.into(),
-                        ..Border::default()
-                    },
-                    ..container::Style::default()
-                });
-            let entry = button(item)
-                .width(Length::Fill)
-                .padding([9, 12])
-                .on_press(Message::Navigate(page))
-                .style(move |_, status| button::Style {
-                    background: Some(Background::Color(if active {
-                        p.surface
-                    } else if status == button::Status::Hovered {
-                        iced::Color {
-                            a: 0.7,
-                            ..p.surface
-                        }
-                    } else {
-                        iced::Color::TRANSPARENT
-                    })),
-                    text_color: fg,
-                    border: Border {
-                        radius: theme::RADIUS_SMALL.into(),
-                        width: if active { 1.0 } else { 0.0 },
-                        color: p.border,
-                    },
-                    shadow: iced::Shadow::default(),
-                    snap: true,
-                });
-            nav = nav.push(row![indicator, entry].spacing(4).align_y(Alignment::Center));
+            nav = nav.push(widgets::arrow(
+                button(container(item).center_y(Length::Fill))
+                    .width(Length::Fill)
+                    .height(theme::CONTROL)
+                    .padding([0.0, theme::S3])
+                    .on_press(Message::Navigate(page))
+                    .style(move |_, status| button::Style {
+                        background: match (active, status) {
+                            (_, button::Status::Pressed) => Some(Background::Color(p.pressed)),
+                            (true, _) => Some(Background::Color(p.selected)),
+                            (false, button::Status::Hovered) => {
+                                Some(Background::Color(p.hover_strong))
+                            }
+                            _ => None,
+                        },
+                        text_color: fg,
+                        border: Border {
+                            radius: theme::R.into(),
+                            ..Border::default()
+                        },
+                        shadow: iced::Shadow::default(),
+                        snap: true,
+                    }),
+            ));
         }
-        let version = widgets::small(
+        let version = container(widgets::small(
             p,
             format!("{} {}", self.ctx.t("Version"), env!("CARGO_PKG_VERSION")),
-        );
-        container(column![brand, nav, iced::widget::space::vertical(), version].spacing(28))
-            .padding([24, 14])
-            .width(232)
-            .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.sidebar)),
-                border: Border {
-                    width: 0.0,
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            })
-            .into()
+        ))
+        .padding([0.0, theme::S3]);
+        container(
+            column![brand, nav, iced::widget::space::vertical(), version].spacing(theme::S6),
+        )
+        .padding([theme::S6, theme::S3])
+        .width(232)
+        .height(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(p.sidebar)),
+            border: Border {
+                width: 0.0,
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {

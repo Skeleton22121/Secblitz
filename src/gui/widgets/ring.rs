@@ -1,8 +1,12 @@
-//! Score ring drawn on a canvas. OWNER: shell agent.
+//! Score ring drawn on a canvas. OWNER: design-system agent.
+//!
+//! The geometry lives in a `canvas::Cache`: it is rebuilt only when the
+//! value, label, tone or theme changes, never on hover or unrelated redraws.
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
-use iced::widget::canvas::{self, path::Arc, Frame, Geometry, Path, Stroke, Text};
+use iced::widget::canvas::{self, path::Arc, Geometry, Path, Stroke, Text};
 use iced::{mouse, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
+use std::cell::RefCell;
 
 pub struct Ring {
     pub p: Palette,
@@ -15,17 +19,45 @@ pub struct Ring {
     pub caption: String,
 }
 
+type RingKey = (u32, Tone, String, String, theme::Mode);
+
+/// Canvas state: the cached geometry and the inputs it was built from.
+#[derive(Default)]
+pub struct RingState {
+    cache: canvas::Cache,
+    key: RefCell<Option<RingKey>>,
+}
+
 impl canvas::Program<Message> for Ring {
-    type State = ();
+    type State = RingState;
     fn draw(
         &self,
-        _: &(),
+        state: &RingState,
         renderer: &Renderer,
         _: &Theme,
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
+        let key = (
+            self.ratio.to_bits(),
+            self.tone,
+            self.label.clone(),
+            self.caption.clone(),
+            self.p.mode,
+        );
+        if state.key.borrow().as_ref() != Some(&key) {
+            state.cache.clear();
+            *state.key.borrow_mut() = Some(key);
+        }
+        vec![state
+            .cache
+            .draw(renderer, bounds.size(), |frame| self.paint(frame))]
+    }
+}
+
+impl Ring {
+    fn paint(&self, frame: &mut canvas::Frame) {
+        let bounds = Rectangle::with_size(frame.size());
         let center = frame.center();
         let radius = bounds.width.min(bounds.height) / 2.0 - 10.0;
         let track = Path::circle(center, radius);
@@ -74,7 +106,6 @@ impl canvas::Program<Message> for Ring {
             align_y: iced::alignment::Vertical::Center,
             ..Text::default()
         });
-        vec![frame.into_geometry()]
     }
 }
 
