@@ -218,7 +218,7 @@ function Gate([string]$id) {
         Load 'Defender'
         $s = Get-MpComputerStatus
         if ($s.IsTamperProtected -isnot [bool]) { throw 'Defender tamper-protection state is unknown' }
-        if ($s.AMServiceEnabled -isnot [bool] -or $s.AntivirusEnabled -isnot [bool] -or !$s.AMServiceEnabled -or !$s.AntivirusEnabled -or $s.AMRunningMode -ne 'Normal' -or $s.IsTamperProtected) { throw 'Defender unavailable, passive, or tamper protected: assessment only' }
+        if ($s.AMServiceEnabled -isnot [bool] -or $s.AntivirusEnabled -isnot [bool] -or !$s.AMServiceEnabled -or !$s.AntivirusEnabled -or $s.AMRunningMode -ne 'Normal' -or ($s.IsTamperProtected -and !(TamperExempt $id))) { throw 'Defender unavailable, passive, or tamper protected: assessment only' }
         $null = Get-MpPreference
     }
     if ($id.StartsWith('firewall.')) {
@@ -238,6 +238,11 @@ function Gate([string]$id) {
         }
         $null = ReadEffectiveFirewall $id
     }
+}
+function TamperExempt([string]$id) {
+    # Strengthening-only Defender preferences that tamper protection does not
+    # guard. Kept equal to src/hardening.rs (a Rust test enforces it).
+    return ($id -in @('defender.pua','defender.script_nis','defender.asr.standard','defender.asr.web_script_email'))
 }
 $uacPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 $defenderNames = @{ 'defender.realtime'='DisableRealtimeMonitoring'; 'defender.behavior'='DisableBehaviorMonitoring'; 'defender.ioav'='DisableIOAVProtection'; 'defender.archive'='DisableArchiveScanning' }

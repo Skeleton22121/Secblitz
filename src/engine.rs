@@ -196,12 +196,61 @@ fn deserialize_before<'de, D: serde::Deserializer<'de>>(
     ) -> std::result::Result<Option<u32>, D::Error> {
         Option::<u32>::deserialize(d)
     }
+    /// Extended hardening slice: `{"items": {key: u32 | null}}`. Duplicate
+    /// keys are rejected here; id-specific domains are checked by the catalog.
+    #[derive(Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct Items {
+        items: std::collections::BTreeMap<String, Option<u32>>,
+    }
+    impl<'de> Deserialize<'de> for Items {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Raw {
+                items: UniqueMap,
+            }
+            struct UniqueMap(std::collections::BTreeMap<String, Option<u32>>);
+            impl<'de> Deserialize<'de> for UniqueMap {
+                fn deserialize<D: serde::Deserializer<'de>>(
+                    d: D,
+                ) -> std::result::Result<Self, D::Error> {
+                    struct V;
+                    impl<'de> serde::de::Visitor<'de> for V {
+                        type Value = UniqueMap;
+                        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                            f.write_str("a map of unique hardening items")
+                        }
+                        fn visit_map<A: serde::de::MapAccess<'de>>(
+                            self,
+                            mut a: A,
+                        ) -> std::result::Result<UniqueMap, A::Error> {
+                            let mut map = std::collections::BTreeMap::new();
+                            while let Some((k, v)) = a.next_entry::<String, Option<u32>>()? {
+                                if map.insert(k, v).is_some() {
+                                    return Err(serde::de::Error::custom(
+                                        "duplicate hardening item",
+                                    ));
+                                }
+                            }
+                            Ok(UniqueMap(map))
+                        }
+                    }
+                    d.deserialize_map(V)
+                }
+            }
+            Ok(Items {
+                items: Raw::deserialize(d)?.items.0,
+            })
+        }
+    }
     #[derive(Deserialize, Serialize)]
     #[serde(untagged)]
     enum Before {
         Boolean(bool),
         Inbound(String),
         Uac(Uac),
+        Items(Items),
     }
     serde_json::to_value(Before::deserialize(d)?).map_err(serde::de::Error::custom)
 }
@@ -210,6 +259,9 @@ fn deserialize_before<'de, D: serde::Deserializer<'de>>(
 // intentionally the same typed domain as platform.rs and the fixed service
 // controls in permissions.rs; journal data cannot name arbitrary objects.
 fn target(id: &str) -> Result<Value> {
+    if let Some(spec) = crate::hardening::spec(id) {
+        return Ok(spec.catalog_target());
+    }
     Ok(match id {
         "defender.realtime" | "defender.behavior" | "defender.ioav" | "defender.archive" => {
             json!(false)
@@ -255,6 +307,9 @@ fn machine_registry_control(id: &str) -> bool {
 /// Catalog targets are fixed. Only the two compiled service IDs derive a write
 /// value from an exact, validated before-image; the sentinel is never written.
 fn target_for(id: &str, before: &Value) -> Result<Value> {
+    if let Some(spec) = crate::hardening::spec(id) {
+        return spec.derive_target(before);
+    }
     let fixed = target(id)?;
     if permission_control(id) {
         validate_value(id, before)?;
@@ -267,6 +322,9 @@ fn target_for(id: &str, before: &Value) -> Result<Value> {
 }
 
 fn validate_value(id: &str, value: &Value) -> Result<()> {
+    if let Some(spec) = crate::hardening::spec(id) {
+        return spec.validate(value);
+    }
     let expected = target(id)?;
     if permission_control(id) {
         return crate::permissions::validate_value(id, value);
@@ -971,7 +1029,9 @@ impl Engine {
             // Finite raw preference domains only. An incomplete legacy ACL
             // original cannot be inferred; it requires review. COW staging has
             // an independent committed snapshot and handles ACLs below.
-            let values = if permission_control(&control.id) {
+            let values = if permission_control(&control.id)
+                || crate::hardening::is_hardening(&control.id)
+            {
                 Vec::new()
             } else if target(&control.id)?.is_boolean() {
                 vec![json!(true), json!(false)]
@@ -1454,7 +1514,17 @@ impl Engine {
                         };
                         Ok((expected, o))
                     }) {
-                        Ok((expected, o)) if expected.as_ref() == Some(&o.value) => {
+                        Ok((expected, o))
+                            if expected.as_ref()
+                                == Some(&scope(
+                                    &c.id,
+                                    &o.value,
+                                    tx.entries
+                                        .iter()
+                                        .find(|e| e.id == c.id)
+                                        .map(|e| &e.before),
+                                )) =>
+                        {
                             Self::observed_outcome(
                                 &c,
                                 "unchanged",
@@ -1498,7 +1568,7 @@ impl Engine {
             {
                 let expected = target_for(&c.id, &entry.before)?;
                 let result = match self.observe(&c.id) {
-                    Ok(o) if o.value == expected => Self::observed_outcome(
+                    Ok(o) if scope(&c.id, &o.value, Some(&entry.before)) == expected => Self::observed_outcome(
                         c,
                         "unchanged",
                         "Target preference already present; original before image retained",
@@ -1708,7 +1778,10 @@ impl Engine {
                 let c = self.control(&id)?.clone();
                 let expected = target_for(&id, &before)?;
                 let observation = self.observe(&id)?;
-                let result = if observation.value == before {
+                let before_eff = scope(&id, &before, Some(&observation.value));
+                let expected_eff = scope(&id, &expected, Some(&observation.value));
+                let seen = scope(&id, &observation.value, Some(&before_eff));
+                let result = if seen == before_eff {
                     // Includes a prepared apply that never wrote, and a restore
                     // that crashed between its write and result flush.
                     if tx.entries[i].state != State::Restoring {
@@ -1722,7 +1795,7 @@ impl Engine {
                         "Original preference already present",
                         &observation,
                     )
-                } else if observation.value != expected {
+                } else if seen != expected_eff {
                     Self::observed_outcome(
                         &c,
                         "conflict",
@@ -1737,7 +1810,7 @@ impl Engine {
                         tx.entries[i].state = State::Restoring;
                     }
                     let fresh = self.observe(&id)?;
-                    if fresh.value != expected {
+                    if scope(&id, &fresh.value, Some(&before_eff)) != expected_eff {
                         Self::observed_outcome(
                             &c,
                             "conflict",
@@ -1747,7 +1820,7 @@ impl Engine {
                     } else if !restore_eligible(&c, &fresh) {
                         Self::observed_outcome(&c, "skipped", &fresh.reason, &fresh)
                     } else {
-                        if let Err(e) = self.backend.write(&id, &before) {
+                        if let Err(e) = self.backend.write(&id, &before_eff) {
                             callback(&id, "error");
                             return Err(e.context(format!(
                                 "Restore {id} has unknown outcome; pending transaction {} retained",
@@ -1756,7 +1829,7 @@ impl Engine {
                         }
                         let readback = self.observe(&id)?;
                         ensure!(
-                            readback.value == before,
+                            scope(&id, &readback.value, Some(&before_eff)) == before_eff,
                             "Restore {id} readback differs from original; pending transaction {} retained",
                             tx.name
                         );
@@ -1787,6 +1860,16 @@ impl Engine {
             report.findings.push(Self::journal_finding(tx));
         }
         Ok(report)
+    }
+}
+
+/// Dynamic hardening controls (firewall rules, saved Wi-Fi networks) observe
+/// whatever exists now; comparisons against a journaled state must only look at
+/// the keys that were journaled. Everything else is returned unchanged.
+fn scope(id: &str, observed: &Value, template: Option<&Value>) -> Value {
+    match (crate::hardening::spec(id), template) {
+        (Some(spec), Some(template)) => spec.view(observed, template),
+        _ => observed.clone(),
     }
 }
 
@@ -1845,6 +1928,16 @@ fn assessment_status(id: &str, o: &Observation) -> Result<&'static str> {
     if permission_control(id) && !o.eligible {
         return Ok("skipped");
     }
+    if let Some(spec) = crate::hardening::spec(id) {
+        // Safe and absent-default states are protected, even on a managed PC.
+        return Ok(if !spec.any_unsafe(&o.value) {
+            "compliant"
+        } else if apply_eligible(id, o) {
+            "attention"
+        } else {
+            "skipped"
+        });
+    }
     Ok(if o.value == target_for(id, &o.value)? {
         "compliant"
     } else if apply_eligible(id, o) {
@@ -1860,6 +1953,12 @@ fn apply_eligible(id: &str, o: &Observation) -> bool {
     }
     if firewall_control(id) {
         return o.authority == Some(Authority::Local) && matches!(firewall_protected(o), Ok(false));
+    }
+    // Extended controls: management/capability evidence (`eligible`) plus
+    // something that is genuinely unsafe. Safe or absent-default state is
+    // never a repair request.
+    if let Some(spec) = crate::hardening::spec(id) {
+        return spec.any_unsafe(&o.value);
     }
     // Registry absence and nonzero UAC modes are not repair requests, even if a
     // backend accidentally advertises them as eligible. Binary originals must
@@ -4018,4 +4117,5 @@ mod tests {
     }
 
     include!("engine_recovery_tests.rs");
+    include!("engine_hardening_tests.rs");
 }

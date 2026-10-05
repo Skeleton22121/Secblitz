@@ -223,6 +223,12 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
         "Secblitz supports Windows x64 only"
     );
     super::validate_request(action, id, value)?;
+    if let Some(id) = id.filter(|id| crate::hardening::is_hardening(id)) {
+        return run_script(
+            super::hardening_script(action, id, value)?,
+            Duration::from_secs(90),
+        );
+    }
     let script = format!(
         "$action='{action}'\n$id='{}'\n$inputJson={}\n{}",
         id.unwrap_or(""),
@@ -437,8 +443,14 @@ impl Backend for WindowsBackend {
             "Write was not acknowledged"
         );
         let actual = self.observe(id)?;
+        // Dynamic controls may see items that appeared since; compare only the
+        // items that were written.
+        let seen = match crate::hardening::spec(id) {
+            Some(spec) => spec.view(&actual.value, value),
+            None => actual.value.clone(),
+        };
         ensure!(
-            &actual.value == value,
+            &seen == value,
             "Preference readback did not match; mutation outcome requires review"
         );
         Ok(())

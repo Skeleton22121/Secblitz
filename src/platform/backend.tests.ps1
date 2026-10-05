@@ -315,4 +315,5 @@ foreach ($id in @('installer.always_install_elevated','lsa.restrict_anonymous_sa
 & (Join-Path $PSScriptRoot 'backend.privilege.tests.ps1') -BackendPath $BackendPath
 & (Join-Path $PSScriptRoot 'backend.permission.tests.ps1') -BackendPath $BackendPath
 & (Join-Path $PSScriptRoot 'backend.firewall.tests.ps1') -BackendPath $BackendPath
+& (Join-Path $PSScriptRoot 'backend.hardening.tests.ps1') -BackendPath $BackendPath
 Write-Output "Platform PowerShell fixtures passed: $script:checks checks"

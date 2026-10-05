@@ -30,9 +30,13 @@ pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
     ids
 }
 
-/// The default-ticked set. Currently identical to `candidates`.
+/// The default-ticked set: every fixable id except choices the person has to
+/// make themselves (those are shown unticked with their consequence).
 pub fn recommended(report: &Report, available: &[String]) -> Vec<String> {
     candidates(report, available)
+        .into_iter()
+        .filter(|id| !advice::is_choice(id))
+        .collect()
 }
 
 /// Impact source keys earned by this batch: (protected now, protected after restart).
@@ -232,6 +236,27 @@ mod tests {
             ..Report::default()
         }
     }
+    #[test]
+    fn choices_are_candidates_but_never_pre_selected() {
+        let r = rep(vec![
+            out("printer.point_and_print", "attention", ""),
+            out("lsa.run_as_ppl", "attention", ""),
+            out("privacy.advertising_id", "attention", ""),
+            out("autorun.disabled", "compliant", ""),
+        ]);
+        let available = ids(&[
+            "printer.point_and_print",
+            "lsa.run_as_ppl",
+            "privacy.advertising_id",
+            "autorun.disabled",
+        ]);
+        assert_eq!(
+            candidates(&r, &available),
+            ids(&["printer.point_and_print", "lsa.run_as_ppl", "privacy.advertising_id"])
+        );
+        assert_eq!(recommended(&r, &available), ids(&["printer.point_and_print"]));
+    }
+
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| (*s).to_owned()).collect()
     }
