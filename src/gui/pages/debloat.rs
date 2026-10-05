@@ -113,6 +113,13 @@ pub struct State {
     groups: Vec<(Group, Vec<u16>)>,
     /// Precomputed in update(): removed and not yet restored (index, unix time).
     removed: Vec<(u16, u64)>,
+    /// The machine-wide "no suggested apps" block was made by Secblitz.
+    suggested_machine: bool,
+    /// ... and the personal half (the signed-in person's own setting).
+    suggested_user: bool,
+    /// Answers still to come while "Allow suggested apps again" runs, and
+    /// whether every one so far worked.
+    allowing: Option<(u8, bool)>,
     /// Start of the current wait animation, and the last frame time.
     spin: anim::Clock,
     now: Instant,
@@ -142,6 +149,9 @@ impl Default for State {
             policy: None,
             groups: Vec::new(),
             removed: Vec::new(),
+            suggested_machine: false,
+            suggested_user: false,
+            allowing: None,
             spin: anim::Clock::new(),
             now: Instant::now(),
         }
@@ -183,6 +193,11 @@ pub enum Msg {
     RestoredOffline(u16, Result<Restored, String>),
     AskDelete(u16),
     Delete(u16),
+    /// Is the machine-wide suggested-apps block Secblitz's own?
+    SuggestedMachine(bool),
+    SuggestedUser(Result<crate::broker::Reply, String>),
+    AllowSuggested,
+    SuggestedAllowed(bool),
     Deleted(Result<(), String>),
     Copies(BTreeSet<u16>, u64),
     Icons(BTreeMap<u16, Handle>),
@@ -244,6 +259,43 @@ fn copies_task() -> Task<Message> {
     )
 }
 
+/// Did Secblitz block suggested apps? Asks the record (machine part) and the
+/// signed-in person's own setting (through the launcher).
+fn suggested_task(ctx: &Ctx) -> Task<Message> {
+    Task::batch([
+        Task::perform(
+            blocking(|| {
+                debloat::suggested::journal_path()
+                    .map(|p| debloat::suggested::recorded(&p))
+                    .unwrap_or(false)
+            }),
+            |on| wrap(Msg::SuggestedMachine(on)),
+        ),
+        ctx.broker_task(
+            crate::broker::Request::UserSetting(
+                crate::user_settings::Setting::SuggestedApps,
+                crate::user_settings::Op::Query,
+            ),
+            |r| wrap(Msg::SuggestedUser(r)),
+        ),
+    ])
+}
+
+/// Put the machine-wide block back the way it was (blocking).
+fn allow_machine() -> bool {
+    #[cfg(windows)]
+    {
+        use debloat::suggested;
+        suggested::journal_path()
+            .and_then(|p| suggested::undo(&mut suggested::MachinePolicy, &p))
+            .is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 /// Inventory plus the removal journal and the saved copies.
 fn scan_task(state: &mut State) -> Task<Message> {
     Task::batch([
@@ -256,12 +308,11 @@ fn scan_task(state: &mut State) -> Task<Message> {
 }
 
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    let _ = ctx;
     if !matches!(state.sheet, Sheet::None) {
         return Task::none();
     }
     start_scan(state);
-    scan_task(state)
+    Task::batch([scan_task(state), suggested_task(ctx)])
 }
 
 fn start_scan(state: &mut State) {
@@ -313,6 +364,16 @@ pub fn escape(state: &mut State) {
     ) {
         state.sheet = Sheet::None;
     }
+}
+
+// Translation sources (rows live in i18n-pending/a6.tsv until merged).
+const BLOCKED_NOTE: &str = "Windows was asked not to add suggested apps.";
+const ALLOW_AGAIN: &str = "Allow suggested apps again";
+const ALLOWED_AGAIN: &str = "Windows can add suggested apps again.";
+
+/// Secblitz blocked suggested apps (machine part, personal part, or both).
+fn suggested_blocked(state: &State) -> bool {
+    state.suggested_machine || state.suggested_user
 }
 
 fn app_of(index: u16) -> &'static debloat::App {
@@ -469,6 +530,54 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 );
             }
             store_restore(state, ctx, index)
+        }
+        Msg::SuggestedMachine(on) => {
+            state.suggested_machine = on;
+            Task::none()
+        }
+        Msg::SuggestedUser(reply) => {
+            state.suggested_user = matches!(reply, Ok(crate::broker::Reply::SafeByUs));
+            Task::none()
+        }
+        Msg::AllowSuggested => {
+            if state.allowing.is_some() || !suggested_blocked(state) {
+                return Task::none();
+            }
+            let user = state.suggested_user;
+            state.allowing = Some((1 + u8::from(user), true));
+            let mut tasks = vec![Task::perform(blocking(allow_machine), |ok| {
+                wrap(Msg::SuggestedAllowed(ok))
+            })];
+            if user {
+                tasks.push(ctx.broker_task(
+                    crate::broker::Request::UserSetting(
+                        crate::user_settings::Setting::SuggestedApps,
+                        crate::user_settings::Op::Undo,
+                    ),
+                    |r| wrap(Msg::SuggestedAllowed(matches!(r, Ok(crate::broker::Reply::Done)))),
+                ));
+            }
+            Task::batch(tasks)
+        }
+        Msg::SuggestedAllowed(ok) => {
+            let Some((left, all_ok)) = state.allowing else {
+                return Task::none();
+            };
+            let (left, all_ok) = (left - 1, all_ok && ok);
+            if left > 0 {
+                state.allowing = Some((left, all_ok));
+                return Task::none();
+            }
+            state.allowing = None;
+            let text = if all_ok {
+                ctx.t(ALLOWED_AGAIN)
+            } else {
+                ctx.t("We couldn't change that setting. It was left as it was.")
+            };
+            Task::batch([
+                toast(text, if all_ok { Tone::Good } else { Tone::Warn }),
+                suggested_task(ctx),
+            ])
         }
         Msg::RestoreStore(index) => {
             if state.restoring.is_some() || ctx.busy {
@@ -842,10 +951,25 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Tab::Removed => removed_tab(state, ctx),
     };
     // Header to content is S6 on every page; tabs sit closer to their list.
-    column![header, column![tabs, body].spacing(theme::S4)]
+    let mut page = column![header, column![tabs, body].spacing(theme::S4)]
         .spacing(theme::S6)
-        .width(Length::Fill)
-        .into()
+        .width(Length::Fill);
+    if suggested_blocked(state) {
+        page = page.push(
+            row![
+                widgets::muted(p, ctx.t(BLOCKED_NOTE)),
+                space::horizontal(),
+                widgets::link(
+                    p,
+                    ctx.t(ALLOW_AGAIN),
+                    wrap(Msg::AllowSuggested),
+                ),
+            ]
+            .spacing(theme::S3)
+            .align_y(Alignment::Center),
+        );
+    }
+    page.into()
 }
 
 /// The open review / working / result sheet, drawn by the shell above the
@@ -1699,14 +1823,13 @@ pub fn is_busy(state: &State) -> bool {
 /// silently; only a page without data shows its loading state.
 #[allow(clippy::items_after_test_module)]
 pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    let _ = ctx;
     if is_busy(state) {
         return Task::none();
     }
     if !matches!(state.scan, Scan::Ready) {
         start_scan(state);
     }
-    scan_task(state)
+    Task::batch([scan_task(state), suggested_task(ctx)])
 }
 
 #[cfg(test)]
