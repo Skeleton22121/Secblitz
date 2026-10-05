@@ -50,16 +50,25 @@
   const state = { ready: false, visible: false };
   video.muted = true;
   const allowed = () => state.ready && state.visible && !document.hidden && !motion.matches && !connection?.saveData;
+  // The themed still underneath stays visible until the recording really plays,
+  // and comes back for reduced motion, Save-Data or a media error.
+  const still = () => motion.matches || connection?.saveData;
   const sync = () => {
     if (allowed()) video.play().catch(() => {});
-    else video.pause();
+    else {
+      video.pause();
+      if (still()) video.hidden = true;
+    }
   };
+  video.addEventListener("playing", () => { if (!still()) video.hidden = false; });
+  video.addEventListener("error", () => { video.hidden = true; }, true);
   video.addEventListener("loadedmetadata", () => { state.ready = true; sync(); });
   document.addEventListener("visibilitychange", sync);
   motion.addEventListener("change", sync);
   new IntersectionObserver(entries => {
     state.visible = entries[0].isIntersecting;
     sync();
-  }, { threshold: 0.25 }).observe(video);
+  // Watch the frame, not the video: the video stays hidden until it plays.
+  }, { threshold: 0.25 }).observe(video.parentElement);
   if (video.readyState >= 1) video.dispatchEvent(new Event("loadedmetadata"));
 })();

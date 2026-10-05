@@ -232,6 +232,11 @@ h3 { font-size: 17px; line-height: 1.35; font-weight: 600; letter-spacing: -0.00
   border-radius: var(--r-large);
   background: var(--surface);
 }
+/* The hero recording sits over the themed still and shows only once it plays. */
+.shot-media { position: relative; }
+.shot-img { height: auto; }
+.shot-video { position: absolute; inset: 0; height: 100%; object-fit: cover; }
+.shot-video[hidden] { display: none; }
 
 /* ---- Facts ---- */
 .facts { padding-bottom: var(--s16); }
