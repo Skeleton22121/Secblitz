@@ -170,6 +170,82 @@ extern "system" {
     fn CreateJobObjectW(attributes: *const SECURITY_ATTRIBUTES, name: *const u16) -> HANDLE;
     fn SetInformationJobObject(job: HANDLE, class: i32, info: *const c_void, len: u32) -> i32;
     fn AssignProcessToJobObject(job: HANDLE, process: HANDLE) -> i32;
+    fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *mut i32) -> i32;
+    fn QueryInformationJobObject(
+        job: HANDLE,
+        class: i32,
+        info: *mut c_void,
+        len: u32,
+        returned: *mut u32,
+    ) -> i32;
+}
+
+/// The job (if any) another program started this process in. Windows' Program
+/// Compatibility Assistant puts every app opened from Explorer into a job that
+/// only allows breakaway, so this is the normal case, not an exotic one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnclosingJob {
+    None,
+    /// Children may be created outside it (`JOB_OBJECT_LIMIT_BREAKAWAY_OK`).
+    Breakaway,
+    /// Children would stay inside, under limits we do not control.
+    Locked,
+}
+
+pub fn enclosing_job() -> Result<EnclosingJob> {
+    let mut in_job = 0;
+    if unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) } == 0 {
+        return Err(winerr());
+    }
+    if in_job == 0 {
+        return Ok(EnclosingJob::None);
+    }
+    let mut limits: ExtendedLimits = unsafe { zeroed() };
+    // A null handle queries the job this process belongs to.
+    if unsafe {
+        QueryInformationJobObject(
+            null_mut(),
+            9, // JobObjectExtendedLimitInformation
+            (&mut limits as *mut ExtendedLimits).cast(),
+            size_of::<ExtendedLimits>() as u32,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(winerr());
+    }
+    Ok(if limits.basic.flags & 0x800 != 0 {
+        EnclosingJob::Breakaway
+    } else {
+        EnclosingJob::Locked
+    })
+}
+
+/// Whether `pid` belongs to the job this process belongs to. Used after a
+/// suspended breakaway start to prove the child really left it.
+pub fn enclosing_job_contains(pid: u32) -> Result<bool> {
+    const CAPACITY: usize = 4096;
+    // JOBOBJECT_BASIC_PROCESS_ID_LIST: two u32 counts, then pointer-sized ids.
+    let mut list = vec![0usize; 1 + CAPACITY];
+    if unsafe {
+        QueryInformationJobObject(
+            null_mut(),
+            3, // JobObjectBasicProcessIdList
+            list.as_mut_ptr().cast(),
+            (list.len() * size_of::<usize>()) as u32,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(winerr());
+    }
+    let assigned = list[0] & 0xFFFF_FFFF;
+    let listed = list[0] >> 32;
+    ensure!(
+        listed == assigned && listed <= CAPACITY,
+        "Incomplete enclosing job process list"
+    );
+    Ok(list[1..=listed].contains(&(pid as usize)))
 }
 /// `processes` is the job's active-process limit: 1 (PowerShell only, no
 /// descendants) everywhere except the one DISM feature write.

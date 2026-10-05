@@ -25,7 +25,6 @@ extern "system" {
         size: u32,
         returned: *mut u32,
     ) -> i32;
-    fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *mut i32) -> i32;
     fn CreatePipe(
         read: *mut HANDLE,
         write: *mut HANDLE,
@@ -192,13 +191,16 @@ pub(super) fn spawn(
     cancel: &AtomicBool,
 ) -> Result<Child> {
     // An enclosing job can impose kill/resource limits even on an unlimited
-    // child job. No breakaway fallback or post-start assignment window is used.
-    let mut in_job = 0;
-    check(unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) })?;
-    ensure!(
-        in_job == 0,
-        "Patching cannot inherit an enclosing process job"
-    );
+    // child job. Start outside it when it allows that (Windows' compatibility
+    // assistant job does), else refuse. The child joins our job atomically at
+    // creation, so there is no post-start assignment window.
+    let breakaway = match crate::platform::enclosing_job()? {
+        crate::platform::EnclosingJob::None => 0,
+        crate::platform::EnclosingJob::Breakaway => CREATE_BREAKAWAY_FROM_JOB,
+        crate::platform::EnclosingJob::Locked => {
+            bail!("Patching cannot inherit an enclosing process job")
+        }
+    };
     let application = wide(command.get_program())?;
     let mut line = Vec::new();
     for value in std::iter::once(command.get_program()).chain(command.get_args()) {
@@ -307,7 +309,11 @@ pub(super) fn spawn(
             null(),
             null(),
             1,
-            CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | 0x00080000,
+            CREATE_NO_WINDOW
+                | CREATE_SUSPENDED
+                | CREATE_UNICODE_ENVIRONMENT
+                | 0x00080000
+                | breakaway,
             environment.as_ptr().cast(),
             cwd.as_ptr(),
             &startup.base,
@@ -316,7 +322,16 @@ pub(super) fn spawn(
     })?;
     let process = Handle(info.hProcess);
     let thread = Handle(info.hThread);
-    if let Err(error) = ready() {
+    let left = || -> Result<()> {
+        if breakaway != 0 {
+            ensure!(
+                !crate::platform::enclosing_job_contains(info.dwProcessId)?,
+                "Patching process stayed in the enclosing job"
+            );
+        }
+        Ok(())
+    };
+    if let Err(error) = left().and_then(|()| ready()) {
         // Never-started allocation only: no script or WUA call has run.
         unsafe {
             TerminateProcess(process.0, 1);

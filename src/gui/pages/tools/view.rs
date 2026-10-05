@@ -1110,7 +1110,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     let p = ctx.palette;
     let (icon, title, lines, confirm_label): (Icon, String, Vec<String>, String) = match sheet {
         Sheet::Scan => (
-            Icon::Scan,
+            Icon::Bug,
             ctx.t("Scan for viruses?"),
             vec![
                 ctx.t("Windows Security will check your PC for harmful software."),

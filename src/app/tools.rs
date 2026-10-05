@@ -83,6 +83,9 @@ pub const ERR_USE_WINDOWS_UPDATE: &str =
     "Updates can't be installed from this account. Open Windows Update to install them.";
 pub const ERR_UNAVAILABLE: &str = "This isn't available on this PC.";
 pub const ERR_SETTINGS_BLOCK: &str = "Your PC's settings don't allow this.";
+/// This copy of Secblitz can't do it (wrong account or started by another
+/// program); a fresh start from the shortcut can.
+pub const ERR_REOPEN: &str = "Reopen Secblitz from its shortcut and try again.";
 
 /// False when trying again cannot help (the GUI should show a different next
 /// step instead of Retry). For `ERR_USE_WINDOWS_UPDATE` the next step is an
@@ -91,7 +94,7 @@ pub const ERR_SETTINGS_BLOCK: &str = "Your PC's settings don't allow this.";
 pub fn is_retryable(note: &str) -> bool {
     !matches!(
         note,
-        ERR_USE_WINDOWS_UPDATE | ERR_UNAVAILABLE | ERR_SETTINGS_BLOCK
+        ERR_USE_WINDOWS_UPDATE | ERR_UNAVAILABLE | ERR_SETTINGS_BLOCK | ERR_REOPEN
     )
 }
 
@@ -117,6 +120,12 @@ pub fn friendly_error(raw: &str) -> &'static str {
         ERR_UNAVAILABLE
     } else if has(&["reboot", "restart"]) {
         "Restart your PC, then try again."
+    } else if has(&["servicing is busy"]) {
+        "Windows is busy with another task. Try again in a few minutes."
+    } else if has(&["not plugged in"]) {
+        "Plug your PC in, then try again."
+    } else if has(&["low disk space"]) {
+        "Free up at least 5 GB on your system drive, then try again."
     } else if has(&["deferred", "readiness", "not ready", "stale", "ac/storage"]) {
         "Your PC isn't ready for this right now. Plug it in, save your work, restart if Windows is waiting, then try again."
     } else if has(&["unresolved", "independent verification", "interrupted"]) {
@@ -141,7 +150,7 @@ pub fn friendly_error(raw: &str) -> &'static str {
     {
         "We couldn't reach Windows Update. Check your internet connection and try again."
     } else if has(&["elevation", "elevated", "administrator", "interactive"]) {
-        "Reopen Secblitz from its shortcut and try again."
+        ERR_REOPEN
     } else {
         "We couldn't finish this. Try again in a few minutes."
     }
@@ -452,6 +461,7 @@ fn repair_flow(
     emit: &dyn Fn(RepairEvent),
     records: &mut Vec<ops::PlanRecord>,
 ) -> Result<()> {
+    secblitz::platform::ensure_own_process_tree()?;
     let all = kind.all_operations();
     let original = ops::policy()?;
     let wanted = policy_for(&original, &all, unix_now()?);
@@ -805,6 +815,7 @@ fn install_flow(
         (1..=32).contains(&reviewed.len()),
         "Select between 1 and 32 updates"
     );
+    secblitz::platform::ensure_own_process_tree()?;
     // Verify anything an earlier, interrupted job left behind (read-only).
     for old in patch::list()? {
         if install_in_flight(old.status) {
@@ -1558,6 +1569,10 @@ mod tests {
     fn friendly_errors_hide_developer_text() {
         for raw in [
             "Deferred: AC/storage/reboot/servicing readiness not confirmed",
+            "Deferred: Windows is waiting for a restart",
+            "Deferred: Windows servicing is busy",
+            "Deferred: not plugged in",
+            "Deferred: low disk space",
             "Owner opt-in expired",
             "Operations worker ended or result already consumed",
             "Owner-initiated reboot has not occurred",
@@ -1589,6 +1604,19 @@ mod tests {
             friendly_error("Request blocked by policy"),
             "Your PC's settings don't allow this."
         );
+        // Each readiness deferral names the step that actually helps.
+        for (raw, text) in [
+            ("Deferred: Windows is waiting for a restart", "Restart your PC, then try again."),
+            ("Deferred: Windows servicing is busy", "Windows is busy with another task. Try again in a few minutes."),
+            ("Deferred: not plugged in", "Plug your PC in, then try again."),
+            ("Deferred: low disk space", "Free up at least 5 GB on your system drive, then try again."),
+        ] {
+            assert_eq!(friendly_error(raw), text);
+        }
+        // Started inside another program's job: only a fresh start helps.
+        let raw = "Started inside another program's process job; reopen Secblitz interactively";
+        assert_eq!(friendly_error(raw), ERR_REOPEN);
+        assert!(!is_retryable(ERR_REOPEN));
         assert_eq!(
             friendly_error("Not enough resource on the clock"),
             "We couldn't finish this. Try again in a few minutes."

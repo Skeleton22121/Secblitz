@@ -169,6 +169,24 @@ pub fn is_elevated() -> Result<bool> {
     }
 }
 
+#[cfg(windows)]
+pub use windows::{enclosing_job, enclosing_job_contains, EnclosingJob};
+
+/// Servicing (DISM, SFC, Windows Update installs) never runs inside another
+/// program's job, which could kill it mid-repair. Its processes leave such a
+/// job when the job allows that; otherwise servicing is refused. Callers check
+/// first so the person gets a clear way out before anything starts.
+pub fn ensure_own_process_tree() -> Result<()> {
+    #[cfg(windows)]
+    {
+        anyhow::ensure!(
+            windows::enclosing_job()? != EnclosingJob::Locked,
+            "Started inside another program's process job; reopen Secblitz interactively"
+        );
+    }
+    Ok(())
+}
+
 pub fn elevate(args: &[String]) -> Result<()> {
     #[cfg(windows)]
     {
