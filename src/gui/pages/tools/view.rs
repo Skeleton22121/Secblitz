@@ -1,16 +1,28 @@
 //! Drawing code for the Tools page. OWNER: tools agent.
-use super::{tools, Detail, Msg, Repair, Run, Sheet, Shortcut, State, Tips, Updates};
+//!
+//! Built only from the shared design-system widgets (`crate::gui::widgets`)
+//! and theme tokens. `view` does no work beyond building widgets; everything
+//! it shows was prepared in `update`.
+use super::{
+    repair_ratio, stage_ratio, tools, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State,
+    Tips, Updates,
+};
 use crate::app::tools::{
-    self as logic, InstallResult, InstallStage, RepairKind, RepairResult, TipProfile, TipState,
+    self as logic, InstallResult, RepairKind, RepairResult, TipProfile, TipState,
 };
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
-use crate::gui::widgets::{self, ButtonKind};
+use crate::gui::widgets::{self, anim, ButtonKind};
 use crate::gui::{Ctx, Message};
-use iced::widget::{button, column, container, progress_bar, row, text};
-use iced::{Alignment, Background, Border, Element, Font, Length};
+use iced::widget::{column, container, row, space, text};
+use iced::{Alignment, Element, Font, Length};
 
 type El<'a> = Element<'a, Message>;
+
+/// Every card body is at least this tall, so neighbouring cards line up.
+const BODY_MIN: f32 = theme::ROW * 2.0;
+/// Size of the spinners and result marks inside cards.
+const MARK: f32 = 20.0;
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     page(state, ctx)
@@ -23,17 +35,22 @@ pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<El<'a>> {
 
 fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    column![
+    let top = column![
         widgets::page_header(
             p,
             ctx.t("Tools"),
             Some(ctx.t("Handy ways to keep your PC safe and healthy.")),
         ),
+        space::vertical().height(theme::S6),
         section(
             p,
-            ctx.t("Protection"),
+            ctx.t("Virus protection"),
             pair(scan_card(state, ctx), defender_card(state, ctx)),
         ),
+    ]
+    .width(Length::Fill);
+    column![
+        top,
         section(
             p,
             ctx.t("Repair & updates"),
@@ -41,7 +58,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 pair(repair_card(state, ctx), updates_card(state, ctx)),
                 tips_card(state, ctx)
             ]
-            .spacing(theme::GAP)
+            .spacing(theme::S4)
             .into(),
         ),
         section(
@@ -51,7 +68,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         ),
         section(p, ctx.t("Windows settings"), settings_card(ctx)),
     ]
-    .spacing(28)
+    .spacing(theme::S8)
     .width(Length::Fill)
     .into()
 }
@@ -61,47 +78,50 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
 // ---------------------------------------------------------------------------
 
 fn section<'a>(p: Palette, title: String, body: El<'a>) -> El<'a> {
-    column![
-        text(title)
-            .size(theme::H2)
-            .font(theme::SEMIBOLD)
-            .color(p.text),
-        body
-    ]
-    .spacing(12)
-    .into()
-}
-
-/// Two equal cards side by side (cards stretch to the same height).
-fn pair<'a>(a: El<'a>, b: El<'a>) -> El<'a> {
-    row![a, b].spacing(theme::GAP).width(Length::Fill).into()
-}
-
-/// Icon, title and one-line description at the top of every card.
-fn head<'a>(p: Palette, icon: Icon, title: String, description: String) -> El<'a> {
-    row![
-        widgets::icon_badge(p, icon, Tone::Neutral),
-        column![
-            text(title).size(16).font(theme::SEMIBOLD).color(p.text),
-            widgets::small(p, description)
-        ]
-        .spacing(2)
+    column![widgets::section_label(p, title), body]
+        .spacing(theme::S3)
         .width(Length::Fill)
-    ]
-    .spacing(12)
-    .align_y(Alignment::Start)
-    .into()
+        .into()
 }
 
-fn tile<'a>(p: Palette, head: El<'a>, body: El<'a>) -> El<'a> {
-    widgets::card(p, column![head, body].spacing(14).width(Length::Fill))
-        .height(Length::Fill)
+/// Two equal cards side by side.
+fn pair<'a>(a: El<'a>, b: El<'a>) -> El<'a> {
+    row![a, b].spacing(theme::S4).width(Length::Fill).into()
+}
+
+/// Gives a card body a minimum height without letting it stretch.
+fn at_least<'a>(body: El<'a>) -> El<'a> {
+    row![space::vertical().width(0).height(BODY_MIN), body]
+        .width(Length::Fill)
         .into()
+}
+
+/// One card: round icon, title and one line of help, then the body.
+fn tile<'a>(p: Palette, icon: Icon, title: String, description: String, body: El<'a>) -> El<'a> {
+    let head = row![
+        widgets::icon_badge(p, icon, Tone::Neutral),
+        column![widgets::h2(p, title), widgets::small(p, description)]
+            .spacing(theme::S1)
+            .width(Length::Fill)
+    ]
+    .spacing(theme::S3)
+    .align_y(Alignment::Center);
+    widgets::card(
+        p,
+        column![head, at_least(body)]
+            .spacing(theme::S3)
+            .width(Length::Fill),
+    )
+    .into()
 }
 
 /// Buttons that wrap onto a second line in a narrow card.
 fn buttons<'a>(items: Vec<El<'a>>) -> El<'a> {
-    row(items).spacing(8).wrap().vertical_spacing(8).into()
+    row(items)
+        .spacing(theme::S2)
+        .wrap()
+        .vertical_spacing(theme::S2)
+        .into()
 }
 
 fn secondary<'a>(p: Palette, label: String, icon: Option<Icon>, msg: Option<Msg>) -> El<'a> {
@@ -112,58 +132,53 @@ fn ghost<'a>(p: Palette, label: String, msg: Msg) -> El<'a> {
     widgets::action(p, ButtonKind::Ghost, label, None, Some(tools(msg)))
 }
 
-/// A calm result box: tinted by meaning, with a short title and detail.
-fn notice<'a>(p: Palette, tone: Tone, icon: Icon, title: String, detail: Option<String>) -> El<'a> {
-    let mut words = column![text(title)
+/// Body-size text in the semibold weight (titles inside a card body).
+fn strong<'a>(p: Palette, s: impl Into<String>) -> El<'a> {
+    text(s.into())
         .size(theme::BODY)
         .font(theme::SEMIBOLD)
-        .color(p.text)]
-    .spacing(2)
-    .width(Length::Fill);
+        .color(p.text)
+        .into()
+}
+
+/// A finished job: the mark draws itself in (check, cross or warning), then
+/// a short title and one line of explanation.
+fn outcome<'a>(
+    state: &State,
+    p: Palette,
+    slot: Slot,
+    tone: Tone,
+    title: String,
+    detail: Option<String>,
+) -> El<'a> {
+    let t = state.shot(slot);
+    let color = p.tone(tone);
+    let mark: El<'a> = match tone {
+        Tone::Good => anim::check_draw(MARK, color, t),
+        Tone::Bad => anim::cross_draw(MARK, color, t),
+        _ => anim::warn_draw(MARK, color, t),
+    };
+    let mut words = column![strong(p, title)]
+        .spacing(theme::S1)
+        .width(Length::Fill);
     if let Some(d) = detail {
         words = words.push(widgets::small(p, d));
     }
-    let tint = p.tint(tone);
-    container(
-        row![widgets::icon(icon, 20.0, p.tone(tone)), words]
-            .spacing(12)
-            .align_y(Alignment::Start),
-    )
-    .padding(12)
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-        background: Some(Background::Color(tint)),
-        border: Border {
-            radius: theme::RADIUS_SMALL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    })
-    .into()
+    row![mark, words]
+        .spacing(theme::S3)
+        .align_y(Alignment::Start)
+        .into()
 }
 
-fn working<'a>(p: Palette, label: String) -> El<'a> {
+/// Something is running and we cannot say for how long.
+fn working<'a>(state: &State, p: Palette, label: String) -> El<'a> {
     row![
-        widgets::icon(Icon::Refresh, 16.0, p.text_muted),
+        anim::spinner(MARK, p.text_muted, state.spin()),
         widgets::muted(p, label)
     ]
-    .spacing(10)
+    .spacing(theme::S3)
     .align_y(Alignment::Center)
     .into()
-}
-
-fn bar<'a>(p: Palette, fraction: f32) -> El<'a> {
-    progress_bar(0.0..=1.0, fraction.clamp(0.0, 1.0))
-        .girth(6)
-        .style(move |_| progress_bar::Style {
-            background: Background::Color(p.surface_alt),
-            bar: Background::Color(p.brand),
-            border: Border {
-                radius: 3.0.into(),
-                ..Border::default()
-            },
-        })
-        .into()
 }
 
 fn elapsed_phrase(ctx: &Ctx, secs: u64) -> String {
@@ -174,78 +189,24 @@ fn elapsed_phrase(ctx: &Ctx, secs: u64) -> String {
     }
 }
 
-/// Collapsed "Technical details" for people who want the raw evidence.
-fn technical<'a>(state: &'a State, ctx: &'a Ctx, which: Detail, details: &str) -> El<'a> {
+/// Collapsed "More details" for people who want the raw evidence.
+fn details<'a>(state: &State, ctx: &Ctx, which: Detail, raw: &str) -> El<'a> {
     let p = ctx.palette;
-    let open = state.detail_open(which);
-    let toggle = button(
-        row![
-            widgets::icon(
-                if open {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                },
-                14.0,
-                p.text_muted
-            ),
-            text(ctx.t("Technical details"))
-                .size(theme::SMALL)
-                .font(theme::MEDIUM)
-                .color(p.text_muted)
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
+    let shown = if raw.trim().is_empty() {
+        ctx.t("No extra details.")
+    } else {
+        raw.trim().to_owned()
+    };
+    widgets::expander(
+        p,
+        ctx.t("More details"),
+        state.detail_open(which),
+        tools(Msg::ToggleDetail(which)),
+        text(shown)
+            .size(theme::SMALL)
+            .font(Font::MONOSPACE)
+            .color(p.text_muted),
     )
-    .padding([4, 0])
-    .on_press(tools(Msg::ToggleDetail(which)))
-    .style(|_, _| button::Style {
-        background: None,
-        ..button::Style::default()
-    });
-    let mut c = column![toggle].spacing(6);
-    if open {
-        let shown = if details.trim().is_empty() {
-            ctx.t("No extra details.")
-        } else {
-            details.trim().to_owned()
-        };
-        c = c.push(
-            container(
-                text(shown)
-                    .size(12)
-                    .font(Font::MONOSPACE)
-                    .color(p.text_muted),
-            )
-            .padding(10)
-            .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.surface_alt)),
-                border: Border {
-                    radius: theme::RADIUS_SMALL.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            }),
-        );
-    }
-    c.into()
-}
-
-fn divider<'a>(p: Palette) -> El<'a> {
-    let line = p.border;
-    container(iced::widget::space::vertical())
-        .width(Length::Fill)
-        .height(1)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(line)),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-fn hint<'a>(p: Palette, s: String) -> El<'a> {
-    widgets::small(p, s)
 }
 
 fn open_security_button<'a>(ctx: &Ctx) -> El<'a> {
@@ -259,25 +220,25 @@ fn open_security_button<'a>(ctx: &Ctx) -> El<'a> {
 
 fn reopen_hint<'a>(ctx: &Ctx) -> Option<El<'a>> {
     ctx.broker.is_none().then(|| {
-        hint(
+        widgets::inline_notice(
             ctx.palette,
+            Tone::Neutral,
             ctx.t("Reopen Secblitz from its shortcut to use this."),
         )
     })
 }
 
+/// Stack body pieces with the standard gap.
+fn stack<'a>(items: Vec<El<'a>>) -> El<'a> {
+    column(items).spacing(theme::S3).width(Length::Fill).into()
+}
+
 // ---------------------------------------------------------------------------
-// Protection
+// Virus protection
 // ---------------------------------------------------------------------------
 
 fn scan_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::Bug,
-        ctx.t("Scan for viruses"),
-        ctx.t("Look for harmful software on your PC."),
-    );
     let body: El<'a> = match &state.scan {
         Run::Idle => secondary(
             p,
@@ -285,56 +246,52 @@ fn scan_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             Some(Icon::Scan),
             Some(Msg::Ask(Sheet::Scan)),
         ),
-        Run::Working => working(p, ctx.t("Starting the scan…")),
-        Run::Done(Ok(())) => column![
-            notice(
+        Run::Working => working(state, p, ctx.t("Starting the scan…")),
+        Run::Done(Ok(())) => {
+            let mut items = vec![
+                outcome(
+                    state,
+                    p,
+                    Slot::Scan,
+                    Tone::Good,
+                    ctx.t("Scan started"),
+                    Some(ctx.t("Windows Security will notify you if it finds anything.")),
+                ),
+                buttons(vec![
+                    open_security_button(ctx),
+                    ghost(p, ctx.t("Done"), Msg::ClearScan),
+                ]),
+            ];
+            items.extend(reopen_hint(ctx));
+            stack(items)
+        }
+        Run::Done(Err(raw)) => stack(vec![
+            outcome(
+                state,
                 p,
-                Tone::Good,
-                Icon::CheckCircle,
-                ctx.t("Scan started"),
-                Some(ctx.t("Windows Security will notify you if it finds anything.")),
-            ),
-            buttons(vec![
-                open_security_button(ctx),
-                ghost(p, ctx.t("Done"), Msg::ClearScan)
-            ]),
-        ]
-        .spacing(10)
-        .into(),
-        Run::Done(Err(raw)) => column![
-            notice(
-                p,
+                Slot::Scan,
                 Tone::Warn,
-                Icon::AlertTriangle,
                 ctx.t("We couldn't start the scan"),
                 Some(ctx.t("Open Windows Security and start a scan there.")),
             ),
             buttons(vec![
                 open_security_button(ctx),
-                ghost(p, ctx.t("Try again"), Msg::ClearScan)
+                ghost(p, ctx.t("Try again"), Msg::ClearScan),
             ]),
-            technical(state, ctx, Detail::Scan, raw),
-        ]
-        .spacing(10)
-        .into(),
+            details(state, ctx, Detail::Scan, raw),
+        ]),
     };
-    let mut c = column![body].spacing(8);
-    if let Some(h) = reopen_hint(ctx) {
-        if matches!(state.scan, Run::Done(_)) {
-            c = c.push(h);
-        }
-    }
-    tile(p, head, c.into())
+    tile(
+        p,
+        Icon::Bug,
+        ctx.t("Scan for viruses"),
+        ctx.t("Look for harmful software on your PC."),
+        body,
+    )
 }
 
 fn defender_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::Download,
-        ctx.t("Update virus protection"),
-        ctx.t("Get the newest virus information."),
-    );
     let body: El<'a> = match &state.defender {
         Run::Idle => secondary(
             p,
@@ -342,34 +299,38 @@ fn defender_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             Some(Icon::Refresh),
             Some(Msg::Ask(Sheet::DefenderUpdate)),
         ),
-        Run::Working => working(p, ctx.t("Updating…")),
-        Run::Done(Ok(())) => column![
-            notice(
+        Run::Working => working(state, p, ctx.t("Updating…")),
+        Run::Done(Ok(())) => stack(vec![
+            outcome(
+                state,
                 p,
+                Slot::Defender,
                 Tone::Good,
-                Icon::CheckCircle,
                 ctx.t("Virus protection updated"),
                 Some(ctx.t("Windows asked Microsoft for the newest virus information.")),
             ),
             buttons(vec![ghost(p, ctx.t("Done"), Msg::ClearDefender)]),
-        ]
-        .spacing(10)
-        .into(),
-        Run::Done(Err(raw)) => column![
-            notice(
+        ]),
+        Run::Done(Err(raw)) => stack(vec![
+            outcome(
+                state,
                 p,
+                Slot::Defender,
                 Tone::Warn,
-                Icon::AlertTriangle,
                 ctx.t("We couldn't update right now"),
                 Some(ctx.t("Check your internet connection and try again.")),
             ),
             buttons(vec![ghost(p, ctx.t("Try again"), Msg::ClearDefender)]),
-            technical(state, ctx, Detail::Defender, raw),
-        ]
-        .spacing(10)
-        .into(),
+            details(state, ctx, Detail::Defender, raw),
+        ]),
     };
-    tile(p, head, body)
+    tile(
+        p,
+        Icon::Download,
+        ctx.t("Update virus protection"),
+        ctx.t("Get the newest virus information."),
+        body,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -377,20 +338,30 @@ fn defender_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
 // ---------------------------------------------------------------------------
 
 fn busy_hint<'a>(ctx: &Ctx) -> El<'a> {
-    hint(
+    widgets::inline_notice(
         ctx.palette,
+        Tone::Neutral,
         ctx.t("Another job is running. Please wait for it to finish."),
     )
 }
 
+/// Title with a spinner and a smooth progress bar.
+fn job_header<'a>(state: &State, p: Palette, title: String, ratio: f32) -> El<'a> {
+    column![
+        row![
+            anim::spinner(MARK, p.text_muted, state.spin()),
+            strong(p, title)
+        ]
+        .spacing(theme::S3)
+        .align_y(Alignment::Center),
+        widgets::bar(p, state.bar_value(ratio), Tone::Brand),
+    ]
+    .spacing(theme::S3)
+    .into()
+}
+
 fn repair_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::Wrench,
-        ctx.t("Repair Windows"),
-        ctx.t("Find and fix problems with Windows itself."),
-    );
     let free = !ctx.busy;
     let start = |kind: RepairKind, label: String, icon: Icon| {
         secondary(
@@ -402,19 +373,18 @@ fn repair_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     };
     let body: El<'a> = match &state.repair {
         Repair::Idle => {
-            let mut c = column![buttons(vec![
+            let mut items = vec![buttons(vec![
                 start(RepairKind::Check, ctx.t("Check for problems"), Icon::Scan),
                 start(
                     RepairKind::Repair,
                     ctx.t("Repair system files"),
-                    Icon::Wrench
+                    Icon::Wrench,
                 ),
-            ])]
-            .spacing(8);
+            ])];
             if !free {
-                c = c.push(busy_hint(ctx));
+                items.push(busy_hint(ctx));
             }
-            c.into()
+            stack(items)
         }
         Repair::Working {
             kind,
@@ -425,50 +395,41 @@ fn repair_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 RepairKind::Check => ctx.t("Checking for problems"),
                 RepairKind::Repair => ctx.t("Repairing Windows"),
             };
-            let mut c = column![text(title)
-                .size(theme::BODY)
-                .font(theme::SEMIBOLD)
-                .color(p.text)]
-            .spacing(8);
             let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
-            match progress {
-                Some(pr) => {
-                    c = c
-                        .push(bar(p, (pr.step as f32 - 0.5) / pr.total as f32))
-                        .push(widgets::muted(p, ctx.t(pr.label)))
-                        .push(hint(
-                            p,
-                            format!(
-                                "{} {} {} {}  ·  {} {}",
-                                ctx.t("Step"),
-                                pr.step,
-                                ctx.t("of"),
-                                pr.total,
-                                ctx.t("Running for"),
-                                elapsed_phrase(ctx, pr.elapsed)
-                            ),
-                        ));
-                }
-                None => {
-                    c = c
-                        .push(bar(p, 0.03))
-                        .push(widgets::muted(p, ctx.t("Getting ready…")));
-                }
+            let (ratio, label, step) = match progress {
+                Some(pr) => (
+                    repair_ratio(pr),
+                    ctx.t(pr.label),
+                    format!(
+                        "{} {} {} {}  ·  {} {}",
+                        ctx.t("Step"),
+                        pr.step,
+                        ctx.t("of"),
+                        pr.total,
+                        ctx.t("Running for"),
+                        elapsed_phrase(ctx, pr.elapsed)
+                    ),
+                ),
+                None => (0.03, ctx.t("Getting ready…"), String::new()),
+            };
+            let mut items = vec![job_header(state, p, title, ratio), widgets::muted(p, label)];
+            if !step.is_empty() {
+                items.push(widgets::small(p, step));
             }
-            c = c.push(hint(
+            items.push(widgets::small(
                 p,
                 ctx.t("You can keep using your PC. Please don't turn it off."),
             ));
-            if stopping {
-                c = c.push(hint(p, ctx.t("Stopping after this step…")));
+            items.push(if stopping {
+                widgets::small(p, ctx.t("Stopping after this step…"))
             } else {
-                c = c.push(buttons(vec![ghost(
+                buttons(vec![ghost(
                     p,
                     ctx.t("Stop after this step"),
                     Msg::StopRepair,
-                )]));
-            }
-            c.into()
+                )])
+            });
+            column(items).spacing(theme::S2).width(Length::Fill).into()
         }
         Repair::Done {
             kind,
@@ -476,14 +437,12 @@ fn repair_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             note,
             technical: raw,
         } => {
-            let (tone, icon) = match result {
-                RepairResult::NoProblems | RepairResult::Repaired => {
-                    (Tone::Good, Icon::CheckCircle)
-                }
-                RepairResult::CouldNotFinish => (Tone::Bad, Icon::ShieldAlert),
+            let tone = match result {
+                RepairResult::NoProblems | RepairResult::Repaired => Tone::Good,
+                RepairResult::CouldNotFinish => Tone::Bad,
                 RepairResult::ProblemsFound
                 | RepairResult::NeedsRestart
-                | RepairResult::Stopped => (Tone::Warn, Icon::AlertTriangle),
+                | RepairResult::Stopped => Tone::Warn,
             };
             let detail = match (result, note) {
                 (RepairResult::CouldNotFinish, Some(n)) => ctx.t(n),
@@ -498,26 +457,31 @@ fn repair_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 ));
             }
             actions.push(ghost(p, ctx.t("Done"), Msg::ClearRepair));
-            column![
-                notice(p, tone, icon, ctx.t(result.title()), Some(detail)),
+            stack(vec![
+                outcome(
+                    state,
+                    p,
+                    Slot::Repair,
+                    tone,
+                    ctx.t(result.title()),
+                    Some(detail),
+                ),
                 buttons(actions),
-                technical(state, ctx, Detail::Repair, raw),
-            ]
-            .spacing(10)
-            .into()
+                details(state, ctx, Detail::Repair, raw),
+            ])
         }
     };
-    tile(p, head, body)
+    tile(
+        p,
+        Icon::Wrench,
+        ctx.t("Repair Windows"),
+        ctx.t("Find and fix problems with Windows itself."),
+        body,
+    )
 }
 
 fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::Download,
-        ctx.t("Windows updates"),
-        ctx.t("Install important security updates."),
-    );
     let free = !ctx.busy;
     let look = |label: String| {
         secondary(
@@ -529,55 +493,48 @@ fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     };
     let body: El<'a> = match &state.updates {
         Updates::Idle => {
-            let mut c = column![
+            let mut items = vec![
                 buttons(vec![secondary(
                     p,
                     ctx.t("Look for updates"),
                     Some(Icon::Refresh),
-                    free.then_some(Msg::LookForUpdates)
+                    free.then_some(Msg::LookForUpdates),
                 )]),
-                hint(
+                widgets::small(
                     p,
-                    ctx.t("Secblitz asks Windows Update. Nothing is installed yet.")
+                    ctx.t("Secblitz asks Windows Update. Nothing is installed yet."),
                 ),
-            ]
-            .spacing(8);
+            ];
             if !free {
-                c = c.push(busy_hint(ctx));
+                items.push(busy_hint(ctx));
             }
-            c.into()
+            stack(items)
         }
-        Updates::Looking => working(p, ctx.t("Looking for updates…")),
-        Updates::UpToDate => column![
-            notice(
+        Updates::Looking => working(state, p, ctx.t("Looking for updates…")),
+        Updates::UpToDate => stack(vec![
+            outcome(
+                state,
                 p,
+                Slot::Updates,
                 Tone::Good,
-                Icon::CheckCircle,
                 ctx.t("Your PC is up to date"),
                 Some(ctx.t("There are no important updates waiting.")),
             ),
             buttons(vec![look(ctx.t("Check again"))]),
-        ]
-        .spacing(10)
-        .into(),
+        ]),
         Updates::Found(found) => {
-            let n = found.updates.len();
             let size = logic::size_phrase(found.total_bytes());
-            let detail = if size.is_empty() {
-                ctx.t("Windows may need to restart afterwards.")
+            let restart = ctx.t("Windows may need to restart afterwards.");
+            let tail = if size.is_empty() {
+                restart
             } else {
-                format!(
-                    "{size}. {}",
-                    ctx.t("Windows may need to restart afterwards.")
-                )
+                format!("{size}. {restart}")
             };
-            column![
-                notice(
+            stack(vec![
+                widgets::inline_notice(
                     p,
                     Tone::Warn,
-                    Icon::Download,
-                    count_line(ctx, n),
-                    Some(detail)
+                    format!("{} {tail}", count_line(ctx, found.updates.len())),
                 ),
                 buttons(vec![
                     widgets::action(
@@ -589,75 +546,67 @@ fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     ),
                     look(ctx.t("Check again")),
                 ]),
-            ]
-            .spacing(10)
-            .into()
+            ])
         }
         Updates::Failed {
             technical: raw,
             note,
-        } => column![
-            notice(
+        } => stack(vec![
+            outcome(
+                state,
                 p,
+                Slot::Updates,
                 Tone::Warn,
-                Icon::AlertTriangle,
                 ctx.t("We couldn't check for updates"),
                 Some(ctx.t(note)),
             ),
             buttons(vec![look(ctx.t("Try again"))]),
-            technical(state, ctx, Detail::Updates, raw),
-        ]
-        .spacing(10)
-        .into(),
+            details(state, ctx, Detail::Updates, raw),
+        ]),
         Updates::Installing {
             cancel,
             stage,
             elapsed,
             count,
         } => {
-            let fraction = match stage {
-                InstallStage::Preparing => 0.12,
-                InstallStage::Installing => 0.55,
-                InstallStage::Checking => 0.9,
-            };
             let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
-            let mut c = column![
-                text(count_installing(ctx, *count))
-                    .size(theme::BODY)
-                    .font(theme::SEMIBOLD)
-                    .color(p.text),
-                bar(p, fraction),
+            let mut items = vec![
+                job_header(
+                    state,
+                    p,
+                    count_installing(ctx, *count),
+                    stage_ratio(*stage),
+                ),
                 widgets::muted(p, ctx.t(stage.label())),
-                hint(
+                widgets::small(
                     p,
-                    format!("{} {}", ctx.t("Running for"), elapsed_phrase(ctx, *elapsed))
+                    format!("{} {}", ctx.t("Running for"), elapsed_phrase(ctx, *elapsed)),
                 ),
-                hint(
+                widgets::small(
                     p,
-                    ctx.t("You can keep using your PC. Please don't turn it off.")
+                    ctx.t("You can keep using your PC. Please don't turn it off."),
                 ),
-            ]
-            .spacing(8);
-            if stopping {
-                c = c.push(hint(p, ctx.t("Stopping after this step…")));
+            ];
+            items.push(if stopping {
+                widgets::small(p, ctx.t("Stopping after this step…"))
             } else {
-                c = c.push(buttons(vec![ghost(
+                buttons(vec![ghost(
                     p,
                     ctx.t("Stop after this step"),
                     Msg::StopInstall,
-                )]));
-            }
-            c.into()
+                )])
+            });
+            column(items).spacing(theme::S2).width(Length::Fill).into()
         }
         Updates::Done {
             result,
             note,
             technical: raw,
         } => {
-            let (tone, icon) = match result {
-                InstallResult::Installed => (Tone::Good, Icon::CheckCircle),
-                InstallResult::CouldNotFinish => (Tone::Bad, Icon::ShieldAlert),
-                _ => (Tone::Warn, Icon::AlertTriangle),
+            let tone = match result {
+                InstallResult::Installed => Tone::Good,
+                InstallResult::CouldNotFinish => Tone::Bad,
+                _ => Tone::Warn,
             };
             let detail = match (result, note) {
                 (InstallResult::CouldNotFinish, Some(n)) => ctx.t(n),
@@ -675,16 +624,27 @@ fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     ),
                 );
             }
-            column![
-                notice(p, tone, icon, ctx.t(result.title()), Some(detail)),
+            stack(vec![
+                outcome(
+                    state,
+                    p,
+                    Slot::Updates,
+                    tone,
+                    ctx.t(result.title()),
+                    Some(detail),
+                ),
                 buttons(actions),
-                technical(state, ctx, Detail::Updates, raw),
-            ]
-            .spacing(10)
-            .into()
+                details(state, ctx, Detail::Updates, raw),
+            ])
         }
     };
-    tile(p, head, body)
+    tile(
+        p,
+        Icon::Download,
+        ctx.t("Windows updates"),
+        ctx.t("Install important security updates."),
+        body,
+    )
 }
 
 fn count_line(ctx: &Ctx, n: usize) -> String {
@@ -705,43 +665,35 @@ fn count_installing(ctx: &Ctx, n: usize) -> String {
 
 fn tips_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::ShieldCheck,
-        ctx.t("PC health tips"),
-        ctx.t("See how your PC is doing and what could be better."),
-    );
     let body: El<'a> = match &state.tips {
         Tips::Pick => {
-            let tiles: Vec<El<'a>> = TipProfile::ALL
-                .iter()
-                .map(|t| profile_tile(ctx, *t))
-                .collect();
-            let mut it = tiles.into_iter();
-            let mut rows =
-                column![widgets::muted(p, ctx.t("What do you use this PC for?"))].spacing(10);
-            while let (Some(a), Some(b)) = (it.next(), it.next()) {
-                rows = rows.push(row![a, b].spacing(10));
+            let mut grid = column![widgets::muted(p, ctx.t("What do you use this PC for?"))]
+                .spacing(theme::S2)
+                .width(Length::Fill);
+            for chunk in TipProfile::ALL.chunks(2) {
+                grid = grid.push(
+                    row(chunk.iter().map(|t| profile_tile(ctx, *t)))
+                        .spacing(theme::S2)
+                        .width(Length::Fill),
+                );
             }
-            rows.push(hint(
+            grid.push(widgets::small(
                 p,
                 ctx.t("This only looks at your PC. Nothing is changed."),
             ))
             .into()
         }
-        Tips::Running(profile) => column![
-            working(p, ctx.t("Looking at your PC…")),
-            hint(
+        Tips::Running(profile) => stack(vec![
+            working(state, p, ctx.t("Looking at your PC…")),
+            widgets::small(
                 p,
                 format!(
                     "{}  ·  {}",
                     ctx.t(profile.title()),
                     ctx.t("This can take about a minute.")
-                )
+                ),
             ),
-        ]
-        .spacing(8)
-        .into(),
+        ]),
         Tips::Done(report) => {
             let good = report.count(TipState::Good);
             let look = report.count(TipState::Look);
@@ -750,7 +702,7 @@ fn tips_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 format!("{good} {}", ctx.t("look good")),
                 Tone::Good
             )]
-            .spacing(8)
+            .spacing(theme::S2)
             .align_y(Alignment::Center);
             if look > 0 {
                 summary = summary.push(widgets::pill(
@@ -759,34 +711,35 @@ fn tips_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     Tone::Warn,
                 ));
             }
-            let mut list = column![].spacing(0);
-            for (i, tip) in report.tips.iter().enumerate() {
-                list = list.push(tip_row(ctx, tip, i > 0));
-            }
-            column![
+            let list = column(report.tips.iter().map(|tip| tip_row(ctx, tip)))
+                .spacing(theme::S1)
+                .width(Length::Fill);
+            stack(vec![
                 row![
-                    text(ctx.t(report.profile.title()))
-                        .size(theme::BODY)
-                        .font(theme::SEMIBOLD)
-                        .color(p.text),
-                    iced::widget::space::horizontal(),
+                    strong(p, ctx.t(report.profile.title())),
+                    space::horizontal(),
                     summary
                 ]
-                .align_y(Alignment::Center),
-                list,
+                .align_y(Alignment::Center)
+                .into(),
+                list.into(),
                 buttons(vec![secondary(
                     p,
                     ctx.t("Choose another"),
                     Some(Icon::Refresh),
-                    Some(Msg::ChooseAnotherTips)
+                    Some(Msg::ChooseAnotherTips),
                 )]),
-                technical(state, ctx, Detail::Tips, &report.technical),
-            ]
-            .spacing(12)
-            .into()
+                details(state, ctx, Detail::Tips, &report.technical),
+            ])
         }
     };
-    widgets::card(p, column![head, body].spacing(14).width(Length::Fill)).into()
+    tile(
+        p,
+        Icon::ShieldCheck,
+        ctx.t("PC health tips"),
+        ctx.t("See how your PC is doing and what could be better."),
+        body,
+    )
 }
 
 fn profile_tile<'a>(ctx: &Ctx, profile: TipProfile) -> El<'a> {
@@ -797,69 +750,46 @@ fn profile_tile<'a>(ctx: &Ctx, profile: TipProfile) -> El<'a> {
         TipProfile::Work => Icon::Package,
         TipProfile::Extra => Icon::Lock,
     };
-    button(
+    widgets::list_button(
+        p,
         row![
-            widgets::icon(icon, 20.0, p.text_muted),
+            widgets::icon_badge(p, icon, Tone::Neutral),
             column![
-                text(ctx.t(profile.title()))
-                    .size(theme::BODY)
-                    .font(theme::SEMIBOLD)
-                    .color(p.text),
+                widgets::body(p, ctx.t(profile.title())),
                 widgets::small(p, ctx.t(profile.blurb()))
             ]
-            .spacing(2)
+            .spacing(theme::S1)
             .width(Length::Fill)
         ]
-        .spacing(12)
+        .spacing(theme::S3)
         .align_y(Alignment::Center),
+        tools(Msg::PickTips(profile)),
     )
-    .width(Length::Fill)
-    .padding(14)
-    .on_press(tools(Msg::PickTips(profile)))
-    .style(move |_, status| button::Style {
-        background: Some(Background::Color(if status == button::Status::Hovered {
-            p.surface_alt
-        } else {
-            p.surface
-        })),
-        text_color: p.text,
-        border: Border {
-            radius: theme::RADIUS_SMALL.into(),
-            width: 1.0,
-            color: p.border,
-        },
-        ..button::Style::default()
-    })
-    .into()
 }
 
-fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, divider_above: bool) -> El<'a> {
+fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip) -> El<'a> {
     let p = ctx.palette;
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
         TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
-    let content = row![
-        widgets::icon(icon, 18.0, p.tone(tone)),
-        column![
-            text(ctx.t(tip.title))
-                .size(theme::BODY)
-                .font(theme::MEDIUM)
-                .color(p.text),
-            widgets::small(p, words)
+    container(
+        row![
+            widgets::icon_badge(p, icon, tone),
+            column![
+                widgets::body(p, ctx.t(tip.title)),
+                widgets::small(p, words)
+            ]
+            .spacing(theme::S1)
+            .width(Length::Fill)
         ]
-        .spacing(2)
-        .width(Length::Fill)
-    ]
-    .spacing(12)
-    .align_y(Alignment::Start);
-    let row = container(content).padding([10, 0]).width(Length::Fill);
-    if divider_above {
-        column![divider(p), row].into()
-    } else {
-        row.into()
-    }
+        .spacing(theme::S3)
+        .align_y(Alignment::Center),
+    )
+    .padding([theme::S2, theme::S4])
+    .width(Length::Fill)
+    .into()
 }
 
 // ---------------------------------------------------------------------------
@@ -868,138 +798,155 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, divider_above: bool) -> El<'a> {
 
 fn password_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::Key,
-        ctx.t("Password generator"),
-        ctx.t("Make a strong password nobody can guess."),
-    );
-    let shown = match &state.password.secret {
-        Some(secret) if state.password.shown => secret.reveal().to_owned(),
-        Some(_) => "•".repeat(logic::PASSWORD_LENGTH),
-        None => String::new(),
-    };
     let body: El<'a> = if state.password.secret.is_none() {
-        column![
-            notice(
+        stack(vec![
+            widgets::inline_notice(
                 p,
                 Tone::Warn,
-                Icon::AlertTriangle,
-                ctx.t("We couldn't make a password"),
-                Some(ctx.t("Please try again.")),
+                format!(
+                    "{}. {}",
+                    ctx.t("We couldn't make a password"),
+                    ctx.t("Please try again.")
+                ),
             ),
             buttons(vec![secondary(
                 p,
                 ctx.t("Try again"),
                 Some(Icon::Refresh),
-                Some(Msg::NewPassword)
+                Some(Msg::NewPassword),
             )]),
-        ]
-        .spacing(10)
-        .into()
+        ])
     } else {
-        let box_ = container(
+        let shown = match &state.password.secret {
+            Some(secret) if state.password.shown => secret.reveal().to_owned(),
+            Some(_) => "•".repeat(logic::PASSWORD_LENGTH),
+            None => String::new(),
+        };
+        let field = container(
             text(shown)
-                .size(20)
+                .size(theme::H2)
                 .font(Font::MONOSPACE)
                 .color(p.text)
                 .wrapping(text::Wrapping::Glyph),
         )
-        .padding([14, 14])
+        .padding([theme::S2, theme::S3])
         .width(Length::Fill)
         .style(move |_| container::Style {
-            background: Some(Background::Color(p.surface_alt)),
-            border: Border {
-                radius: theme::RADIUS_SMALL.into(),
+            background: Some(iced::Background::Color(p.surface_alt)),
+            border: iced::Border {
+                radius: theme::R.into(),
                 width: 1.0,
                 color: p.border,
             },
             ..container::Style::default()
         });
-        column![
-            box_,
-            buttons(vec![
-                secondary(p, ctx.t("Copy"), None, Some(Msg::CopyPassword)),
-                secondary(
-                    p,
-                    ctx.t("Make another"),
-                    Some(Icon::Refresh),
-                    Some(Msg::NewPassword)
-                ),
-                ghost(
-                    p,
-                    if state.password.shown {
-                        ctx.t("Hide")
-                    } else {
-                        ctx.t("Show")
-                    },
-                    Msg::TogglePassword
-                ),
-            ]),
-            hint(p, ctx.t("Secblitz never saves your passwords.")),
-        ]
-        .spacing(10)
-        .into()
+        let eye = widgets::icon_button(
+            p,
+            ButtonKind::Secondary,
+            if state.password.shown {
+                Icon::EyeOff
+            } else {
+                Icon::Eye
+            },
+            Some(tools(Msg::TogglePassword)),
+        );
+        let copy: El<'a> = if state.password.copied {
+            container(anim::check_draw(MARK, p.good, state.shot(Slot::Copy)))
+                .center(theme::CONTROL)
+                .into()
+        } else {
+            widgets::icon_button(
+                p,
+                ButtonKind::Secondary,
+                Icon::Copy,
+                Some(tools(Msg::CopyPassword)),
+            )
+        };
+        stack(vec![
+            row![field, eye, copy]
+                .spacing(theme::S2)
+                .align_y(Alignment::Center)
+                .into(),
+            buttons(vec![secondary(
+                p,
+                ctx.t("Make another"),
+                Some(Icon::Refresh),
+                Some(Msg::NewPassword),
+            )]),
+            widgets::small(
+                p,
+                if state.password.copied {
+                    ctx.t("Copied. Paste it where you need it.")
+                } else {
+                    ctx.t("Secblitz never saves your passwords.")
+                },
+            ),
+        ])
     };
-    tile(p, head, body)
+    tile(
+        p,
+        Icon::Key,
+        ctx.t("Password generator"),
+        ctx.t("Make a strong password nobody can guess."),
+        body,
+    )
 }
 
 fn manager_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let head = head(
-        p,
-        Icon::Lock,
-        ctx.t("Password manager"),
-        ctx.t("Keep all your passwords safe in one place."),
-    );
     let body: El<'a> = match &state.bitwarden {
         Run::Idle => {
-            let mut c = column![
+            let mut items = vec![
                 buttons(vec![secondary(
                     p,
                     ctx.t("Install Bitwarden"),
                     Some(Icon::Download),
-                    ctx.broker.is_some().then_some(Msg::Ask(Sheet::Bitwarden))
+                    ctx.broker.is_some().then_some(Msg::Ask(Sheet::Bitwarden)),
                 )]),
-                hint(
+                widgets::small(
                     p,
-                    ctx.t("Bitwarden is free and trusted by millions of people.")
+                    ctx.t("Bitwarden is free and trusted by millions of people."),
                 ),
-            ]
-            .spacing(8);
-            if let Some(h) = reopen_hint(ctx) {
-                c = c.push(h);
-            }
-            c.into()
+            ];
+            items.extend(reopen_hint(ctx));
+            stack(items)
         }
-        Run::Working => working(p, ctx.t("Installing Bitwarden. This can take a minute…")),
-        Run::Done(Ok(())) => column![
-            notice(
+        Run::Working => working(
+            state,
+            p,
+            ctx.t("Installing Bitwarden. This can take a minute…"),
+        ),
+        Run::Done(Ok(())) => stack(vec![
+            outcome(
+                state,
                 p,
+                Slot::Bitwarden,
                 Tone::Good,
-                Icon::CheckCircle,
                 ctx.t("Bitwarden is installed"),
                 Some(ctx.t("Find it in your Start menu.")),
             ),
             buttons(vec![ghost(p, ctx.t("Done"), Msg::ClearBitwarden)]),
-        ]
-        .spacing(10)
-        .into(),
-        Run::Done(Err(raw)) => column![
-            notice(
+        ]),
+        Run::Done(Err(raw)) => stack(vec![
+            outcome(
+                state,
                 p,
+                Slot::Bitwarden,
                 Tone::Bad,
-                Icon::ShieldAlert,
                 ctx.t("We couldn't install Bitwarden"),
                 Some(ctx.t("Check your internet connection and try again.")),
             ),
             buttons(vec![ghost(p, ctx.t("Try again"), Msg::ClearBitwarden)]),
-            technical(state, ctx, Detail::Bitwarden, raw),
-        ]
-        .spacing(10)
-        .into(),
+            details(state, ctx, Detail::Bitwarden, raw),
+        ]),
     };
-    tile(p, head, body)
+    tile(
+        p,
+        Icon::Lock,
+        ctx.t("Password manager"),
+        ctx.t("Keep all your passwords safe in one place."),
+        body,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1008,8 +955,9 @@ fn manager_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
 
 fn settings_card<'a>(ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let mut list = column![].spacing(0);
-    for (i, shortcut) in Shortcut::ALL.iter().enumerate() {
+    let available = ctx.broker.is_some();
+    let mut list = column![].spacing(theme::S1).width(Length::Fill);
+    for shortcut in Shortcut::ALL {
         let (icon, title, desc) = match shortcut {
             Shortcut::WindowsUpdate => (
                 Icon::Download,
@@ -1032,37 +980,32 @@ fn settings_card<'a>(ctx: &'a Ctx) -> El<'a> {
                 "PIN, fingerprint and password",
             ),
         };
-        let item = row![
+        let content = row![
             widgets::icon_badge(p, icon, Tone::Neutral),
             column![
-                text(ctx.t(title))
-                    .size(theme::BODY)
-                    .font(theme::MEDIUM)
-                    .color(p.text),
+                widgets::body(p, ctx.t(title)),
                 widgets::small(p, ctx.t(desc))
             ]
-            .spacing(2)
+            .spacing(theme::S1)
             .width(Length::Fill),
-            secondary(
-                p,
-                ctx.t("Open"),
-                Some(Icon::ExternalLink),
-                ctx.broker.is_some().then_some(Msg::Open(*shortcut))
-            )
+            widgets::icon(Icon::ExternalLink, 16.0, p.text_muted),
         ]
-        .spacing(12)
+        .spacing(theme::S3)
         .align_y(Alignment::Center);
-        list = list.push(container(item).padding([10, 0]).width(Length::Fill));
-        if i + 1 < Shortcut::ALL.len() {
-            list = list.push(divider(p));
-        }
+        list = list.push(if available {
+            widgets::list_button(p, content, tools(Msg::Open(shortcut)))
+        } else {
+            container(content)
+                .padding([theme::S3, theme::S4])
+                .width(Length::Fill)
+                .into()
+        });
     }
-    let mut c = column![].spacing(8);
+    let mut c = column![].spacing(theme::S3).width(Length::Fill);
     if let Some(h) = reopen_hint(ctx) {
         c = c.push(h);
     }
-    c = c.push(list);
-    widgets::card(p, c).into()
+    widgets::card(p, c.push(list)).into()
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,7 +1037,6 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             vec![
                 ctx.t("Secblitz will look at Windows for damage. Nothing is changed."),
                 ctx.t("This can take a few minutes. You can keep using your PC."),
-                ctx.t("Secblitz will allow this one job to run now. Nothing else changes."),
             ],
             ctx.t("Start check"),
         ),
@@ -1105,7 +1047,6 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                 ctx.t("Secblitz will look for damaged Windows files and replace them with good copies."),
                 ctx.t("This can take 15–45 minutes. You can keep using your PC."),
                 ctx.t("Your own files and apps are not touched. This can't be undone automatically, but it only fixes files that belong to Windows."),
-                ctx.t("Secblitz will allow this one job to run now. Nothing else changes."),
             ],
             ctx.t("Repair now"),
         ),
@@ -1140,23 +1081,20 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ctx.t("Install"),
         ),
     };
-    let mut c = column![row![
+    let mut content = column![row![
         widgets::icon_badge(p, icon, Tone::Neutral),
-        text(title)
-            .size(theme::H2)
-            .font(theme::SEMIBOLD)
-            .color(p.text)
+        widgets::h2(p, title)
     ]
-    .spacing(12)
-    .align_y(Alignment::Center),]
-    .spacing(14)
+    .spacing(theme::S3)
+    .align_y(Alignment::Center)]
+    .spacing(theme::S3)
     .width(Length::Fill);
     for line in lines {
-        c = c.push(widgets::body(p, line));
+        content = content.push(widgets::body(p, line));
     }
     if sheet == Sheet::InstallUpdates {
         if let Updates::Found(found) = &state.updates {
-            let mut list = column![].spacing(6);
+            let mut list = column![].spacing(theme::S2);
             for u in found.updates.iter().take(5) {
                 list = list.push(
                     row![
@@ -1166,7 +1104,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                             .color(p.text)
                             .width(Length::Fill)
                     ]
-                    .spacing(8)
+                    .spacing(theme::S2)
                     .align_y(Alignment::Center),
                 );
             }
@@ -1181,23 +1119,24 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                     ),
                 ));
             }
-            c = c.push(list);
-            let mut details = found.technical.clone();
+            content = content.push(list);
+            let mut raw = found.technical.clone();
             let mut seen: Vec<&str> = Vec::new();
             for u in &found.updates {
                 if !u.license.is_empty() && !seen.contains(&u.license.as_str()) {
                     seen.push(&u.license);
-                    details.push('\n');
-                    details.push_str(&u.license);
+                    raw.push('\n');
+                    raw.push_str(&u.license);
                 }
             }
-            if details.len() > 4000 {
-                details.truncate(details.floor_char_boundary(4000));
+            if raw.len() > 4000 {
+                raw.truncate(raw.floor_char_boundary(4000));
             }
-            c = c.push(technical(state, ctx, Detail::Sheet, &details));
+            content = content.push(details(state, ctx, Detail::Sheet, &raw));
         }
     }
-    let actions = row![
+    let footer = row![
+        space::horizontal(),
         widgets::action(
             p,
             ButtonKind::Secondary,
@@ -1210,9 +1149,12 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ButtonKind::Primary,
             confirm_label,
             None,
-            Some(tools(Msg::Confirm))
+            Some(tools(Msg::Confirm)),
         ),
     ]
-    .spacing(10);
-    c.push(actions).into()
+    .spacing(theme::S2);
+    column![content, footer]
+        .spacing(theme::S6)
+        .width(Length::Fill)
+        .into()
 }
