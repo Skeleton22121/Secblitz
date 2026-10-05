@@ -29,7 +29,10 @@ OutputDir={#OutputPath}
 OutputBaseFilename=secblitz-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
-CloseApplications=no
+; The tray agent answers WM_QUERYENDSESSION/WM_ENDSESSION/WM_CLOSE by exiting, so
+; Restart Manager can close it. Updates also signal it through the quiesce event.
+CloseApplications=yes
+CloseApplicationsFilter=secblitz.exe
 RestartApplications=no
 ChangesAssociations=no
 UsePreviousTasks=no
@@ -61,12 +64,18 @@ fr.DesktopIcon=Gardez Secblitz à portée de main : créez un raccourci sur le b
 de.DesktopIcon=Secblitz griffbereit halten – Desktop-Verknüpfung erstellen
 pt.DesktopIcon=Tenha o Secblitz à mão - criar um atalho no ambiente de trabalho
 it.DesktopIcon=Secblitz a portata di mano: crea un collegamento sul desktop
-en.LaunchSecblitz=Open Secblitz - start the guided setup
-es.LaunchSecblitz=Abrir Secblitz: iniciar la configuración guiada
-fr.LaunchSecblitz=Ouvrir Secblitz : démarrer la configuration guidée
-de.LaunchSecblitz=Secblitz öffnen – geführte Einrichtung starten
-pt.LaunchSecblitz=Abrir o Secblitz - iniciar a configuração guiada
-it.LaunchSecblitz=Apri Secblitz: avvia la configurazione guidata
+en.LaunchSecblitz=Open Secblitz
+es.LaunchSecblitz=Abrir Secblitz
+fr.LaunchSecblitz=Ouvrir Secblitz
+de.LaunchSecblitz=Secblitz öffnen
+pt.LaunchSecblitz=Abrir o Secblitz
+it.LaunchSecblitz=Apri Secblitz
+en.TrayIcon=Show the Secblitz shield in the taskbar corner
+es.TrayIcon=Mostrar el escudo de Secblitz en la esquina de la barra de tareas
+fr.TrayIcon=Afficher le bouclier Secblitz dans le coin de la barre des tâches
+de.TrayIcon=Secblitz-Schild in der Ecke der Taskleiste anzeigen
+pt.TrayIcon=Mostrar o escudo do Secblitz no canto da barra de tarefas
+it.TrayIcon=Mostra lo scudo di Secblitz nell'angolo della barra delle applicazioni
 en.Monitor=Install the optional read-only monitor (starts at next Windows boot)
 es.Monitor=Instalar el monitor opcional de solo lectura (se inicia al reiniciar Windows)
 fr.Monitor=Installer le moniteur facultatif en lecture seule (au prochain démarrage de Windows)
@@ -83,6 +92,7 @@ it.Failed=Manutenzione di Secblitz non riuscita. Consulta il registro di install
 [Tasks]
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Check: DesktopDefault
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked; Check: DesktopOptedOut
+Name: "trayicon"; Description: "{cm:TrayIcon}"
 Name: "monitor"; Description: "{cm:Monitor}"; Flags: unchecked
 Name: "autoupdates"; Description: "{cm:AutoUpdates}"; Check: AutoUpdatesDefault
 Name: "autoupdates"; Description: "{cm:AutoUpdates}"; Flags: unchecked; Check: AutoUpdatesOptedOut
@@ -90,16 +100,27 @@ Name: "autoupdates"; Description: "{cm:AutoUpdates}"; Flags: unchecked; Check: A
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "secblitz.exe"; Flags: ignoreversion
 
+[Registry]
+; Per-machine logon entry for the unelevated tray agent; removed on uninstall.
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SecblitzTray"; ValueData: """{app}\secblitz.exe"" tray"; Flags: uninsdeletevalue; Tasks: trayicon
+
 [Icons]
 ; Ordinary launch: the application's asInvoker manifest and UAC flow own elevation.
 Name: "{commonprograms}\Secblitz"; Filename: "{app}\secblitz.exe"; WorkingDir: "{app}"
 Name: "{commondesktop}\Secblitz"; Filename: "{app}\secblitz.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
-; Inno creates/removes the owned .lnk. No wildcard [UninstallDelete].
+; Inno creates/removes the owned .lnk. No wildcard; only the fixed Status
+; directory (tray status file written by the monitor/app) is removed.
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\Status"
+
 [Run]
 ; Start Setup normally so Inno retains the original unelevated user context.
 ; runasoriginaluser cannot de-elevate an already-elevated Setup invocation.
-Filename: "{app}\secblitz.exe"; Parameters: "guide"; WorkingDir: "{app}"; Description: "{cm:LaunchSecblitz}"; Flags: nowait postinstall skipifsilent runasoriginaluser; Check: CanLaunchSecblitz
+Filename: "{app}\secblitz.exe"; WorkingDir: "{app}"; Description: "{cm:LaunchSecblitz}"; Flags: nowait postinstall skipifsilent runasoriginaluser; Check: CanLaunchSecblitz
+; Start the tray right away for the person who ran Setup (not for silent updates,
+; where the update worker restarts it in each session that had one).
+Filename: "{app}\secblitz.exe"; Parameters: "tray"; WorkingDir: "{app}"; Flags: nowait skipifsilent runasoriginaluser; Tasks: trayicon; Check: CanLaunchSecblitz
 
 [Code]
 { Embed the maintenance source in both Setup and Uninstall. Never execute a
@@ -276,9 +297,24 @@ begin
   if not Result then Log('Secblitz maintenance failed: ' + Action + ', code ' + IntToStr(Code));
 end;
 
+{ Politely ask a running tray agent (this session) to exit; never kill it. }
+procedure CloseTray;
+var Window: HWND; Tries: Integer;
+begin
+  Tries := 0;
+  Window := FindWindowByClassName('SecblitzTrayWindow');
+  while (Window <> 0) and (Tries < 20) do begin
+    PostMessage(Window, 16, 0, 0); { WM_CLOSE }
+    Sleep(250);
+    Tries := Tries + 1;
+    Window := FindWindowByClassName('SecblitzTrayWindow');
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  CloseTray;
   { Reject /DIR overrides too, not just directory-page edits. }
   if CompareText(ExpandConstant('{app}'), ExpandConstant('{autopf64}\Secblitz')) <> 0 then
   begin
@@ -351,6 +387,7 @@ begin
   Result := True;
   { Inno may call this once before its elevation relaunch. }
   if not IsAdmin then Exit;
+  CloseTray;
   try
     Result := Maintain('RemoveMonitor');
   except

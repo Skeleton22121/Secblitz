@@ -44,6 +44,11 @@ const DIRECTORY_SD: &str = "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0
 const APP_DIRECTORY_SD: &str =
     "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;LS)(A;OICI;0x1200a9;;;BU)";
 const BINARY_SD: &str = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;LS)(A;;0x1200a9;;;BU)";
+// Status directory: LocalService may modify (the monitor writes `status.json`),
+// Users may only list/read it (the unelevated tray). 0x1301bf = modify.
+const STATUS_LS_RIGHTS: u32 = 0x1301bf;
+const STATUS_DIRECTORY_SD: &str =
+    "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)(A;OICI;0x1200a9;;;BU)";
 const REPORT_SD: &str = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x12019f;;;LS)";
 const SERVICE_SD: &str =
     "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWLOCRRC;;;LS)(A;;CCLCSWLOCRRC;;;BU)";
@@ -356,6 +361,89 @@ fn inspect_descriptor(
     Ok(())
 }
 
+// Validate the Status directory: protected DACL, SYSTEM/Administrators full,
+// LocalService modify, Users read/execute, nothing else. This is a deliberate,
+// narrow exception to the Monitor-only LocalService write boundary.
+fn inspect_status_descriptor(sd: *mut c_void) -> Result<()> {
+    unsafe {
+        let mut owner = null_mut();
+        let mut acl = null_mut();
+        let mut defaulted = 0;
+        let mut present = 0;
+        ensure!(
+            GetSecurityDescriptorOwner(sd, &mut owner, &mut defaulted) != 0,
+            "Cannot inspect owner"
+        );
+        ensure!(
+            GetSecurityDescriptorDacl(sd, &mut present, &mut acl, &mut defaulted) != 0
+                && present != 0,
+            "Cannot inspect DACL"
+        );
+        let system = sid("S-1-5-18")?;
+        let admins = sid("S-1-5-32-544")?;
+        let local_service = sid("S-1-5-19")?;
+        let users = sid("S-1-5-32-545")?;
+        ensure!(
+            !owner.is_null()
+                && IsValidSid(owner) != 0
+                && (EqualSid(owner, system.0) != 0 || EqualSid(owner, admins.0) != 0),
+            "StatusOwnerUntrusted"
+        );
+        ensure!(
+            !acl.is_null() && IsValidAcl(acl) != 0,
+            "Missing/invalid DACL"
+        );
+        let mut control = 0;
+        let mut revision = 0;
+        ensure!(
+            GetSecurityDescriptorControl(sd, &mut control, &mut revision) != 0
+                && control & SE_DACL_PROTECTED != 0,
+            "StatusDaclUnprotected"
+        );
+        let mut seen = [false; 4];
+        for index in 0..(*acl).AceCount as u32 {
+            let mut ace = null_mut();
+            ensure!(GetAce(acl, index, &mut ace) != 0, "Cannot inspect ACE");
+            let header = &*(ace as *const ACE_HEADER);
+            ensure!(
+                header.AceSize as usize >= size_of::<ACCESS_ALLOWED_ACE>() && header.AceType == 0,
+                "StatusAclEntryUnsupported"
+            );
+            ensure!(header.AceFlags & 3 == 3, "Missing ACL propagation");
+            ensure!(
+                header.AceFlags
+                    & !(OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERITED_ACE) as u8
+                    == 0,
+                "StatusAceFlagsUnexpected"
+            );
+            let a = &*(ace as *const ACCESS_ALLOWED_ACE);
+            let trustee = &a.SidStart as *const u32 as *mut c_void;
+            let sid_bytes = header.AceSize as usize - 8;
+            ensure!(
+                sid_bytes >= 8
+                    && 8 + *(trustee.cast::<u8>().add(1)) as usize * 4 <= sid_bytes
+                    && IsValidSid(trustee) != 0,
+                "Invalid trustee SID"
+            );
+            let (slot, mask) = if EqualSid(trustee, system.0) != 0 {
+                (0, FILE_ALL_ACCESS)
+            } else if EqualSid(trustee, admins.0) != 0 {
+                (1, FILE_ALL_ACCESS)
+            } else if EqualSid(trustee, local_service.0) != 0 {
+                (2, STATUS_LS_RIGHTS)
+            } else if EqualSid(trustee, users.0) != 0 {
+                (3, RX)
+            } else {
+                bail!("StatusTrusteeUnexpected");
+            };
+            ensure!(a.Mask == mask, "StatusRightsUnexpected");
+            seen[slot] = true;
+        }
+        ensure!(seen.iter().all(|x| *x), "StatusTrusteesMissing");
+    }
+    Ok(())
+}
+
 struct Layout {
     root: PathBuf,
     held: Vec<File>,
@@ -426,6 +514,79 @@ impl Layout {
         self.held.push(f);
         Ok(())
     }
+    fn status_directory(
+        &mut self,
+        path: &Path,
+        create: bool,
+        created: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        if create {
+            let sd = descriptor(STATUS_DIRECTORY_SD)?;
+            let sa = attributes(&sd);
+            let p = wide(path)?;
+            if unsafe { CreateDirectoryW(p.as_ptr(), &sa) } == 0 {
+                let code = unsafe { GetLastError() };
+                ensure!(
+                    code == ERROR_ALREADY_EXISTS,
+                    "Create directory failed ({code})"
+                );
+            } else {
+                created.push(path.to_owned());
+            }
+        }
+        let f = open(
+            path,
+            READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
+            OPEN_EXISTING,
+            None,
+        )?;
+        let i = info(&f)?;
+        ensure!(
+            i.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                && i.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+            "StatusDirectoryInvalid"
+        );
+        unsafe {
+            let mut sd = null_mut();
+            let rc = GetSecurityInfo(
+                f.as_raw_handle(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut sd,
+            );
+            ensure!(rc == 0, "StatusAclUnreadable({rc})");
+            let _sd = Local(sd);
+            inspect_status_descriptor(sd)?;
+        }
+        self.held.push(f);
+        Ok(())
+    }
+}
+
+/// `<Program Files>\Secblitz\Status` when the running executable is the
+/// installed one; `None` for portable/dev copies.
+pub fn trusted_status_dir() -> Option<PathBuf> {
+    let root = base().ok()?.join("Secblitz");
+    let exe = std::env::current_exe().ok()?;
+    let parent = exe.parent()?;
+    parent
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&root.to_string_lossy())
+        .then(|| root.join("Status"))
+}
+
+/// Create (elevated) or validate the Status directory and return its path.
+pub fn ensure_status_dir() -> Result<PathBuf> {
+    let mut layout = Layout::parents()?;
+    let root = layout.root.clone();
+    layout.directory(&root, false, &mut Vec::new())?;
+    let status = root.join("Status");
+    layout.status_directory(&status, true, &mut Vec::new())?;
+    Ok(status)
 }
 
 fn manager(access: ServiceManagerAccess) -> Result<ServiceManager> {
@@ -462,6 +623,7 @@ pub fn install() -> Result<()> {
         layout.directory(&root, true, &mut created_dirs)?;
         let monitor = root.join("Monitor");
         layout.directory(&monitor, true, &mut created_dirs)?;
+        layout.status_directory(&root.join("Status"), true, &mut created_dirs)?;
         let binary = root.join("secblitz.exe");
         let source_path = std::env::current_exe()?;
         let mut source = open(&source_path, GENERIC_READ, OPEN_EXISTING, None)?;
@@ -965,6 +1127,14 @@ fn service_main(_: Vec<OsString>) {
         layout.directory(&root, false, &mut Vec::new())?;
         let monitor = root.join("Monitor");
         layout.directory(&monitor, false, &mut Vec::new())?;
+        // Best effort: an install predating the Status directory keeps working.
+        let status_dir = {
+            let d = root.join("Status");
+            layout
+                .status_directory(&d, false, &mut Vec::new())
+                .ok()
+                .map(|_| d)
+        };
         let mut report = open(
             &monitor.join("latest.json"),
             GENERIC_WRITE | READ_CONTROL,
@@ -1001,12 +1171,15 @@ fn service_main(_: Vec<OsString>) {
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            let bytes = snapshot?;
+            let (bytes, summary) = snapshot?;
             ensure!(bytes.len() <= REPORT_LIMIT, "Monitor report exceeded limit");
             report.seek(SeekFrom::Start(0))?;
             report.set_len(0)?;
             report.write_all(&bytes)?;
             report.sync_all()?;
+            if let Some(dir) = &status_dir {
+                let _ = crate::status::write_to(dir, &summary);
+            }
             let remaining = INTERVAL.saturating_sub(started.elapsed());
             let _ = receiver.recv_timeout(remaining);
         }
@@ -1020,13 +1193,14 @@ fn service_main(_: Vec<OsString>) {
 fn short(s: &str) -> String {
     s.chars().take(512).collect()
 }
-fn scan(stop: &AtomicBool) -> Result<Vec<u8>> {
+fn scan(stop: &AtomicBool) -> Result<(Vec<u8>, crate::status::Status)> {
     use serde_json::json;
     let start = Instant::now();
     let mut rows = Vec::new();
     let mut findings = Vec::new();
     let mut readiness = None;
     let mut incomplete = false;
+    let mut items: Vec<(String, crate::status::Item)> = Vec::new();
     match crate::platform::backend().map(crate::permissions::with_permissions) {
         Err(e) => {
             incomplete = true;
@@ -1045,12 +1219,17 @@ fn scan(stop: &AtomicBool) -> Result<Vec<u8>> {
                 }
                 let row = match backend.observe(&control.id) {
                     Ok(o) => {
+                        items.push((
+                            control.id.clone(),
+                            crate::status::classify(&control.id, &control.target, &o),
+                        ));
                         json!({"id":short(&control.id), "status":"observed", "eligible":o.eligible,
                         "value":short(&o.value.to_string()), "detail":short(&o.reason),
                         "effective":o.effective, "authority":o.authority})
                     }
                     Err(e) => {
                         incomplete = true;
+                        items.push((control.id.clone(), crate::status::Item::Unknown));
                         json!({"id":short(&control.id), "status":"unknown", "error":short(&e.to_string())})
                     }
                 };
@@ -1089,18 +1268,23 @@ fn scan(stop: &AtomicBool) -> Result<Vec<u8>> {
             Ok(())
         }
     }
+    let summary = crate::status::summarize(&items, !incomplete, crate::status::now());
     let mut out = Bounded(Vec::new());
     let snapshot = json!({"schema":1, "unix_time":SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         "incomplete":incomplete, "observations":rows, "findings":findings, "readiness":readiness});
     if serde_json::to_writer(&mut out, &snapshot).is_err() {
-        return Ok(b"{\"schema\":1,\"incomplete\":true,\"status\":\"unknown\",\"error\":\"report exceeded 64 KiB\"}".to_vec());
+        return Ok((b"{\"schema\":1,\"incomplete\":true,\"status\":\"unknown\",\"error\":\"report exceeded 64 KiB\"}".to_vec(), summary));
     }
-    Ok(out.0)
+    Ok((out.0, summary))
 }
 
 #[cfg(test)]
 #[path = "windows_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "status_tests.rs"]
+mod status_tests;
 
 #[cfg(test)]
 mod start_security_tests {
