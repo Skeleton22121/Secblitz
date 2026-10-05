@@ -1,5 +1,13 @@
+// GUI program: no console window is ever created.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 use secblitz::actions;
+pub(crate) mod advice;
+mod app;
+mod broker;
+mod gui;
 mod guided;
+mod launcher;
+mod tray;
 mod i18n;
 mod maintenance_cli;
 mod menu;
@@ -685,9 +693,31 @@ fn elevate_and_wait(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
+/// New GUI-era entry points, dispatched before the legacy CLI parser.
+/// OWNER: platform agent (final dispatch replaces the legacy CLI entirely).
+fn dispatch_gui(args: &[std::ffi::OsString], lang: Lang) -> Option<i32> {
+    let words: Vec<&str> = args.iter().skip(1).filter_map(|a| a.to_str()).collect();
+    let position = |flag: &str| words.iter().position(|w| *w == flag);
+    match words.iter().find(|w| !w.starts_with("--") && Lang::parse(w).is_none()) {
+        Some(&"gui") => {
+            let broker = position("--broker").and_then(|i| words.get(i + 1)).map(|s| s.to_string());
+            let start = position("--self-test")
+                .and_then(|i| words.get(i + 1))
+                .and_then(|s| gui::Page::parse(s));
+            let result = gui::run(gui::Options { lang, broker, start });
+            Some(if result.is_ok() { 0 } else { 1 })
+        }
+        Some(&"tray") => Some(tray::run(lang).unwrap_or(1)),
+        _ => None,
+    }
+}
+
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     let lang = selected_language(&args);
+    if let Some(code) = dispatch_gui(&args, lang) {
+        std::process::exit(code);
+    }
     let json_requested = args.iter().any(|a| a == "--json");
     let mut pause = false;
     let mut details = false;
