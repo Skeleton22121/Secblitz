@@ -132,6 +132,10 @@ struct Att {
 #[derive(Debug)]
 struct Other {
     key: String,
+    /// Control id or finding title the explanation is looked up by.
+    explain: String,
+    /// Findings are reported only; controls can be turned on.
+    report_only: bool,
     name: String,
     line: String,
     status: String,
@@ -144,6 +148,7 @@ struct Other {
 
 #[derive(Debug)]
 struct Prot {
+    id: String,
     name: String,
     line: String,
 }
@@ -199,6 +204,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(impact))
             };
             rows.protected.push(Prot {
+                id: r.id.clone(),
                 name: lang.control(&r.id),
                 line,
             });
@@ -214,6 +220,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         rows.others.push(other(
             ctx,
             rows.others.len(),
+            (r.id.as_str(), false),
             lang.control(&r.id),
             &a,
             bucket,
@@ -244,6 +251,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         rows.others.push(other(
             ctx,
             rows.others.len(),
+            (f.title.as_str(), true),
             ctx.t(a.label),
             &a,
             bucket,
@@ -254,9 +262,11 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
     rows
 }
 
+#[allow(clippy::too_many_arguments)]
 fn other(
     ctx: &Ctx,
     index: usize,
+    explain: (&str, bool),
     name: String,
     a: &advice::Advice,
     bucket: Bucket,
@@ -271,6 +281,8 @@ fn other(
     };
     Other {
         key: format!("other:{index}"),
+        explain: explain.0.to_owned(),
+        report_only: explain.1,
         name,
         line: ctx.t(a.next),
         status: ctx.t(a.status),
@@ -565,6 +577,19 @@ fn attention_row<'a>(
         nothing()
     };
     let toggle = Message::Fixes(Msg::Toggle(a.id.clone()));
+    let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
+    if let Some(t) = widgets::explain::toggle(ctx, "fixes", &a.id) {
+        tools = tools.push(t);
+    }
+    tools = tools.push(widgets::overflow_menu(
+        p,
+        vec![(
+            Icon::Info,
+            ctx.t(if open { "Hide details" } else { "Details" }),
+            Message::Fixes(Msg::Expand(a.id.clone())),
+            false,
+        )],
+    ));
     let head = line(
         Some(widgets::checkbox(
             p,
@@ -581,31 +606,22 @@ fn attention_row<'a>(
             trailing,
             Some(toggle),
         ),
-        widgets::overflow_menu(
-            p,
-            vec![(
-                Icon::Info,
-                ctx.t(if open { "Hide details" } else { "Details" }),
-                Message::Fixes(Msg::Expand(a.id.clone())),
-                false,
-            )],
-        ),
+        tools.into(),
     );
-    if !open {
-        return head;
+    let mut rows = column![head].spacing(theme::S1);
+    if let Some(inset) = widgets::explain::panel(ctx, "fixes", &a.id, false, INDENT) {
+        rows = rows.push(inset);
     }
-    column![
-        head,
-        expanded(
+    if open {
+        rows = rows.push(expanded(
             p,
             INDENT,
             Some(a.why.clone()),
             ctx.t("More details"),
-            a.tech.clone()
-        )
-    ]
-    .spacing(theme::S1)
-    .into()
+            a.tech.clone(),
+        ));
+    }
+    rows.into()
 }
 
 fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
@@ -634,6 +650,11 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
         Message::Fixes(Msg::Expand(o.key.clone())),
         false,
     ));
+    let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
+    if let Some(t) = widgets::explain::toggle(ctx, "fixes", &o.explain) {
+        tools = tools.push(t);
+    }
+    tools = tools.push(widgets::overflow_menu(p, menu));
     let head = line(
         None,
         widgets::row_item_tinted(
@@ -645,21 +666,29 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             widgets::pill(p, o.status.clone(), o.tone),
             None,
         ),
-        widgets::overflow_menu(p, menu),
+        tools.into(),
     );
-    if !open {
-        return head;
+    let mut rows = column![head].spacing(theme::S1);
+    if let Some(inset) =
+        widgets::explain::panel(ctx, "fixes", &o.explain, o.report_only, INDENT_PLAIN)
+    {
+        rows = rows.push(inset);
     }
-    column![
-        head,
-        expanded(p, INDENT_PLAIN, None, ctx.t("More details"), o.tech.clone())
-    ]
-    .spacing(theme::S1)
-    .into()
+    if open {
+        rows = rows.push(expanded(
+            p,
+            INDENT_PLAIN,
+            None,
+            ctx.t("More details"),
+            o.tech.clone(),
+        ));
+    }
+    rows.into()
 }
 
-fn protected_row<'a>(p: Palette, r: &Prot) -> Element<'a, Message> {
-    widgets::row_item_tinted(
+fn protected_row<'a>(ctx: &Ctx, r: &Prot) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let head = widgets::row_item_tinted(
         p,
         Some(Icon::Check),
         Some(Tone::Good),
@@ -667,7 +696,8 @@ fn protected_row<'a>(p: Palette, r: &Prot) -> Element<'a, Message> {
         Some(r.line.clone()),
         nothing(),
         None,
-    )
+    );
+    widgets::explain::with_disclosure(ctx, "fixes", &r.id, false, INDENT_PLAIN, head)
 }
 
 /// "See 12 more" / "Show less" under a truncated list.
@@ -952,7 +982,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         let shown = widgets::limited(&rows.protected, FIRST_ROWS, state.all_protected);
         let mut list = column![].spacing(theme::S1);
         for r in shown {
-            list = list.push(protected_row(p, r));
+            list = list.push(protected_row(ctx, r));
         }
         if let Some(m) = more(
             ctx,

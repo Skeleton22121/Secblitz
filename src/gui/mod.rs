@@ -126,6 +126,8 @@ pub struct Ctx {
     pub state_dir: Option<PathBuf>,
     pub prefs: app::settings::Prefs,
     pub toast: Option<(String, Tone)>,
+    /// Key of the one check row whose explanation is open (`widgets::explain`).
+    pub explain_open: Option<String>,
 }
 
 impl Ctx {
@@ -166,6 +168,8 @@ pub enum Message {
     Noop,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
+    /// Open or close the explanation under one check row (key from `widgets::explain::key`).
+    Explain(String),
     DismissToast,
     /// Slow clock used to auto-dismiss toasts.
     ToastTick(std::time::Instant),
@@ -315,6 +319,7 @@ impl App {
             state_dir: secblitz::platform::app_dir().ok(),
             prefs,
             toast: None,
+            explain_open: None,
         };
         let mut app = App {
             page: options.start.unwrap_or_default(),
@@ -348,6 +353,7 @@ impl App {
                     return Task::none();
                 }
                 self.page = page;
+                self.ctx.explain_open = None;
                 self.begin_entrance();
                 Task::batch([
                     self.enter_page(page),
@@ -387,9 +393,20 @@ impl App {
                     iced::window::close(id)
                 }
             }
+            Message::Explain(key) => {
+                // One explanation open at a time; pressing it again closes it.
+                self.ctx.explain_open = match self.ctx.explain_open.take() {
+                    Some(open) if open == key => None,
+                    _ => Some(key),
+                };
+                Task::none()
+            }
             Message::Escape => {
                 if self.fix.is_open() {
                     return fixflow::escape(&mut self.fix, &mut self.ctx);
+                }
+                if self.ctx.explain_open.take().is_some() {
+                    return Task::none();
                 }
                 match self.page {
                     Page::Debloat => debloat::escape(&mut self.debloat),

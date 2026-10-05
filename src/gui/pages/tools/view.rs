@@ -788,7 +788,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     } else {
         space::horizontal().width(0).into()
     };
-    widgets::row_item_tinted(
+    let head = widgets::row_item_tinted(
         p,
         Some(icon),
         Some(tone),
@@ -796,7 +796,14 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
         Some(words),
         action,
         None,
-    )
+    );
+    match &tip.explain {
+        // Tips only report: the third line says what the person can do.
+        Some(id) => {
+            widgets::explain::with_disclosure(ctx, "tips", id, true, widgets::explain::INDENT, head)
+        }
+        None => head,
+    }
 }
 
 // ---------------------------------------------------------------------------
