@@ -17,9 +17,21 @@ foreach ($path in @($BackendPath, $HardeningPath)) {
     if ($errors.Count) { throw ($errors | Out-String) }
     foreach ($node in $ast.EndBlock.Statements) {
         if ($node -is [Management.Automation.Language.FunctionDefinitionAst]) { . ([scriptblock]::Create($node.Extent.Text)) }
+        # Module-level constants of hardening.ps1 ($hName = literal), so new
+        # constants never need copying into this file by hand.
+        elseif ($path -eq $HardeningPath -and $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+                $node.Left.VariablePath.UserPath -cmatch '^h[A-Z]' -and
+                $node.Right.Extent.Text -notmatch '\$(?!true|false|null)') { . ([scriptblock]::Create($node.Extent.Text)) }
     }
 }
 $script:checks = 0
+# backend.tests.ps1 runs this file as a child script, so its doubles for these
+# cmdlets are visible here; start from the real ones so this suite is hermetic.
+function Get-ChildItem { Microsoft.PowerShell.Management\Get-ChildItem @args }
+function Test-Path { Microsoft.PowerShell.Management\Test-Path @args }
+function Get-Item { Microsoft.PowerShell.Management\Get-Item @args }
+function Get-ItemProperty { Microsoft.PowerShell.Management\Get-ItemProperty @args }
 # The script Rust actually runs is the backend definitions plus hardening.ps1:
 # it must parse as one unit and must not redefine (shadow) any backend function.
 $backendText = [IO.File]::ReadAllText($BackendPath)
@@ -381,7 +393,7 @@ Assert ($null -eq (HReadRegistry (HDef 'ssl3.client.default_off'))) 'absent valu
 $script:fakeKey = FakeDwordKey @{ Enabled = 0; DisabledByDefault = 1 }
 Assert ((HReadRegistry (HDef 'ssl3.client.enabled')) -eq 0 -and (HReadRegistry (HDef 'ssl3.client.default_off')) -eq 1) 'tls read'
 $script:calls = @()
-function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, $Force, $ErrorAction); $script:calls += ,@($Name, $Value) }
+function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, [switch]$Force, $ErrorAction); $script:calls += ,@($Name, $Value) }
 function Remove-ItemProperty { param($LiteralPath, $Name, $ErrorAction); $script:calls += ,@($Name, 'removed') }
 HSetRegistry (HDef 'ssl3.client.enabled') 4294967295
 HSetRegistry (HDef 'ssl3.client.enabled') 0
@@ -661,7 +673,7 @@ function Get-Service { param($Name, $ErrorAction); $o = [pscustomobject]@{ Statu
 function Stop-Service { param($Name, $ErrorAction); $script:calls += ,@('stop', $Name); $script:svcStatus = 'Stopped' }
 function Start-Service { param($Name, $ErrorAction); $script:calls += ,@('start', $Name); $script:svcStatus = 'Running' }
 function Set-Service { param($Name, $StartupType, $ErrorAction); $script:calls += ,@('type', $Name, $StartupType) }
-function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, $Force, $ErrorAction); $script:calls += ,@('reg', $Name, $Value) }
+function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, [switch]$Force, $ErrorAction); $script:calls += ,@('reg', $Name, $Value) }
 HSetService 'WinRM' 4
 Assert ((CallLog) -ceq 'stop:WinRM,type:WinRM:Disabled') "service stop and disable: $(CallLog)"
 $script:calls = @(); $script:svcStatus = 'Stopped'
