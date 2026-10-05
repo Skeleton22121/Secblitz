@@ -4,5 +4,6 @@ pub mod fixflow;
 pub mod history;
 pub mod home;
 pub mod personal;
+pub mod remove;
 pub mod settings;
 pub mod tools;
