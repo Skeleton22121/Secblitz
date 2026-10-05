@@ -22,7 +22,7 @@ use crate::app::{self, score::Score, worker};
 use crate::i18n::Lang;
 use iced::futures::channel::{mpsc, oneshot};
 use iced::futures::{Future, Stream};
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
 use pages::{debloat, fixes, fixflow, history, home, settings, tools};
@@ -163,6 +163,8 @@ pub enum Message {
     Escape,
     Toast(String, Tone),
     DismissToast,
+    /// Slow clock used to auto-dismiss toasts.
+    ToastTick(std::time::Instant),
     Home(home::Msg),
     Fixes(fixes::Msg),
     Fix(fixflow::Msg),
@@ -182,6 +184,8 @@ pub struct App {
     pub tools: tools::State,
     pub history: history::State,
     pub settings: settings::State,
+    /// The toast currently shown and when it was first seen (auto-dismiss).
+    toast_seen: Option<(String, std::time::Instant)>,
 }
 
 /// Run a blocking closure on a fresh thread and await its result.
@@ -260,6 +264,7 @@ impl App {
             tools: Default::default(),
             history: Default::default(),
             settings: Default::default(),
+            toast_seen: None,
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
@@ -293,6 +298,23 @@ impl App {
             }
             Message::DismissToast => {
                 self.ctx.toast = None;
+                self.toast_seen = None;
+                Task::none()
+            }
+            Message::ToastTick(now) => {
+                // Pages may set `ctx.toast` directly: stamp whatever is shown.
+                let current = self.ctx.toast.as_ref().map(|(text, _)| text.clone());
+                match (current, &self.toast_seen) {
+                    (None, _) => self.toast_seen = None,
+                    (Some(text), Some((seen, _))) if *seen == text => {}
+                    (Some(text), _) => self.toast_seen = Some((text, now)),
+                }
+                if let Some((_, since)) = &self.toast_seen {
+                    if now.duration_since(*since).as_secs() >= TOAST_SECONDS {
+                        self.ctx.toast = None;
+                        self.toast_seen = None;
+                    }
+                }
                 Task::none()
             }
             Message::Home(m) => home::update(&mut self.home, m, &mut self.ctx),
@@ -375,22 +397,46 @@ impl App {
             Page::History => history::view(&self.history, &self.ctx),
             Page::Settings => settings::view(&self.settings, &self.ctx),
         };
-        let main = container(scrollable(container(content).padding(32).width(Length::Fill)))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.bg)),
-                ..container::Style::default()
-            });
+        // Content is centred with a readable maximum width.
+        let column_content = container(content).max_width(PAGE_MAX_WIDTH).width(Length::Fill);
+        let main = container(scrollable(
+            container(column_content).center_x(Length::Fill).padding([32, 40]).width(Length::Fill),
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(p.bg)),
+            ..container::Style::default()
+        });
         let body = row![self.sidebar(), main];
         // The fix flow (review sheet / working / result) draws over any page.
-        fixflow::overlay(&self.fix, &self.ctx, body.into())
+        let base = fixflow::overlay(&self.fix, &self.ctx, body.into());
+        match &self.ctx.toast {
+            Some((message, tone)) => stack![
+                base,
+                container(widgets::toast(p, message.clone(), *tone))
+                    .center_x(Length::Fill)
+                    .align_bottom(Length::Fill)
+                    .padding(28)
+            ]
+            .into(),
+            None => base,
+        }
+    }
+
+    /// Colour of the small status dot next to Home.
+    fn verdict_tone(&self) -> Tone {
+        match self.ctx.score().map(|s| s.verdict()) {
+            Some(app::score::Verdict::Protected) => Tone::Good,
+            Some(app::score::Verdict::Attention) => Tone::Warn,
+            _ => Tone::Neutral,
+        }
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
         let p = self.ctx.palette;
         let brand = row![
-            widgets::icon(Icon::ShieldCheck, 26.0, p.brand),
+            widgets::brand_mark(26.0, p.text),
             text("Secblitz").size(20).font(theme::BOLD).color(p.text)
         ]
         .spacing(10)
@@ -399,34 +445,60 @@ impl App {
         for page in Page::ALL {
             let active = self.page == page;
             let fg = if active { p.text } else { p.text_muted };
-            let item = row![
-                widgets::icon(page.icon(), 18.0, if active { p.brand } else { p.text_muted }),
-                text(self.ctx.t(page.label())).size(theme::BODY).font(theme::MEDIUM).color(fg)
+            let mut item = row![
+                widgets::icon(page.icon(), 18.0, fg),
+                text(self.ctx.t(page.label()))
+                    .size(theme::BODY)
+                    .font(if active { theme::SEMIBOLD } else { theme::MEDIUM })
+                    .color(fg),
+                iced::widget::space::horizontal(),
             ]
             .spacing(12)
             .align_y(Alignment::Center);
-            nav = nav.push(
-                button(item)
-                    .width(Length::Fill)
-                    .padding([10, 14])
-                    .on_press(Message::Navigate(page))
-                    .style(move |_, status| button::Style {
-                        background: Some(Background::Color(if active {
-                            p.surface_alt
-                        } else if status == button::Status::Hovered {
-                            p.surface
-                        } else {
-                            iced::Color::TRANSPARENT
-                        })),
-                        text_color: fg,
-                        border: Border { radius: theme::RADIUS_SMALL.into(), ..Border::default() },
-                        ..button::Style::default()
-                    }),
-            );
+            if page == Page::Home && self.ctx.checking.is_none() && self.ctx.report.is_some() {
+                let dot = p.tone(self.verdict_tone());
+                item = item.push(container(iced::widget::space::horizontal()).width(8).height(8).style(
+                    move |_| container::Style {
+                        background: Some(Background::Color(dot)),
+                        border: Border { radius: 4.0.into(), ..Border::default() },
+                        ..container::Style::default()
+                    },
+                ));
+            }
+            let indicator = container(iced::widget::space::horizontal())
+                .width(3)
+                .height(18)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(if active { p.brand } else { iced::Color::TRANSPARENT })),
+                    border: Border { radius: 2.0.into(), ..Border::default() },
+                    ..container::Style::default()
+                });
+            let entry = button(item)
+                .width(Length::Fill)
+                .padding([9, 12])
+                .on_press(Message::Navigate(page))
+                .style(move |_, status| button::Style {
+                    background: Some(Background::Color(if active {
+                        p.surface
+                    } else if status == button::Status::Hovered {
+                        iced::Color { a: 0.7, ..p.surface }
+                    } else {
+                        iced::Color::TRANSPARENT
+                    })),
+                    text_color: fg,
+                    border: Border {
+                        radius: theme::RADIUS_SMALL.into(),
+                        width: if active { 1.0 } else { 0.0 },
+                        color: p.border,
+                    },
+                    shadow: iced::Shadow::default(),
+                    snap: true,
+                });
+            nav = nav.push(row![indicator, entry].spacing(4).align_y(Alignment::Center));
         }
         let version = widgets::small(p, format!("{} {}", self.ctx.t("Version"), env!("CARGO_PKG_VERSION")));
         container(column![brand, nav, iced::widget::space::vertical(), version].spacing(28))
-            .padding(20)
+            .padding([24, 14])
             .width(232)
             .height(Length::Fill)
             .style(move |_| container::Style {
@@ -445,8 +517,116 @@ impl App {
             } => Some(Message::Escape),
             _ => None,
         });
-        Subscription::batch([escape, home::subscription(&self.home, &self.ctx)])
+        let toast = if self.ctx.toast.is_some() {
+            ticks_500ms().map(Message::ToastTick)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([escape, toast, home::subscription(&self.home, &self.ctx)])
     }
+}
+
+/// Widest the page content grows on large windows.
+const PAGE_MAX_WIDTH: f32 = 960.0;
+/// How long a toast stays on screen.
+const TOAST_SECONDS: u64 = 4;
+
+fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant> + Send + 'static {
+    let (tx, rx) = mpsc::unbounded();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(period);
+        // The receiver is dropped when the subscription ends: stop then.
+        if tx.unbounded_send(std::time::Instant::now()).is_err() {
+            break;
+        }
+    });
+    rx
+}
+
+/// ~30 frames per second tick for animations (subscribe only while animating).
+pub fn ticks_30() -> Subscription<std::time::Instant> {
+    Subscription::run(|| ticker(std::time::Duration::from_millis(33)))
+}
+
+/// Slow tick used for time-outs such as toast dismissal.
+pub fn ticks_500ms() -> Subscription<std::time::Instant> {
+    Subscription::run(|| ticker(std::time::Duration::from_millis(500)))
+}
+
+/// Draw the application icon (white shield with a check on a dark tile) as RGBA.
+pub fn window_icon_rgba(size: u32) -> Vec<u8> {
+    // Shield outline in a 24x24 design grid.
+    const SHIELD: [(f32, f32); 10] = [
+        (12.0, 2.5),
+        (19.5, 5.5),
+        (19.5, 12.0),
+        (18.0, 15.8),
+        (15.0, 19.0),
+        (12.0, 21.5),
+        (9.0, 19.0),
+        (6.0, 15.8),
+        (4.5, 12.0),
+        (4.5, 5.5),
+    ];
+    fn inside(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
+        let mut hit = false;
+        let mut j = poly.len() - 1;
+        for i in 0..poly.len() {
+            let (xi, yi) = poly[i];
+            let (xj, yj) = poly[j];
+            if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+                hit = !hit;
+            }
+            j = i;
+        }
+        hit
+    }
+    fn near_segment(a: (f32, f32), b: (f32, f32), x: f32, y: f32, r: f32) -> bool {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let t = (((x - a.0) * dx + (y - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        let (px, py) = (a.0 + t * dx, a.1 + t * dy);
+        (x - px).powi(2) + (y - py).powi(2) <= r * r
+    }
+    const SS: u32 = 3; // supersampling per axis
+    let mut out = Vec::with_capacity((size * size * 4) as usize);
+    let scale = 24.0 / size as f32;
+    let tile_radius = 5.0f32;
+    for py in 0..size {
+        for px in 0..size {
+            let (mut tile, mut shield) = (0u32, 0u32);
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * scale;
+                    let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * scale;
+                    // Rounded tile covering the whole canvas.
+                    let cx = x.clamp(tile_radius, 24.0 - tile_radius);
+                    let cy = y.clamp(tile_radius, 24.0 - tile_radius);
+                    if (x - cx).powi(2) + (y - cy).powi(2) <= tile_radius * tile_radius {
+                        tile += 1;
+                        let tick = near_segment((8.8, 12.2), (11.0, 14.4), x, y, 0.9)
+                            || near_segment((11.0, 14.4), (15.4, 9.8), x, y, 0.9);
+                        if inside(&SHIELD, x, y) && !tick {
+                            shield += 1;
+                        }
+                    }
+                }
+            }
+            let n = SS * SS;
+            // Colours: tile #18181B, shield white.
+            let mix = |bg: u32, fg: u32| (bg * (tile - shield) + fg * shield) / tile.max(1);
+            out.extend_from_slice(&[
+                mix(0x18, 0xFF) as u8,
+                mix(0x18, 0xFF) as u8,
+                mix(0x1B, 0xFF) as u8,
+                (tile * 255 / n) as u8,
+            ]);
+        }
+    }
+    out
+}
+
+fn window_icon() -> Option<iced::window::Icon> {
+    iced::window::icon::from_rgba(window_icon_rgba(64), 64, 64).ok()
 }
 
 /// Build the tray summary from a fresh report.
@@ -487,8 +667,24 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     application.window(iced::window::Settings {
         size: iced::Size::new(1100.0, 720.0),
         min_size: Some(iced::Size::new(880.0, 600.0)),
+        icon: window_icon(),
         ..Default::default()
     })
     .run()
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_has_expected_size_and_shape() {
+        let px = window_icon_rgba(32);
+        assert_eq!(px.len(), 32 * 32 * 4);
+        let at = |x: usize, y: usize| &px[(y * 32 + x) * 4..(y * 32 + x) * 4 + 4];
+        assert_eq!(at(0, 0)[3], 0, "corner is transparent");
+        assert_eq!(at(16, 9)[..3], [255, 255, 255], "shield body is white");
+        assert!(window_icon().is_some());
+    }
+}
+
