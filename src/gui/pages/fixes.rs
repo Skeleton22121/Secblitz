@@ -2,7 +2,8 @@
 //! OWNER: fixes agent.
 //!
 //! Layout (docs/DESIGN-SYSTEM.md): borderless groups of `row_item`s. "Needs
-//! attention" is open; "Worth a look" is a plain group; "Can't check" and
+//! attention" is open, followed by the selectable "Privacy extras" (optional,
+//! never counted); "Worth a look" is a plain group; "Can't check" and
 //! "Protected" are collapsibles. Secondary actions live in an overflow menu.
 //! While a check runs the page shows the compact check hero plus the status
 //! ticker. Row text is translated and built once per check result (`Cache`)
@@ -119,6 +120,9 @@ struct Cached {
 #[derive(Debug, Default)]
 struct Rows {
     attention: Vec<Att>,
+    /// Optional privacy tidy-ups: selectable, but not protection gaps and
+    /// never counted (score::to_check leaves them out too).
+    privacy: Vec<Att>,
     others: Vec<Other>,
     protected: Vec<Prot>,
 }
@@ -194,7 +198,12 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         };
         let restart = ctx.catalog.restart.iter().any(|x| x == id)
             || r.detail.to_lowercase().contains("restart");
-        rows.attention.push(Att {
+        let list = if score::classify(r) == Class::Excluded {
+            &mut rows.privacy
+        } else {
+            &mut rows.attention
+        };
+        list.push(Att {
             id: id.clone(),
             name: lang.control(id),
             line,
@@ -590,11 +599,13 @@ fn attention_row<'a>(
     checked: bool,
     restart_label: &str,
     choice_label: &str,
+    extra: bool,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&a.id);
     let mut pills = row![].spacing(theme::S3).align_y(Alignment::Center);
-    if a.choice {
+    // Every privacy extra is a choice; its group already says so.
+    if a.choice && !extra {
         pills = pills.push(widgets::pill(p, choice_label.to_owned(), Tone::Neutral));
     }
     if a.restart {
@@ -628,8 +639,8 @@ fn attention_row<'a>(
         )),
         widgets::row_item_tinted(
             p,
-            Some(Icon::AlertTriangle),
-            Some(Tone::Warn),
+            Some(if extra { Icon::Eye } else { Icon::AlertTriangle }),
+            Some(if extra { Tone::Neutral } else { Tone::Warn }),
             a.name.clone(),
             Some(a.line.clone()),
             trailing,
@@ -908,48 +919,46 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Needs attention (open, selectable).
-    if rows.attention.is_empty() {
-        if ctx.checking.is_none() {
-            body = body.push(widgets::region(
+    // Needs attention (open, selectable), then optional privacy extras. One
+    // selection spans both; the Fix button sits on whichever group comes first.
+    if rows.attention.is_empty() && ctx.checking.is_none() {
+        body = body.push(widgets::region(
+            p,
+            widgets::empty_state(
                 p,
-                widgets::empty_state(
-                    p,
-                    Icon::ShieldCheck,
-                    ctx.t("Nothing needs fixing right now"),
-                    ctx.t("We'll tell you if anything changes."),
-                    None,
-                ),
-            ));
-        }
-    } else {
-        let all: Vec<String> = rows.attention.iter().map(|a| a.id.clone()).collect();
+                Icon::ShieldCheck,
+                ctx.t("Nothing needs fixing right now"),
+                ctx.t("We'll tell you if anything changes."),
+                None,
+            ),
+        ));
+    }
+    if !rows.attention.is_empty() || !rows.privacy.is_empty() {
+        let all: Vec<String> = rows
+            .attention
+            .iter()
+            .chain(&rows.privacy)
+            .map(|a| a.id.clone())
+            .collect();
         let chosen = selection(state, ctx, &all);
         let n = chosen.len();
         let restart_label = ctx.t("Restart needed");
         let choice_label = ctx.t("Your choice");
-        let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
-        let mut list: Vec<Element<'a, Message>> = shown
-            .iter()
-            .map(|a| {
-                attention_row(
-                    state,
-                    ctx,
-                    a,
-                    chosen.contains(&a.id),
-                    &restart_label,
-                    &choice_label,
-                )
-            })
-            .collect();
-        if let Some(m) = more(
-            ctx,
-            rows.attention.len(),
-            state.all_attention,
-            Msg::AllAttention,
-        ) {
-            list.push(m);
-        }
+        let rows_of = |list: &[Att], extra: bool| -> Vec<Element<'a, Message>> {
+            list.iter()
+                .map(|a| {
+                    attention_row(
+                        state,
+                        ctx,
+                        a,
+                        chosen.contains(&a.id),
+                        &restart_label,
+                        &choice_label,
+                        extra,
+                    )
+                })
+                .collect()
+        };
         let count = match n {
             0 => ctx.t("Nothing selected"),
             1 => ctx.t("1 selected"),
@@ -969,25 +978,55 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 Message::Fixes(Msg::SelectAll),
             )
         };
-        let trailing = row![
-            widgets::action(
+        let mut trailing = Some(
+            row![
+                widgets::action(
+                    p,
+                    ButtonKind::Primary,
+                    ctx.t("Fix selected"),
+                    Some(Icon::Wrench),
+                    (ready && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
+                ),
+                widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
+            ]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center),
+        );
+        if !rows.attention.is_empty() {
+            let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
+            let mut list = rows_of(shown, false);
+            if let Some(m) = more(
+                ctx,
+                rows.attention.len(),
+                state.all_attention,
+                Msg::AllAttention,
+            ) {
+                list.push(m);
+            }
+            body = body.push(widgets::group(
                 p,
-                ButtonKind::Primary,
-                ctx.t("Fix selected"),
-                Some(Icon::Wrench),
-                (ready && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
-            ),
-            widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
-        ]
-        .spacing(theme::S1)
-        .align_y(Alignment::Center);
-        body = body.push(widgets::group(
-            p,
-            ctx.t("Needs your attention"),
-            Some(count),
-            Some(trailing.into()),
-            list,
-        ));
+                ctx.t("Needs your attention"),
+                Some(count.clone()),
+                trailing.take().map(Into::into),
+                list,
+            ));
+        }
+        if !rows.privacy.is_empty() {
+            let note = ctx.t("Optional. Not part of your protection score.");
+            // Without attention rows this group carries the selection count too.
+            let subtitle = if trailing.is_some() {
+                format!("{note} · {count}")
+            } else {
+                note
+            };
+            body = body.push(widgets::group(
+                p,
+                ctx.t("Privacy extras"),
+                Some(subtitle),
+                trailing.take().map(Into::into),
+                rows_of(&rows.privacy, true),
+            ));
+        }
     }
 
     let bucket =
