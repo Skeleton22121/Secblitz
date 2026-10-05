@@ -49,6 +49,16 @@ impl Shortcut {
         Self::Encryption,
         Self::SignIn,
     ];
+    /// The Settings page a tip's "open" action points at, when the list has one.
+    pub fn from_action(action: actions::Action) -> Option<Self> {
+        match action {
+            actions::Action::OpenWindowsUpdate => Some(Self::WindowsUpdate),
+            actions::Action::OpenWindowsSecurity => Some(Self::WindowsSecurity),
+            actions::Action::OpenEncryptionSettings => Some(Self::Encryption),
+            actions::Action::OpenSignInSettings => Some(Self::SignIn),
+            _ => None,
+        }
+    }
     fn request(self) -> broker::Request {
         match self {
             Self::WindowsUpdate => broker::Request::OpenWindowsUpdate,

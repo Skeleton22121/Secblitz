@@ -778,7 +778,8 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
                 ctx.t("{n} worth a look").replace("{n}", &look.to_string())
             );
         }
-        let list = column(report.tips.iter().map(|tip| tip_row(ctx, tip)))
+        let scanning = matches!(state.scan, Run::Working);
+        let list = column(report.tips.iter().map(|tip| tip_row(ctx, tip, scanning)))
             .spacing(theme::S1)
             .width(Length::Fill);
         out.push(widgets::collapsible(
@@ -793,12 +794,31 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     out
 }
 
-fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip) -> El<'a> {
+fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     let p = ctx.palette;
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
         TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
+    };
+    // One compact action: the usual scan (after its own confirmation), or the
+    // Windows page that helps. Nothing starts without the person's say-so.
+    let action: El<'a> = if tip.state != TipState::Look {
+        space::horizontal().width(0).into()
+    } else if tip.scan {
+        secondary(
+            p,
+            ctx.t("Scan now"),
+            (!scanning).then_some(Msg::Ask(Sheet::Scan)),
+        )
+    } else if let Some(shortcut) = tip.open.and_then(Shortcut::from_action) {
+        secondary(
+            p,
+            ctx.t("Open"),
+            ctx.broker.is_some().then_some(Msg::Open(shortcut)),
+        )
+    } else {
+        space::horizontal().width(0).into()
     };
     widgets::row_item_tinted(
         p,
@@ -806,7 +826,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip) -> El<'a> {
         Some(tone),
         ctx.t(tip.title),
         Some(words),
-        space::horizontal().width(0),
+        action,
         None,
     )
 }

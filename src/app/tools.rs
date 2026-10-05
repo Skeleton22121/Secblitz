@@ -919,6 +919,8 @@ impl TipProfile {
                 P::SmartScreen,
                 P::UpdatePolicy,
                 P::HostsFile,
+                P::Autostart,
+                P::AccountSetup,
             ],
             Self::Gaming => &[
                 P::UpdateCache,
@@ -932,6 +934,8 @@ impl TipProfile {
                 P::SecureBootCerts,
                 P::DefenderProtection,
                 P::UpdatePolicy,
+                P::Autostart,
+                P::WifiSecurity,
             ],
             Self::Work => &[
                 P::UpdateCache,
@@ -953,6 +957,10 @@ impl TipProfile {
                 P::Sharing,
                 P::AccountHygiene,
                 P::FirewallRules,
+                P::Autostart,
+                P::AccountSetup,
+                P::WifiSecurity,
+                P::DnsEncryption,
             ],
             Self::Extra => &[
                 P::DefenderHealth,
@@ -976,6 +984,11 @@ impl TipProfile {
                 P::AccountHygiene,
                 P::Sharing,
                 P::FirewallRules,
+                P::Autostart,
+                P::AccountSetup,
+                P::WindowsHello,
+                P::WifiSecurity,
+                P::DnsEncryption,
             ],
         }
     }
@@ -1019,6 +1032,11 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
         P::AccountHygiene => "Old and hidden accounts",
         P::Sharing => "Shared folders",
         P::FirewallRules => "Apps allowed through the firewall",
+        P::AccountSetup => "Your everyday account",
+        P::WindowsHello => "PIN and Windows Hello",
+        P::DnsEncryption => "Private internet lookups",
+        P::WifiSecurity => "Wi-Fi protection",
+        P::Autostart => "Programs that start by themselves",
     }
 }
 
@@ -1058,6 +1076,11 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::AccountHygiene => "Turn off hidden or unused accounts on this PC.",
         P::Sharing => "Stop sharing folders you don't need.",
         P::FirewallRules => "Some apps in your personal folders are allowed through the firewall. Remove ones you don't know.",
+        P::AccountSetup => "Use a normal account every day, and turn on Find my device on a laptop.",
+        P::WindowsHello => "Add a PIN or Windows Hello in Sign-in options for faster, safer sign-in.",
+        P::DnsEncryption => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
+        P::WifiSecurity => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
+        P::Autostart => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
     }
 }
 
@@ -1073,17 +1096,22 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "defender.scan_age" => "Your PC hasn't been scanned for a while. Run a quick scan in Windows Security.",
         "smartscreen.apps" => "Turn on warnings for unknown downloads in Windows Security.",
         "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Ask whoever set up this PC.",
-        "update.auto_policy_disabled" => "Automatic updates are switched off. Turn them back on in Windows Update.",
         "update.paused" => "Updates are paused. Resume them in Windows Update.",
         "update.reboot_overdue" => "Restart your PC to finish installing updates.",
         "ps.v2_engine" => "An old Windows tool that attackers like to use is still installed. Remove it in Windows Features.",
         "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
         "persistence.wmi_subscriptions" => "Something is set to run quietly in the background. Ask someone you trust to look at it.",
         "services.unquoted_paths" => "A background program has a risky setup. Ask someone you trust to look at it.",
-        "accounts.builtin_administrator" => "A hidden administrator account is switched on. Turn it off if you don't use it.",
         "accounts.stale_enabled" => "Some old accounts are still switched on. Remove the ones nobody uses.",
         "smb.shares_exposed" => "Some folders are shared with everyone on your network. Stop sharing what you don't need.",
         "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.",
+        "accounts.daily_admin" => "You use an administrator account every day. Make a normal account for daily use.",
+        "accounts.hello_configured" => "No PIN or Windows Hello is set up. Add one in Sign-in options.",
+        "accounts.find_my_device" => "Find my device is off. Turn it on in Settings so you can find a lost laptop.",
+        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Look in Core isolation in Windows Security.",
+        "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
+        "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
+        "persistence.run_and_tasks" => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
         _ => return None,
     })
 }
@@ -1094,7 +1122,6 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     match rule_id {
         "os.feature_release_support"
         | "boot.secure_boot_certs"
-        | "update.auto_policy_disabled"
         | "update.paused"
         | "update.reboot_overdue" => Some(Action::OpenWindowsUpdate),
         "defender.tamper_protection"
@@ -1102,12 +1129,17 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         | "defender.exclusions_risky"
         | "defender.scan_age"
         | "smartscreen.apps"
-        | "smartscreen.browser_policy" => Some(Action::OpenWindowsSecurity),
-        "accounts.builtin_administrator" | "accounts.stale_enabled" => {
-            Some(Action::OpenSignInSettings)
-        }
+        | "smartscreen.browser_policy"
+        | "vbs.kernel_stack_protection" => Some(Action::OpenWindowsSecurity),
+        "accounts.stale_enabled" | "accounts.hello_configured" => Some(Action::OpenSignInSettings),
         _ => None,
     }
+}
+
+/// Checks where the Tools page can offer its existing "scan for viruses" job
+/// right in the tip. Nothing new is started: the person confirms the usual sheet.
+pub fn rule_scan(rule_id: &str) -> bool {
+    matches!(rule_id, "defender.scan_age" | "defender.threats")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1124,6 +1156,8 @@ pub struct Tip {
     pub advice: &'static str,
     /// Windows page that helps with a `Look` tip, shown as a button.
     pub open: Option<secblitz::actions::Action>,
+    /// A `Look` tip that the Tools page's own quick scan can help with.
+    pub scan: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1180,6 +1214,10 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .iter()
             .filter(|a| a.status == diag::Status::Attention)
             .find_map(|a| rule_advice(&a.rule.id).map(|text| (text, rule_open(&a.rule.id))));
+        let scan = probe
+            .assessments
+            .iter()
+            .any(|a| a.status == diag::Status::Attention && rule_scan(&a.rule.id));
         let look = state == TipState::Look;
         tips.push(Tip {
             title: tip_title(id),
@@ -1197,6 +1235,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 }
                 (true, None, _) => None,
             },
+            scan: look && scan,
         });
     }
     let rank = |s: TipState| match s {
@@ -1640,17 +1679,22 @@ mod tests {
             "defender.scan_age",
             "smartscreen.apps",
             "smartscreen.browser_policy",
-            "update.auto_policy_disabled",
             "update.paused",
             "update.reboot_overdue",
             "ps.v2_engine",
             "net.hosts_file",
             "persistence.wmi_subscriptions",
             "services.unquoted_paths",
-            "accounts.builtin_administrator",
             "accounts.stale_enabled",
             "smb.shares_exposed",
             "firewall.user_dir_inbound_allow",
+            "accounts.daily_admin",
+            "accounts.hello_configured",
+            "accounts.find_my_device",
+            "vbs.kernel_stack_protection",
+            "net.dns_encryption",
+            "net.wifi_security",
+            "persistence.run_and_tasks",
         ] {
             let text = rule_advice(rule).expect(rule);
             assert_no_dev_terms(text);
