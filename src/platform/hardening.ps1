@@ -93,7 +93,10 @@ function HReadDefenderPref() {
     $p = Get-MpPreference
     $out = @{}
     foreach ($def in @($spec.keys)) {
-        $raw = $p.($def.name)
+        # Newer Defender platforms drop retired preferences (for example
+        # DisableIntrusionPreventionSystem); a missing property reads as unset.
+        $prop = $p.PSObject.Properties[$def.name]
+        $raw = if ($null -ne $prop) { $prop.Value } else { $null }
         if ($def.name -ceq 'MAPSReporting') { $out[$def.name] = HEnumNumber $raw $hMaps }
         elseif ($def.name -ceq 'PUAProtection') { $out[$def.name] = HEnumNumber $raw $hPua }
         elseif ($def.name -ceq 'EnableNetworkProtection') {
@@ -128,16 +131,39 @@ function HReadAsr() {
     }
     return $out
 }
-function HAdsiPolicy() {
-    $d = [ADSI]('WinNT://' + [Environment]::MachineName)
-    if ([string]$d.SchemaClassName -cne 'Domain') { throw 'Local account policy is not readable' }
-    return $d
+function HNetModals() {
+    # Documented NetUserModalsGet/Set (netapi32) for the local account policy.
+    # ADSI cannot reach it on workgroup PCs. Reflection.Emit creates only a
+    # P/Invoke stub: no Add-Type, so no csc.exe child process.
+    if ($null -ne ('Secblitz.NetModals' -as [type])) { return }
+    $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('Secblitz.NetModals'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $module = $assembly.DefineDynamicModule('Secblitz.NetModals')
+    $type = $module.DefineType('Secblitz.NetModals', [Reflection.TypeAttributes]'Public, Abstract, Sealed')
+    $dll = [IO.Path]::Combine($env:SystemRoot, 'System32\netapi32.dll')
+    $signatures = @(
+        @{ name = 'NetUserModalsGet'; args = [Type[]]@([IntPtr], [uint32], [IntPtr].MakeByRefType()) },
+        @{ name = 'NetUserModalsSet'; args = [Type[]]@([IntPtr], [uint32], [IntPtr], [uint32].MakeByRefType()) },
+        @{ name = 'NetApiBufferFree'; args = [Type[]]@([IntPtr]) }
+    )
+    foreach ($sig in $signatures) {
+        $method = $type.DefinePInvokeMethod($sig.name, $dll, $sig.name, [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [uint32], $sig.args, [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+        $method.SetImplementationFlags($method.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+    }
+    $null = $type.CreateType()
+}
+function HLockoutInfo() {
+    # Level 3: USER_MODALS_INFO_3 { duration; observation window; threshold }.
+    HNetModals
+    $buffer = [IntPtr]::Zero
+    $status = [Secblitz.NetModals]::NetUserModalsGet([IntPtr]::Zero, [uint32]3, [ref]$buffer)
+    if ($status -ne 0 -or $buffer -eq [IntPtr]::Zero) { throw 'Lockout threshold is not readable' }
+    try { $info = @(0, 4, 8 | ForEach-Object { [Runtime.InteropServices.Marshal]::ReadInt32($buffer, $_) }) }
+    finally { $null = [Secblitz.NetModals]::NetApiBufferFree($buffer) }
+    if ($info[2] -lt 0) { throw 'Lockout threshold is not readable' }
+    return $info
 }
 function HReadLockout() {
-    $d = HAdsiPolicy
-    $n = $d.Properties['MaxBadPasswordsAllowed'].Value
-    if ($null -eq $n -or $n -isnot [int]) { throw 'Lockout threshold is not readable' }
-    return @{ LockoutThreshold = [int]$n }
+    return @{ LockoutThreshold = [int](HLockoutInfo)[2] }
 }
 function HBuiltinAdmin() {
     Load 'Microsoft.PowerShell.LocalAccounts'
@@ -565,9 +591,18 @@ function HSetAsr($def, $v) {
     Add-MpPreference -AttackSurfaceReductionRules_Ids $def.name -AttackSurfaceReductionRules_Actions $action
 }
 function HSetLockout($def, $v) {
-    $d = HAdsiPolicy
-    $d.Put('MaxBadPasswordsAllowed', [int]$v)
-    $d.SetInfo()
+    # Level 3 carries all three lockout fields: write back the current duration
+    # and observation window unchanged, with only the new threshold.
+    $info = HLockoutInfo
+    $buffer = [Runtime.InteropServices.Marshal]::AllocHGlobal(12)
+    try {
+        [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 0, $info[0])
+        [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 4, $info[1])
+        [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 8, [int]$v)
+        [uint32]$field = 0
+        $status = [Secblitz.NetModals]::NetUserModalsSet([IntPtr]::Zero, [uint32]3, $buffer, [ref]$field)
+        if ($status -ne 0) { throw "Lockout threshold could not be set (status $status)" }
+    } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer) }
 }
 function HSetBuiltinAdmin($def, $v) {
     $a = HBuiltinAdmin

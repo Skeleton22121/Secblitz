@@ -251,6 +251,9 @@ MakeSpec '{"id":"defender.script_nis","source":"DefenderPref","dynamic":false,"r
 $script:mp = [pscustomobject]@{ DisableScriptScanning = $false; DisableIntrusionPreventionSystem = $null }
 $r = HRead
 Assert ($r['DisableIntrusionPreventionSystem'] -eq 0 -and !(HAnyUnsafe $r)) 'unset prevention preference means on'
+$script:mp = [pscustomobject]@{ DisableScriptScanning = $false }
+$r = HRead
+Assert ($r['DisableIntrusionPreventionSystem'] -eq 0 -and !(HAnyUnsafe $r)) 'retired prevention preference (missing property) means on'
 $script:mp = [pscustomobject]@{ DisableScriptScanning = 'yes'; DisableIntrusionPreventionSystem = $false }
 Reject { HRead } 'readable boolean'
 

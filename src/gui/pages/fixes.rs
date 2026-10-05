@@ -222,7 +222,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             });
             continue;
         }
-        let (bucket, tone) = if a.status == "Managed elsewhere" {
+        let (bucket, tone) = if class == Class::Managed {
             (Bucket::Managed, Tone::Neutral)
         } else if class == Class::Excluded {
             (Bucket::GoodToKnow, Tone::Neutral)
@@ -247,16 +247,13 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         if a.group == Group::Protected {
             continue;
         }
-        let (bucket, tone) =
-            if a.status == "Managed elsewhere" || a.step == NextStep::ReviewWithAdministrator {
-                (Bucket::Managed, Tone::Neutral)
-            } else if score::is_good_to_know(f) {
-                (Bucket::GoodToKnow, Tone::Neutral)
-            } else if a.step == NextStep::CheckAgain {
-                (Bucket::Unavailable, Tone::Neutral)
-            } else {
-                (Bucket::Look, Tone::Warn)
-            };
+        // Same classes as the count (score::to_check), so they always agree.
+        let (bucket, tone) = match score::classify_finding(f) {
+            Class::Managed => (Bucket::Managed, Tone::Neutral),
+            Class::Excluded => (Bucket::GoodToKnow, Tone::Neutral),
+            Class::Unknown => (Bucket::Unavailable, Tone::Neutral),
+            Class::Protected | Class::Fixable | Class::Review => (Bucket::Look, Tone::Warn),
+        };
         rows.others.push(other(
             ctx,
             rows.others.len(),
