@@ -125,21 +125,26 @@ servers come before Quad9.
 ### Lists
 
 Downloaded by the service once a day, over HTTPS from a fixed set of URLs
-compiled into the binary. Redirects are refused and each file is size-capped
-(16 MiB). The last good compiled set is kept on disk, so the filter works
+compiled into the binary. Redirects are refused, and each file is size-capped, both as
+downloaded (gzip) and unpacked (16 MiB for most lists, 128 MiB for the threat feeds). The last good compiled set is kept on disk, so the filter works
 offline and after a restart. All these lists are GPL or similar; Secblitz
 downloads them and never ships them.
 
 | Switch | Built from |
 |---|---|
-| Ads | AdGuard DNS filter (registry id 1), minus every domain classified as tracking |
+| Ads | AdGuard DNS filter (registry id 1) entries that are not classified as tracking, plus every entry that also appears in an ad list (AdGuard Base, AdGuard Mobile Ads or EasyList) |
 | Tracking and telemetry | AdGuard DNS filter entries that also appear in AdGuard Tracking Protection or EasyPrivacy, plus HaGeZi's Windows/Office Tracker Blocklist (id 63) |
 | Dangerous websites | HaGeZi's Threat Intelligence Feeds (id 44): phishing, malware, scam and cryptojacking domains |
 
 The AdGuard DNS filter is one merged list of ads and trackers (about 178,000
 domains, no markers saying which is which). Classifying entries with AdGuard's
-own tracking lists keeps AdGuard's DNS-specific curation and exclusions for
-both switches. HaGeZi's Threat Intelligence Feeds (owner's choice) hold about
+own tracking and ad lists keeps AdGuard's DNS-specific curation and exclusions for
+both switches. A domain that is both an ad server and a tracker (for example
+doubleclick.net, criteo.com, taboola.com) is in both switches, so "Block ads"
+alone still stops the big ad networks. Checked on 2026-10-05: of 177,733 entries,
+109,412 are tracking and 71,091 are ads (2,770 in both). The classifier lists
+are refreshed weekly; the lists that block are refreshed daily. Until the
+classifier lists are downloaded, both switches use the whole AdGuard DNS filter. HaGeZi's Threat Intelligence Feeds (owner's choice) hold about
 2.5 million domains: a 13 MB compressed download (52 MB unpacked), about 20 MB
 of memory as 64-bit hashes, and under a second to rebuild. To spare metered
 and mobile connections, no list is refreshed while Windows reports the
