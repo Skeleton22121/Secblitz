@@ -104,3 +104,72 @@ per redraw.
 - Apple, [Human Interface Guidelines: Motion](https://developer.apple.com/design/human-interface-guidelines/motion): purposeful, brief motion; honour Reduce Motion.
 - Microsoft, [SPI_GETCLIENTAREAANIMATION](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow): the "Show animations in Windows" setting.
 - Microsoft, [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (MIT).
+
+## Visuals
+
+Round 3 visuals: spinner, PC-check illustration, progress bars, charts, score
+ring. All of them are borderless, draw plain tinted shapes (no backing discs),
+use no shadows, honour `anim::reduced()`, and cost nothing when nothing moves.
+
+**Renderer fact that shaped the design.** iced's CPU renderer (`tiny-skia`,
+what the test VM uses) ignores `Svg::rotation`; `Svg::opacity` and the colour
+tint work on both backends. So SVG assets are used for still layers (faded
+with opacity), and everything that rotates or fills is drawn as canvas
+geometry, which transforms identically everywhere.
+
+### Spinner (`anim::spinner`, `anim::dots`)
+
+- Ring with a 12 % track and a round-capped arc. Stroke is `size * 0.085`,
+  clamped to 1.75..4 px (about 2 px at 24). Sizes used: 16, 20, 32, 48.
+- The whole arc turns at constant speed (1.6 s per turn) while its length
+  breathes between 30 and 270 degrees on `POINT_TO_POINT`, one breath per
+  1.4 s. It grows around its own middle, so it pulses rather than chases.
+  `anim::spinner_arc(secs)` is the pure function behind it.
+- `anim::dots(size, color, elapsed)`: three dots pulsing in sequence (1.2 s,
+  0.16 offset, `STANDARD` ease) for inline "Working..." text. Width is 2.2x
+  the height; pass the text size.
+- Reduced motion: fixed three-quarter arc / static dots.
+
+### PC-check hero (`scan::check_hero`)
+
+160 px, layered. Assets in `assets/illustrations/` (`shield`, `glyph`,
+`check`, `alert`, `orbit`, all `currentColor`, viewBox 160). Layers bottom to
+top: canvas (rising fill, orbit dots, radar sweep) -> orbit SVG (idle only) ->
+shield outline -> glyph -> canvas (check / exclamation draw-in).
+
+| Phase | What moves |
+| --- | --- |
+| Idle | Orbit and glyph breathe on a 4 s cosine; nothing else. |
+| Checking | Orbit dots turn (3.2 s), radar wedge sweeps (2.6 s, 14 fading slices), shield fills bottom to top with `progress` (exponential smoothing, rate 5/s, so count jumps glide). Orbit and sweep fade in over 400 ms. |
+| Good | Orbit dots converge and fade (350 ms), outline and fill cross-fade to green (300 ms), the check draws in (450 ms after a 120 ms delay) with a 6 % scale overshoot settle. |
+| Attention | Same with amber; the exclamation bar draws and the dot pops. |
+
+`scan::animating(phase, elapsed)` tells the page whether to keep the frame
+subscription (Idle and Checking: yes; done phases: until 1.4 s).
+
+### Status ticker (`scan::status_ticker`)
+
+Three rows, newest at the bottom. A new line enters from below over 450 ms on
+`EMPHASIZED` while older lines glide up one row, soften from text to muted
+colour and fade (alpha 1, 0.55, 0.28, 0). Positions are one pure function of
+how far each line has entered (`ticker_depths`, `ticker_style`), so lines that
+arrive in quick succession never jump. The newest line carries a tiny spinner,
+finished lines a faint tick.
+
+### Progress (`widgets::progress`)
+
+6 px capsule, track is the text colour at 8 %. `bar` draws a page-owned
+`Tween` (400 ms decelerate); `bar_eased` tweens by itself; `indeterminate`
+glides a highlight with a faint trail along the track (1.7 s, `STANDARD`) and
+requests its own redraws; `steps` is a row of 4 px segments for flows.
+
+### Charts and ring
+
+- `chart::trend`: monotone cubic line (Fritsch-Butland tangents, never
+  overshoots), 2 px, area as four stacked 4.5 % bands fading downward, three
+  guide lines, percent labels top and bottom, first and last date, latest
+  point marker, hover tooltip with value and date. The line draws in once,
+  left to right, 500 ms `DECELERATE`; afterwards the geometry is cached and
+  only the hover layer redraws. One point shows a level line and the value.
+- `ring::ring` / `ring::ring_counting`: stroke `size * 0.045` (4..9 px),
+  7 % track, round cap, arc and number ease together over `SLOW`.

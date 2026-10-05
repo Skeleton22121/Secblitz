@@ -314,12 +314,20 @@ pub struct Tween {
 
 impl Tween {
     pub fn new(from: f32, to: f32, dur: Duration) -> Self {
+        Self::starting(Instant::now(), from, to, dur)
+    }
+    /// A tween that starts at a given (frame) timestamp; deterministic.
+    pub fn starting(at: Instant, from: f32, to: f32, dur: Duration) -> Self {
         Self {
             from,
             to,
-            clock: Clock::new(),
+            clock: Clock::at(at),
             dur,
         }
+    }
+    /// Where the tween is heading.
+    pub fn target(&self) -> f32 {
+        self.to
     }
     /// Retarget from the value currently shown, so changes never jump.
     pub fn retarget(&mut self, now: Instant, to: f32) {
@@ -347,6 +355,7 @@ enum Kind {
     Warn,
     Shield,
     Pulse,
+    Dots,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -452,6 +461,21 @@ fn spinner_with<'a, M: 'a>(
     )
 }
 
+/// Three small dots pulsing in sequence, for inline "working" text. `size` is
+/// the height (match the text size); the width is 2.2 times that.
+pub fn dots<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
+    canvas::Canvas::new(Glyph {
+        kind: Kind::Dots,
+        color,
+        t: 1.0,
+        secs: elapsed.as_secs_f32(),
+        still: reduced(),
+    })
+    .width(Length::Fixed(size * 2.2))
+    .height(Length::Fixed(size))
+    .into()
+}
+
 /// Circle strokes in, then the check draws, with a small overshoot settle.
 pub fn check_draw<'a, M: 'a>(size: f32, color: Color, t: f32) -> Element<'a, M> {
     one_shot(Kind::Check, size, color, t)
@@ -535,7 +559,7 @@ impl Xf {
     }
 }
 
-fn stroke(color: Color, w: f32) -> Stroke<'static> {
+pub(crate) fn stroke(color: Color, w: f32) -> Stroke<'static> {
     Stroke::default()
         .with_width(w)
         .with_color(color)
@@ -544,7 +568,7 @@ fn stroke(color: Color, w: f32) -> Stroke<'static> {
 }
 
 /// Polyline drawn up to `frac` (0..=1) of its total length.
-fn partial_line(pts: &[Point], frac: f32) -> Option<Path> {
+pub(crate) fn partial_line(pts: &[Point], frac: f32) -> Option<Path> {
     let total: f32 = pts.windows(2).map(|w| dist(w[0], w[1])).sum();
     let mut left = total * frac.clamp(0.0, 1.0);
     if left <= 0.0 || pts.len() < 2 {
@@ -573,7 +597,7 @@ fn dist(a: Point, b: Point) -> f32 {
     ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt()
 }
 
-fn arc_path(c: Point, r: f32, start: f32, sweep: f32) -> Path {
+pub(crate) fn arc_path(c: Point, r: f32, start: f32, sweep: f32) -> Path {
     Path::new(|b| {
         b.arc(Arc {
             center: c,
@@ -584,11 +608,11 @@ fn arc_path(c: Point, r: f32, start: f32, sweep: f32) -> Path {
     })
 }
 
-const TOP: f32 = -std::f32::consts::FRAC_PI_2;
-const TAU: f32 = std::f32::consts::TAU;
+pub(crate) const TOP: f32 = -std::f32::consts::FRAC_PI_2;
+pub(crate) const TAU: f32 = std::f32::consts::TAU;
 
 /// Remap `t` so the phase [a, b] runs 0..1 (clamped).
-fn phase(t: f32, a: f32, b: f32) -> f32 {
+pub(crate) fn phase(t: f32, a: f32, b: f32) -> f32 {
     ((t - a) / (b - a)).clamp(0.0, 1.0)
 }
 
@@ -599,33 +623,77 @@ fn paint(f: &mut Frame, g: &Glyph) {
         Kind::Warn => paint_warn(f, g),
         Kind::Shield => paint_shield(f, g),
         Kind::Pulse => paint_pulse(f, g),
+        Kind::Dots => paint_dots(f, g),
     }
 }
 
+/// Arc of the ring spinner at `secs`: (start angle, sweep) in radians, 0 = top.
+///
+/// The whole arc turns at a constant speed (one turn per 1.6 s) while its
+/// length breathes between 30 and 270 degrees on the Fluent "point to point"
+/// curve (one breath per 1.4 s). The arc grows around its own middle, so the
+/// motion reads as calm pulsing rather than a chase.
+pub fn spinner_arc(secs: f32) -> (f32, f32) {
+    const BREATH: f32 = 1.4;
+    const TURN: f32 = 1.6;
+    let p = (secs / BREATH).rem_euclid(1.0);
+    let k = POINT_TO_POINT.at(triangle(p));
+    let min = 30f32.to_radians();
+    let max = 270f32.to_radians();
+    let len = min + (max - min) * k;
+    let rot = (secs / TURN).rem_euclid(1.0) * TAU;
+    (TOP + rot - len / 2.0, len)
+}
+
+/// 0 -> 1 -> 0 over `p` in 0..1 (the caller eases it).
+pub(crate) fn triangle(p: f32) -> f32 {
+    let p = p.rem_euclid(1.0);
+    if p < 0.5 {
+        p * 2.0
+    } else {
+        2.0 - p * 2.0
+    }
+}
+
+/// Stroke width of the ring spinner for a canvas of `size` px: about 2 px at
+/// 24 px, never thinner than 1.75 px so 16 px stays crisp.
+pub fn spinner_stroke(size: f32) -> f32 {
+    (size * 0.085).clamp(1.75, 4.0)
+}
+
 fn paint_spinner(f: &mut Frame, g: &Glyph) {
-    let xf = Xf::new(f.size(), 1.0);
-    let w = xf.len(2.4);
-    let r = xf.len(10.0);
-    let c = xf.p(12.0, 12.0);
-    // Faint track so the ring reads as a ring even on the short arc.
-    f.stroke(&Path::circle(c, r), stroke(g.color.scale_alpha(0.16), w));
+    let size = f.size().width.min(f.size().height);
+    let w = spinner_stroke(size);
+    let r = (size - w) / 2.0 - 0.25;
+    let c = Point::new(f.size().width / 2.0, f.size().height / 2.0);
+    // Faint track (12 %) so the ring reads as a ring even on the short arc.
+    f.stroke(&Path::circle(c, r), stroke(g.color.scale_alpha(0.12), w));
     if g.still {
         // Reduced motion: a fixed three-quarter arc.
         f.stroke(&arc_path(c, r, TOP, TAU * 0.75), stroke(g.color, w));
         return;
     }
-    // Head races ahead, tail catches up (point-to-point), the whole ring turns.
-    const CYCLE: f32 = 1.5;
-    const SPIN: f32 = 2.2;
-    let p = (g.secs / CYCLE).fract();
-    let head = POINT_TO_POINT.at(phase(p, 0.0, 0.72));
-    let tail = POINT_TO_POINT.at(phase(p, 0.28, 1.0));
-    let len = (head - tail).max(0.03) * TAU;
-    let rot = (g.secs / SPIN).fract() * TAU;
-    f.stroke(
-        &arc_path(c, r, TOP + rot + tail * TAU, len),
-        stroke(g.color, w),
-    );
+    let (start, len) = spinner_arc(g.secs);
+    f.stroke(&arc_path(c, r, start, len), stroke(g.color, w));
+}
+
+/// Intensity 0..1 of dot `i` (0..3) of the inline "working" dots at `secs`.
+pub fn dot_pulse(secs: f32, i: usize) -> f32 {
+    let p = (secs / 1.2 - i as f32 * 0.16).rem_euclid(1.0);
+    STANDARD.at(triangle(p))
+}
+
+fn paint_dots(f: &mut Frame, g: &Glyph) {
+    let (w, h) = (f.size().width, f.size().height);
+    let r = h * 0.17;
+    for i in 0..3 {
+        let k = if g.still { 0.6 } else { dot_pulse(g.secs, i) };
+        let cx = w * (1.0 + 2.0 * i as f32) / 6.0;
+        f.fill(
+            &Path::circle(Point::new(cx, h / 2.0), r * (0.7 + 0.3 * k)),
+            g.color.scale_alpha(0.3 + 0.7 * k),
+        );
+    }
 }
 
 fn paint_badge(f: &mut Frame, g: &Glyph) {
@@ -755,6 +823,9 @@ fn paint_pulse(f: &mut Frame, g: &Glyph) {
 }
 
 #[cfg(test)]
+pub(crate) static MOTION_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -851,6 +922,7 @@ mod tests {
 
     #[test]
     fn override_controls_reduced_and_clock() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_reduced_override(Some(true));
         assert!(reduced() && !animating());
         let c = Clock::new();
@@ -871,6 +943,70 @@ mod tests {
         assert_eq!(c.progress_at(SLOW, start + SLOW * 3), 1.0);
         assert!((c.progress_at(SLOW, start + SLOW / 2) - 0.5).abs() < 1e-3);
         assert_eq!(c.progress_at(Duration::ZERO, start), 1.0);
+    }
+
+    #[test]
+    fn spinner_arc_breathes_between_30_and_270() {
+        let (mut lo, mut hi) = (f32::MAX, 0f32);
+        for i in 0..2800 {
+            let (_, len) = spinner_arc(i as f32 / 1000.0);
+            lo = lo.min(len);
+            hi = hi.max(len);
+        }
+        assert!((lo.to_degrees() - 30.0).abs() < 0.5, "{}", lo.to_degrees());
+        assert!((hi.to_degrees() - 270.0).abs() < 0.5, "{}", hi.to_degrees());
+    }
+
+    #[test]
+    fn spinner_centre_turns_at_constant_speed() {
+        let mid = |s: f32| {
+            let (a, l) = spinner_arc(s);
+            a + l / 2.0
+        };
+        let d1 = mid(0.30) - mid(0.20);
+        let d2 = mid(1.00) - mid(0.90);
+        assert!((d1 - d2).abs() < 1e-3);
+        assert!(d1 > 0.0);
+    }
+
+    #[test]
+    fn spinner_stroke_scales_and_clamps() {
+        assert_eq!(spinner_stroke(16.0), 1.75);
+        assert!(spinner_stroke(32.0) > spinner_stroke(20.0));
+        assert_eq!(spinner_stroke(400.0), 4.0);
+    }
+
+    #[test]
+    fn dots_pulse_in_range_and_offset() {
+        for i in 0..3 {
+            for t in 0..120 {
+                let v = dot_pulse(t as f32 / 50.0, i);
+                assert!((0.0..=1.0).contains(&v));
+            }
+        }
+        assert_ne!(dot_pulse(0.3, 0), dot_pulse(0.3, 1));
+    }
+
+    #[test]
+    fn tween_math() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t0 = Instant::now();
+        set_reduced_override(Some(false));
+        let mut tw = Tween::starting(t0, 10.0, 20.0, SLOW);
+        assert_eq!(tw.value(t0), 10.0);
+        assert!((tw.value(t0 + SLOW) - 20.0).abs() < 1e-4);
+        assert!(tw.done(t0 + SLOW));
+        assert!(!tw.done(t0 + SLOW / 2));
+        // Decelerate: more than half way at half time.
+        assert!(tw.value(t0 + SLOW / 2) > 15.0);
+        // Retarget continues from where it is, never jumps.
+        let mid = t0 + SLOW / 4;
+        let shown = tw.value(mid);
+        tw.retarget(mid, 0.0);
+        assert!((tw.value(mid) - shown).abs() < 1e-4);
+        assert_eq!(tw.target(), 0.0);
+        assert!((tw.value(mid + SLOW)).abs() < 1e-4);
+        set_reduced_override(None);
     }
 
     #[test]
