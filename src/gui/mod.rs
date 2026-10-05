@@ -1031,76 +1031,41 @@ pub fn ticks_100ms() -> Subscription<std::time::Instant> {
     Subscription::run(|| ticker(std::time::Duration::from_millis(100)))
 }
 
-/// Draw the application icon (white shield with a check on a dark tile) as RGBA.
+/// The application icon (white shield and bolt on an ink tile) as RGBA.
 pub fn window_icon_rgba(size: u32) -> Vec<u8> {
-    // Shield outline in a 24x24 design grid.
-    const SHIELD: [(f32, f32); 10] = [
-        (12.0, 2.5),
-        (19.5, 5.5),
-        (19.5, 12.0),
-        (18.0, 15.8),
-        (15.0, 19.0),
-        (12.0, 21.5),
-        (9.0, 19.0),
-        (6.0, 15.8),
-        (4.5, 12.0),
-        (4.5, 5.5),
-    ];
-    fn inside(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
-        let mut hit = false;
-        let mut j = poly.len() - 1;
-        for i in 0..poly.len() {
-            let (xi, yi) = poly[i];
-            let (xj, yj) = poly[j];
-            if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
-                hit = !hit;
-            }
-            j = i;
+    // The window and taskbar use the same artwork as the exe icon: the
+    // matching frame of the embedded .ico (each frame is an RGBA PNG).
+    const ICO: &[u8] = include_bytes!("../../assets/secblitz.ico");
+    ico_frame(ICO, size).unwrap_or_default()
+}
+
+fn ico_frame(ico: &[u8], size: u32) -> Option<Vec<u8>> {
+    let count = u16::from_le_bytes([*ico.get(4)?, *ico.get(5)?]) as usize;
+    for i in 0..count {
+        let entry = ico.get(6 + 16 * i..22 + 16 * i)?;
+        let width = if entry[0] == 0 {
+            256
+        } else {
+            u32::from(entry[0])
+        };
+        if width != size {
+            continue;
         }
-        hit
+        let len = u32::from_le_bytes(entry[8..12].try_into().ok()?) as usize;
+        let offset = u32::from_le_bytes(entry[12..16].try_into().ok()?) as usize;
+        let mut reader = png::Decoder::new(ico.get(offset..offset.checked_add(len)?)?)
+            .read_info()
+            .ok()?;
+        let mut pixels = vec![0; reader.output_buffer_size()];
+        let frame = reader.next_frame(&mut pixels).ok()?;
+        let rgba = frame.color_type == png::ColorType::Rgba
+            && frame.bit_depth == png::BitDepth::Eight
+            && frame.width == size
+            && frame.height == size;
+        pixels.truncate(frame.buffer_size());
+        return rgba.then_some(pixels);
     }
-    fn near_segment(a: (f32, f32), b: (f32, f32), x: f32, y: f32, r: f32) -> bool {
-        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-        let t = (((x - a.0) * dx + (y - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-        let (px, py) = (a.0 + t * dx, a.1 + t * dy);
-        (x - px).powi(2) + (y - py).powi(2) <= r * r
-    }
-    const SS: u32 = 3; // supersampling per axis
-    let mut out = Vec::with_capacity((size * size * 4) as usize);
-    let scale = 24.0 / size as f32;
-    let tile_radius = 5.0f32;
-    for py in 0..size {
-        for px in 0..size {
-            let (mut tile, mut shield) = (0u32, 0u32);
-            for sy in 0..SS {
-                for sx in 0..SS {
-                    let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * scale;
-                    let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * scale;
-                    // Rounded tile covering the whole canvas.
-                    let cx = x.clamp(tile_radius, 24.0 - tile_radius);
-                    let cy = y.clamp(tile_radius, 24.0 - tile_radius);
-                    if (x - cx).powi(2) + (y - cy).powi(2) <= tile_radius * tile_radius {
-                        tile += 1;
-                        let tick = near_segment((8.8, 12.2), (11.0, 14.4), x, y, 0.9)
-                            || near_segment((11.0, 14.4), (15.4, 9.8), x, y, 0.9);
-                        if inside(&SHIELD, x, y) && !tick {
-                            shield += 1;
-                        }
-                    }
-                }
-            }
-            let n = SS * SS;
-            // Colours: tile #18181B, shield white.
-            let mix = |bg: u32, fg: u32| (bg * (tile - shield) + fg * shield) / tile.max(1);
-            out.extend_from_slice(&[
-                mix(0x18, 0xFF) as u8,
-                mix(0x18, 0xFF) as u8,
-                mix(0x1B, 0xFF) as u8,
-                (tile * 255 / n) as u8,
-            ]);
-        }
-    }
-    out
+    None
 }
 
 fn window_icon() -> Option<iced::window::Icon> {
@@ -1162,7 +1127,15 @@ mod tests {
         assert_eq!(px.len(), 32 * 32 * 4);
         let at = |x: usize, y: usize| &px[(y * 32 + x) * 4..(y * 32 + x) * 4 + 4];
         assert_eq!(at(0, 0)[3], 0, "corner is transparent");
-        assert_eq!(at(16, 9)[..3], [255, 255, 255], "shield body is white");
+        assert_eq!(at(7, 13)[..3], [255, 255, 255], "shield outline is white");
+        assert_eq!(at(3, 16)[..3], [0x18, 0x18, 0x1B], "the tile is ink");
+        assert!(
+            at(11, 13)[..3].iter().all(|&c| c < 0x30),
+            "inside the shield is dark"
+        );
+        assert_eq!(at(15, 11)[..3], [255, 255, 255], "the bolt is white");
+        assert_eq!(window_icon_rgba(64).len(), 64 * 64 * 4);
+        assert!(window_icon_rgba(33).is_empty(), "no frame, no icon");
         assert!(window_icon().is_some());
     }
 }
