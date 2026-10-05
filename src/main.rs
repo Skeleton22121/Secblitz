@@ -376,11 +376,6 @@ fn uninstall_command(matches: &ArgMatches) -> Option<UninstallCommand> {
 /// Exit code for "not allowed to run here": no UAC, nothing changed.
 #[cfg(windows)]
 const UNINSTALL_REFUSED: i32 = 2;
-/// The personal part refuses an elevated process (it could be another account's
-/// registry). Distinct from 0..=6, the number of personal settings left.
-#[cfg(windows)]
-const UNINSTALL_USER_REFUSED: i32 = 9;
-
 #[cfg(windows)]
 fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Result<i32> {
     use uninstall::{left_line, Summary};
@@ -405,9 +400,9 @@ fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Resul
             Ok(0)
         }
         UninstallCommand::RevertUser => {
-            if platform::is_elevated().unwrap_or(true) {
-                return Ok(UNINSTALL_USER_REFUSED);
-            }
+            // Elevated or not, it only ever changes the running account's own
+            // settings (people who sign in as the built-in Administrator, or
+            // with UAC off, are always elevated). Exit code: settings left.
             let summary = uninstall::revert_user();
             print(&summary, json, lang);
             Ok(summary.left.len().min(6) as i32)
