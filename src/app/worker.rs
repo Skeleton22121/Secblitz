@@ -140,7 +140,9 @@ impl Worker {
                     }
                     Err(error) => {
                         let _ = opened_tx.unbounded_send(Event::Opened(Err(format!("{error:#}"))));
-                        // Keep answering jobs with the open failure.
+                        // End the one-shot stream, then keep answering jobs
+                        // with the open failure.
+                        drop(opened_tx);
                         let message = format!("{error:#}");
                         for (job, reply) in inbox {
                             let _ = reply.unbounded_send(failed(&job, &message));
@@ -229,4 +231,198 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
         Job::History => Event::History(session.history().map_err(|e| format!("{e:#}"))),
     };
     let _ = reply.unbounded_send(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::futures::executor::block_on;
+    use iced::futures::StreamExt;
+
+    type Log = Arc<std::sync::Mutex<Vec<String>>>;
+
+    struct Fake {
+        log: Log,
+        fail_apply: bool,
+        fail_audit: bool,
+    }
+
+    impl Fake {
+        fn note(&self, what: impl Into<String>) {
+            self.log.lock().unwrap().push(what.into());
+        }
+    }
+
+    fn report(tag: &str) -> Report {
+        Report {
+            transaction: Some(tag.to_owned()),
+            ..Report::default()
+        }
+    }
+
+    impl Session for Fake {
+        fn available(&self) -> Vec<String> {
+            vec!["a".into(), "b".into()]
+        }
+        fn restart_ids(&self) -> Vec<String> {
+            vec!["b".into()]
+        }
+        fn audit(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report> {
+            self.note("audit");
+            progress("a", "compliant");
+            if self.fail_audit {
+                anyhow::bail!("audit broke");
+            }
+            Ok(report("audit"))
+        }
+        fn apply(
+            &mut self,
+            ids: &[String],
+            progress: &mut dyn FnMut(&str, &str),
+        ) -> anyhow::Result<Report> {
+            self.note(format!("apply {}", ids.join(",")));
+            for id in ids {
+                progress(id, "applied");
+            }
+            if self.fail_apply {
+                anyhow::bail!("disk full");
+            }
+            Ok(report("apply"))
+        }
+        fn undo(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report> {
+            self.note("undo");
+            progress("a", "restored");
+            Ok(report("undo"))
+        }
+        fn history(&mut self) -> anyhow::Result<Vec<String>> {
+            Ok(vec!["tx applied".into()])
+        }
+    }
+
+    fn worker(fail_apply: bool, fail_audit: bool) -> (Worker, Log) {
+        let log = Log::default();
+        let l = log.clone();
+        let w = Worker::spawn(move || {
+            Ok(Box::new(Fake {
+                log: l,
+                fail_apply,
+                fail_audit,
+            }) as Box<dyn Session>)
+        });
+        (w, log)
+    }
+
+    fn collect(w: &Worker, job: Job) -> Vec<Event> {
+        block_on(w.run(job).collect())
+    }
+
+    #[test]
+    fn opened_reports_catalog_once() {
+        let (w, _) = worker(false, false);
+        let first: Vec<Event> = block_on(w.opened().collect());
+        match first.as_slice() {
+            [Event::Opened(Ok(c))] => {
+                assert_eq!(c.available, vec!["a", "b"]);
+                assert_eq!(c.restart, vec!["b"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(block_on(w.opened().collect::<Vec<_>>()).is_empty());
+    }
+
+    #[test]
+    fn check_forwards_progress_then_result() {
+        let (w, _) = worker(false, false);
+        let events = collect(&w, Job::Check);
+        assert!(matches!(
+            &events[0],
+            Event::Progress { phase: Phase::Checking, id, status } if id == "a" && status == "compliant"
+        ));
+        assert!(matches!(events.last(), Some(Event::Checked(Ok(_)))));
+    }
+
+    #[test]
+    fn apply_is_always_followed_by_verify_even_when_apply_fails() {
+        let (w, log) = worker(true, false);
+        let events = collect(&w, Job::Apply(vec!["a".into(), "b".into()]));
+        assert_eq!(*log.lock().unwrap(), vec!["apply a,b", "audit"]);
+        let phases: Vec<Phase> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Progress { phase, .. } => Some(*phase),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            phases,
+            vec![Phase::Applying, Phase::Applying, Phase::Verifying]
+        );
+        match events.last() {
+            Some(Event::Applied {
+                attempted,
+                result,
+                verify,
+            }) => {
+                assert_eq!(attempted, &vec!["a".to_owned(), "b".to_owned()]);
+                assert!(result.as_ref().unwrap_err().contains("disk full"));
+                assert!(verify.is_ok());
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failed_verify_is_reported_separately() {
+        let (w, _) = worker(false, true);
+        match collect(&w, Job::Apply(vec!["a".into()])).last() {
+            Some(Event::Applied { result, verify, .. }) => {
+                assert!(result.is_ok());
+                assert!(verify.as_ref().unwrap_err().contains("audit broke"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn undo_is_followed_by_verify() {
+        let (w, log) = worker(false, false);
+        let events = collect(&w, Job::Undo);
+        assert_eq!(*log.lock().unwrap(), vec!["undo", "audit"]);
+        assert!(matches!(
+            events.last(),
+            Some(Event::Undone {
+                result: Ok(_),
+                verify: Ok(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn history_job_returns_lines() {
+        let (w, _) = worker(false, false);
+        match collect(&w, Job::History).last() {
+            Some(Event::History(Ok(lines))) => assert_eq!(lines, &vec!["tx applied".to_owned()]),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_failure_answers_every_job_with_the_error() {
+        let w = Worker::spawn(|| anyhow::bail!("cannot open"));
+        match block_on(w.opened().collect::<Vec<_>>()).as_slice() {
+            [Event::Opened(Err(e))] => assert!(e.contains("cannot open")),
+            other => panic!("unexpected {other:?}"),
+        }
+        for job in [
+            Job::Check,
+            Job::Apply(vec!["a".into()]),
+            Job::Undo,
+            Job::History,
+        ] {
+            let events = collect(&w, job.clone());
+            assert_eq!(events.len(), 1, "{job:?}");
+            let text = format!("{:?}", events[0]);
+            assert!(text.contains("cannot open"), "{text}");
+        }
+    }
 }
