@@ -14,7 +14,12 @@
     "render": "npm run verify && remotion render src/index.ts SecblitzDemo out/secblitz-demo.mp4",
     "render-v060": "npm run verify-v060 && remotion render src/index.ts SecblitzDemoV060 out/secblitz-demo-v060.mp4",
     "deliver": "node scripts/deliver.mjs",
-    "deliver-v060": "node scripts/deliver-v060.mjs"
+    "deliver-v060": "node scripts/deliver-v060.mjs",
+    "plan-v070": "node scripts/plan-v070.mjs",
+    "verify-v070": "node scripts/verify-v070.mjs",
+    "preview-v070": "npm run verify-v070 && remotion still src/index.ts SecblitzLoop070 out/preview-v070.png --frame=0",
+    "render-v070": "npm run verify-v070 && remotion render src/index.ts SecblitzLoop070 out/secblitz-loop-v070.mp4",
+    "deliver-v070": "node scripts/deliver-v070.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.532",
