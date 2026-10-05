@@ -808,24 +808,21 @@ fn smartscreen_policy_and_smart_app_control_are_distinguished() {
 
 #[test]
 fn update_policy_blockers_pauses_and_overdue_restarts() {
-    let fixture = |auto: bool, paused: bool, pending: bool, uptime: u32| {
+    let fixture = |_auto: bool, paused: bool, pending: bool, uptime: u32| {
         assessed(
             ProbeId::UpdatePolicy,
             json!({
-                "auto_updates_blocked":k(auto),"update_access_blocked":k(false),"update_service_disabled":k(false),
                 "paused":k(paused),"drivers_excluded":k(false),"reboot_pending":k(pending),"uptime_days":k(uptime)
             }),
         )
     };
     let ok = fixture(false, false, false, 30);
     assert_eq!(ok.status, Status::Healthy);
-    assert_eq!(
-        status_of(
-            &fixture(true, false, false, 1),
-            "update.auto_policy_disabled"
-        ),
-        Status::Attention
-    );
+    // Switched-off automatic updates are an engine control now: shown once, there.
+    assert!(ok
+        .assessments
+        .iter()
+        .all(|a| a.rule.id != "update.auto_policy_disabled"));
     assert_eq!(
         status_of(&fixture(false, true, false, 1), "update.paused"),
         Status::Attention
@@ -910,16 +907,16 @@ fn legacy_feature_persistence_accounts_sharing_and_firewall_rules() {
 
     let p = assessed(
         ProbeId::AccountHygiene,
-        json!({"builtin_admin_enabled":k(true),"stale_enabled_accounts":k(2)}),
-    );
-    assert_eq!(
-        status_of(&p, "accounts.builtin_administrator"),
-        Status::Attention
+        json!({"stale_enabled_accounts":k(2)}),
     );
     assert_eq!(status_of(&p, "accounts.stale_enabled"), Status::Attention);
+    assert!(p
+        .assessments
+        .iter()
+        .all(|a| a.rule.id != "accounts.builtin_administrator"));
     let p = assessed(
         ProbeId::AccountHygiene,
-        json!({"builtin_admin_enabled":k(false),"stale_enabled_accounts":k(0)}),
+        json!({"stale_enabled_accounts":k(0)}),
     );
     assert_eq!(p.status, Status::Healthy);
 
@@ -983,10 +980,13 @@ fn new_probes_have_compiled_branches_and_read_only_privacy_boundaries() {
         include_str!("common.ps1"),
         include_str!("probes.ps1")
     );
+    // Fixed Windows tools and the WLAN API run natively, not through PowerShell.
+    let native = [ProbeId::WindowsHello, ProbeId::WifiSecurity];
     for &id in &ProbeId::ALL[23..] {
-        assert!(
+        assert_eq!(
             script.contains(&format!("'{id:?}' {{")),
-            "{id:?} has no compiled branch"
+            !native.contains(&id),
+            "{id:?} compiled branch"
         );
     }
     // Hosts entries, exclusion lists, share names and rule programs never reach output.
@@ -998,6 +998,22 @@ fn new_probes_have_compiled_branches_and_read_only_privacy_boundaries() {
         "Disable-WindowsOptionalFeature",
         "Set-SmbShare",
         "Stop-Service",
+        "Set-Service",
+        "Set-Content",
+        "Out-File",
+        "New-Item",
+        "New-ItemProperty",
+        "Set-LocalUser",
+        "Disable-LocalUser",
+        "Add-LocalGroupMember",
+        "Remove-LocalGroupMember",
+        "Set-DnsClient",
+        "Add-DnsClientDohServerAddress",
+        "Remove-DnsClientDohServerAddress",
+        "Disable-ScheduledTask",
+        "Unregister-ScheduledTask",
+        "Register-ScheduledTask",
+        "Start-ScheduledTask",
     ] {
         assert!(!script.contains(forbidden), "{forbidden}");
     }
@@ -1017,11 +1033,209 @@ fn every_new_probe_has_a_launcher_module_entry_and_unique_source() {
         "AccountHygiene",
         "Sharing",
         "FirewallRules",
+        "AccountSetup",
+        "WindowsHello",
+        "DnsEncryption",
+        "WifiSecurity",
+        "Autostart",
     ] {
         assert!(launcher.contains(&format!("ProbeId::{id}")), "{id}");
+    }
+    // The pinned module list matches what each branch loads.
+    let script = include_str!("probes.ps1");
+    for (probe, modules) in [
+        (
+            "Autostart",
+            vec![
+                "CimCmdlets",
+                "ScheduledTasks",
+                "Microsoft.PowerShell.Security",
+            ],
+        ),
+        (
+            "AccountSetup",
+            vec!["Microsoft.PowerShell.LocalAccounts", "CimCmdlets"],
+        ),
+        ("DnsEncryption", vec!["DnsClient"]),
+    ] {
+        let branch = script.split(&format!("'{probe}' {{")).nth(1).unwrap();
+        let branch = &branch[..branch.find("\n        '").unwrap_or(branch.len())];
+        for module in modules {
+            assert!(
+                branch.contains(&format!("Load '{module}'")),
+                "{probe} {module}"
+            );
+            assert!(launcher.contains(&format!("\"{module}\"")), "{module}");
+        }
     }
     let mut sources: Vec<_> = ProbeId::ALL.iter().map(|id| id.source()).collect();
     sources.sort_unstable();
     sources.dedup();
     assert_eq!(sources.len(), ProbeId::ALL.len());
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in, encryption, network and start-up checks.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn account_setup_daily_admin_and_find_my_device() {
+    let fixture = |admin: Value, find: Value| {
+        assessed(
+            ProbeId::AccountSetup,
+            json!({"current_user_is_admin":admin,"find_my_device":find}),
+        )
+    };
+    let unknown = json!({"state":"Unknown","value":"Unavailable"});
+    let p = fixture(k(true), k("Off"));
+    assert_eq!(status_of(&p, "accounts.daily_admin"), Status::Attention);
+    assert_eq!(status_of(&p, "accounts.find_my_device"), Status::Attention);
+    let p = fixture(k(false), k("On"));
+    assert_eq!(p.status, Status::Healthy);
+    // A desktop, a local-only account or an unreported setting is never an alarm.
+    for neutral in ["NotApplicable", "Unreported"] {
+        let p = fixture(k(false), k(neutral));
+        assert_eq!(
+            status_of(&p, "accounts.find_my_device"),
+            Status::Informational
+        );
+    }
+    // Nested-group doubt and a bogus value stay unknown, never "standard account".
+    let p = fixture(unknown, k("maybe"));
+    assert_eq!(status_of(&p, "accounts.daily_admin"), Status::Unknown);
+    assert_eq!(status_of(&p, "accounts.find_my_device"), Status::Unknown);
+    assert_eq!(p.status, Status::Unknown);
+}
+
+#[test]
+fn dsregcmd_output_yields_only_the_ngc_flag() {
+    let make = |text: &str| parse::dsreg(text.as_bytes()).pin_set;
+    assert_eq!(
+        make("| User State |\n\n                    NgcSet : YES\n  WamDefaultSet : NO"),
+        Reading::Known(true)
+    );
+    assert_eq!(make("   NgcSet : NO\r\n"), Reading::Known(false));
+    // Missing, duplicated or unexpected values are unknown, never "no PIN".
+    for bad in [
+        "",
+        "no such line",
+        "NgcSet : MAYBE",
+        "NgcSet : YES\nNgcSet : NO",
+        "NgcSet",
+    ] {
+        assert!(make(bad).known().is_none(), "{bad:?}");
+    }
+    let hello = assessed(ProbeId::WindowsHello, json!({"pin_set":k(false)}));
+    assert_eq!(
+        status_of(&hello, "accounts.hello_configured"),
+        Status::Attention
+    );
+    let hello = assessed(ProbeId::WindowsHello, json!({"pin_set":k(true)}));
+    assert_eq!(hello.status, Status::Healthy);
+}
+
+#[test]
+fn kernel_stack_protection_is_a_tip_and_skipped_when_not_reported() {
+    let fixture = |stacks: &str, running: Vec<u32>| {
+        assessed(
+            ProbeId::Vbs,
+            json!({"status":k(2),"configured_services":k(running.clone()),"running_services":k(running),"kernel_shadow_stacks":k(stacks)}),
+        )
+    };
+    let id = "vbs.kernel_stack_protection";
+    assert_eq!(status_of(&fixture("On", vec![2]), id), Status::Healthy);
+    assert_eq!(status_of(&fixture("Off", vec![2]), id), Status::Attention);
+    assert_eq!(
+        status_of(&fixture("Off", vec![1]), id),
+        Status::Informational
+    );
+    // Not reported by this Windows build: no assessment at all, no change to the probe.
+    let absent = fixture("Absent", vec![2]);
+    assert!(absent.assessments.iter().all(|a| a.rule.id != id));
+    assert_eq!(status_of(&fixture("bogus", vec![2]), id), Status::Unknown);
+}
+
+#[test]
+fn dns_encryption_is_informational_unless_a_capable_provider_is_unencrypted() {
+    let fixture = |total: u32, encrypted: u32, upgradeable: u32| {
+        assessed(
+            ProbeId::DnsEncryption,
+            json!({"dns_servers":k(total),"encrypted_dns_servers":k(encrypted),"upgradeable_dns_servers":k(upgradeable)}),
+        )
+    };
+    let id = "net.dns_encryption";
+    assert_eq!(status_of(&fixture(2, 2, 0), id), Status::Healthy);
+    assert_eq!(status_of(&fixture(2, 0, 2), id), Status::Attention);
+    // Router-provided DNS: nothing to nag about, and DNS is never changed.
+    assert_eq!(status_of(&fixture(1, 0, 0), id), Status::Informational);
+    assert_eq!(status_of(&fixture(2, 1, 1), id), Status::Informational);
+    assert_eq!(status_of(&fixture(0, 0, 0), id), Status::Unknown);
+}
+
+#[test]
+fn wifi_security_classes_and_assessments() {
+    use parse::wifi_class;
+    assert_eq!(wifi_class(false, 1, 0), "Open");
+    assert_eq!(wifi_class(true, 1, 1), "Wep");
+    assert_eq!(wifi_class(true, 2, 1), "Wep");
+    assert_eq!(wifi_class(true, 4, 2), "Old"); // WPA-PSK
+    assert_eq!(wifi_class(true, 7, 2), "Old"); // WPA2 with TKIP
+    assert_eq!(wifi_class(true, 7, 4), "Strong");
+    assert_eq!(wifi_class(true, 9, 4), "Strong");
+    assert_eq!(wifi_class(true, 7, 0x100), "Other");
+    assert_eq!(wifi_class(true, 99, 4), "Other");
+    for (class, status) in [
+        ("Strong", Status::Healthy),
+        ("None", Status::Informational),
+        ("Open", Status::Attention),
+        ("Wep", Status::Attention),
+        ("Old", Status::Attention),
+        ("Other", Status::Unknown),
+        ("bogus", Status::Unknown),
+    ] {
+        let p = assessed(ProbeId::WifiSecurity, json!({"current_network":k(class)}));
+        assert_eq!(status_of(&p, "net.wifi_security"), status, "{class}");
+    }
+}
+
+#[test]
+fn autostart_counts_flag_risky_entries_and_need_complete_evidence() {
+    let fixture = |checked: Value, risky: u32, command: u32| {
+        assessed(
+            ProbeId::Autostart,
+            json!({"entries_checked":checked,"risky_unsigned":k(risky),"suspicious_command":k(command)}),
+        )
+    };
+    let id = "persistence.run_and_tasks";
+    assert_eq!(status_of(&fixture(k(12), 0, 0), id), Status::Healthy);
+    assert_eq!(status_of(&fixture(k(12), 1, 0), id), Status::Attention);
+    assert_eq!(status_of(&fixture(k(12), 0, 2), id), Status::Attention);
+    // A source that could not be read cannot make the result "clean".
+    let unreadable = json!({"state":"Unknown","value":"Unavailable"});
+    assert_eq!(
+        status_of(&fixture(unreadable.clone(), 0, 0), id),
+        Status::Unknown
+    );
+    assert_eq!(status_of(&fixture(unreadable, 1, 0), id), Status::Attention);
+}
+
+#[test]
+fn engine_owned_checks_are_not_duplicated_here() {
+    let script = include_str!("probes.ps1");
+    for removed in [
+        "auto_updates_blocked",
+        "update_access_blocked",
+        "update_service_disabled",
+        "builtin_admin_enabled",
+    ] {
+        assert!(!script.contains(removed), "{removed}");
+    }
+    let checks = include_str!("checks.rs");
+    let code = checks.split("#[cfg(test)]").next().unwrap();
+    for duplicate in [
+        "a(\"update.auto_policy_disabled\"",
+        "boolean(\"accounts.builtin_administrator\"",
+    ] {
+        assert!(!code.contains(duplicate), "{duplicate}");
+    }
 }
