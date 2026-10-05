@@ -1311,45 +1311,16 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         scroll_list(p, list, 220.0),
     ]
     .spacing(theme::S3);
-    let manual: Vec<String> = indices
-        .iter()
-        .filter(|i| app_of(**i).store_id.is_none())
-        .map(|i| ctx.t(app_of(*i).name))
-        .collect();
-    // Where to restore: name the tab whenever something can come back.
+    // Removal only happens once a copy is saved, so every app can come back.
     col = col.push(widgets::inline_notice(
         p,
         Tone::Neutral,
-        ctx.t("Secblitz keeps a copy, so you can bring these apps back any time, even without internet."),
+        if n == 1 {
+            ctx.t("Secblitz keeps a copy, so you can bring it back any time from the Removed apps tab, even without internet.")
+        } else {
+            ctx.t("Secblitz keeps a copy, so you can bring them back any time from the Removed apps tab, even without internet.")
+        },
     ));
-    if manual.len() < n {
-        col = col.push(widgets::inline_notice(
-            p,
-            Tone::Neutral,
-            if !manual.is_empty() {
-                ctx.t("You can bring most of these back later from the Removed apps tab.")
-            } else if n == 1 {
-                ctx.t("You can bring it back later from the Removed apps tab.")
-            } else {
-                ctx.t("You can bring these back later from the Removed apps tab.")
-            },
-        ));
-    }
-    if !manual.is_empty() {
-        col = col.push(widgets::inline_notice(
-            p,
-            Tone::Warn,
-            format!(
-                "{} {}",
-                if manual.len() == 1 {
-                    ctx.t("This can't be restored automatically:")
-                } else {
-                    ctx.t("These can't be restored automatically:")
-                },
-                manual.join(", ")
-            ),
-        ));
-    }
     if indices.iter().any(|i| app_of(*i).group == Group::Gaming) {
         col = col.push(widgets::inline_notice(
             p,

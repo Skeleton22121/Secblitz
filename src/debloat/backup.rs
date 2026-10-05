@@ -10,7 +10,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-pub const DIR: &str = "AppBackups";
+pub const DIR: &str = crate::platform::APP_BACKUPS;
 pub const MANIFEST: &str = "backup.json";
 pub const FRAMEWORK_MANIFEST: &str = "framework.json";
 pub const FRAMEWORKS: &str = "frameworks";
@@ -48,11 +48,22 @@ pub struct FileEntry {
     pub sha256: String,
 }
 
+/// Windows permissions (SDDL) of a package folder and of its files, as
+/// they were in WindowsApps when the copy was made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sddl {
+    pub dir: String,
+    pub file: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Package {
     pub full_name: String,
     pub kind: Kind,
     pub files: Vec<FileEntry>,
+    /// Original permissions; checked again with `own_sddl` before use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sddl: Option<Sddl>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +92,8 @@ pub struct FrameworkCopy {
     pub schema: u32,
     pub full_name: String,
     pub files: Vec<FileEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sddl: Option<Sddl>,
 }
 
 /// `Name_Version_Architecture_ResourceId_PublisherId`.
@@ -613,33 +626,42 @@ fn read_only(rights: &str) -> bool {
             .all(|t| matches!(t, b"GR" | b"GX" | b"FR" | b"FX" | b"RC" | b"SW" | b"LO"))
 }
 
-/// Security of a live Microsoft package folder (or file), re-targeted at
-/// `to_family`. Refuses anything that would let a non-system account write.
-pub fn template_sddl(template: &str, from_family: &str, to_family: &str) -> Result<String> {
-    let (to_name, to_pub) = to_family.rsplit_once('_').context("Unexpected family")?;
-    ensure!(
-        plain_token(to_name, 50)
-            && to_pub.len() == 13
-            && to_pub
+fn valid_family(family: &str) -> bool {
+    family.rsplit_once('_').is_some_and(|(name, publisher)| {
+        plain_token(name, 50)
+            && publisher.len() == 13
+            && publisher
                 .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()),
-        "Unexpected family"
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    })
+}
+
+/// Check package permissions: owned by SYSTEM, Administrators or
+/// TrustedInstaller; nobody else may write; no audit section. Returns the
+/// text of every quoted literal in conditional ACEs (the app families that
+/// `WIN://SYSAPPID Contains` names).
+fn check_sddl(sddl: &str) -> Result<Vec<String>> {
+    let rest = sddl.strip_prefix("O:").context("Unexpected owner")?;
+    let (owner, rest) = rest.split_once("G:").context("Unexpected owner")?;
+    ensure!(
+        matches!(owner, "SY" | "BA") || owner == TRUSTED_INSTALLER,
+        "Unexpected owner"
     );
-    ensure!(template.starts_with("O:SYG:SY"), "Unexpected owner");
-    let quoted = format!("\"{from_family}\"");
-    ensure!(template.contains(&quoted), "Template does not name its app");
-    let dacl = template.split_once("D:").context("No DACL")?.1;
+    let dacl = rest.split_once("D:").context("No DACL")?.1;
     ensure!(!dacl.contains("S:"), "Unexpected audit section");
     let mut rest = dacl.trim_start_matches(|c: char| c.is_ascii_uppercase());
+    let mut names = Vec::new();
     while !rest.is_empty() {
         ensure!(rest.starts_with('('), "Unexpected DACL");
         // Conditional ACEs contain parentheses; find the matching close.
         let mut depth = 0usize;
         let mut end = None;
+        let mut quoted = false;
         for (i, c) in rest.char_indices() {
             match c {
-                '(' => depth += 1,
-                ')' => {
+                '"' => quoted = !quoted,
+                '(' if !quoted => depth += 1,
+                ')' if !quoted => {
                     depth -= 1;
                     if depth == 0 {
                         end = Some(i);
@@ -661,10 +683,40 @@ pub fn template_sddl(template: &str, from_family: &str, to_family: &str) -> Resu
         let trusted = matches!(sid, "SY") || sid == TRUSTED_INSTALLER;
         ensure!(
             kind.ends_with('D') || trusted || read_only(rights),
-            "Template grants write access"
+            "Permissions grant write access"
         );
+        if let Some(condition) = fields.get(6) {
+            let parts: Vec<&str> = condition.split('"').collect();
+            ensure!(parts.len() % 2 == 1, "Unexpected condition");
+            names.extend(parts.iter().skip(1).step_by(2).map(|p| p.to_string()));
+        }
         rest = &rest[end + 1..];
     }
+    Ok(names)
+}
+
+/// A package's own recorded permissions, safe to put back for `family`:
+/// any app-only condition must name exactly this family.
+pub fn own_sddl(sddl: &str, family: &str) -> Result<String> {
+    ensure!(valid_family(family), "Unexpected family");
+    let names = check_sddl(sddl)?;
+    ensure!(
+        names.iter().all(|n| n == family),
+        "Permissions name another app"
+    );
+    Ok(sddl.to_owned())
+}
+
+/// Security of a live Microsoft package folder (or file), re-targeted at
+/// `to_family`. Used only when a copy has no recorded permissions.
+pub fn template_sddl(template: &str, from_family: &str, to_family: &str) -> Result<String> {
+    ensure!(valid_family(to_family), "Unexpected family");
+    let names = check_sddl(template)?;
+    ensure!(
+        !names.is_empty() && names.iter().all(|n| n == from_family),
+        "Template does not name its app"
+    );
+    let quoted = format!("\"{from_family}\"");
     Ok(template.replace(&quoted, &format!("\"{to_family}\"")))
 }
 
@@ -688,11 +740,13 @@ mod tests {
                     full_name: "Microsoft.BingWeather_4.54.63045.0_neutral_~_8wekyb3d8bbwe".into(),
                     kind: Kind::Bundle,
                     files: vec![entry("AppxMetadata/AppxBundleManifest.xml")],
+                    sddl: None,
                 },
                 Package {
                     full_name: "Microsoft.BingWeather_4.54.63045.0_x64__8wekyb3d8bbwe".into(),
                     kind: Kind::Main,
                     files: vec![entry("AppxManifest.xml")],
+                    sddl: None,
                 },
                 Package {
                     full_name:
@@ -700,6 +754,7 @@ mod tests {
                             .into(),
                     kind: Kind::Resource,
                     files: vec![entry("AppxManifest.xml")],
+                    sddl: None,
                 },
             ],
             frameworks: vec!["Microsoft.VCLibs.140.00_14.0.33519.0_x64__8wekyb3d8bbwe".into()],
@@ -1035,6 +1090,32 @@ mod tests {
         for bad in ["LC", "RP", "GRLC", "FRRP", "0x14", "0x1200a9ff"] {
             assert!(!read_only(bad), "{bad}");
         }
+    }
+
+    /// Real permissions read on Windows 11 (VCLibs framework, Calculator).
+    const FRAMEWORK_DIR: &str = "O:BAG:S-1-5-21-583798214-2395324448-2099448207-513D:AI(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;AC)(A;OICI;0x1200a9;;;S-1-15-2-2)(A;OICIID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;OICIID;0x1200a9;;;S-1-15-3-1024-3635283841-2530182609-996808640-1887759898-3848208603-3313616867-983405619-2501854204)(A;OICIID;FA;;;SY)(A;CIID;0x1200a9;;;BA)(A;OICIID;0x1200a9;;;LS)(A;OICIID;0x1200a9;;;NS)(A;OICIID;0x1200a9;;;RC)";
+    const APP_FILE: &str = "O:SYG:SYD:AI(XA;ID;0x1200a9;;;BU;(WIN://SYSAPPID Contains \"Microsoft.WindowsCalculator_8wekyb3d8bbwe\"))(A;ID;0x1200a9;;;S-1-15-3-466767348-3739614953-2700836392-1801644223-4227750657-1087833535-2488631167)(A;ID;FR;;;BU)(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;0x1200a9;;;S-1-15-3-1024-3635283841-2530182609-996808640-1887759898-3848208603-3313616867-983405619-2501854204)(A;ID;FA;;;SY)(A;ID;0x1200a9;;;LS)(A;ID;0x1200a9;;;NS)(A;ID;0x1200a9;;;RC)";
+
+    #[test]
+    fn own_sddl_accepts_real_permissions_for_their_own_package_only() {
+        let vclibs = "Microsoft.VCLibs.140.00_8wekyb3d8bbwe";
+        let calc = "Microsoft.WindowsCalculator_8wekyb3d8bbwe";
+        assert_eq!(own_sddl(FRAMEWORK_DIR, vclibs).unwrap(), FRAMEWORK_DIR);
+        assert_eq!(own_sddl(APP_FILE, calc).unwrap(), APP_FILE);
+        // An app-only rule naming another app is refused.
+        assert!(own_sddl(APP_FILE, "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
+        // Untrusted owner, write grants, audit sections are refused.
+        assert!(own_sddl(&APP_FILE.replace("O:SY", "O:BU"), calc).is_err());
+        assert!(own_sddl(&format!("{FRAMEWORK_DIR}(A;;FA;;;BU)"), vclibs).is_err());
+        assert!(own_sddl(&format!("{FRAMEWORK_DIR}S:(AU;SA;FA;;;WD)"), vclibs).is_err());
+        assert!(own_sddl("O:SYG:SYD:(A;;GA;;;WD)", vclibs).is_err());
+        assert!(own_sddl(FRAMEWORK_DIR, "bad\"family_8wekyb3d8bbwe").is_err());
+        // A parenthesis hidden in a quoted name can't end the ACE early.
+        let sneaky = APP_FILE.replace(
+            "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "x))(A;;FA;;;WD)((",
+        );
+        assert!(own_sddl(&sneaky, calc).is_err());
     }
 
     #[test]

@@ -203,6 +203,10 @@ pub fn elevate(args: &[String]) -> Result<()> {
 /// lives in the `App` namespace inside the protected state directory. The engine
 /// treats it as opaque, like `operations` and `Patching`; journal entries must
 /// never be written next to the WAL files themselves.
+/// Saved copies of removed apps, inside `app_dir()`. The state directory
+/// check inspects this folder but does not walk its (many) files.
+pub const APP_BACKUPS: &str = "AppBackups";
+
 pub fn app_dir() -> Result<PathBuf> {
     let dir = state_dir()?.join("App");
     match std::fs::symlink_metadata(&dir) {
