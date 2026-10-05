@@ -268,6 +268,11 @@ pub fn serve(
         config::load_config(&paths.config),
         upstream_addrs(&network),
     ));
+    if let Some(previous) = config::load_status(&paths.status) {
+        shared
+            .stats
+            .resume(previous.day, previous.blocked, server::unix_now());
+    }
     let meta: SharedMeta = Arc::new(Mutex::new(Meta::default()));
     let background = Background {
         busy: Arc::new(AtomicBool::new(false)),
