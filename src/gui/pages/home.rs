@@ -1,5 +1,5 @@
-//! Home: score ring, verdict, one primary action, attention/protected cards,
-//! first-run scanning view. OWNER: page-polish agent.
+//! Home: one hero region (score ring, verdict, one primary, extras in the
+//! overflow menu), then flat row groups; first-run PC-check view.
 //!
 //! Motion (see docs/MOTION.md): `window::frames()` is subscribed only while the
 //! scan view is live or the score number is counting up, never when idle.
@@ -7,13 +7,12 @@ use crate::advice::{self, Group, NextStep};
 use crate::app::score::{Score, Verdict};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Tone};
-use crate::gui::widgets::{self, anim, ring, ButtonKind};
+use crate::gui::widgets::{self, anim, progress, ring, scan, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
-use iced::widget::{column, container, row, text};
+use iced::widget::{column, container, row};
 use iced::{Alignment, Element, Length, Subscription, Task};
 use secblitz::engine::{Outcome, Report};
 use secblitz::model::Probe;
-use std::collections::HashMap;
 use std::time::Instant;
 
 /// Score number counting from the previously shown value to a new one.
@@ -32,10 +31,14 @@ pub struct State {
     now: Instant,
     /// Started when the scan view appears; drives the shield and spinner.
     scan: Option<anim::Clock>,
-    /// When each checked item finished (for its check draw-in).
-    done_at: HashMap<String, Instant>,
-    /// How many progress items were already stamped in `done_at`.
+    /// Status lines of the live check, oldest first, with their start time.
+    lines: Vec<(String, Instant)>,
+    /// How many progress items were already turned into status lines.
     processed: usize,
+    /// "Protected" list expanded.
+    protected_open: bool,
+    /// "Protected" list shows every row instead of the first few.
+    protected_all: bool,
     /// `checked_at` of the check whose result is already on screen.
     seen_check: Option<u64>,
     /// Protected count currently shown beside the ring.
@@ -49,8 +52,10 @@ impl Default for State {
             details_open: false,
             now: Instant::now(),
             scan: None,
-            done_at: HashMap::new(),
+            lines: Vec::new(),
             processed: 0,
+            protected_open: false,
+            protected_all: false,
             seen_check: None,
             shown: 0,
             count: None,
@@ -64,18 +69,36 @@ pub enum Msg {
     Frame(Instant),
     /// Open / close the details on the error card.
     ToggleDetails,
+    /// Expand / collapse the protected list.
+    ToggleProtected,
+    /// Show every protected row / only the first few.
+    ToggleProtectedAll,
 }
 
 /// Free space below which the user is warned (decimal GB, as Windows shows it).
 const LOW_DISK_BYTES: u64 = 5_000_000_000;
-/// Finished items kept visible in the live checklist.
-const VISIBLE_STEPS: usize = 5;
+/// Status lines kept in memory for the ticker (it shows the last few).
+const KEPT_LINES: usize = 8;
+/// Rows of the protected list shown before "Show more".
+const PROTECTED_ROWS: usize = 8;
+/// Attention rows shown on Home.
+const ATTENTION_ROWS: usize = 4;
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Frame(now) => frame(state, ctx, now),
         Msg::ToggleDetails => state.details_open = !state.details_open,
+        Msg::ToggleProtected => state.protected_open = !state.protected_open,
+        Msg::ToggleProtectedAll => state.protected_all = !state.protected_all,
     }
+    Task::none()
+}
+
+/// Home has nothing to read in the background; the hook exists so the shell
+/// can treat every page alike, and it drops stale view state.
+#[allow(dead_code)]
+pub fn preload(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
+    state.protected_all = false;
     Task::none()
 }
 
@@ -84,18 +107,27 @@ fn frame(state: &mut State, ctx: &Ctx, now: Instant) {
     if let Some(progress) = &ctx.checking {
         if state.scan.is_none() {
             state.scan = Some(anim::Clock::at(now));
-            state.done_at.clear();
+            state.lines.clear();
+            state.lines.push((ctx.t("Looking at your settings…"), now));
             state.processed = 0;
         }
         if state.processed > progress.items.len() {
             state.processed = 0;
         }
         for (id, _) in progress.items.iter().skip(state.processed) {
-            state.done_at.entry(id.clone()).or_insert(now);
+            let label = ctx.t(advice::control_label(id));
+            if !state.lines.iter().any(|(l, _)| *l == label) {
+                state.lines.push((label, now));
+            }
+        }
+        if state.lines.len() > KEPT_LINES {
+            let extra = state.lines.len() - KEPT_LINES;
+            state.lines.drain(..extra);
         }
         state.processed = progress.items.len();
     } else {
         state.scan = None;
+        state.lines.clear();
     }
     if ctx.checking.is_none() && ctx.checked_at != state.seen_check {
         state.seen_check = ctx.checked_at;
@@ -142,7 +174,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         if let Some(error) = &ctx.check_error {
             return error_card(state, ctx, "We couldn't check your PC", error);
         }
-        return widgets::card(
+        return widgets::region(
             p,
             widgets::empty_state(
                 p,
@@ -165,32 +197,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
 // ---------------------------------------------------------------- scanning
 
-/// One checklist line with an animated status mark.
-fn step_row<'a>(
-    p: theme::Palette,
-    mark: Element<'a, Message>,
-    label: String,
-    running: bool,
-) -> Element<'a, Message> {
-    row![
-        container(mark).center_x(theme::CHECK),
-        text(label)
-            .size(theme::BODY)
-            .font(if running {
-                theme::MEDIUM
-            } else {
-                theme::REGULAR
-            })
-            .color(if running { p.text } else { p.text_muted })
-    ]
-    .spacing(theme::S3)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Element<'a, Message> {
+fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Element<'a, Message> {
     let p = ctx.palette;
-    // Distinct finished items, in first-seen order.
     let mut seen: Vec<&str> = Vec::new();
     for (id, _) in &progress.items {
         if !seen.contains(&id.as_str()) {
@@ -209,40 +217,21 @@ fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Elemen
         .map(|c| c.elapsed_at(state.now))
         .unwrap_or_default();
 
-    let mut list = column![].spacing(theme::S3);
-    for id in &seen[n.saturating_sub(VISIBLE_STEPS)..] {
-        let t = state.done_at.get(*id).map_or(0.0, |at| {
-            anim::Clock::at(*at).progress_at(anim::SLOW, state.now)
-        });
-        list = list.push(step_row(
-            p,
-            anim::check_draw(theme::CHECK, p.good, t),
-            ctx.t(advice::control_label(id)),
-            false,
-        ));
-    }
-    list = list.push(step_row(
-        p,
-        anim::spinner(theme::CHECK, p.text_muted, elapsed),
-        ctx.t("Looking at your settings…"),
-        true,
-    ));
-
     let body = column![
-        widgets::scan::check_hero(p, widgets::scan::HeroPhase::Checking, elapsed, ratio),
+        scan::check_hero(p, scan::HeroPhase::Checking, elapsed, ratio),
         column![
             widgets::h1(p, ctx.t("Checking your PC")),
             widgets::muted(p, ctx.t("This takes about a minute. Nothing is changed.")),
         ]
         .spacing(theme::S1)
         .align_x(Alignment::Center),
-        container(widgets::bar(p, ratio, Tone::Neutral)).max_width(theme::MAX_READABLE),
-        container(list).max_width(theme::MAX_READABLE),
+        container(progress::bar_eased(p, ratio, Tone::Neutral)).max_width(theme::MAX_READABLE),
+        container(scan::status_ticker(p, &state.lines, state.now)).max_width(theme::MAX_READABLE),
     ]
     .spacing(theme::S6)
     .align_x(Alignment::Center)
     .width(Length::Fill);
-    widgets::card(p, container(body).center_x(Length::Fill)).into()
+    widgets::region(p, container(body).center_x(Length::Fill)).into()
 }
 
 // ----------------------------------------------------------------- errors
@@ -273,7 +262,7 @@ fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Ele
     ]
     .spacing(theme::S4)
     .align_x(Alignment::Start);
-    widgets::card(p, content).into()
+    widgets::region(p, content).into()
 }
 
 // ---------------------------------------------------------------- assessed
@@ -491,15 +480,13 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         176.0,
     );
 
-    let check_again = |kind: ButtonKind, icon: Option<Icon>| {
-        widgets::action(
-            p,
-            kind,
-            ctx.t("Check again"),
-            icon,
-            (!ctx.busy).then_some(Message::CheckNow),
-        )
-    };
+    let check_item = (
+        Icon::Refresh,
+        ctx.t("Check again"),
+        Message::CheckNow,
+        false,
+    );
+    let mut extras: Vec<(Icon, String, Message, bool)> = Vec::new();
     let mut buttons = row![].spacing(theme::S2).align_y(Alignment::Center);
     if ctx.checking.is_some() {
         let elapsed = state
@@ -516,27 +503,34 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
                 None,
             ));
     } else if verdict == Verdict::Attention && fixable > 0 {
-        buttons = buttons
-            .push(widgets::action(
-                p,
-                ButtonKind::Primary,
-                count_text(ctx, "Fix it for me", "Fix {n} for me", fixable),
-                Some(Icon::Wrench),
-                (!ctx.busy).then(|| Message::ReviewFixes(ids.clone())),
-            ))
-            .push(check_again(ButtonKind::Secondary, None));
+        buttons = buttons.push(widgets::action(
+            p,
+            ButtonKind::Primary,
+            count_text(ctx, "Fix it for me", "Fix {n} for me", fixable),
+            Some(Icon::Wrench),
+            (!ctx.busy).then(|| Message::ReviewFixes(ids.clone())),
+        ));
+        extras.push(check_item);
     } else if verdict == Verdict::Attention {
-        buttons = buttons
-            .push(widgets::action(
-                p,
-                ButtonKind::Primary,
-                ctx.t("See what to do"),
-                None,
-                Some(Message::Navigate(Page::Fixes)),
-            ))
-            .push(check_again(ButtonKind::Secondary, None));
+        buttons = buttons.push(widgets::action(
+            p,
+            ButtonKind::Primary,
+            ctx.t("See what to do"),
+            None,
+            Some(Message::Navigate(Page::Fixes)),
+        ));
+        extras.push(check_item);
     } else {
-        buttons = buttons.push(check_again(ButtonKind::Primary, Some(Icon::Refresh)));
+        buttons = buttons.push(widgets::action(
+            p,
+            ButtonKind::Primary,
+            ctx.t("Check again"),
+            Some(Icon::Refresh),
+            (!ctx.busy).then_some(Message::CheckNow),
+        ));
+    }
+    if ctx.checking.is_none() && !ctx.busy && !extras.is_empty() {
+        buttons = buttons.push(widgets::overflow_menu(p, extras));
     }
 
     let mut texts = column![widgets::h1(p, title), widgets::muted(p, subtitle)].spacing(theme::S1);
@@ -546,7 +540,7 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     if let Some(when) = last_checked(ctx) {
         texts = texts.push(widgets::small(p, when));
     }
-    let hero = widgets::card(
+    let hero = widgets::region(
         p,
         row![
             ring_view,
@@ -558,7 +552,7 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         .align_y(Alignment::Center),
     );
 
-    let mut page = column![].spacing(theme::S4);
+    let mut page = column![].spacing(theme::S8);
     if ctx.check_error.is_some() {
         page = page.push(widgets::inline_notice(
             p,
@@ -572,102 +566,123 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     }
 
     if !items.is_empty() {
-        page = page.push(attention_card(ctx, &items));
+        page = page.push(attention_group(ctx, &items));
     }
     let (count, labels) = protected_labels(report);
     if count > 0 {
-        page = page.push(protected_card(ctx, count, &labels));
+        page = page.push(protected_group(state, ctx, count, &labels));
     }
     let tips = tips(report);
     if !tips.is_empty() {
-        // Light and calm: plain muted lines, no boxes.
-        let mut c = column![widgets::section_label(p, ctx.t("Good to know"))].spacing(theme::S3);
-        for a in tips.iter().take(3) {
-            c = c.push(
-                row![
-                    widgets::icon(Icon::Info, 16.0, p.text_muted),
-                    widgets::muted(p, format!("{}. {}", ctx.t(a.label), ctx.t(a.next))),
-                ]
-                .spacing(theme::S3)
-                .align_y(Alignment::Center),
-            );
-        }
-        page = page.push(container(c).padding([theme::S2, theme::S1]));
+        let rows = tips
+            .iter()
+            .take(3)
+            .map(|a| {
+                widgets::row_item(
+                    p,
+                    Some(Icon::Info),
+                    ctx.t(a.label),
+                    Some(ctx.t(a.next)),
+                    iced::widget::space::horizontal(),
+                    None,
+                )
+            })
+            .collect();
+        page = page.push(widgets::group(p, ctx.t("Good to know"), None, None, rows));
     }
     page.into()
 }
 
-fn attention_card<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Element<'a, Message> {
+fn attention_group<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Element<'a, Message> {
     let p = ctx.palette;
-    let mut c = column![row![
-        widgets::h2(p, ctx.t("Needs your attention")),
-        widgets::pill(p, items.len().to_string(), Tone::Warn),
-    ]
-    .spacing(theme::S2)
-    .align_y(Alignment::Center)]
-    .spacing(theme::S3);
-    for (r, a) in items.iter().take(4) {
-        let impact = if a.impact.is_empty() {
-            String::new()
-        } else {
-            format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact))
-        };
-        let line = row![
-            widgets::icon_badge(p, Icon::AlertTriangle, Tone::Warn),
-            column![
-                text(ctx.t(advice::control_label(&r.id)))
-                    .size(theme::BODY)
-                    .font(theme::MEDIUM)
-                    .color(p.text),
-                text(impact)
-                    .size(theme::SMALL)
-                    .font(theme::REGULAR)
-                    .color(p.text_muted),
-            ]
-            .spacing(theme::S1)
-            .width(Length::Fill),
-            widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
-        ]
-        .spacing(theme::S3)
-        .align_y(Alignment::Center);
-        c = c.push(widgets::list_button(
+    let mut rows: Vec<Element<'a, Message>> = items
+        .iter()
+        .take(ATTENTION_ROWS)
+        .map(|(r, a)| {
+            let impact = (!a.impact.is_empty())
+                .then(|| format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact)));
+            widgets::row_item_tinted(
+                p,
+                Some(Icon::AlertTriangle),
+                Some(Tone::Warn),
+                ctx.t(advice::control_label(&r.id)),
+                impact,
+                widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
+                Some(Message::Navigate(Page::Fixes)),
+            )
+        })
+        .collect();
+    if items.len() > ATTENTION_ROWS {
+        rows.push(widgets::show_more_button(
             p,
-            line,
+            count_text(
+                ctx,
+                "See {n} more",
+                "See {n} more",
+                items.len() - ATTENTION_ROWS,
+            ),
             Message::Navigate(Page::Fixes),
         ));
     }
-    if items.len() > 4 {
-        let more = count_text(ctx, "See {n} more", "See {n} more", items.len() - 4);
-        c = c.push(widgets::link(p, more, Message::Navigate(Page::Fixes)));
-    }
-    widgets::card(p, c).into()
+    widgets::group(
+        p,
+        ctx.t("Needs your attention"),
+        None,
+        Some(widgets::pill(p, items.len().to_string(), Tone::Warn)),
+        rows,
+    )
 }
 
-fn protected_card<'a>(ctx: &'a Ctx, count: usize, labels: &[&'static str]) -> Element<'a, Message> {
+/// Everything that is fine, folded away with a one-line summary.
+fn protected_group<'a>(
+    state: &State,
+    ctx: &'a Ctx,
+    count: usize,
+    labels: &[&'static str],
+) -> Element<'a, Message> {
     let p = ctx.palette;
-    let names: Vec<String> = labels.iter().take(4).map(|l| ctx.t(l)).collect();
+    let names: Vec<String> = labels.iter().take(3).map(|l| ctx.t(l)).collect();
     let mut summary = names.join(", ");
-    if labels.len() > 4 {
+    if labels.len() > 3 {
         summary.push('…');
     }
-    let header = row![
-        widgets::icon_badge(p, Icon::ShieldCheck, Tone::Good),
-        column![
-            row![
-                widgets::h2(p, ctx.t("Protected")),
-                widgets::pill(p, count.to_string(), Tone::Good)
-            ]
-            .spacing(theme::S2)
-            .align_y(Alignment::Center),
-            widgets::small(p, summary),
-        ]
-        .spacing(theme::S1)
-        .width(Length::Fill),
-        widgets::link(p, ctx.t("See all"), Message::Navigate(Page::Fixes)),
-    ]
-    .spacing(theme::S3)
-    .align_y(Alignment::Center);
-    widgets::card(p, header).into()
+    let shown = widgets::limited(labels, PROTECTED_ROWS, state.protected_all);
+    let mut body = column![].spacing(theme::S1);
+    for l in shown {
+        body = body.push(widgets::row_item_tinted(
+            p,
+            Some(Icon::ShieldCheck),
+            Some(Tone::Good),
+            ctx.t(l),
+            None,
+            iced::widget::space::horizontal(),
+            None,
+        ));
+    }
+    if labels.len() > PROTECTED_ROWS {
+        body = body.push(widgets::show_more_button(
+            p,
+            if state.protected_all {
+                ctx.t("Show less")
+            } else {
+                count_text(
+                    ctx,
+                    "Show {n} more",
+                    "Show {n} more",
+                    labels.len() - PROTECTED_ROWS,
+                )
+            },
+            Message::Home(Msg::ToggleProtectedAll),
+        ));
+    }
+    widgets::collapsible(
+        p,
+        ctx.t("Protected"),
+        Some(format!("{count} · {summary}")),
+        state.protected_open,
+        Message::Home(Msg::ToggleProtected),
+        body,
+    )
 }
 
 #[cfg(test)]
