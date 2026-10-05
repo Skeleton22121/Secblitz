@@ -207,7 +207,6 @@ pub struct State {
     /// Time of the latest animation frame (never read from the clock in `view`).
     now: Instant,
     /// Zero point for the endless spinners.
-    epoch: Instant,
     /// Finished-state draw-ins that are still moving.
     shots: Vec<(Slot, Clock)>,
 }
@@ -236,7 +235,6 @@ impl Default for State {
             bitwarden: Run::Idle,
             open_details: Vec::new(),
             now: Instant::now(),
-            epoch: Instant::now(),
             shots: Vec::new(),
         }
     }
@@ -550,19 +548,10 @@ impl State {
             .find(|(s, _)| *s == slot)
             .map_or(1.0, |(_, clock)| clock.progress_at(anim::SLOW, self.now))
     }
-    /// Time since the spinners' zero point.
-    fn spin(&self) -> Duration {
-        self.now.saturating_duration_since(self.epoch)
-    }
-    /// True while any spinner or draw-in is on screen.
+    /// True while a draw-in mark is animating. Progress bars ask for their
+    /// own redraws, so running jobs need no page-wide frame clock.
     fn needs_frames(&self) -> bool {
         !self.shots.is_empty()
-            || matches!(self.scan, Run::Working)
-            || matches!(self.defender, Run::Working)
-            || matches!(self.bitwarden, Run::Working)
-            || matches!(self.repair, Repair::Working { .. })
-            || matches!(self.updates, Updates::Looking | Updates::Installing { .. })
-            || matches!(self.tips, Tips::Running(_))
     }
 
     fn close_detail(&mut self, detail: Detail) {

@@ -16,7 +16,7 @@ use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, space, text};
-use iced::{Alignment, Element, Font, Length, Padding};
+use iced::{Alignment, Element, Font, Length};
 
 type El<'a> = Element<'a, Message>;
 type MenuEntry = (Icon, String, Message, bool);
@@ -105,30 +105,6 @@ fn trailing<'a>(items: Vec<El<'a>>) -> El<'a> {
         .into()
 }
 
-fn spin<'a>(state: &State, p: Palette) -> El<'a> {
-    anim::spinner(MARK, p.text_muted, state.spin())
-}
-
-/// Extra lines under a row, lined up with its text.
-fn under<'a>(items: Vec<El<'a>>) -> El<'a> {
-    container(column(items).spacing(theme::S2).width(Length::Fill))
-        .padding(Padding {
-            top: 0.0,
-            right: theme::S4,
-            bottom: theme::S2,
-            left: theme::S4 + theme::ICON_ROW + theme::S4,
-        })
-        .width(Length::Fill)
-        .into()
-}
-
-fn block<'a>(head: El<'a>, extra: Option<El<'a>>) -> El<'a> {
-    match extra {
-        Some(e) => column![head, e].width(Length::Fill).into(),
-        None => head,
-    }
-}
-
 /// What a running row shows besides its title.
 struct Running<'a> {
     icon: Icon,
@@ -139,26 +115,25 @@ struct Running<'a> {
     notes: Vec<El<'a>>,
 }
 
-/// A row that is working: spinner on the right, a bar underneath.
-fn running<'a>(state: &State, p: Palette, r: Running<'a>) -> El<'a> {
-    let head = widgets::row_item(
+/// A row that is working: the bar sits under its title, inside the row.
+fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
+    let mut below = vec![r.bar];
+    below.extend(r.notes);
+    widgets::row_item_below(
         p,
         Some(r.icon),
+        None,
         r.title,
         Some(r.sub),
-        trailing(vec![spin(state, p), more(p, r.menu)]),
+        trailing(vec![more(p, r.menu)]),
+        below,
         None,
-    );
-    let mut extra = vec![r.bar];
-    extra.extend(r.notes);
-    block(head, Some(under(extra)))
+    )
 }
 
 /// A working row whose length is unknown.
-fn busy_row<'a>(state: &State, p: Palette, icon: Icon, title: String, sub: String) -> El<'a> {
-    running(
-        state,
-        p,
+fn busy_row<'a>(p: Palette, icon: Icon, title: String, sub: String) -> El<'a> {
+    running(p,
         Running {
             icon,
             title,
@@ -192,7 +167,7 @@ fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome<'a>) -> El<'a> {
         _ => anim::warn_draw(MARK, color, t),
     };
     let mut menu = o.menu;
-    let mut extra = None;
+    let mut below = Vec::new();
     if let Some((which, raw)) = o.raw {
         menu.push(entry(
             Icon::Info,
@@ -200,18 +175,19 @@ fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome<'a>) -> El<'a> {
             Msg::ToggleDetail(which),
         ));
         if state.detail_open(which) {
-            extra = Some(under(vec![raw_text(ctx, raw)]));
+            below.push(raw_text(ctx, raw));
         }
     }
-    let head = widgets::row_item(
+    widgets::row_item_below(
         p,
         Some(o.icon),
+        None,
         o.title,
         o.sub,
         trailing(vec![mark, more(p, menu)]),
+        below,
         None,
-    );
-    block(head, extra)
+    )
 }
 
 /// The raw evidence for people who want it.
@@ -286,9 +262,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             secondary(p, ctx.t("Scan"), Some(Msg::Ask(Sheet::Scan))),
             None,
         ),
-        Run::Working => busy_row(
-            state,
-            p,
+        Run::Working => busy_row(p,
             Icon::Bug,
             ctx.t("Scan for viruses"),
             ctx.t("Starting the scan…"),
@@ -339,9 +313,7 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             secondary(p, ctx.t("Update"), Some(Msg::Ask(Sheet::DefenderUpdate))),
             None,
         ),
-        Run::Working => busy_row(
-            state,
-            p,
+        Run::Working => busy_row(p,
             Icon::Download,
             ctx.t("Update virus protection"),
             ctx.t("Updating…"),
@@ -461,9 +433,7 @@ fn repair_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     Msg::StopRepair,
                 )]
             };
-            running(
-                state,
-                p,
+            running(p,
                 Running {
                     icon: Icon::Wrench,
                     title,
@@ -538,9 +508,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ),
             None,
         ),
-        Updates::Looking => busy_row(
-            state,
-            p,
+        Updates::Looking => busy_row(p,
             Icon::Download,
             ctx.t("Windows updates"),
             ctx.t("Looking for updates…"),
@@ -629,9 +597,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     Msg::StopInstall,
                 )]
             };
-            running(
-                state,
-                p,
+            running(p,
                 Running {
                     icon: Icon::Download,
                     title: count_installing(ctx, *count),
@@ -717,21 +683,19 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     .into();
 
     if let Tips::Running(profile) = &state.tips {
-        let head = widgets::row_item(
+        return vec![widgets::row_item_below(
             p,
             Some(Icon::ShieldCheck),
+            None,
             ctx.t("Looking at your PC…"),
             Some(format!(
                 "{}  ·  {}",
                 ctx.t(profile.title()),
                 ctx.t("This can take about a minute.")
             )),
-            spin(state, p),
+            iced::widget::space::horizontal().width(0),
+            vec![progress::indeterminate(p, Tone::Brand)],
             None,
-        );
-        return vec![block(
-            head,
-            Some(under(vec![progress::indeterminate(p, Tone::Brand)])),
         )];
     }
 
@@ -755,20 +719,24 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
             )],
         ));
     }
-    let head = widgets::row_item(
+    let blurb = widgets::small(p, ctx.t(state.tip_choice.blurb()));
+    let mut below = vec![picker, blurb];
+    if let Tips::Done(report) = &state.tips {
+        if state.detail_open(Detail::Tips) {
+            below.push(raw_text(ctx, &report.technical));
+        }
+    }
+    let mut out = vec![widgets::row_item_below(
         p,
         Some(Icon::ShieldCheck),
+        None,
         ctx.t("What do you use this PC for?"),
         Some(ctx.t("This only looks at your PC. Nothing is changed.")),
         trailing(items),
+        below,
         None,
-    );
-    let blurb = widgets::small(p, ctx.t(state.tip_choice.blurb()));
-    let mut out = vec![block(head, Some(under(vec![picker, blurb])))];
+    )];
     if let Tips::Done(report) = &state.tips {
-        if state.detail_open(Detail::Tips) {
-            out.push(under(vec![raw_text(ctx, &report.technical)]));
-        }
         let good = report.count(TipState::Good);
         let look = report.count(TipState::Look);
         let mut summary = ctx.t("{n} look good").replace("{n}", &good.to_string());
@@ -931,9 +899,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ),
             None,
         ),
-        Run::Working => busy_row(
-            state,
-            p,
+        Run::Working => busy_row(p,
             Icon::Lock,
             ctx.t("Password manager"),
             ctx.t("Installing Bitwarden. This can take a minute…"),

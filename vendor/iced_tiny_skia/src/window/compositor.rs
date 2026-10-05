@@ -1,6 +1,5 @@
 use crate::core::{Color, Rectangle, Size};
 use crate::graphics::compositor::{self, Information};
-use crate::graphics::damage;
 use crate::graphics::error::{self, Error};
 use crate::graphics::{self, Shell, Viewport};
 use crate::{Layer, Renderer, Settings};
@@ -160,61 +159,31 @@ pub fn present(
         .buffer_mut()
         .map_err(|_| compositor::SurfaceError::Lost)?;
 
-    let last_layers = {
-        let age = buffer.age();
+    // Secblitz patch: every redraw repaints the whole frame. Upstream diffs
+    // the layer stack against the previous frame and repaints only damaged
+    // rectangles (or nothing), but that diff misses some changes (text and
+    // vector content updated in place, transformed and clipped content), and
+    // each miss leaves stale pixels on screen. iced only redraws when
+    // something asked for it, so an idle window still costs nothing.
+    let _ = surface.max_age;
+    surface.layer_stack.clear();
+    surface.background_color = background_color;
+    let damage = vec![Rectangle::with_size(viewport.logical_size())];
 
-        surface.max_age = surface.max_age.max(age);
-        surface.layer_stack.truncate(surface.max_age as usize);
+    let mut pixels = tiny_skia::PixmapMut::from_bytes(
+        bytemuck::cast_slice_mut(&mut buffer),
+        physical_size.width,
+        physical_size.height,
+    )
+    .expect("Create pixel map");
 
-        if age > 0 {
-            surface.layer_stack.get(age as usize - 1)
-        } else {
-            None
-        }
-    };
-
-    let damage = last_layers
-        .and_then(|last_layers| {
-            (surface.background_color == background_color).then(|| {
-                damage::diff(
-                    last_layers,
-                    renderer.layers(),
-                    |layer| vec![layer.bounds],
-                    Layer::damage,
-                )
-            })
-        })
-        .unwrap_or_else(|| vec![Rectangle::with_size(viewport.logical_size())]);
-
-    if damage.is_empty() {
-        if let Some(last_layers) = last_layers {
-            surface.layer_stack.push_front(last_layers.clone());
-        }
-    } else {
-        surface.layer_stack.push_front(renderer.layers().to_vec());
-        surface.background_color = background_color;
-
-        // Secblitz patch: repaint the whole frame whenever anything changed.
-        // Partial repaints left stale pixels behind animated, transformed and
-        // clipped content. Unchanged frames are still skipped above, so an
-        // idle window costs nothing.
-        let damage = vec![Rectangle::with_size(viewport.logical_size())];
-
-        let mut pixels = tiny_skia::PixmapMut::from_bytes(
-            bytemuck::cast_slice_mut(&mut buffer),
-            physical_size.width,
-            physical_size.height,
-        )
-        .expect("Create pixel map");
-
-        renderer.draw(
-            &mut pixels,
-            &mut surface.clip_mask,
-            viewport,
-            &damage,
-            background_color,
-        );
-    }
+    renderer.draw(
+        &mut pixels,
+        &mut surface.clip_mask,
+        viewport,
+        &damage,
+        background_color,
+    );
 
     on_pre_present();
     buffer.present().map_err(|_| compositor::SurfaceError::Lost)

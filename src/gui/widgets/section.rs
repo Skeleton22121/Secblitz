@@ -17,7 +17,8 @@ use iced::advanced::{overlay, Clipboard, Shell, Widget};
 use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{button, column, container, row, text};
 use iced::{
-    mouse, window, Alignment, Background, Border, Color, Element, Event, Length, Pixels, Radians,
+    mouse, window, Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
+    Radians,
     Rectangle, Renderer, Shadow, Size, Theme, Vector,
 };
 use std::time::Instant;
@@ -258,6 +259,27 @@ pub fn row_item_tinted<'a>(
     trailing: impl Into<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
+    row_item_below(p, glyph, tone, title, subtitle, trailing, Vec::new(), on_press)
+}
+
+/// [`row_item_tinted`] with extra lines (a progress bar, a picker, notes)
+/// inside the row, lined up with its title and sharing its hover tone.
+#[allow(clippy::too_many_arguments)]
+pub fn row_item_below<'a>(
+    p: Palette,
+    glyph: Option<Icon>,
+    tone: Option<Tone>,
+    title: impl Into<String>,
+    subtitle: Option<String>,
+    trailing: impl Into<Element<'a, Message>>,
+    below: Vec<Element<'a, Message>>,
+    on_press: Option<Message>,
+) -> Element<'a, Message> {
+    let indent = if glyph.is_some() {
+        theme::ICON_ROW + theme::S4
+    } else {
+        0.0
+    };
     let mut texts = column![text(title.into())
         .size(theme::BODY)
         .line_height(LineHeight::Absolute(Pixels(theme::LINE_BODY)))
@@ -284,7 +306,23 @@ pub fn row_item_tinted<'a>(
         .push(iced::widget::space::vertical().height(theme::ROW_ITEM - theme::S2 * 2.0))
         .push(texts)
         .push(trailing.into());
-    let inner = container(line)
+    let body: Element<'a, Message> = if below.is_empty() {
+        line.into()
+    } else {
+        column![
+            line,
+            container(column(below).spacing(theme::S2).width(Length::Fill))
+                .padding(Padding {
+                    left: indent,
+                    bottom: theme::S2,
+                    ..Padding::ZERO
+                })
+                .width(Length::Fill)
+        ]
+        .spacing(theme::S1)
+        .into()
+    };
+    let inner = container(body)
         .padding([theme::S2, theme::S4])
         .width(Length::Fill)
         .center_y(Length::Shrink);

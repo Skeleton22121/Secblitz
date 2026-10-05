@@ -1,4 +1,5 @@
-//! Progress bars: thin, round, eased, borderless.
+//! Progress bars in the Windows 11 style: a 1 px track with a 3 px rounded
+//! indicator, eased, borderless, drawn on whole pixels so edges stay crisp.
 //!
 //! * [`bar`]: draws the value of a [`Tween`] the page keeps (it controls the
 //!   clock, so it also works with a frame subscription it already runs).
@@ -8,23 +9,39 @@
 //!   redraws itself for as long as it is on screen.
 //! * [`steps`]: a row of short segments for multi-step flows.
 //!
-//! The track is a whisper of the text colour, so it reads on `bg`,
-//! `surface` and `surface_alt` alike. No borders, no shadows.
+//! The track is a hairline of the text colour, so it reads on `bg`,
+//! `surface`, `surface_alt` and hover tones alike. No borders, no shadows.
 use super::anim::{self, Tween, DECELERATE};
 use crate::gui::theme::{Palette, Tone};
 use crate::gui::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use std::time::Instant;
 
-/// Height of a bar.
-pub const HEIGHT: f32 = 6.0;
+/// Height of a bar (the indicator; the track is a centred hairline).
+pub const HEIGHT: f32 = 3.0;
 /// Height of one segment of [`steps`].
-pub const STEP_HEIGHT: f32 = 4.0;
+pub const STEP_HEIGHT: f32 = 3.0;
 const STEP_GAP: f32 = 4.0;
 
+/// A frame whose origin sits on a whole device pixel, so the hairline and the
+/// indicator's straight edges are not smeared across two pixel rows.
+fn pixel_frame(r: &Renderer, b: Rectangle) -> Frame {
+    let mut f = Frame::new(r, b.size());
+    f.translate(Vector::new(-b.x.fract(), -b.y.fract()));
+    f
+}
+
 fn track_color(p: &Palette) -> Color {
-    p.text.scale_alpha(0.08)
+    p.text.scale_alpha(0.22)
+}
+
+/// The 1 px track from `x0` to `x1`, on the middle pixel row of the bar.
+fn track(f: &mut Frame, x0: f32, x1: f32, color: Color) {
+    let y = ((f.height() - 1.0) / 2.0).round();
+    if x1 > x0 {
+        f.fill_rectangle(Point::new(x0, y), Size::new(x1 - x0, 1.0), color);
+    }
 }
 
 /// Capsule from `x0` to `x1` filling the frame height `h`.
@@ -65,8 +82,9 @@ pub fn shimmer_span(secs: f32, w: f32) -> (f32, f32) {
 
 fn paint_bar(f: &mut Frame, p: &Palette, tone: Tone, value: f32) {
     let (w, h) = (f.width(), f.height());
-    f.fill(&capsule(0.0, w, h), track_color(p));
-    let fw = fill_width(value, w, h);
+    let fw = fill_width(value, w, h).round();
+    // The track only shows where the indicator is not, so the two never blend.
+    track(f, fw, w, track_color(p));
     if fw > 0.0 {
         f.fill(&capsule(0.0, fw, h), p.tone(tone));
     }
@@ -90,7 +108,7 @@ impl canvas::Program<Message> for Plain {
         b: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut f = Frame::new(r, b.size());
+        let mut f = pixel_frame(r, b);
         paint_bar(&mut f, &self.p, self.tone, self.value);
         vec![f.into_geometry()]
     }
@@ -173,7 +191,7 @@ impl canvas::Program<Message> for Eased {
         b: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut f = Frame::new(r, b.size());
+        let mut f = pixel_frame(r, b);
         paint_bar(&mut f, &self.p, self.tone, s.shown);
         vec![f.into_geometry()]
     }
@@ -224,25 +242,21 @@ impl canvas::Program<Message> for Shimmer {
         b: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut f = Frame::new(r, b.size());
+        let mut f = pixel_frame(r, b);
         let (w, h) = (f.width(), f.height());
-        f.fill(&capsule(0.0, w, h), track_color(&self.p));
         let color = self.p.tone(self.tone);
         if anim::reduced() {
             // Still: a short segment in the middle, not a frozen "loading" bar.
-            f.fill(&capsule(w * 0.33, w * 0.67, h), color);
+            track(&mut f, 0.0, w, track_color(&self.p));
+            f.fill(&capsule((w * 0.33).round(), (w * 0.67).round(), h), color);
             return vec![f.into_geometry()];
         }
+        // Like Windows: no track while the length is unknown, just one
+        // segment gliding across and leaving cleanly at the edges.
         let (left, len) = shimmer_span(s.secs, w);
-        // Faint trail first, then the bright head; both clipped to the track.
-        for (from, to, alpha) in [
-            (left - len * 0.5, left + len, 0.28),
-            (left, left + len, 1.0),
-        ] {
-            let (x0, x1) = (from.max(0.0), to.min(w));
-            if x1 - x0 > 0.5 {
-                f.fill(&capsule(x0, x1, h), color.scale_alpha(alpha));
-            }
+        let (x0, x1) = (left.max(0.0), (left + len).min(w));
+        if x1 - x0 > 0.5 {
+            f.fill(&capsule(x0, x1, h), color);
         }
         vec![f.into_geometry()]
     }
@@ -277,14 +291,15 @@ impl canvas::Program<Message> for Steps {
         b: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut f = Frame::new(r, b.size());
+        let mut f = pixel_frame(r, b);
         let n = self.total.max(1);
         let h = f.height();
         let seg = (f.width() - STEP_GAP * (n - 1) as f32) / n as f32;
         for i in 0..n {
-            let x = i as f32 * (seg + STEP_GAP);
-            f.fill(&capsule(x, x + seg, h), track_color(&self.p));
-            let fw = fill_width(step_fill(self.current, i), seg, h);
+            let x = (i as f32 * (seg + STEP_GAP)).round();
+            let end = (x + seg).round();
+            let fw = fill_width(step_fill(self.current, i), end - x, h).round();
+            track(&mut f, x + fw, end, track_color(&self.p));
             if fw > 0.0 {
                 f.fill(&capsule(x, x + fw, h), self.p.tone(self.tone));
             }
