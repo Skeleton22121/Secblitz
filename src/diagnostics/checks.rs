@@ -300,26 +300,13 @@ pub(super) fn smartscreen(v: &SmartScreen) -> Vec<Assessment> {
 }
 
 // ---------------------------------------------------------------------------
-// Update hygiene (update.auto_policy_disabled, paused, drivers, reboot)
+// Update hygiene (paused, drivers, reboot)
 // ---------------------------------------------------------------------------
 
 pub(super) fn update_policy(v: &UpdatePolicy) -> Vec<Assessment> {
-    let blockers = [
-        v.auto_updates_blocked.known(),
-        v.update_access_blocked.known(),
-        v.update_service_disabled.known(),
-    ];
-    let auto = if blockers.contains(&Some(&true)) {
-        Attention
-    } else if blockers.iter().all(|b| *b == Some(&false)) {
-        Healthy
-    } else {
-        Unknown
-    };
-    let mut out = vec![
-        a("update.auto_policy_disabled", auto, "A policy value or a disabled update service stops Windows from installing updates by itself. Update blockers are a common sign of tampering or old tweak tools."),
-        boolean("update.paused", &v.paused, false, "Windows Update pause or delay is active; updates resume after the pause ends or when resumed in Settings."),
-    ];
+    // Switched-off automatic updates are a fixable engine control
+    // (update.auto_policy_disabled); only the read-only update checks live here.
+    let mut out = vec![boolean("update.paused", &v.paused, false, "Windows Update pause or delay is active; updates resume after the pause ends or when resumed in Settings.")];
     out.push(a("update.drivers_excluded", match v.drivers_excluded.known() { Some(true) => Informational, Some(false) => Healthy, None => Unknown }, "Driver updates are excluded from Windows quality updates by policy. This is often deliberate and is reported for information only."));
     let reboot = match (v.reboot_pending.known(), v.uptime_days.known()) {
         (Some(true), Some(days)) if *days >= 7 => Attention,
@@ -383,7 +370,6 @@ pub(super) fn persistence(v: &Persistence) -> Vec<Assessment> {
 
 pub(super) fn account_hygiene(v: &AccountHygiene) -> Vec<Assessment> {
     vec![
-        boolean("accounts.builtin_administrator", &v.builtin_admin_enabled, false, "The built-in Administrator account (RID 500) is a well-known target. It is off by default; nothing is disabled by this check."),
         a("accounts.stale_enabled", match v.stale_enabled_accounts.known() { Some(0) => Healthy, Some(_) => Attention, None => Unknown }, "Enabled local accounts that have not signed in for 180 days, excluding built-in accounts. Names are never collected."),
     ]
 }
@@ -421,6 +407,90 @@ pub(super) fn firewall_rules(v: &FirewallRules) -> Vec<Assessment> {
 }
 
 // ---------------------------------------------------------------------------
+// Sign-in, encryption, network and start-up checks (tips only)
+// ---------------------------------------------------------------------------
+
+pub(super) fn account_setup(v: &AccountSetup) -> Vec<Assessment> {
+    let daily = match v.current_user_is_admin.known() {
+        Some(true) => Attention,
+        Some(false) => Healthy,
+        None => Unknown,
+    };
+    let find = match v.find_my_device.known().map(String::as_str) {
+        Some("On") => Healthy,
+        Some("Off") => Attention,
+        // Desktops and local-only accounts do not apply; a laptop whose setting this
+        // Windows build does not report is not judged either way.
+        Some("NotApplicable" | "Unreported") => Informational,
+        _ => Unknown,
+    };
+    vec![
+        a("accounts.daily_admin", daily, "The account running this tool is directly a member of the local Administrators group. Nested groups are not followed, so a standard-looking account stays unknown. Nothing is demoted or changed; names are never collected."),
+        a("accounts.find_my_device", find, "Find my device is checked on laptops signed in with a Microsoft account. Where the setting cannot be read with confidence the result stays unknown; nothing is changed."),
+    ]
+}
+
+pub(super) fn windows_hello(v: &WindowsHello) -> Vec<Assessment> {
+    vec![boolean("accounts.hello_configured", &v.pin_set, true, "Whether a Windows Hello PIN or biometric sign-in is set up for this account, read from the single NgcSet line of the Windows device-registration report. Password sign-in is never turned off by this tool.")]
+}
+
+pub(super) fn kernel_stack(vbs: &Vbs) -> Option<Assessment> {
+    let id = "vbs.kernel_stack_protection";
+    let running_hvci = vbs.running_services.known().is_some_and(|s| s.contains(&2));
+    Some(match vbs.kernel_shadow_stacks.known().map(String::as_str) {
+        Some("On") => a(id, Healthy, "Kernel-mode hardware-enforced stack protection is switched on."),
+        Some("Off") if running_hvci => a(id, Attention, "Kernel-mode hardware-enforced stack protection is off although Memory integrity is running. Whether your PC supports it is not tested; the Windows Security toggle shows that. Nothing is changed by this check."),
+        Some("Off") => a(id, Informational, "Kernel-mode hardware-enforced stack protection is off. It needs Memory integrity running first; nothing is changed by this check."),
+        // Not reported by this Windows build: no claim either way.
+        Some("Absent") => return None,
+        _ => a(id, Unknown, "Kernel-mode stack protection state could not be read."),
+    })
+}
+
+pub(super) fn dns_encryption(v: &DnsEncryption) -> Vec<Assessment> {
+    let status = match (
+        v.dns_servers.known(),
+        v.encrypted_dns_servers.known(),
+        v.upgradeable_dns_servers.known(),
+    ) {
+        (Some(0), _, _) => Unknown,
+        (Some(total), Some(encrypted), _) if total == encrypted => Healthy,
+        (Some(_), Some(0), Some(upgradeable)) if *upgradeable > 0 => Attention,
+        (Some(_), Some(_), Some(_)) => Informational,
+        _ => Unknown,
+    };
+    vec![a("net.dns_encryption", status, "Counts only. Attention means a DNS provider that supports encrypted lookups is in use but its lookups are not encrypted yet. Router-provided or other DNS servers are informational, because changing DNS can break parental filters and sign-in pages; this tool never changes DNS.")]
+}
+
+pub(super) fn wifi_security(v: &WifiSecurity) -> Vec<Assessment> {
+    let (status, detail) = match v.current_network.known().map(String::as_str) {
+        Some("Strong") => (Healthy, "The connected Wi-Fi network uses modern WPA2 or WPA3 security."),
+        Some("None") => (Informational, "No Wi-Fi network is connected, or this PC has no Wi-Fi."),
+        Some("Open") => (Attention, "The connected Wi-Fi network has no password protection. On your own router, turn on WPA2 or WPA3; on a public network avoid private sign-ins."),
+        Some("Wep") => (Attention, "The connected Wi-Fi network uses WEP, which can be broken in minutes. The fix is on the router: switch to WPA2 or WPA3."),
+        Some("Old") => (Attention, "The connected Wi-Fi network uses old WPA or TKIP security. The fix is on the router: switch to WPA2 or WPA3 with AES."),
+        _ => (Unknown, "The security type of the connected Wi-Fi network could not be read with confidence."),
+    };
+    vec![a(
+        "net.wifi_security",
+        status,
+        format!("{detail} The network name and address are never collected."),
+    )]
+}
+
+pub(super) fn autostart(v: &Autostart) -> Vec<Assessment> {
+    let flagged = [v.risky_unsigned.known(), v.suspicious_command.known()];
+    let status = if flagged.iter().any(|n| n.is_some_and(|n| *n > 0)) {
+        Attention
+    } else if flagged.iter().all(|n| *n == Some(&0)) && v.entries_checked.known().is_some() {
+        Healthy
+    } else {
+        Unknown
+    };
+    vec![a("persistence.run_and_tasks", status, "Counts only. Start-up entries (Run keys, Startup folders, non-Microsoft scheduled tasks) are flagged when the program sits in Temp, Downloads, Public or the Roaming folder root and is not signed, or when a command hides an encoded script or downloads from the internet. Names and paths are never collected.")]
+}
+
+// ---------------------------------------------------------------------------
 // Documentation links and neutral guidance for the rule ids above
 // ---------------------------------------------------------------------------
 
@@ -433,12 +503,18 @@ pub(super) fn documentation(id: &str) -> Option<&'static str> {
         "defender.exclusions_risky" => "https://learn.microsoft.com/defender-endpoint/configure-exclusions-microsoft-defender-antivirus",
         "smartscreen.apps" | "smartscreen.browser_policy" => "https://learn.microsoft.com/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/",
         "smart_app_control.state" => "https://learn.microsoft.com/windows/apps/develop/smart-app-control/overview",
-        "update.auto_policy_disabled" | "update.paused" | "update.drivers_excluded" | "update.reboot_overdue" => "https://learn.microsoft.com/windows/deployment/update/waas-wu-settings",
+        "update.paused" | "update.drivers_excluded" | "update.reboot_overdue" => "https://learn.microsoft.com/windows/deployment/update/waas-wu-settings",
         "ps.v2_engine" => "https://devblogs.microsoft.com/powershell/windows-powershell-2-0-deprecation/",
         "net.hosts_file" => "https://learn.microsoft.com/troubleshoot/windows-client/networking/reset-hosts-file-back-to-default",
         "persistence.wmi_subscriptions" => "https://learn.microsoft.com/windows/win32/wmisdk/receiving-a-wmi-event",
         "services.unquoted_paths" => "https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw",
         "firewall.user_dir_inbound_allow" => "https://learn.microsoft.com/windows/security/operating-system-security/network-security/windows-firewall/",
+        "vbs.kernel_stack_protection" => "https://learn.microsoft.com/windows/security/hardware-security/enable-virtualization-based-protection-of-code-integrity",
+        "accounts.hello_configured" => "https://learn.microsoft.com/windows/security/identity-protection/hello-for-business/",
+        "accounts.find_my_device" => "https://support.microsoft.com/windows/find-and-lock-a-lost-windows-device-890bf25e-b8ba-d3fe-8253-e98a18f03e1e",
+        "net.dns_encryption" => "https://learn.microsoft.com/windows-server/networking/dns/doh-client-support",
+        "net.wifi_security" => "https://learn.microsoft.com/windows/win32/api/wlanapi/ns-wlanapi-wlan_security_attributes",
+        "persistence.run_and_tasks" => "https://learn.microsoft.com/windows/win32/setupapi/run-and-runonce-registry-keys",
         _ => return None,
     })
 }
@@ -453,13 +529,19 @@ pub(super) fn guidance(id: &str) -> Option<&'static str> {
         "defender.exclusions_risky" => "Review the exclusions in Windows Security and remove any you do not recognise. Games and developer tools may have been excluded on purpose; removal is always a separate, confirmed step.",
         "smartscreen.apps" | "smartscreen.browser_policy" => "Open Windows Security, App and browser control, and turn reputation-based protection on. A policy value set by an organization must be changed by them.",
         "smart_app_control.state" => "Information only. Smart App Control cannot be turned back on once off, so it is never changed here.",
-        "update.auto_policy_disabled" | "update.paused" | "update.reboot_overdue" => "Open Windows Update, resume or turn on updates and restart when it is convenient. If an organization controls updates, coordinate with them.",
+        "update.paused" | "update.reboot_overdue" => "Open Windows Update, resume or turn on updates and restart when it is convenient. If an organization controls updates, coordinate with them.",
         "update.drivers_excluded" => "Information only; confirm the exclusion is intended.",
         "ps.v2_engine" => "Remove the Windows PowerShell 2.0 feature in Windows Features unless an old script needs it.",
         "net.hosts_file" => "Have someone you trust review the hosts file and reset it to the Windows default if it was not edited on purpose. Do not paste its contents into public forums.",
         "persistence.wmi_subscriptions" => "Ask an IT-savvy helper to review WMI event consumers before removing anything; some management tools create them.",
         "services.unquoted_paths" => "Ask the software vendor or an IT-savvy helper to correct the service path; this tool never edits service settings.",
-        "accounts.builtin_administrator" => "Disable the built-in Administrator account in Computer Management unless it is the only administrator.",
+        "accounts.daily_admin" => "Create a standard account for daily use and keep this administrator account for installing software. Nothing is changed for you.",
+        "accounts.hello_configured" => "Open Settings, Accounts, Sign-in options and add a PIN or Windows Hello. This tool never sets one for you.",
+        "accounts.find_my_device" => "Open Settings, Privacy and security, Find my device and turn it on, so a lost laptop can be located and locked.",
+        "vbs.kernel_stack_protection" => "Open Windows Security, Device security, Core isolation and turn on Kernel-mode Hardware-enforced Stack Protection if it is offered. Your PC may not support it.",
+        "net.dns_encryption" => "Open Settings, Network and internet, your connection, DNS server assignment, and choose encrypted lookups. Your DNS servers are never changed by this tool.",
+        "net.wifi_security" => "Change the Wi-Fi security on your router to WPA2 or WPA3 (AES). On a public network, avoid banking and passwords.",
+        "persistence.run_and_tasks" => "Ask an IT-savvy helper to review programs that start by themselves from Temp, Downloads or Public folders. Nothing is removed by this tool.",
         "accounts.stale_enabled" => "Review old accounts in Settings and remove the ones nobody uses.",
         "smb.shares_exposed" | "smb.server_encryption" => "Stop sharing folders you do not need and avoid Everyone access. Encryption can break older devices.",
         "firewall.user_dir_inbound_allow" => "Review inbound firewall rules for programs in personal folders and remove those you do not recognise. Multiplayer games may need some.",
@@ -647,7 +729,6 @@ mod tests {
             "smartscreen.apps",
             "smartscreen.browser_policy",
             "smart_app_control.state",
-            "update.auto_policy_disabled",
             "update.paused",
             "update.drivers_excluded",
             "update.reboot_overdue",
@@ -655,8 +736,14 @@ mod tests {
             "net.hosts_file",
             "persistence.wmi_subscriptions",
             "services.unquoted_paths",
-            "accounts.builtin_administrator",
             "accounts.stale_enabled",
+            "accounts.daily_admin",
+            "accounts.hello_configured",
+            "accounts.find_my_device",
+            "vbs.kernel_stack_protection",
+            "net.dns_encryption",
+            "net.wifi_security",
+            "persistence.run_and_tasks",
             "smb.shares_exposed",
             "smb.server_encryption",
             "firewall.user_dir_inbound_allow",

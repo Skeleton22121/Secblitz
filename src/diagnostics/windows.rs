@@ -257,15 +257,21 @@ fn environment(root: &Path) -> ProbeResult<Vec<u16>> {
     Ok(output)
 }
 
+/// Probes that run one fixed Windows tool directly instead of PowerShell.
+/// Executable and arguments are compiled constants.
+fn native_tool(id: ProbeId) -> Option<(&'static str, &'static str)> {
+    match id {
+        ProbeId::WinRe => Some(("System32/reagentc.exe", "/info")),
+        ProbeId::WindowsHello => Some(("System32/dsregcmd.exe", "/status")),
+        _ => None,
+    }
+}
+
 /// Neither the executable nor the arguments can be supplied by report data.
 fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     let deadline = Instant::now() + timeout;
-    let (exe, arguments, input) = if id == ProbeId::WinRe {
-        (
-            root.join("System32/reagentc.exe"),
-            "/info".to_owned(),
-            String::new(),
-        )
+    let (exe, arguments, input) = if let Some((tool, arguments)) = native_tool(id) {
+        (root.join(tool), arguments.to_owned(), String::new())
     } else {
         let bootstrap = "$global:ProgressPreference='SilentlyContinue';[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);& ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
         let encoded = base64::engine::general_purpose::STANDARD.encode(
@@ -295,7 +301,7 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     // retain non-delete/non-write-sharing pins through process/job teardown.
     let mut pins =
         crate::operations::pin_system_executable(&exe).map_err(|_| UnknownReason::Unavailable)?;
-    if id != ProbeId::WinRe {
+    if native_tool(id).is_none() {
         for module in modules(id) {
             let relative = if module == "Microsoft.PowerShell.LocalAccounts" {
                 "Microsoft.PowerShell.LocalAccounts/1.0.0.0/Microsoft.PowerShell.LocalAccounts.psd1"
@@ -506,6 +512,13 @@ fn modules(id: ProbeId) -> Vec<&'static str> {
         ProbeId::UpdatePolicy | ProbeId::Persistence => &["CimCmdlets"],
         ProbeId::LegacyFeatures => &["Dism"],
         ProbeId::AccountHygiene => &["Microsoft.PowerShell.LocalAccounts"],
+        ProbeId::AccountSetup => &["Microsoft.PowerShell.LocalAccounts", "CimCmdlets"],
+        ProbeId::DnsEncryption => &["DnsClient"],
+        ProbeId::Autostart => &[
+            "CimCmdlets",
+            "ScheduledTasks",
+            "Microsoft.PowerShell.Security",
+        ],
         ProbeId::Sharing => &["SmbShare"],
         ProbeId::FirewallRules => &["NetSecurity"],
         ProbeId::SecurityProviders
@@ -555,6 +568,7 @@ fn proxy() -> Evidence {
 type AuditReceiver = mpsc::Receiver<ProbeResult<Evidence>>;
 static AUDIT: OnceLock<Mutex<Option<AuditReceiver>>> = OnceLock::new();
 static PROXY: OnceLock<Mutex<Option<AuditReceiver>>> = OnceLock::new();
+static WIFI: OnceLock<Mutex<Option<AuditReceiver>>> = OnceLock::new();
 fn native_bounded(
     slot: &'static OnceLock<Mutex<Option<AuditReceiver>>>,
     timeout: Duration,
@@ -590,6 +604,116 @@ fn native_bounded(
         }
     }
 }
+type WlanOpen = unsafe extern "system" fn(u32, *const c_void, *mut u32, *mut HANDLE) -> u32;
+type WlanClose = unsafe extern "system" fn(HANDLE, *const c_void) -> u32;
+type WlanEnum = unsafe extern "system" fn(HANDLE, *const c_void, *mut *mut u8) -> u32;
+type WlanQuery = unsafe extern "system" fn(
+    HANDLE,
+    *const u8,
+    u32,
+    *const c_void,
+    *mut u32,
+    *mut *mut u8,
+    *mut u32,
+) -> u32;
+type WlanFree = unsafe extern "system" fn(*mut c_void);
+
+/// Security type of the connected Wi-Fi network (read-only). Only the two
+/// algorithm numbers are read: the network name, address and profile are never
+/// touched. No WLAN service means there is no Wi-Fi to assess.
+fn wifi() -> ProbeResult<Evidence> {
+    use windows_sys::Win32::{
+        Foundation::FreeLibrary,
+        System::LibraryLoader::{GetProcAddress, LoadLibraryExW},
+    };
+    const SEARCH_SYSTEM32: u32 = 0x800;
+    const SERVICE_NOT_ACTIVE: u32 = 1062;
+    let evidence = |class: &str| {
+        Evidence::WifiSecurity(WifiSecurity {
+            current_network: Reading::Known(class.into()),
+        })
+    };
+    let name: Vec<u16> = "wlanapi.dll\0".encode_utf16().collect();
+    let module = unsafe { LoadLibraryExW(name.as_ptr(), null_mut(), SEARCH_SYSTEM32) };
+    if module.is_null() {
+        return Ok(evidence("None"));
+    }
+    macro_rules! symbol {
+        ($name:literal, $ty:ty) => {
+            match unsafe { GetProcAddress(module, concat!($name, "\0").as_ptr()) } {
+                Some(f) => unsafe {
+                    std::mem::transmute::<unsafe extern "system" fn() -> isize, $ty>(f)
+                },
+                None => {
+                    unsafe { FreeLibrary(module) };
+                    return Err(UnknownReason::Unavailable);
+                }
+            }
+        };
+    }
+    let open = symbol!("WlanOpenHandle", WlanOpen);
+    let close = symbol!("WlanCloseHandle", WlanClose);
+    let enumerate = symbol!("WlanEnumInterfaces", WlanEnum);
+    let query = symbol!("WlanQueryInterface", WlanQuery);
+    let free = symbol!("WlanFreeMemory", WlanFree);
+    let read =
+        |base: *const u8, offset: usize| unsafe { base.add(offset).cast::<u32>().read_unaligned() };
+    let result = (|| {
+        let (mut version, mut client): (u32, HANDLE) = (0, null_mut());
+        match unsafe { open(2, null(), &mut version, &mut client) } {
+            0 => {}
+            SERVICE_NOT_ACTIVE => return Ok("None"),
+            _ => return Err(UnknownReason::Unavailable),
+        }
+        let result = (|| {
+            let mut list: *mut u8 = null_mut();
+            if unsafe { enumerate(client, null(), &mut list) } != 0 || list.is_null() {
+                return Err(UnknownReason::Unavailable);
+            }
+            // WLAN_INTERFACE_INFO_LIST: count, index, then 532-byte entries
+            // (GUID, 256 UTF-16 description units, state).
+            let count = read(list, 0) as usize;
+            let mut best: Option<&'static str> = None;
+            let mut outcome = Ok(());
+            if count > 64 {
+                outcome = Err(UnknownReason::OutputLimit);
+            }
+            for i in 0..count.min(64) {
+                let entry = unsafe { list.add(8 + i * 532) };
+                if read(entry, 528) != 1 {
+                    continue; // not connected
+                }
+                let (mut size, mut data, mut kind): (u32, *mut u8, u32) = (0, null_mut(), 0);
+                // opcode 7: wlan_intf_opcode_current_connection
+                let status =
+                    unsafe { query(client, entry, 7, null(), &mut size, &mut data, &mut kind) };
+                if status != 0 || data.is_null() {
+                    outcome = Err(UnknownReason::Unavailable);
+                    continue;
+                }
+                // WLAN_CONNECTION_ATTRIBUTES: security attributes start at byte 588.
+                if size >= 604 {
+                    let class =
+                        parse::wifi_class(read(data, 588) != 0, read(data, 596), read(data, 600));
+                    if best.is_none_or(|b| parse::wifi_rank(class) < parse::wifi_rank(b)) {
+                        best = Some(class);
+                    }
+                } else {
+                    outcome = Err(UnknownReason::InvalidData);
+                }
+                unsafe { free(data.cast()) };
+            }
+            unsafe { free(list.cast()) };
+            outcome?;
+            Ok(best.unwrap_or("None"))
+        })();
+        unsafe { close(client, null()) };
+        result
+    })();
+    unsafe { FreeLibrary(module) };
+    result.map(evidence)
+}
+
 fn permissions() -> ProbeResult<Evidence> {
     let findings = crate::permissions::audit().map_err(|_| UnknownReason::Unavailable)?;
     if findings.len() > 32 {
@@ -669,13 +793,14 @@ pub(super) fn collect(context: &Context) -> Vec<Diagnostic> {
             ProbeId::Permissions => {
                 native_bounded(&AUDIT, timeout.min(Duration::from_secs(2)), permissions)
             }
+            ProbeId::WifiSecurity => {
+                native_bounded(&WIFI, timeout.min(Duration::from_secs(3)), wifi)
+            }
             _ => match &root {
-                Ok(root) => run(root, id, timeout).and_then(|bytes| {
-                    if id == ProbeId::WinRe {
-                        Ok(Evidence::WinRe(parse::winre(&bytes)))
-                    } else {
-                        parse::decode(id, &bytes)
-                    }
+                Ok(root) => run(root, id, timeout).and_then(|bytes| match id {
+                    ProbeId::WinRe => Ok(Evidence::WinRe(parse::winre(&bytes))),
+                    ProbeId::WindowsHello => Ok(Evidence::WindowsHello(parse::dsreg(&bytes))),
+                    _ => parse::decode(id, &bytes),
                 }),
                 Err(reason) => Err(*reason),
             },
