@@ -11,6 +11,7 @@
 //! any PowerShell is started.
 pub mod backup;
 pub mod catalog;
+pub mod vault;
 pub mod journal;
 #[cfg(windows)]
 mod windows;
