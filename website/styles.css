@@ -237,6 +237,21 @@ h3 { font-size: 17px; line-height: 1.35; font-weight: 600; letter-spacing: -0.00
 .shot-img { height: auto; }
 .shot-video { position: absolute; inset: 0; height: 100%; object-fit: cover; }
 .shot-video[hidden] { display: none; }
+.shot-toggle {
+  position: absolute; right: var(--s3); bottom: var(--s3);
+  display: inline-flex; align-items: center; gap: var(--s2);
+  height: 36px; padding: 0 var(--s4); border: 0; border-radius: 999px;
+  background: var(--brand); color: var(--on-brand);
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  opacity: 0.92; transition: opacity var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.shot-toggle:hover { opacity: 1; background: var(--brand-hover); }
+.shot-toggle:active { background: var(--brand-pressed); }
+.shot-toggle .icon { width: 16px; height: 16px; color: currentColor; }
+.shot-toggle[hidden] { display: none; }
+/* While the tour plays, only the pause icon shows; its name stays for screen readers. */
+.shot-toggle.is-playing { width: 36px; padding: 0; justify-content: center; }
+.shot-toggle.is-playing span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---- Facts ---- */
 .facts { padding-bottom: var(--s16); }

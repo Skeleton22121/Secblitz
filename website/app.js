@@ -42,27 +42,53 @@
     });
   }
 
-  // ---- Optional demo video: plays only when visible, never on reduced motion or data saver ----
+  // ---- Demo video: plays only while visible. Reduced motion and data saver
+  // start on the still; the button lets anyone play or pause it. ----
   const video = document.getElementById("demo-video");
+  const button = document.getElementById("demo-toggle");
   if (!video) return;
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const connection = navigator.connection;
-  const state = { ready: false, visible: false };
+  const state = { ready: false, visible: false, failed: false, choice: null };
   video.muted = true;
-  const allowed = () => state.ready && state.visible && !document.hidden && !motion.matches && !connection?.saveData;
-  // The themed still underneath stays visible until the recording really plays,
-  // and comes back for reduced motion, Save-Data or a media error.
-  const still = () => motion.matches || connection?.saveData;
+  // The visitor's own choice wins; until they make one, follow their settings.
+  const wanted = () => state.choice ? state.choice === "play" : !motion.matches && !connection?.saveData;
+  const allowed = () => state.ready && state.visible && !document.hidden && wanted();
+  const render = () => {
+    if (!button) return;
+    const playing = wanted();
+    button.hidden = !state.ready || state.failed;
+    button.classList.toggle("is-playing", playing);
+    button.querySelector("use").setAttribute("href", playing ? "#i-pause" : "#i-play");
+    button.querySelector("span").textContent = playing ? "Pause the tour" : "Play the tour";
+  };
   const sync = () => {
     if (allowed()) video.play().catch(() => {});
-    else {
-      video.pause();
-      if (still()) video.hidden = true;
-    }
+    else video.pause();
+    // The themed still underneath shows until the recording really plays, and
+    // again if the visitor never chose to play it. A paused tour stays on its frame.
+    if (!wanted() && state.choice === null) video.hidden = true;
+    render();
   };
-  video.addEventListener("playing", () => { if (!still()) video.hidden = false; });
-  video.addEventListener("error", () => { video.hidden = true; }, true);
+  video.addEventListener("playing", () => {
+    state.failed = false;
+    if (wanted()) video.hidden = false;
+    render();
+  });
+  video.addEventListener("error", () => {
+    // A source error fires before the next source is tried; only give up
+    // when the last one has failed or the element itself has.
+    if (video.error || video.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+      state.failed = true;
+      video.hidden = true;
+      render();
+    }
+  }, true);
   video.addEventListener("loadedmetadata", () => { state.ready = true; sync(); });
+  button?.addEventListener("click", () => {
+    state.choice = wanted() ? "pause" : "play";
+    sync();
+  });
   document.addEventListener("visibilitychange", sync);
   motion.addEventListener("change", sync);
   new IntersectionObserver(entries => {

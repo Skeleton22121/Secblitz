@@ -23,7 +23,8 @@ spec.loader.exec_module(gate)
 STATIC = (
     "index.html", "404.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json",
     "assets/favicon.svg", "assets/preview-b081691b149a.webp",
-    "assets/intro-a18b68fac12f.mp4", "assets/preview-541ff80cb74f.webp", "assets/home-dark-1215a72074e4.webp",
+    "assets/intro-a18b68fac12f.mp4", "assets/intro-a8f1e9ace5d9.webm",
+    "assets/preview-541ff80cb74f.webp", "assets/home-dark-1215a72074e4.webp",
     "assets/app-protection-light.webp", "assets/app-protection-dark.webp",
     "assets/fonts/ibm-plex-sans-400.woff2", "assets/fonts/ibm-plex-sans-500.woff2",
     "assets/fonts/ibm-plex-sans-600.woff2", "assets/fonts/IBMPlexSans-LICENSE.txt",
@@ -86,7 +87,7 @@ def check_content(relative, data):
     # knowledge of the operator's actual secret values or a malware detector.
     if gate.SECRET_MARKERS.search(data) or gate.SECRET_MARKERS.search(data.replace(b"\x00", b"")):
         raise ValueError("potential secret in release input (content and path suppressed)")
-    hashed_asset = re.fullmatch(r"assets/(?:intro|preview)-([0-9a-f]{12})\.(?:mp4|webp)", relative)
+    hashed_asset = re.fullmatch(r"assets/(?:intro|preview)-([0-9a-f]{12})\.(?:mp4|webm|webp)", relative)
     if hashed_asset and not hashlib.sha256(data).hexdigest().startswith(hashed_asset[1]):
         raise ValueError("media bytes do not match the content-hashed filename")
     if relative.endswith(".exe"):
@@ -110,6 +111,9 @@ def check_content(relative, data):
     elif relative.endswith(".mp4"):
         if data[4:8] != b"ftyp":
             raise ValueError("invalid MP4 asset")
+    elif relative.endswith(".webm"):
+        if data[:4] != b"\x1a\x45\xdf\xa3" or b"webm" not in data[:64]:
+            raise ValueError("invalid WebM asset")
     else:
         data.decode("utf-8", errors="strict")
 
