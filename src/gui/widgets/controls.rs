@@ -4,6 +4,7 @@
 use super::anim;
 use super::cursor::arrow;
 use super::icon;
+use super::press::{self, Track};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, mix, Palette};
 use crate::gui::Message;
@@ -15,9 +16,8 @@ use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{button, container, pick_list, row, stack, text, text_input};
 use iced::{
     mouse, window, Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
-    Rectangle, Renderer, Shadow, Size, Theme,
+    Point, Rectangle, Renderer, Shadow, Size, Theme, Vector,
 };
-use std::time::Instant;
 
 fn line(px: f32) -> LineHeight {
     LineHeight::Absolute(Pixels(px))
@@ -25,8 +25,8 @@ fn line(px: f32) -> LineHeight {
 
 // ---------------------------------------------------------------- dropdown
 
-/// Polished drop-down list: 36 px, 1 px border, chevron on the right, focus
-/// ring while open. `selected: None` shows `placeholder`.
+/// Polished drop-down list: 36 px filled tonal field (no outline), chevron on
+/// the right, focus ring while open. `selected: None` shows `placeholder`.
 ///
 /// Menu rows are as tall as the control (36 px): iced derives both from the
 /// same padding. Wrap in a fixed-width container to size it.
@@ -55,9 +55,9 @@ where
         .handle(pick_list::Handle::None)
         .style(move |_, status| {
             let (bg, border_color, width) = match status {
-                pick_list::Status::Active => (p.surface, p.border_strong, 1.0),
-                pick_list::Status::Hovered => (p.hover, p.text_muted, 1.0),
-                pick_list::Status::Opened { .. } => (p.surface, p.focus_ring, 2.0),
+                pick_list::Status::Active => (p.surface_alt, Color::TRANSPARENT, 0.0),
+                pick_list::Status::Hovered => (p.hover_strong, Color::TRANSPARENT, 0.0),
+                pick_list::Status::Opened { .. } => (p.surface_alt, p.focus_ring, 2.0),
             };
             pick_list::Style {
                 text_color: p.text,
@@ -73,10 +73,11 @@ where
         })
         .menu_style(move |_| iced::overlay::menu::Style {
             background: Background::Color(p.surface),
+            // A floating list needs a faint edge: shadows are not allowed.
             border: Border {
                 radius: theme::R.into(),
                 width: 1.0,
-                color: p.border_strong,
+                color: p.border,
             },
             text_color: p.text,
             selected_text_color: p.text,
@@ -94,7 +95,259 @@ where
 
 // --------------------------------------------------------------- segmented
 
+/// Pill slide duration (between WinUI normal 250 and fast 167).
+const SLIDE: std::time::Duration = std::time::Duration::from_millis(200);
+const MAX_SEGMENTS: usize = 4;
+
+struct SegState {
+    /// Index the pill is heading to.
+    sel: usize,
+    /// Pill x / width relative to the widget's left edge when the slide began.
+    from: (f32, f32),
+    slide: Track,
+    hover: [Track; MAX_SEGMENTS],
+    pressed: Option<usize>,
+}
+
+struct Segmented<'a> {
+    p: Palette,
+    labels: Vec<Element<'a, Message>>,
+    on_select: Vec<Message>,
+    selected: usize,
+}
+
+impl Segmented<'_> {
+    /// (x, width) of segment `i` relative to the widget's left edge.
+    fn seg(&self, layout: Layout<'_>, i: usize) -> (f32, f32) {
+        let left = layout.bounds().x;
+        match layout.children().nth(i) {
+            Some(c) => {
+                let b = c.bounds();
+                (b.x - theme::S4 - left, b.width + 2.0 * theme::S4)
+            }
+            None => (theme::S1, 0.0),
+        }
+    }
+    fn pill(&self, st: &SegState, layout: Layout<'_>) -> (f32, f32) {
+        let (tx, tw) = self.seg(layout, st.sel);
+        let v = st.slide.value;
+        (
+            st.from.0 + (tx - st.from.0) * v,
+            st.from.1 + (tw - st.from.1) * v,
+        )
+    }
+    fn hit(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> Option<usize> {
+        let pos = cursor.position_over(layout.bounds())?;
+        (0..self.labels.len()).find(|i| {
+            let (x, w) = self.seg(layout, *i);
+            let left = layout.bounds().x;
+            pos.x >= left + x && pos.x <= left + x + w + theme::S1
+        })
+    }
+}
+
+impl Widget<Message, Theme, Renderer> for Segmented<'_> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<SegState>()
+    }
+    fn state(&self) -> tree::State {
+        tree::State::new(SegState {
+            sel: self.selected,
+            from: (0.0, 0.0),
+            slide: Track::at(1.0),
+            hover: [Track::at(0.0); MAX_SEGMENTS],
+            pressed: None,
+        })
+    }
+    fn children(&self) -> Vec<Tree> {
+        self.labels.iter().map(Tree::new).collect()
+    }
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&self.labels);
+    }
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Shrink, Length::Fixed(theme::CONTROL))
+    }
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, _: &layout::Limits) -> layout::Node {
+        let mut x = theme::S1;
+        let mut kids = Vec::with_capacity(self.labels.len());
+        for (i, label) in self.labels.iter_mut().enumerate() {
+            let node = label.as_widget_mut().layout(
+                &mut tree.children[i],
+                renderer,
+                &layout::Limits::new(Size::ZERO, Size::INFINITE),
+            );
+            let size = node.size();
+            kids.push(node.move_to(Point::new(
+                x + theme::S4,
+                theme::S1 + (theme::CONTROL_SMALL - size.height) / 2.0,
+            )));
+            x += size.width + 2.0 * theme::S4 + theme::S1;
+        }
+        layout::Node::with_children(Size::new(x, theme::CONTROL), kids)
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _: &Rectangle,
+    ) {
+        let hit = self.hit(layout, cursor);
+        let st = tree.state.downcast_mut::<SegState>();
+        let before: Vec<f32> = st.hover.iter().map(Track::goal).collect();
+        for (i, h) in st.hover.iter_mut().enumerate() {
+            h.target(if hit == Some(i) { 1.0 } else { 0.0 });
+        }
+        if st.hover.iter().map(Track::goal).ne(before) {
+            shell.request_redraw();
+        }
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if hit.is_some() => {
+                st.pressed = hit;
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if st.pressed.is_some() =>
+            {
+                if let (Some(i), Some(h)) = (st.pressed.take(), hit) {
+                    if i == h && h != self.selected {
+                        if let Some(m) = self.on_select.get(h) {
+                            shell.publish(m.clone());
+                        }
+                    }
+                }
+                shell.capture_event();
+            }
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                if st.sel != self.selected {
+                    // Retarget mid-slide from wherever the pill is now.
+                    let (x, w) = self.pill(st, layout);
+                    st.from = (x, w);
+                    st.sel = self.selected;
+                    st.slide = Track::at(0.0);
+                    st.slide.target(1.0);
+                }
+                let mut busy = st.slide.step(*now, SLIDE, |t| anim::STANDARD.at(t));
+                for h in st.hover.iter_mut() {
+                    busy |= h.step(*now, anim::FAST, |t| anim::STANDARD.at(t));
+                }
+                if busy || st.slide.running() {
+                    shell.request_redraw();
+                }
+            }
+            _ => {}
+        }
+    }
+    fn mouse_interaction(
+        &self,
+        _: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Rectangle,
+        _: &Renderer,
+    ) -> mouse::Interaction {
+        match self.hit(layout, cursor) {
+            Some(i) if i != self.selected => mouse::Interaction::Pointer,
+            _ => mouse::Interaction::Idle,
+        }
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let st = tree.state.downcast_ref::<SegState>();
+        let p = self.p;
+        let b = layout.bounds();
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: b,
+                border: Border {
+                    radius: theme::R.into(),
+                    ..Border::default()
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            Background::Color(p.surface_alt),
+        );
+        for i in (0..self.labels.len()).filter(|i| *i != st.sel) {
+            let h = st.hover[i.min(MAX_SEGMENTS - 1)].value.clamp(0.0, 1.0);
+            if h > 0.0 {
+                let (x, w) = self.seg(layout, i);
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: b.x + x,
+                            y: b.y + theme::S1,
+                            width: w,
+                            height: theme::CONTROL_SMALL,
+                        },
+                        border: Border {
+                            radius: theme::R_SMALL.into(),
+                            ..Border::default()
+                        },
+                        shadow: Shadow::default(),
+                        snap: false,
+                    },
+                    Background::Color(Color {
+                        a: h,
+                        ..p.hover_strong
+                    }),
+                );
+            }
+        }
+        let (px, pw) = self.pill(st, layout);
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: b.x + px,
+                    y: b.y + theme::S1,
+                    width: pw,
+                    height: theme::CONTROL_SMALL,
+                },
+                border: Border {
+                    radius: theme::R_SMALL.into(),
+                    ..Border::default()
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            Background::Color(p.surface),
+        );
+        for (i, (label, child)) in self.labels.iter().zip(layout.children()).enumerate() {
+            let h = st.hover[i.min(MAX_SEGMENTS - 1)].value.clamp(0.0, 1.0);
+            // The label under the pill darkens as the pill arrives.
+            let (x, w) = self.seg(layout, i);
+            let under = ((px + pw).min(x + w) - px.max(x)).max(0.0) / w.max(1.0);
+            let on = under.clamp(0.0, 1.0);
+            let color = mix(mix(p.text_muted, p.text, h), p.text, on);
+            label.as_widget().draw(
+                &tree.children[i],
+                renderer,
+                theme,
+                &renderer::Style { text_color: color },
+                child,
+                cursor,
+                viewport,
+            );
+        }
+    }
+}
+
 /// Two-to-four way choice shown as one pill-shaped control (Light / Dark…).
+/// The selection pill slides to the new option (200 ms) and the labels
+/// cross-fade; hovering an option tints it.
 pub fn segmented<'a, T>(
     p: Palette,
     options: &[(T, String)],
@@ -104,67 +357,28 @@ pub fn segmented<'a, T>(
 where
     T: Copy + PartialEq + 'a,
 {
-    let mut r = row![].spacing(theme::S1);
-    for (value, label) in options {
-        let active = *value == selected;
-        let content = container(
-            text(label.clone())
-                .size(theme::BODY)
-                .line_height(line(theme::LINE_BODY))
-                .font(if active {
-                    theme::SEMIBOLD
-                } else {
-                    theme::MEDIUM
-                })
-                .wrapping(Wrapping::None),
-        )
-        .height(Length::Fill)
-        .align_y(Alignment::Center);
-        r = r.push(
-            button(content)
-                .height(theme::CONTROL_SMALL)
-                .padding([0.0, theme::S4])
-                .on_press(on_select(*value))
-                .style(move |_, status| {
-                    let hovered =
-                        matches!(status, button::Status::Hovered | button::Status::Pressed);
-                    button::Style {
-                        background: if active {
-                            Some(Background::Color(p.surface))
-                        } else if hovered {
-                            Some(Background::Color(p.hover_strong))
-                        } else {
-                            None
-                        },
-                        text_color: if active || hovered {
-                            p.text
-                        } else {
-                            p.text_muted
-                        },
-                        border: Border {
-                            radius: theme::R_SMALL.into(),
-                            width: if active { 1.0 } else { 0.0 },
-                            color: p.border,
-                        },
-                        shadow: Shadow::default(),
-                        snap: true,
-                    }
-                }),
-        );
-    }
-    arrow(
-        container(r)
-            .padding(theme::S1)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.surface_alt)),
-                border: Border {
-                    radius: theme::R.into(),
-                    width: 1.0,
-                    color: p.border,
-                },
-                ..container::Style::default()
-            }),
-    )
+    let options = &options[..options.len().min(MAX_SEGMENTS)];
+    let labels = options
+        .iter()
+        .map(|(_, label)| {
+            Element::from(
+                text(label.clone())
+                    .size(theme::BODY)
+                    .line_height(line(theme::LINE_BODY))
+                    .font(theme::MEDIUM)
+                    .wrapping(Wrapping::None),
+            )
+        })
+        .collect();
+    Element::new(Segmented {
+        p,
+        labels,
+        on_select: options.iter().map(|(v, _)| on_select(*v)).collect(),
+        selected: options
+            .iter()
+            .position(|(v, _)| *v == selected)
+            .unwrap_or(0),
+    })
 }
 
 // ------------------------------------------------------------------ switch
@@ -172,14 +386,12 @@ where
 const SWITCH_W: f32 = 40.0;
 const SWITCH_H: f32 = 20.0;
 
-#[derive(Default)]
 struct SwitchState {
-    /// 0.0 = off .. 1.0 = on, as currently drawn.
-    progress: f32,
-    from: f32,
-    target: f32,
-    start: Option<Instant>,
-    hovered: bool,
+    /// 0 = off .. 1 = on.
+    progress: Track,
+    /// Knob size: 0 rest, 0.67 hovered, 1 pressed.
+    grow: Track,
+    hover: Track,
     pressed: bool,
 }
 
@@ -194,12 +406,11 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
         tree::Tag::of::<SwitchState>()
     }
     fn state(&self) -> tree::State {
-        let v = if self.on { 1.0 } else { 0.0 };
         tree::State::new(SwitchState {
-            progress: v,
-            from: v,
-            target: v,
-            ..SwitchState::default()
+            progress: Track::at(if self.on { 1.0 } else { 0.0 }),
+            grow: Track::at(0.0),
+            hover: Track::at(0.0),
+            pressed: false,
         })
     }
     fn size(&self) -> Size<Length> {
@@ -220,38 +431,12 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
         _: &Rectangle,
     ) {
         let st = tree.state.downcast_mut::<SwitchState>();
-        let over = cursor.is_over(layout.bounds());
         let enabled = self.on_toggle.is_some();
-        let target = if self.on { 1.0 } else { 0.0 };
+        let over = enabled && cursor.is_over(layout.bounds());
         match event {
-            Event::Window(window::Event::RedrawRequested(now)) => {
-                if (st.target - target).abs() > f32::EPSILON {
-                    st.from = st.progress;
-                    st.target = target;
-                    st.start = Some(*now);
-                }
-                if let Some(start) = st.start {
-                    let t = now.saturating_duration_since(start).as_secs_f32()
-                        / anim::FAST.as_secs_f32();
-                    if t >= 1.0 || anim::reduced() {
-                        st.start = None;
-                        st.progress = st.target;
-                    } else {
-                        st.progress = st.from + (st.target - st.from) * anim::DECELERATE.at(t);
-                        shell.request_redraw();
-                    }
-                }
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft) => {
-                if st.hovered != over {
-                    st.hovered = over;
-                    shell.request_redraw();
-                }
-            }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if over && enabled => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if over => {
                 st.pressed = true;
                 shell.capture_event();
-                shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if st.pressed => {
                 st.pressed = false;
@@ -261,20 +446,44 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
                     }
                 }
                 shell.capture_event();
-                shell.request_redraw();
             }
             _ => {}
+        }
+        let before = (st.hover.goal(), st.grow.goal(), st.progress.goal());
+        st.hover.target(if over { 1.0 } else { 0.0 });
+        st.grow.target(if st.pressed {
+            1.0
+        } else if over {
+            0.67
+        } else {
+            0.0
+        });
+        st.progress.target(if self.on { 1.0 } else { 0.0 });
+        if before != (st.hover.goal(), st.grow.goal(), st.progress.goal()) {
+            shell.request_redraw();
+        }
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            let a = st.progress.step(*now, anim::FAST, |t| anim::DECELERATE.at(t));
+            let b = st.grow.step(*now, anim::FASTER, |t| anim::DECELERATE.at(t));
+            let c = st.hover.step(*now, anim::FAST, |t| anim::STANDARD.at(t));
+            if a || b || c || st.progress.running() || st.grow.running() || st.hover.running() {
+                shell.request_redraw();
+            }
         }
     }
     fn mouse_interaction(
         &self,
         _: &Tree,
-        _: Layout<'_>,
-        _: mouse::Cursor,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
         _: &Rectangle,
         _: &Renderer,
     ) -> mouse::Interaction {
-        mouse::Interaction::Idle
+        if self.on_toggle.is_some() && cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::Idle
+        }
     }
     fn draw(
         &self,
@@ -289,49 +498,53 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
         let st = tree.state.downcast_ref::<SwitchState>();
         let p = self.p;
         let b = layout.bounds();
-        let t = st.progress.clamp(0.0, 1.0);
+        let t = st.progress.value.clamp(0.0, 1.0);
+        let h = st.hover.value.clamp(0.0, 1.0);
         let enabled = self.on_toggle.is_some();
-        let (off_border, on_fill, knob_off, knob_on) = if enabled {
-            (p.text_muted, p.brand, p.text_muted, p.on_brand)
+        let (off_fill, on_fill, off_ring, knob_off, knob_on) = if enabled {
+            (
+                mix(p.surface_alt, p.hover_strong, h),
+                mix(p.brand, p.brand_hover, h),
+                p.text_muted,
+                p.text_muted,
+                p.on_brand,
+            )
         } else {
-            (p.disabled_fg, p.disabled_fg, p.disabled_fg, p.disabled_bg)
+            (
+                p.disabled_bg,
+                p.disabled_fg,
+                p.disabled_fg,
+                p.disabled_fg,
+                p.disabled_bg,
+            )
         };
-        let hot = st.hovered && enabled;
-        let off_fill = if hot { p.hover_strong } else { p.surface };
-        let on_fill = if hot { p.brand_hover } else { on_fill };
+        // The off track keeps a thin outline (a switch needs an edge to read
+        // as a control); it fades out as the fill takes over.
         let fill = mix(off_fill, on_fill, t);
-        let border = mix(off_border, on_fill, t);
         renderer.fill_quad(
             renderer::Quad {
                 bounds: b,
                 border: Border {
                     radius: (SWITCH_H / 2.0).into(),
                     width: 1.0,
-                    color: border,
+                    color: mix(off_ring, on_fill, t),
                 },
                 shadow: Shadow::default(),
                 snap: false,
             },
             Background::Color(fill),
         );
-        // Knob: 12 px, grows to 14 px while hovered / pressed (Windows 11).
-        let d = if st.pressed {
-            15.0
-        } else if st.hovered && enabled {
-            14.0
-        } else {
-            12.0
-        };
+        // Knob: 12 px, up to 15 px while pressed (Windows 11).
+        let d = 12.0 + 3.0 * st.grow.value.clamp(0.0, 1.0);
         let x = b.x + 10.0 + (b.width - 20.0) * t - d / 2.0;
-        let kb = Rectangle {
-            x,
-            y: b.y + (b.height - d) / 2.0,
-            width: d,
-            height: d,
-        };
         renderer.fill_quad(
             renderer::Quad {
-                bounds: kb,
+                bounds: Rectangle {
+                    x,
+                    y: b.y + (b.height - d) / 2.0,
+                    width: d,
+                    height: d,
+                },
                 border: Border {
                     radius: (d / 2.0).into(),
                     ..Border::default()
@@ -344,8 +557,9 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
     }
 }
 
-/// Windows 11 style on/off switch (40x20, knob slides with a short decelerate
-/// animation). `on_toggle: None` renders it disabled.
+/// Windows 11 style on/off switch (40x20). The knob slides on a decelerate
+/// curve, grows on hover and press, and the track colour tweens.
+/// `on_toggle: None` renders it disabled.
 pub fn switch<'a>(
     p: Palette,
     on: bool,
@@ -378,8 +592,168 @@ impl From<bool> for CheckState {
     }
 }
 
+/// Tick polyline in the 18 px box and its length (for the draw-in).
+const TICK: [(f32, f32); 3] = [(4.8, 9.4), (7.9, 12.5), (13.4, 5.9)];
+
+fn tick_len() -> (f32, f32) {
+    let seg = |a: (f32, f32), b: (f32, f32)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    (seg(TICK[0], TICK[1]), seg(TICK[1], TICK[2]))
+}
+
+struct CheckGlyphState {
+    /// Fill 0..0.4 of the value, tick the rest.
+    v: Track,
+    state: CheckState,
+}
+
+/// The 18 px box: fill fades in, then the tick draws itself in.
+struct CheckGlyph {
+    p: Palette,
+    state: CheckState,
+    enabled: bool,
+}
+
+impl Widget<Message, Theme, Renderer> for CheckGlyph {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<CheckGlyphState>()
+    }
+    fn state(&self) -> tree::State {
+        tree::State::new(CheckGlyphState {
+            v: Track::at(if self.state == CheckState::Off { 0.0 } else { 1.0 }),
+            state: self.state,
+        })
+    }
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(theme::CHECK), Length::Fixed(theme::CHECK))
+    }
+    fn layout(&mut self, _: &mut Tree, _: &Renderer, _: &layout::Limits) -> layout::Node {
+        layout::Node::new(Size::new(theme::CHECK, theme::CHECK))
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        _: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _: &Rectangle,
+    ) {
+        let st = tree.state.downcast_mut::<CheckGlyphState>();
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            if st.state != self.state {
+                st.state = self.state;
+                st.v.target(if self.state == CheckState::Off { 0.0 } else { 1.0 });
+            }
+            let on = st.v.goal() > 0.5;
+            let busy = if on {
+                st.v.step(*now, anim::NORMAL, |t| anim::DECELERATE.at(t))
+            } else {
+                st.v.step(*now, anim::FAST, |t| anim::ACCELERATE.at(t))
+            };
+            if busy || st.v.running() {
+                shell.request_redraw();
+            }
+        } else if st.state != self.state {
+            shell.request_redraw();
+        }
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Rectangle,
+    ) {
+        use iced::advanced::graphics::geometry::Renderer as _;
+        use iced::widget::canvas::{Frame, LineCap, LineJoin, Path, Stroke};
+        let st = tree.state.downcast_ref::<CheckGlyphState>();
+        let p = self.p;
+        let b = layout.bounds();
+        let v = st.v.value.clamp(0.0, 1.0);
+        let fill_t = (v / 0.4).clamp(0.0, 1.0);
+        let tick_t = ((v - 0.25) / 0.75).clamp(0.0, 1.0);
+        let (on_bg, on_fg, off_bg, ring) = if self.enabled {
+            (p.brand, p.on_brand, p.surface_alt, p.text_muted)
+        } else {
+            (p.disabled_fg, p.disabled_bg, p.disabled_bg, p.border_strong)
+        };
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: b,
+                border: Border {
+                    radius: 4.0.into(),
+                    width: 1.5,
+                    color: mix(ring, on_bg, fill_t),
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            Background::Color(mix(off_bg, on_bg, fill_t)),
+        );
+        if v <= 0.0 {
+            return;
+        }
+        if self.state == CheckState::Mixed {
+            let w = 8.0 * fill_t;
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: b.x + (b.width - w) / 2.0,
+                        y: b.y + b.height / 2.0 - 1.0,
+                        width: w,
+                        height: 2.0,
+                    },
+                    border: Border {
+                        radius: 1.0.into(),
+                        ..Border::default()
+                    },
+                    shadow: Shadow::default(),
+                    snap: false,
+                },
+                Background::Color(on_fg),
+            );
+            return;
+        }
+        if tick_t <= 0.0 {
+            return;
+        }
+        let (l1, l2) = tick_len();
+        let mut reach = tick_t * (l1 + l2);
+        let lerp = |a: (f32, f32), b: (f32, f32), t: f32| {
+            Point::new(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+        };
+        let path = Path::new(|pb| {
+            pb.move_to(Point::new(TICK[0].0, TICK[0].1));
+            let first = reach.min(l1);
+            pb.line_to(lerp(TICK[0], TICK[1], first / l1));
+            reach -= first;
+            if reach > 0.0 {
+                pb.line_to(lerp(TICK[1], TICK[2], reach / l2));
+            }
+        });
+        let mut frame = Frame::new(renderer, b.size());
+        frame.stroke(
+            &path,
+            Stroke::default()
+                .with_width(1.8)
+                .with_color(on_fg)
+                .with_line_cap(LineCap::Round)
+                .with_line_join(LineJoin::Round),
+        );
+        renderer.with_translation(Vector::new(b.x, b.y), |r| {
+            r.draw_geometry(frame.into_geometry())
+        });
+    }
+}
+
 /// 18 px checkbox with an optional label; the whole line is the click target.
-/// `on_press: None` renders it disabled.
+/// The box fills, then the tick draws itself in (250 ms); the line tints on
+/// hover. `on_press: None` renders it disabled.
 pub fn checkbox<'a>(
     p: Palette,
     state: CheckState,
@@ -387,63 +761,9 @@ pub fn checkbox<'a>(
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let enabled = on_press.is_some();
-    let checked = state != CheckState::Off;
-    let mark: Element<'a, Message> = match state {
-        CheckState::On => icon(
-            Icon::Check,
-            14.0,
-            if enabled { p.on_brand } else { p.disabled_bg },
-        ),
-        CheckState::Mixed => container(iced::widget::space::horizontal())
-            .width(8)
-            .height(2)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(if enabled {
-                    p.on_brand
-                } else {
-                    p.disabled_bg
-                })),
-                border: Border {
-                    radius: 1.0.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            })
-            .into(),
-        CheckState::Off => iced::widget::space::horizontal().width(0).height(0).into(),
-    };
-    let boxed = container(mark)
-        .center(theme::CHECK)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(if checked {
-                if enabled {
-                    p.brand
-                } else {
-                    p.disabled_fg
-                }
-            } else if enabled {
-                p.surface
-            } else {
-                p.disabled_bg
-            })),
-            border: Border {
-                radius: 4.0.into(),
-                width: 1.0,
-                color: if checked {
-                    if enabled {
-                        p.brand
-                    } else {
-                        p.disabled_fg
-                    }
-                } else if enabled {
-                    p.text_muted
-                } else {
-                    p.border_strong
-                },
-            },
-            ..container::Style::default()
-        });
-    let mut content = row![boxed].spacing(theme::S3).align_y(Alignment::Center);
+    let mut content = row![Element::new(CheckGlyph { p, state, enabled })]
+        .spacing(theme::S3)
+        .align_y(Alignment::Center);
     if let Some(l) = label {
         content = content.push(
             text(l)
@@ -453,9 +773,11 @@ pub fn checkbox<'a>(
         );
     }
     arrow(
-        button(content)
+        press::button(content)
+            .scale(false)
             .padding([theme::S1, theme::S1])
             .on_press_maybe(on_press)
+            .focus_color(p.focus_ring)
             .style(move |_, status| button::Style {
                 background: match status {
                     button::Status::Hovered => Some(Background::Color(p.hover)),
@@ -473,9 +795,161 @@ pub fn checkbox<'a>(
     )
 }
 
+// ------------------------------------------------------- sliding selection
+
+struct Marker {
+    p: Palette,
+    /// Item pitch (height + gap) and item height, in px.
+    pitch: f32,
+    item: f32,
+    index: usize,
+    count: usize,
+}
+
+struct MarkerState {
+    from: f32,
+    index: usize,
+    slide: Track,
+}
+
+impl Marker {
+    fn y(&self, i: f32) -> f32 {
+        i * self.pitch
+    }
+    /// Height of the whole list (no trailing gap).
+    fn total(&self) -> f32 {
+        self.y(self.count.saturating_sub(1) as f32) + self.item
+    }
+}
+
+impl Widget<Message, Theme, Renderer> for Marker {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<MarkerState>()
+    }
+    fn state(&self) -> tree::State {
+        tree::State::new(MarkerState {
+            from: self.index as f32,
+            index: self.index,
+            slide: Track::at(1.0),
+        })
+    }
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Fixed(self.total()))
+    }
+    fn layout(&mut self, _: &mut Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
+        let w = limits.max().width;
+        layout::Node::new(Size::new(
+            if w.is_finite() { w } else { 0.0 },
+            self.total(),
+        ))
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        _: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _: &Rectangle,
+    ) {
+        let st = tree.state.downcast_mut::<MarkerState>();
+        if st.index != self.index {
+            st.from += (st.index as f32 - st.from) * st.slide.value;
+            st.index = self.index;
+            st.slide = Track::at(0.0);
+            st.slide.target(1.0);
+            shell.request_redraw();
+        }
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            // The pill glides on the point-to-point curve (A to B, soft landing).
+            let busy = st
+                .slide
+                .step(*now, std::time::Duration::from_millis(260), |t| {
+                    anim::POINT_TO_POINT.at(t)
+                });
+            if busy || st.slide.running() {
+                shell.request_redraw();
+            }
+        }
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Rectangle,
+    ) {
+        let st = tree.state.downcast_ref::<MarkerState>();
+        let b = layout.bounds();
+        let at = st.from + (st.index as f32 - st.from) * st.slide.value;
+        let y = b.y + self.y(at);
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: b.x,
+                    y,
+                    width: b.width,
+                    height: self.item,
+                },
+                border: Border {
+                    radius: theme::R.into(),
+                    ..Border::default()
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            Background::Color(self.p.selected),
+        );
+        // A short accent bar on the left edge travels with it.
+        let bar_h = 16.0;
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: b.x + 1.0,
+                    y: y + (self.item - bar_h) / 2.0,
+                    width: 3.0,
+                    height: bar_h,
+                },
+                border: Border {
+                    radius: 1.5.into(),
+                    ..Border::default()
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            Background::Color(self.p.brand),
+        );
+    }
+}
+
+/// Selection background for a vertical list of `count` equal items
+/// (`item` px tall, `gap` px apart): a rounded fill with a small accent bar
+/// that glides to item `index` instead of jumping. Stack it behind the items.
+pub fn slide_marker<'a>(
+    p: Palette,
+    index: usize,
+    count: usize,
+    item: f32,
+    gap: f32,
+) -> Element<'a, Message> {
+    Element::new(Marker {
+        p,
+        pitch: item + gap,
+        item,
+        index,
+        count,
+    })
+}
+
 // ------------------------------------------------------------- text field
 
-/// Single-line text field, 36 px: 1 px border, strong border on hover, focus ring.
+/// Single-line text field, 36 px: a filled tonal field (no outline), darker on
+/// hover, 2 px focus ring.
 pub fn text_field<'a>(
     p: Palette,
     placeholder: &str,
@@ -490,14 +964,18 @@ pub fn text_field<'a>(
         .padding([(theme::CONTROL - theme::LINE_BODY) / 2.0, theme::S3])
         .style(move |_, status| {
             let (border, width) = match status {
-                text_input::Status::Active => (p.border_strong, 1.0),
-                text_input::Status::Hovered => (p.text_muted, 1.0),
+                text_input::Status::Active => (Color::TRANSPARENT, 0.0),
+                text_input::Status::Hovered => (Color::TRANSPARENT, 0.0),
                 text_input::Status::Focused { .. } => (p.focus_ring, 2.0),
-                text_input::Status::Disabled => (p.border, 1.0),
+                text_input::Status::Disabled => (Color::TRANSPARENT, 0.0),
             };
             let disabled = status == text_input::Status::Disabled;
+            let fill = match status {
+                text_input::Status::Hovered => p.hover_strong,
+                _ => p.surface_alt,
+            };
             text_input::Style {
-                background: Background::Color(if disabled { p.disabled_bg } else { p.surface }),
+                background: Background::Color(if disabled { p.disabled_bg } else { fill }),
                 border: Border {
                     radius: theme::R.into(),
                     width,

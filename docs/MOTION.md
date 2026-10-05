@@ -47,8 +47,8 @@ exactly 0 and 1 at the ends.
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `FASTER` | 83 ms | Reserved for micro feedback (WinUI ControlFasterAnimationDuration). Not used today: hover and press are instant colour changes |
-| `FAST` | 150 ms | Toggle knob, toast exit (between WinUI 167 and Material short3 150) |
+| `FASTER` | 83 ms | Micro feedback: button press-down, switch knob growth (WinUI ControlFasterAnimationDuration) |
+| `FAST` | 150 ms | Hover tween, toggle knob, toast exit (between WinUI 167 and Material short3 150) |
 | `NORMAL` | 250 ms | Short-distance moves such as the toast slide-up (WinUI ControlNormalAnimationDuration) |
 | `SLOW` | 400 ms | Completion moments: check draw-in, ring fill, count-up |
 
@@ -75,8 +75,8 @@ keep each one small and short.
 
 ## Where NOT to animate
 
-- Page switches: no fades or slides. Content appears on the next frame.
-- Hover, press, focus, selection: instant colour change.
+- Page switches: no cross-fade and no slide-out; the old page is dropped at once (see "Page entrance" below for the incoming page only).
+- Hover, press, focus, selection never *wait* on an animation: the target is set on the very next frame and the tween (<= 150 ms) starts moving at once.
 - Dropdown menus and the expander chevron / body: they open instantly.
 - Lists and tables appearing, or scrolling.
 - Anything behind a modal; no animated backdrops.
@@ -104,3 +104,97 @@ per redraw.
 - Apple, [Human Interface Guidelines: Motion](https://developer.apple.com/design/human-interface-guidelines/motion): purposeful, brief motion; honour Reduce Motion.
 - Microsoft, [SPI_GETCLIENTAREAANIMATION](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow): the "Show animations in Windows" setting.
 - Microsoft, [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (MIT).
+
+## Round 3: navigation and micro-interactions
+
+### Research notes (what we copied and why)
+
+- **WinUI / Fluent 2 page entrance.** `EntranceThemeTransition` moves the
+  incoming content up from a small vertical offset while fading it in with a
+  decelerate curve (the XAML default is a 40 px offset; Fluent's guidance for
+  page navigation is "slide up + fade, about 300 ms, decelerate"). *Drill-in*
+  (`DrillInNavigationTransitionInfo`) scales as well, and is meant for
+  hierarchical navigation. Our sidebar is flat (peer pages), so we use the
+  entrance variant, not drill-in.
+- **Material 3.** Peer destinations use *fade through* (outgoing fades out
+  first, incoming fades in with a slight scale) and sibling steps use *shared
+  axis*. Both keep the outgoing page for one more beat. We deliberately do not:
+  the software renderer redraws the whole content area every frame of a
+  transition, so keeping two pages alive would double the cost.
+- **Buttons.** Fluent controls use a state layer (hover and pressed tints of
+  the same fill) and Windows 11 buttons shrink slightly on press. Material 3
+  state layers are 8% hover, 10% press, tweened over short2/short3 (100 to
+  150 ms). Common press scales are 0.97 to 0.98. We take the Fluent tints
+  from the palette (`hover`, `pressed`), 0.97 scale and 83 ms down, 220 ms up.
+
+### Page entrance (`gui/mod.rs`, `appear::{enter_progress, fade_palette, lift}`)
+
+On `Navigate(page)` the new page is swapped in at once (no outgoing animation)
+and enters over 220 ms (`appear::ENTER`) on `DECELERATE`:
+
+- **Rise**: drawn 12 px low, `Renderer::with_translation`, easing to 0.
+- **Fade**: iced 0.14 has no subtree opacity, so the page is *built* from a
+  palette lerped towards the window background (`appear::fade_palette`),
+  starting at 30% strength. No off-screen layer is needed.
+
+While it runs the shell subscribes to `window::frames()` (`Message::PageFrame`)
+and rewrites `ctx.palette`; the sidebar, footer and sheets use the settled
+palette (`Palette::of(mode)`). When it ends `ctx.palette` is restored and the
+subscription drops, so an idle window draws nothing. `anim::reduced()` skips the
+entrance entirely. Navigating also snaps the page scroll back to the top.
+
+### Preloading
+
+The shell tracks `warmed` / `flight` per warmable page (History, Clean up apps,
+Settings). `preload_all()` runs when the engine opens and after every check;
+each page's `preload()` does its read on a worker thread (`blocking`) and the
+`flight` flag blocks a second load while one is running (cleared when the page's
+`Loaded` / `Scanned` message arrives). Opening a warmed page triggers a *silent*
+refresh: the data on screen stays and is replaced when the new read lands, so
+the page never flashes back to a spinner. Home, Protection and Tools have no
+background reads.
+
+### Buttons (`widgets/press.rs`)
+
+`press::button` is a drop-in for `iced::widget::button` (same builder methods,
+same `Fn(&Theme, Status) -> Style` closures, so all existing styles work).
+
+| Part | Behaviour |
+| --- | --- |
+| Hover | fill, text and border tween `Active` to `Hovered` over `FAST` (150 ms) on `STANDARD`; a missing fill fades from transparent |
+| Press | fill continues to `Pressed`; the button scales to 0.97 about its centre in `FASTER` (83 ms) |
+| Release | spring-back in 220 ms with a small overshoot (ease-out-back, about 0.5% over) |
+| Wide elements | no scale above 260 px wide (`SCALE_MAX_WIDTH`); rows only tint |
+| Focus | Tab / Shift+Tab (shell sends `focus_next` / `focus_previous`), 2 px ring, Enter or Space activates; a mouse press clears it |
+| Disabled | the style's `Disabled` look, no hover, no press, not focusable |
+
+State lives in the widget tree; `shell.request_redraw()` is called only while a
+tween runs.
+
+### Other controls (`widgets/controls.rs`)
+
+- **Segmented**: one selection pill slides between options in 200 ms on
+  `STANDARD` (retargets from where it is); labels tint as the pill passes;
+  hover tints the other options.
+- **Switch**: knob slides on `DECELERATE` (150 ms), track colour tweens, knob
+  grows 12 px, 14 px on hover, 15 px pressed (83 ms).
+- **Checkbox**: the box fills in the first 40% of 250 ms, then the tick draws
+  itself in (stroked polyline, round caps); unchecking reverses in 150 ms on
+  `ACCELERATE`. Mixed draws a dash.
+- **Sidebar marker** (`slide_marker`): the selected fill and a 3 x 16 px accent
+  bar glide to the chosen item in 260 ms on `POINT_TO_POINT`.
+- Dropdown and text field are filled tonal fields (no outline); the focus ring
+  is the only stroke. The open dropdown list keeps a faint edge because
+  shadows are not allowed.
+
+### Idle check
+
+Every animated widget requests a redraw only from inside a running tween, and
+the only new subscription (`PageFrame`) exists for the 220 ms entrance. After
+the last tween ends no event requests another frame, so CPU use returns to 0.
+
+### Sources (round 3)
+
+- Microsoft, [Page transitions](https://learn.microsoft.com/en-us/windows/apps/design/motion/page-transitions) (entrance, drill-in, suppress).
+- Microsoft, [Timing and easing](https://learn.microsoft.com/en-us/windows/apps/design/motion/timing-and-easing).
+- Material Design 3, [Transitions: fade through, shared axis](https://m3.material.io/styles/motion/transitions/transition-patterns) and [State layers](https://m3.material.io/foundations/interaction/states/state-layers).
