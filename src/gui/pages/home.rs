@@ -1,53 +1,130 @@
 //! Home: score ring, verdict, one primary action, attention/protected cards,
-//! first-run scanning view. OWNER: shell agent.
+//! first-run scanning view. OWNER: page-polish agent.
+//!
+//! Motion (see docs/MOTION.md): `window::frames()` is subscribed only while the
+//! scan view is live or the score number is counting up, never when idle.
 use crate::advice::{self, Group, NextStep};
 use crate::app::score::{Score, Verdict};
 use crate::gui::icons::Icon;
-use crate::gui::theme::{self, Palette, Tone};
-use crate::gui::widgets::{self, ring, ButtonKind, StepState};
+use crate::gui::theme::{self, Tone};
+use crate::gui::widgets::{self, anim, ring, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
-use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, container, row, stack, text};
-use iced::{
-    mouse, Alignment, Element, Length, Point, Rectangle, Renderer, Subscription, Task, Theme,
-};
+use iced::widget::{column, container, row, text};
+use iced::{Alignment, Element, Length, Subscription, Task};
 use secblitz::engine::{Outcome, Report};
 use secblitz::model::Probe;
+use std::collections::HashMap;
+use std::time::Instant;
 
-#[derive(Debug, Default)]
+/// Score number counting from the previously shown value to a new one.
+#[derive(Debug, Clone, Copy)]
+struct Count {
+    from: i64,
+    to: i64,
+    clock: anim::Clock,
+}
+
+#[derive(Debug)]
 pub struct State {
-    /// Seconds of animation while scanning (drives the pulse).
-    phase: f32,
-    /// "Technical details" expander of the error card.
+    /// "More details" expander of the error card.
     details_open: bool,
+    /// Latest frame timestamp (views never call `Instant::now()`).
+    now: Instant,
+    /// Started when the scan view appears; drives the shield and spinner.
+    scan: Option<anim::Clock>,
+    /// When each checked item finished (for its check draw-in).
+    done_at: HashMap<String, Instant>,
+    /// How many progress items were already stamped in `done_at`.
+    processed: usize,
+    /// `checked_at` of the check whose result is already on screen.
+    seen_check: Option<u64>,
+    /// Protected count currently shown beside the ring.
+    shown: i64,
+    count: Option<Count>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            details_open: false,
+            now: Instant::now(),
+            scan: None,
+            done_at: HashMap::new(),
+            processed: 0,
+            seen_check: None,
+            shown: 0,
+            count: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// Animation tick while scanning.
-    Tick,
-    /// Open / close the technical details on the error card.
+    /// Animation frame (only while something animates).
+    Frame(Instant),
+    /// Open / close the details on the error card.
     ToggleDetails,
 }
 
-const TICK_SECONDS: f32 = 0.033;
 /// Free space below which the user is warned (decimal GB, as Windows shows it).
 const LOW_DISK_BYTES: u64 = 5_000_000_000;
+/// Finished items kept visible in the live checklist.
+const VISIBLE_STEPS: usize = 5;
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
-    let _ = ctx;
     match msg {
-        Msg::Tick => state.phase = (state.phase + TICK_SECONDS) % 3600.0,
+        Msg::Frame(now) => frame(state, ctx, now),
         Msg::ToggleDetails => state.details_open = !state.details_open,
     }
     Task::none()
 }
 
-/// A ~30 fps tick, only while a check is running.
+fn frame(state: &mut State, ctx: &Ctx, now: Instant) {
+    state.now = now;
+    if let Some(progress) = &ctx.checking {
+        if state.scan.is_none() {
+            state.scan = Some(anim::Clock::at(now));
+            state.done_at.clear();
+            state.processed = 0;
+        }
+        if state.processed > progress.items.len() {
+            state.processed = 0;
+        }
+        for (id, _) in progress.items.iter().skip(state.processed) {
+            state.done_at.entry(id.clone()).or_insert(now);
+        }
+        state.processed = progress.items.len();
+    } else {
+        state.scan = None;
+    }
+    if ctx.checking.is_none() && ctx.checked_at != state.seen_check {
+        state.seen_check = ctx.checked_at;
+        if let Some(report) = ctx.report.as_deref() {
+            let to = Score::of(report).protected as i64;
+            if to != state.shown {
+                state.count = Some(Count {
+                    from: state.shown,
+                    to,
+                    clock: anim::Clock::at(now),
+                });
+            }
+        }
+    }
+    if let Some(c) = &state.count {
+        if c.clock.done(anim::SLOW, now) {
+            state.shown = c.to;
+            state.count = None;
+        }
+    }
+}
+
+/// Frames only while a scan is live or a number is counting up.
 pub fn subscription(state: &State, ctx: &Ctx) -> Subscription<Message> {
-    let _ = state;
-    if ctx.checking.is_some() {
-        crate::gui::ticks_30().map(|_| Message::Home(Msg::Tick))
+    let live = ctx.checking.is_some()
+        || state.count.is_some()
+        || (ctx.checked_at != state.seen_check && ctx.report.is_some());
+    if live && anim::animating() {
+        iced::window::frames().map(|now| Message::Home(Msg::Frame(now)))
     } else {
         Subscription::none()
     }
@@ -55,13 +132,13 @@ pub fn subscription(state: &State, ctx: &Ctx) -> Subscription<Message> {
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
-    if let Some(progress) = &ctx.checking {
-        return scanning(state, ctx, progress);
-    }
     if let Some(error) = &ctx.engine_error {
         return error_card(state, ctx, "We couldn't start Secblitz", error);
     }
     let Some(report) = ctx.report.as_deref() else {
+        if let Some(progress) = &ctx.checking {
+            return scanning(state, ctx, progress);
+        }
         if let Some(error) = &ctx.check_error {
             return error_card(state, ctx, "We couldn't check your PC", error);
         }
@@ -88,48 +165,32 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
 // ---------------------------------------------------------------- scanning
 
-/// Concentric rings that expand and fade behind the shield.
-struct Pulse {
-    p: Palette,
-    phase: f32,
-}
-
-impl canvas::Program<Message> for Pulse {
-    type State = ();
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &Renderer,
-        _: &Theme,
-        bounds: Rectangle,
-        _: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
-        let max = bounds.width.min(bounds.height) / 2.0 - 2.0;
-        let min = 46.0;
-        // Three rings, evenly staggered, each cycle lasting 2.4 s.
-        for k in 0..3 {
-            let t = ((self.phase / 2.4) + k as f32 / 3.0).fract();
-            let eased = 1.0 - (1.0 - t) * (1.0 - t);
-            let radius = min + (max - min) * eased;
-            let alpha = (1.0 - t) * 0.5;
-            frame.stroke(
-                &Path::circle(center, radius),
-                Stroke::default().with_width(2.0).with_color(iced::Color {
-                    a: alpha,
-                    ..self.p.text_muted
-                }),
-            );
-        }
-        frame.fill(&Path::circle(center, min + 8.0), self.p.surface_alt);
-        vec![frame.into_geometry()]
-    }
+/// One checklist line with an animated status mark.
+fn step_row<'a>(
+    p: theme::Palette,
+    mark: Element<'a, Message>,
+    label: String,
+    running: bool,
+) -> Element<'a, Message> {
+    row![
+        container(mark).center_x(theme::CHECK),
+        text(label)
+            .size(theme::BODY)
+            .font(if running {
+                theme::MEDIUM
+            } else {
+                theme::REGULAR
+            })
+            .color(if running { p.text } else { p.text_muted })
+    ]
+    .spacing(theme::S3)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Element<'a, Message> {
     let p = ctx.palette;
-    // Latest status per item, in first-seen order.
+    // Distinct finished items, in first-seen order.
     let mut seen: Vec<&str> = Vec::new();
     for (id, _) in &progress.items {
         if !seen.contains(&id.as_str()) {
@@ -143,54 +204,45 @@ fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Elemen
     } else {
         (n as f32 / total as f32).min(0.96)
     };
+    let elapsed = state
+        .scan
+        .map(|c| c.elapsed_at(state.now))
+        .unwrap_or_default();
 
-    let breathe = 1.0 + 0.06 * (state.phase * std::f32::consts::TAU / 2.4).sin();
-    let hero = stack![
-        canvas::Canvas::new(Pulse {
+    let mut list = column![].spacing(theme::S3);
+    for id in &seen[n.saturating_sub(VISIBLE_STEPS)..] {
+        let t = state.done_at.get(*id).map_or(0.0, |at| {
+            anim::Clock::at(*at).progress_at(anim::SLOW, state.now)
+        });
+        list = list.push(step_row(
             p,
-            phase: state.phase
-        })
-        .width(220)
-        .height(220),
-        container(widgets::icon(Icon::Shield, 64.0 * breathe, p.text)).center(Length::Fill),
-    ]
-    .width(220)
-    .height(220);
-
-    let mut list = column![].spacing(10);
-    let start = n.saturating_sub(5);
-    for id in &seen[start..] {
-        list = list.push(widgets::progress_row(
-            p,
+            anim::check_draw(theme::CHECK, p.good, t),
             ctx.t(advice::control_label(id)),
-            StepState::Done,
+            false,
         ));
     }
-    list = list.push(widgets::progress_row(
+    list = list.push(step_row(
         p,
+        anim::spinner(theme::CHECK, p.text_muted, elapsed),
         ctx.t("Looking at your settings…"),
-        StepState::Running,
+        true,
     ));
 
     let body = column![
-        container(hero).center_x(Length::Fill),
+        anim::shield_scan(96.0, p.text, elapsed),
         column![
-            text(ctx.t("Checking your PC"))
-                .size(theme::H1)
-                .font(theme::BOLD)
-                .color(p.text),
+            widgets::h1(p, ctx.t("Checking your PC")),
             widgets::muted(p, ctx.t("This takes about a minute. Nothing is changed.")),
         ]
-        .spacing(6)
-        .align_x(Alignment::Center)
-        .width(Length::Fill),
-        container(widgets::bar(p, ratio, Tone::Good)).max_width(420),
-        container(list).max_width(420).padding([4, 0]),
+        .spacing(theme::S1)
+        .align_x(Alignment::Center),
+        container(widgets::bar(p, ratio, Tone::Neutral)).max_width(420),
+        container(list).max_width(420),
     ]
-    .spacing(theme::GAP + 8.0)
+    .spacing(theme::S6)
     .align_x(Alignment::Center)
     .width(Length::Fill);
-    widgets::card(p, container(body).center_x(Length::Fill).padding([16, 0])).into()
+    widgets::card(p, container(body).center_x(Length::Fill)).into()
 }
 
 // ----------------------------------------------------------------- errors
@@ -213,13 +265,13 @@ fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Ele
         ),
         widgets::expander(
             p,
-            ctx.t("Technical details"),
+            ctx.t("More details"),
             state.details_open,
             Message::Home(Msg::ToggleDetails),
             widgets::small(p, raw.to_owned()),
         ),
     ]
-    .spacing(theme::GAP)
+    .spacing(theme::S4)
     .align_x(Alignment::Start);
     widgets::card(p, content).into()
 }
@@ -343,6 +395,11 @@ fn last_checked(ctx: &Ctx) -> Option<String> {
     })
 }
 
+/// Things that need a change the person makes themselves in Windows.
+fn left_to_you(attention: usize, fixable: usize) -> usize {
+    attention.saturating_sub(fixable)
+}
+
 fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, Message> {
     let p = ctx.palette;
     let score = Score::of(report);
@@ -360,6 +417,10 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     } else {
         score.verdict()
     };
+    let attention = score.attention.max(1);
+    let fixable = ids.len().min(attention);
+    let manual = left_to_you(attention, fixable);
+    let mut note: Option<String> = None;
     let (tone, title, subtitle) = match verdict {
         Verdict::Protected => (
             Tone::Good,
@@ -367,19 +428,31 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
             ctx.t("Everything we checked is switched on and working."),
         ),
         Verdict::Attention => {
-            let n = score.attention.max(1);
+            if fixable > 0 && manual > 0 {
+                note = Some(count_text(
+                    ctx,
+                    "The other one needs a change you make yourself in Windows Settings.",
+                    "The other {n} need a change you make yourself in Windows Settings.",
+                    manual,
+                ));
+            }
             (
                 Tone::Warn,
                 count_text(
                     ctx,
                     "{n} thing needs your attention",
                     "{n} things need your attention",
-                    n,
+                    attention,
                 ),
-                if ids.is_empty() {
-                    ctx.t("The steps below take just a moment in Windows Settings.")
+                if fixable == 0 {
+                    ctx.t("These need a change in Windows Settings. We will show you where.")
                 } else {
-                    ctx.t("We can fix these for you in one step. You can undo any change later.")
+                    count_text(
+                        ctx,
+                        "We can fix it for you. You can undo any change later.",
+                        "We can fix {n} of them for you. You can undo any change later.",
+                        fixable,
+                    )
                 },
             )
         }
@@ -390,53 +463,82 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         ),
     };
 
+    // The number counts up from the previous value after each check.
+    let protected = i64::try_from(score.protected).unwrap_or(0);
+    let shown = if anim::reduced() {
+        protected
+    } else if let Some(c) = &state.count {
+        anim::count_up_int(c.from, c.to, c.clock.progress_at(anim::SLOW, state.now))
+    } else if ctx.checked_at != state.seen_check {
+        state.shown
+    } else {
+        protected
+    };
     let ring_view = ring::ring(
         ring::Ring {
             p,
             ratio: score.ratio(),
             tone,
-            label: format!("{}/{}", score.protected, score.total),
-            caption: ctx.t("protected"),
+            label: shown.to_string(),
+            caption: ctx
+                .t("of {n} protected")
+                .replace("{n}", &score.total.to_string()),
         },
         176.0,
     );
 
-    let mut buttons = row![].spacing(10).align_y(Alignment::Center);
-    if ids.is_empty() {
-        buttons = buttons.push(widgets::action(
+    let check_again = |kind: ButtonKind, icon: Option<Icon>| {
+        widgets::action(
             p,
-            ButtonKind::Primary,
+            kind,
             ctx.t("Check again"),
-            Some(Icon::Refresh),
+            icon,
             (!ctx.busy).then_some(Message::CheckNow),
-        ));
-    } else {
-        let label = count_text(ctx, "Fix {n} problem", "Fix {n} problems", ids.len());
+        )
+    };
+    let mut buttons = row![].spacing(theme::S2).align_y(Alignment::Center);
+    if ctx.checking.is_some() {
+        let elapsed = state
+            .scan
+            .map(|c| c.elapsed_at(state.now))
+            .unwrap_or_default();
+        buttons = buttons
+            .push(anim::spinner(theme::CHECK, p.text_muted, elapsed))
+            .push(widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Checking…"),
+                None,
+                None,
+            ));
+    } else if verdict == Verdict::Attention && fixable > 0 {
         buttons = buttons
             .push(widgets::action(
                 p,
                 ButtonKind::Primary,
-                label,
+                count_text(ctx, "Fix it for me", "Fix {n} for me", fixable),
                 Some(Icon::Wrench),
                 (!ctx.busy).then(|| Message::ReviewFixes(ids.clone())),
             ))
+            .push(check_again(ButtonKind::Secondary, None));
+    } else if verdict == Verdict::Attention {
+        buttons = buttons
             .push(widgets::action(
                 p,
-                ButtonKind::Secondary,
-                ctx.t("Check again"),
+                ButtonKind::Primary,
+                ctx.t("See what to do"),
                 None,
-                (!ctx.busy).then_some(Message::CheckNow),
-            ));
+                Some(Message::Navigate(Page::Fixes)),
+            ))
+            .push(check_again(ButtonKind::Secondary, None));
+    } else {
+        buttons = buttons.push(check_again(ButtonKind::Primary, Some(Icon::Refresh)));
     }
 
-    let mut texts = column![
-        text(title)
-            .size(theme::DISPLAY - 4.0)
-            .font(theme::BOLD)
-            .color(p.text),
-        widgets::muted(p, subtitle),
-    ]
-    .spacing(6);
+    let mut texts = column![widgets::h1(p, title), widgets::muted(p, subtitle)].spacing(theme::S1);
+    if let Some(note) = note {
+        texts = texts.push(widgets::muted(p, note));
+    }
     if let Some(when) = last_checked(ctx) {
         texts = texts.push(widgets::small(p, when));
     }
@@ -445,14 +547,14 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         row![
             ring_view,
             column![texts, buttons]
-                .spacing(theme::GAP + 6.0)
+                .spacing(theme::S6)
                 .width(Length::Fill)
         ]
-        .spacing(32)
+        .spacing(theme::S8)
         .align_y(Alignment::Center),
     );
 
-    let mut page = column![].spacing(theme::GAP);
+    let mut page = column![].spacing(theme::S4);
     if ctx.check_error.is_some() {
         page = page.push(widgets::inline_notice(
             p,
@@ -474,17 +576,20 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     }
     let tips = tips(report);
     if !tips.is_empty() {
-        let mut c = column![widgets::section_label(p, ctx.t("Good to know"))].spacing(10);
+        // Light and calm: plain muted lines, no boxes.
+        let mut c = column![widgets::section_label(p, ctx.t("Good to know"))].spacing(theme::S3);
         for a in tips.iter().take(3) {
-            c = c.push(widgets::inline_notice(
-                p,
-                Tone::Neutral,
-                format!("{}. {}", ctx.t(a.label), ctx.t(a.next)),
-            ));
+            c = c.push(
+                row![
+                    widgets::icon(Icon::Info, 16.0, p.text_muted),
+                    widgets::muted(p, format!("{}. {}", ctx.t(a.label), ctx.t(a.next))),
+                ]
+                .spacing(theme::S3)
+                .align_y(Alignment::Center),
+            );
         }
-        page = page.push(c);
+        page = page.push(container(c).padding([theme::S2, theme::S1]));
     }
-    let _ = state;
     page.into()
 }
 
@@ -494,9 +599,9 @@ fn attention_card<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Ele
         widgets::h2(p, ctx.t("Needs your attention")),
         widgets::pill(p, items.len().to_string(), Tone::Warn),
     ]
-    .spacing(10)
+    .spacing(theme::S2)
     .align_y(Alignment::Center)]
-    .spacing(6);
+    .spacing(theme::S3);
     for (r, a) in items.iter().take(4) {
         let impact = if a.impact.is_empty() {
             String::new()
@@ -515,11 +620,11 @@ fn attention_card<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Ele
                     .font(theme::REGULAR)
                     .color(p.text_muted),
             ]
-            .spacing(2)
+            .spacing(theme::S1)
             .width(Length::Fill),
             widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
         ]
-        .spacing(14)
+        .spacing(theme::S3)
         .align_y(Alignment::Center);
         c = c.push(widgets::list_button(
             p,
@@ -548,15 +653,15 @@ fn protected_card<'a>(ctx: &'a Ctx, count: usize, labels: &[&'static str]) -> El
                 widgets::h2(p, ctx.t("Protected")),
                 widgets::pill(p, count.to_string(), Tone::Good)
             ]
-            .spacing(10)
+            .spacing(theme::S2)
             .align_y(Alignment::Center),
             widgets::small(p, summary),
         ]
-        .spacing(2)
+        .spacing(theme::S1)
         .width(Length::Fill),
         widgets::link(p, ctx.t("See all"), Message::Navigate(Page::Fixes)),
     ]
-    .spacing(14)
+    .spacing(theme::S3)
     .align_y(Alignment::Center);
     widgets::card(p, header).into()
 }
@@ -587,10 +692,9 @@ mod tests {
     }
 
     #[test]
-    fn tick_advances_and_wraps_phase() {
-        let mut state = State::default();
-        state.phase = 3599.99;
-        state.phase = (state.phase + TICK_SECONDS) % 3600.0;
-        assert!(state.phase < 1.0);
+    fn headline_and_button_agree() {
+        assert_eq!(left_to_you(3, 2), 1);
+        assert_eq!(left_to_you(2, 2), 0);
+        assert_eq!(left_to_you(1, 3), 0);
     }
 }
