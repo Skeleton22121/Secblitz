@@ -39,7 +39,9 @@ impl Status {
         anyhow::ensure!(s.attention.len() <= 64, "too many ids");
         anyhow::ensure!(
             s.attention.iter().all(|id| id.len() <= 64
-                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')),
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')),
             "invalid id"
         );
         Ok(s)
@@ -95,7 +97,9 @@ pub fn summarize(items: &[(String, Item)], complete: bool, now: u64) -> Status {
         .filter(|(id, i)| {
             *i == Item::Attention
                 && id.len() <= 64
-                && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
         })
         .take(64)
         .map(|(id, _)| id.clone())
@@ -243,13 +247,25 @@ mod tests {
             effective: None,
             authority: None,
         };
-        assert_eq!(classify("defender.realtime", &json!(false), &obs(json!(false))), Item::Protected);
-        assert_eq!(classify("defender.realtime", &json!(false), &obs(json!(true))), Item::Attention);
+        assert_eq!(
+            classify("defender.realtime", &json!(false), &obs(json!(false))),
+            Item::Protected
+        );
+        assert_eq!(
+            classify("defender.realtime", &json!(false), &obs(json!(true))),
+            Item::Attention
+        );
         let mut fw = obs(json!(true));
-        assert_eq!(classify("firewall.public.enabled", &json!(true), &fw), Item::Attention);
+        assert_eq!(
+            classify("firewall.public.enabled", &json!(true), &fw),
+            Item::Attention
+        );
         fw.authority = Some(Authority::Local);
         fw.effective = Some(EffectiveFirewall::Enabled(true));
-        assert_eq!(classify("firewall.public.enabled", &json!(true), &fw), Item::Protected);
+        assert_eq!(
+            classify("firewall.public.enabled", &json!(true), &fw),
+            Item::Protected
+        );
     }
 
     #[test]

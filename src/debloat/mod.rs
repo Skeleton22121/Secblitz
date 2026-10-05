@@ -178,11 +178,7 @@ pub(crate) fn parse_inventory(json: &str) -> Result<Vec<Installed>> {
 pub fn inventory() -> Result<Vec<Installed>> {
     #[cfg(windows)]
     {
-        let json = windows::run(
-            windows::INVENTORY,
-            &[],
-            std::time::Duration::from_secs(180),
-        )?;
+        let json = windows::run(windows::INVENTORY, &[], std::time::Duration::from_secs(180))?;
         parse_inventory(&json)
     }
     #[cfg(not(windows))]
@@ -250,7 +246,10 @@ pub(crate) fn remove_with(
     emit: &dyn Fn(Progress),
 ) -> Result<Batch> {
     let indices = validate_indices(indices)?;
-    let mut batch = Batch { t: now(), ..Batch::default() };
+    let mut batch = Batch {
+        t: now(),
+        ..Batch::default()
+    };
     for index in indices {
         let packages: Vec<&Installed> = installed
             .iter()
@@ -278,7 +277,10 @@ pub(crate) fn remove_with(
             }
         }
         let result = if let Some(reason) = failure {
-            batch.failed.push(Failure { index, reason: reason.clone() });
+            batch.failed.push(Failure {
+                index,
+                reason: reason.clone(),
+            });
             ItemResult::Failed(reason)
         } else if removed.is_empty() && protected {
             batch.skipped.push(index);
@@ -312,7 +314,8 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
         }
     };
     #[cfg(not(windows))]
-    let run = |_: &str| -> PackageOutcome { PackageOutcome::Failed("Only available on Windows".into()) };
+    let run =
+        |_: &str| -> PackageOutcome { PackageOutcome::Failed("Only available on Windows".into()) };
     let batch = remove_with(&indices, &installed, &run, emit)?;
     if !batch.removed.is_empty() || !batch.skipped.is_empty() || !batch.failed.is_empty() {
         let _ = journal::append(&batch);

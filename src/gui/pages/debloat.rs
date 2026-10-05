@@ -122,10 +122,13 @@ fn wrap(msg: Msg) -> Message {
 
 fn scan_task() -> Task<Message> {
     Task::batch([
-        Task::perform(blocking(|| debloat::inventory().map_err(|e| format!("{e:#}"))), |r| {
-            wrap(Msg::Scanned(r))
+        Task::perform(
+            blocking(|| debloat::inventory().map_err(|e| format!("{e:#}"))),
+            |r| wrap(Msg::Scanned(r)),
+        ),
+        Task::perform(blocking(debloat::journal::load), |j| {
+            wrap(Msg::JournalLoaded(j))
         }),
-        Task::perform(blocking(debloat::journal::load), |j| wrap(Msg::JournalLoaded(j))),
     ])
 }
 
@@ -139,7 +142,6 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 }
 
 /// Close the review sheet or the result with Escape. Working cannot be dismissed.
-#[allow(dead_code)] // wired by the shell Escape handler
 pub fn escape(state: &mut State) {
     if matches!(state.sheet, Sheet::Review | Sheet::Done(_)) {
         state.sheet = Sheet::None;
@@ -290,15 +292,25 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                             }),
                             |j| wrap(Msg::JournalLoaded(j)),
                         ),
-                        toast(format!("{name} {}", ctx.t("is back on your PC.")), Tone::Good),
+                        toast(
+                            format!("{name} {}", ctx.t("is back on your PC.")),
+                            Tone::Good,
+                        ),
                     ])
                 }
                 Ok(crate::broker::Reply::OpenedStore) => toast(
-                    format!("{} {name}.", ctx.t("We opened the Microsoft Store so you can install")),
+                    format!(
+                        "{} {name}.",
+                        ctx.t("We opened the Microsoft Store so you can install")
+                    ),
                     Tone::Neutral,
                 ),
                 _ => toast(
-                    format!("{} {name}. {}", ctx.t("We couldn't bring back"), ctx.t("Please try again later.")),
+                    format!(
+                        "{} {name}. {}",
+                        ctx.t("We couldn't bring back"),
+                        ctx.t("Please try again later.")
+                    ),
                     Tone::Bad,
                 ),
             }
@@ -324,7 +336,8 @@ fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     state.sheet = Sheet::Working(indices.iter().map(|i| (*i, Step::Waiting)).collect());
     let block = state.block_again;
     let stream = blocking_stream(move |emit: &dyn Fn(Run)| {
-        let result = debloat::remove(&indices, &|p| emit(Run::Step(p))).map_err(|e| format!("{e:#}"));
+        let result =
+            debloat::remove(&indices, &|p| emit(Run::Step(p))).map_err(|e| format!("{e:#}"));
         if block && result.is_ok() {
             emit(Run::Policy(debloat::set_consumer_features_policy().is_ok()));
         }
@@ -359,7 +372,11 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
             ctx.busy = false;
             let policy_ok = state.policy.take();
             let asked = state.block_again && result.is_ok();
-            let mut done = Finished { asked_to_block: asked, policy_ok, ..Finished::default() };
+            let mut done = Finished {
+                asked_to_block: asked,
+                policy_ok,
+                ..Finished::default()
+            };
             let mut tasks = vec![];
             match result {
                 Ok(batch) => {
@@ -370,9 +387,15 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
                     }
                     done.batch = Some(batch);
                     if asked {
-                        tasks.push(ctx.broker_task(crate::broker::Request::BlockSuggestedApps, |r| {
-                            wrap(Msg::UserBlocked(matches!(r, Ok(crate::broker::Reply::Done))))
-                        }));
+                        tasks.push(ctx.broker_task(
+                            crate::broker::Request::BlockSuggestedApps,
+                            |r| {
+                                wrap(Msg::UserBlocked(matches!(
+                                    r,
+                                    Ok(crate::broker::Reply::Done)
+                                )))
+                            },
+                        ));
                     }
                 }
                 Err(e) => done.error = Some(e),
@@ -432,15 +455,18 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Tab::Apps => apps_tab(state, ctx),
         Tab::Removed => removed_tab(state, ctx),
     };
-    let page = column![header, tabs, body].spacing(theme::GAP).width(Length::Fill);
+    let page = column![header, tabs, body]
+        .spacing(theme::GAP)
+        .width(Length::Fill);
+    page.into()
+}
+
+/// The open review / working / result sheet, drawn by the shell above the
+/// whole window (outside the page's scrollable).
+pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     match &state.sheet {
-        Sheet::None => page.into(),
-        sheet => {
-            // The shell scrolls pages; keep the base tall enough for the dimmed
-            // backdrop to cover the whole window.
-            let base = row![page, Space::new().width(0).height(Length::Fixed(680.0))];
-            widgets::sheet(p, base, sheet_view(state, sheet, ctx))
-        }
+        Sheet::None => None,
+        sheet => Some(sheet_view(state, sheet, ctx)),
     }
 }
 
@@ -458,13 +484,21 @@ fn tab_button<'a>(
         .align_y(Alignment::Center);
     if let Some(n) = badge {
         content = content.push(
-            container(text(n.to_string()).size(theme::SMALL).font(theme::MEDIUM).color(p.text_muted))
-                .padding([1, 8])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(p.surface_alt)),
-                    border: Border { radius: 999.0.into(), ..Border::default() },
-                    ..container::Style::default()
-                }),
+            container(
+                text(n.to_string())
+                    .size(theme::SMALL)
+                    .font(theme::MEDIUM)
+                    .color(p.text_muted),
+            )
+            .padding([1, 8])
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.surface_alt)),
+                border: Border {
+                    radius: 999.0.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            }),
         );
     }
     let fg = if active { p.text } else { p.text_muted };
@@ -541,7 +575,10 @@ fn row_button<'a>(
                 iced::Color::TRANSPARENT
             })),
             text_color: p.text,
-            border: Border { radius: theme::RADIUS_SMALL.into(), ..Border::default() },
+            border: Border {
+                radius: theme::RADIUS_SMALL.into(),
+                ..Border::default()
+            },
             ..button::Style::default()
         })
         .into()
@@ -637,13 +674,26 @@ fn summary_card<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     } else {
         count_text(ctx, n, "Remove {n} app", "Remove {n} apps")
     };
-    let mut left = column![text(label).size(theme::H2).font(theme::SEMIBOLD).color(p.text)].spacing(2);
+    let mut left = column![text(label)
+        .size(theme::H2)
+        .font(theme::SEMIBOLD)
+        .color(p.text)]
+    .spacing(2);
     if ctx.busy {
-        left = left.push(widgets::small(p, ctx.t("Please wait until the current task has finished.")));
+        left = left.push(widgets::small(
+            p,
+            ctx.t("Please wait until the current task has finished."),
+        ));
     } else if n == 0 {
-        left = left.push(widgets::small(p, ctx.t("Tick the apps you want to remove.")));
+        left = left.push(widgets::small(
+            p,
+            ctx.t("Tick the apps you want to remove."),
+        ));
     } else {
-        left = left.push(widgets::small(p, ctx.t("You will be able to review before anything is removed.")));
+        left = left.push(widgets::small(
+            p,
+            ctx.t("You will be able to review before anything is removed."),
+        ));
     }
     widgets::card(
         p,
@@ -694,10 +744,18 @@ fn group_text(group: Group) -> (&'static str, &'static str, Icon) {
     }
 }
 
-fn group_card<'a>(state: &'a State, ctx: &'a Ctx, group: Group, members: &[u16]) -> Element<'a, Message> {
+fn group_card<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    group: Group,
+    members: &[u16],
+) -> Element<'a, Message> {
     let p = ctx.palette;
     let (title, subtitle, icon) = group_text(group);
-    let chosen = members.iter().filter(|i| state.selected.contains(i)).count();
+    let chosen = members
+        .iter()
+        .filter(|i| state.selected.contains(i))
+        .count();
     let tick_state = if chosen == 0 {
         Tick::Off
     } else if chosen == members.len() {
@@ -712,7 +770,10 @@ fn group_card<'a>(state: &'a State, ctx: &'a Ctx, group: Group, members: &[u16])
             tick(p, tick_state),
             widgets::icon(icon, 18.0, p.text_muted),
             column![
-                text(ctx.t(title)).size(theme::H2).font(theme::SEMIBOLD).color(p.text),
+                text(ctx.t(title))
+                    .size(theme::H2)
+                    .font(theme::SEMIBOLD)
+                    .color(p.text),
                 widgets::small(p, ctx.t(subtitle)),
             ]
             .spacing(2),
@@ -738,13 +799,27 @@ fn group_card<'a>(state: &'a State, ctx: &'a Ctx, group: Group, members: &[u16])
         }
         let app = app_of(index);
         let mut line = row![
-            tick(p, if state.selected.contains(&index) { Tick::All } else { Tick::Off }),
-            text(ctx.t(app.name)).size(theme::BODY).font(theme::MEDIUM).color(p.text),
+            tick(
+                p,
+                if state.selected.contains(&index) {
+                    Tick::All
+                } else {
+                    Tick::Off
+                }
+            ),
+            text(ctx.t(app.name))
+                .size(theme::BODY)
+                .font(theme::MEDIUM)
+                .color(p.text),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
         if app.store_id.is_none() {
-            line = line.push(widgets::pill(p, ctx.t("Can't be restored automatically"), Tone::Warn));
+            line = line.push(widgets::pill(
+                p,
+                ctx.t("Can't be restored automatically"),
+                Tone::Warn,
+            ));
         }
         col = col.push(row_button(p, line, Some(wrap(Msg::Toggle(index)))));
     }
@@ -775,7 +850,10 @@ fn banner<'a>(p: Palette, icon: Icon, tone: Tone, message: String) -> Element<'a
     .width(Length::Fill)
     .style(move |_| container::Style {
         background: Some(Background::Color(p.tint(tone))),
-        border: Border { radius: theme::RADIUS_SMALL.into(), ..Border::default() },
+        border: Border {
+            radius: theme::RADIUS_SMALL.into(),
+            ..Border::default()
+        },
         ..container::Style::default()
     })
     .into()
@@ -784,7 +862,14 @@ fn banner<'a>(p: Palette, icon: Icon, tone: Tone, message: String) -> Element<'a
 fn option_card<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     let line = row![
-        tick(p, if state.block_again { Tick::All } else { Tick::Off }),
+        tick(
+            p,
+            if state.block_again {
+                Tick::All
+            } else {
+                Tick::Off
+            }
+        ),
         column![
             text(ctx.t("Stop Windows from adding suggested apps again"))
                 .size(theme::BODY)
@@ -799,7 +884,9 @@ fn option_card<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     ]
     .spacing(12)
     .align_y(Alignment::Center);
-    widgets::card(p, row_button(p, line, Some(wrap(Msg::ToggleBlock)))).padding(12).into()
+    widgets::card(p, row_button(p, line, Some(wrap(Msg::ToggleBlock))))
+        .padding(12)
+        .into()
 }
 
 // ---- removed apps tab ---------------------------------------------------
@@ -809,7 +896,9 @@ fn removed_entries(state: &State) -> Vec<(u16, u64)> {
     let mut out: Vec<(u16, u64)> = Vec::new();
     for batch in state.journal.iter().rev() {
         for r in batch.removed.iter().filter(|r| !r.restored) {
-            if (r.index as usize) < debloat::catalog().len() && !out.iter().any(|(i, _)| *i == r.index) {
+            if (r.index as usize) < debloat::catalog().len()
+                && !out.iter().any(|(i, _)| *i == r.index)
+            {
                 out.push((r.index, batch.t));
             }
         }
@@ -847,7 +936,10 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         let app = app_of(index);
         let restoring = state.restoring == Some(index);
         let mut info = column![
-            text(ctx.t(app.name)).size(theme::BODY).font(theme::MEDIUM).color(p.text),
+            text(ctx.t(app.name))
+                .size(theme::BODY)
+                .font(theme::MEDIUM)
+                .color(p.text),
             widgets::small(p, ago(ctx, t)),
         ]
         .spacing(2);
@@ -858,7 +950,11 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ));
             widgets::pill(p, ctx.t("Can't be restored automatically"), Tone::Warn)
         } else {
-            let label = if restoring { ctx.t("Restoring…") } else { ctx.t("Restore") };
+            let label = if restoring {
+                ctx.t("Restoring…")
+            } else {
+                ctx.t("Restore")
+            };
             let enabled = state.restoring.is_none() && !ctx.busy;
             widgets::action(
                 p,
@@ -941,7 +1037,11 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             p,
             Icon::AlertTriangle,
             Tone::Warn,
-            format!("{} {}", ctx.t("These can't be restored automatically:"), manual.join(", ")),
+            format!(
+                "{} {}",
+                ctx.t("These can't be restored automatically:"),
+                manual.join(", ")
+            ),
         ));
     }
     if indices.iter().any(|i| app_of(*i).group == Group::Gaming) {
@@ -961,7 +1061,13 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     col.push(
         row![
             Space::new().width(Length::Fill),
-            widgets::action(p, ButtonKind::Secondary, ctx.t("Cancel"), None, Some(wrap(Msg::Cancel))),
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Cancel"),
+                None,
+                Some(wrap(Msg::Cancel))
+            ),
             widgets::action(
                 p,
                 ButtonKind::Danger,
@@ -983,9 +1089,11 @@ fn working_sheet<'a>(items: &'a [(u16, Step)], ctx: &'a Ctx) -> Element<'a, Mess
             Step::Waiting => (Icon::Package, Tone::Neutral, ctx.t("Waiting")),
             Step::Working => (Icon::Refresh, Tone::Brand, ctx.t("Removing…")),
             Step::Done(ItemResult::Removed) => (Icon::CheckCircle, Tone::Good, ctx.t("Removed")),
-            Step::Done(ItemResult::Protected) => {
-                (Icon::Info, Tone::Neutral, ctx.t("Windows protects this app"))
-            }
+            Step::Done(ItemResult::Protected) => (
+                Icon::Info,
+                Tone::Neutral,
+                ctx.t("Windows protects this app"),
+            ),
             Step::Done(ItemResult::Failed(_)) => {
                 (Icon::AlertTriangle, Tone::Bad, ctx.t("Couldn't remove"))
             }
@@ -993,7 +1101,9 @@ fn working_sheet<'a>(items: &'a [(u16, Step)], ctx: &'a Ctx) -> Element<'a, Mess
         list = list.push(
             row![
                 widgets::icon(icon, 18.0, p.tone(tone)),
-                text(ctx.t(app_of(*index).name)).size(theme::BODY).color(p.text),
+                text(ctx.t(app_of(*index).name))
+                    .size(theme::BODY)
+                    .color(p.text),
                 Space::new().width(Length::Fill),
                 widgets::small(p, note),
             ]
@@ -1003,7 +1113,10 @@ fn working_sheet<'a>(items: &'a [(u16, Step)], ctx: &'a Ctx) -> Element<'a, Mess
     }
     column![
         widgets::h1(p, ctx.t("Removing apps…")),
-        widgets::muted(p, ctx.t("Please keep this window open. This can take a few minutes.")),
+        widgets::muted(
+            p,
+            ctx.t("Please keep this window open. This can take a few minutes.")
+        ),
         container(scrollable(container(list).padding(4))).max_height(300),
     ]
     .spacing(14)
@@ -1027,7 +1140,10 @@ fn result_block<'a>(
     column![
         row![
             widgets::icon(icon, 18.0, p.tone(tone)),
-            text(title).size(theme::BODY).font(theme::SEMIBOLD).color(p.text)
+            text(title)
+                .size(theme::BODY)
+                .font(theme::SEMIBOLD)
+                .color(p.text)
         ]
         .spacing(10)
         .align_y(Alignment::Center),
@@ -1055,7 +1171,13 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             };
             col = col.push(widgets::h1(p, title));
             if !removed.is_empty() {
-                col = col.push(result_block(p, Icon::CheckCircle, Tone::Good, ctx.t("Removed"), removed));
+                col = col.push(result_block(
+                    p,
+                    Icon::CheckCircle,
+                    Tone::Good,
+                    ctx.t("Removed"),
+                    removed,
+                ));
             }
             if !protected.is_empty() {
                 col = col.push(result_block(
@@ -1088,7 +1210,10 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
         }
         (None, error) => {
             col = col.push(widgets::h1(p, ctx.t("We couldn't remove the apps")));
-            col = col.push(widgets::muted(p, ctx.t("Nothing was changed. Please try again.")));
+            col = col.push(widgets::muted(
+                p,
+                ctx.t("Nothing was changed. Please try again."),
+            ));
             if let Some(e) = error {
                 technical.push(e.clone());
             }
@@ -1122,22 +1247,41 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
     if !technical.is_empty() {
         col = col.push(technical_details(state, ctx, technical));
     }
-    col.push(
-        row![
-            Space::new().width(Length::Fill),
-            widgets::action(p, ButtonKind::Primary, ctx.t("Done"), None, Some(wrap(Msg::CloseResult)))
-        ],
-    )
+    col.push(row![
+        Space::new().width(Length::Fill),
+        widgets::action(
+            p,
+            ButtonKind::Primary,
+            ctx.t("Done"),
+            None,
+            Some(wrap(Msg::CloseResult))
+        )
+    ])
     .into()
 }
 
-fn technical_details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a, Message> {
+fn technical_details<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    lines: Vec<String>,
+) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.details;
     let head = button(
         row![
-            widgets::icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, 14.0, p.text_muted),
-            text(ctx.t("Technical details")).size(theme::SMALL).font(theme::MEDIUM).color(p.text_muted),
+            widgets::icon(
+                if open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                14.0,
+                p.text_muted
+            ),
+            text(ctx.t("Technical details"))
+                .size(theme::SMALL)
+                .font(theme::MEDIUM)
+                .color(p.text_muted),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -1152,13 +1296,18 @@ fn technical_details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> 
             block = block.push(text(line).size(theme::SMALL).color(p.text_muted));
         }
         col = col.push(
-            container(scrollable(block)).max_height(140).padding(10).width(Length::Fill).style(
-                move |_| container::Style {
+            container(scrollable(block))
+                .max_height(140)
+                .padding(10)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
                     background: Some(Background::Color(p.surface_alt)),
-                    border: Border { radius: theme::RADIUS_SMALL.into(), ..Border::default() },
+                    border: Border {
+                        radius: theme::RADIUS_SMALL.into(),
+                        ..Border::default()
+                    },
                     ..container::Style::default()
-                },
-            ),
+                }),
         );
     }
     col.into()

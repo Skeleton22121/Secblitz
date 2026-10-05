@@ -41,7 +41,10 @@ fn split(line: &str) -> Option<Vec<String>> {
     if started {
         args.push(current);
     }
-    if args.iter().any(|a| a.ends_with('\\') && line.contains("\\\"")) {
+    if args
+        .iter()
+        .any(|a| a.ends_with('\\') && line.contains("\\\""))
+    {
         return None;
     }
     Some(args)
@@ -62,7 +65,9 @@ mod tests {
     fn exact_tray_mode_is_recognised() {
         assert!(tray(r#""C:\Program Files\Secblitz\secblitz.exe" tray"#));
         assert!(tray(r"C:\Secblitz\secblitz.exe tray"));
-        assert!(tray("\"C:\\Program Files\\Secblitz\\secblitz.exe\"   tray  "));
+        assert!(tray(
+            "\"C:\\Program Files\\Secblitz\\secblitz.exe\"   tray  "
+        ));
         assert!(tray("\"C:\\Program Files\\Secblitz\\secblitz.exe\" tray\0"));
     }
 

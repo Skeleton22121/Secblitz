@@ -25,8 +25,7 @@ pub const PASSWORD_LENGTH: usize = 24;
 /// 64 distinct characters: every six-bit value is equally likely, so there is
 /// no modulo bias. No character-class repair, predictable seed or logging.
 pub fn encode_password(random: &[u8; PASSWORD_LENGTH]) -> [u8; PASSWORD_LENGTH] {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     random.map(|byte| ALPHABET[(byte & 63) as usize])
 }
 
@@ -88,7 +87,15 @@ pub fn friendly_error(raw: &str) -> &'static str {
         "An earlier job still needs to be checked. Restart Secblitz and try again."
     } else if has(&["busy", "lock", "contention", "another"]) {
         "Windows is busy with another job. Try again in a few minutes."
-    } else if has(&["network", "offline", "internet", "0x8024", "0x8007", "timed out", "source"]) {
+    } else if has(&[
+        "network",
+        "offline",
+        "internet",
+        "0x8024",
+        "0x8007",
+        "timed out",
+        "source",
+    ]) {
         "We couldn't reach Windows Update. Check your internet connection and try again."
     } else if has(&["policy", "opt-in", "not enabled", "managed", "ownership"]) {
         "Your PC's settings don't allow this."
@@ -271,7 +278,13 @@ pub fn classify(kind: RepairKind, records: &[ops::PlanRecord], stopped: bool) ->
     use ops::StepState as S;
     let steps: Vec<(Op, &ops::StepRecord)> = records
         .iter()
-        .flat_map(|r| r.plan.steps.iter().map(|s| s.operation.kind).zip(r.steps.iter()))
+        .flat_map(|r| {
+            r.plan
+                .steps
+                .iter()
+                .map(|s| s.operation.kind)
+                .zip(r.steps.iter())
+        })
         .collect();
     if steps.iter().any(|(_, s)| s.state == S::Failed) {
         return RepairResult::CouldNotFinish;
@@ -385,7 +398,11 @@ pub fn run_repair(kind: RepairKind, cancel: Arc<AtomicBool>, emit: &dyn Fn(Repai
             (result, Some(friendly_error(&raw)))
         }
     };
-    emit(RepairEvent::Done { result, note, technical });
+    emit(RepairEvent::Done {
+        result,
+        note,
+        technical,
+    });
 }
 
 fn repair_flow(
@@ -433,11 +450,17 @@ fn repair_steps(
         let kinds = expand(&chunk);
         let plan = ops::plan(plan_request(&chunk))?;
         let planned: Vec<Op> = plan.steps.iter().map(|s| s.operation.kind).collect();
-        ensure!(planned == kinds, "The prepared plan did not match the request");
+        ensure!(
+            planned == kinds,
+            "The prepared plan did not match the request"
+        );
         let approved = ops::approve(plan.id, &plan.digest, APPROVAL_SECONDS)?;
         ensure!(
             approved.plan.digest == plan.digest
-                && approved.approval.as_ref().is_some_and(|a| a.digest == plan.digest)
+                && approved
+                    .approval
+                    .as_ref()
+                    .is_some_and(|a| a.digest == plan.digest)
                 && !approved.consumed,
             "The approval did not match the prepared plan"
         );
@@ -445,13 +468,17 @@ fn repair_steps(
         let mut record = supervise_operation(&task, cancel, emit, &kinds, done, total)?;
         if record.steps.iter().any(step_unresolved) && !cancel.load(Ordering::SeqCst) {
             if let Ok(task) = ops::resume(plan.id) {
-                if let Ok(verified) = supervise_operation(&task, cancel, emit, &kinds, done, total) {
+                if let Ok(verified) = supervise_operation(&task, cancel, emit, &kinds, done, total)
+                {
                     record = verified;
                 }
             }
         }
         done += record.steps.len();
-        let finished = record.steps.iter().all(|s| s.state == ops::StepState::Succeeded);
+        let finished = record
+            .steps
+            .iter()
+            .all(|s| s.state == ops::StepState::Succeeded);
         records.push(record);
         if !finished {
             break;
@@ -482,7 +509,11 @@ fn supervise_operation(
         if last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
             let index = task.progress().ok().and_then(|p| p.step).unwrap_or(0);
-            let kind = kinds.get(index).or(kinds.first()).copied().unwrap_or(Op::DismCheckHealth);
+            let kind = kinds
+                .get(index)
+                .or(kinds.first())
+                .copied()
+                .unwrap_or(Op::DismCheckHealth);
             emit(RepairEvent::Progress(RepairProgress {
                 label: step_label(kind),
                 step: (done + index + 1).min(total.max(1)),
@@ -533,7 +564,11 @@ pub fn summarize_catalog(catalog: &patch::Catalog) -> Found {
                 "{} (KB {}) severity {} bundled {}\n",
                 u.title,
                 kb,
-                if u.severity.is_empty() { "n/a" } else { &u.severity },
+                if u.severity.is_empty() {
+                    "n/a"
+                } else {
+                    &u.severity
+                },
                 u.bundled.len()
             ));
             UpdateInfo {
@@ -675,7 +710,10 @@ impl InstallStage {
 
 #[derive(Debug, Clone)]
 pub enum InstallEvent {
-    Stage { stage: InstallStage, elapsed: u64 },
+    Stage {
+        stage: InstallStage,
+        elapsed: u64,
+    },
     Done {
         result: InstallResult,
         note: Option<&'static str>,
@@ -700,12 +738,20 @@ pub fn run_install(
             let raw = format!("{e:#}");
             technical.push_str(&format!("error: {raw}\n"));
             (
-                if stopped { InstallResult::Stopped } else { InstallResult::CouldNotFinish },
+                if stopped {
+                    InstallResult::Stopped
+                } else {
+                    InstallResult::CouldNotFinish
+                },
                 Some(friendly_error(&raw)),
             )
         }
     };
-    emit(InstallEvent::Done { result, note, technical });
+    emit(InstallEvent::Done {
+        result,
+        note,
+        technical,
+    });
 }
 
 fn install_flow(
@@ -768,7 +814,10 @@ fn wait_patch<T>(
         }
         if last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
-            emit(InstallEvent::Stage { stage, elapsed: started.elapsed().as_secs() });
+            emit(InstallEvent::Stage {
+                stage,
+                elapsed: started.elapsed().as_secs(),
+            });
         }
     }
 }
@@ -967,7 +1016,11 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         tips.push(Tip {
             title: tip_title(id),
             state,
-            advice: if state == TipState::Look { tip_advice(id) } else { "" },
+            advice: if state == TipState::Look {
+                tip_advice(id)
+            } else {
+                ""
+            },
         });
     }
     let rank = |s: TipState| match s {
@@ -982,7 +1035,11 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
     if technical.len() > 8000 {
         technical.truncate(technical.floor_char_boundary(8000));
     }
-    TipsReport { profile, tips, technical }
+    TipsReport {
+        profile,
+        tips,
+        technical,
+    }
 }
 
 /// Blocking: read-only collection (no changes, nothing leaves the PC).
@@ -1003,7 +1060,9 @@ mod tests {
         for byte in 0..=u8::MAX {
             let encoded = encode_password(&[byte; PASSWORD_LENGTH]);
             assert_eq!(encoded.len(), PASSWORD_LENGTH);
-            assert!(encoded.iter().all(|c| c.is_ascii_alphanumeric() || b"-_".contains(c)));
+            assert!(encoded
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(c)));
             *counts.entry(encoded[0]).or_insert(0) += 1;
         }
         assert_eq!(counts.len(), 64);
@@ -1041,7 +1100,12 @@ mod tests {
         assert_eq!(expand(&[Op::SfcRepair]), vec![Op::SfcVerify, Op::SfcRepair]);
         assert_eq!(
             RepairKind::Repair.all_operations(),
-            vec![Op::DismScanHealth, Op::DismRestoreHealth, Op::SfcVerify, Op::SfcRepair]
+            vec![
+                Op::DismScanHealth,
+                Op::DismRestoreHealth,
+                Op::SfcVerify,
+                Op::SfcRepair
+            ]
         );
         assert_eq!(
             RepairKind::Check.all_operations(),
@@ -1054,9 +1118,15 @@ mod tests {
         let now = 1_000_000;
         let current = ops::OwnerPolicy::default();
         let check = policy_for(&current, &RepairKind::Check.all_operations(), now);
-        assert_eq!(check.allowed, current.allowed, "diagnostics already allowed");
+        assert_eq!(
+            check.allowed, current.allowed,
+            "diagnostics already allowed"
+        );
         assert_eq!(check.opt_in_until, None, "a check needs no opt-in");
-        assert!(check.exceptions.iter().all(|e| e.expires_at == now + GRANT_SECONDS));
+        assert!(check
+            .exceptions
+            .iter()
+            .all(|e| e.expires_at == now + GRANT_SECONDS));
 
         let repair = policy_for(&current, &RepairKind::Repair.all_operations(), now);
         assert!(repair.allowed.contains(&Op::DismRestoreHealth));
@@ -1067,12 +1137,20 @@ mod tests {
         assert_eq!(repair.window, current.window);
         assert_eq!(repair.idle_seconds, current.idle_seconds);
         // Every exception is for an allowed operation and short lived.
-        assert!(repair.exceptions.iter().all(|e| {
-            repair.allowed.contains(&e.operation) && e.expires_at - now <= 24 * 3600
-        }));
-        let scopes: Vec<_> = repair.exceptions.iter().map(|e| (e.operation, e.scope)).collect();
+        assert!(repair
+            .exceptions
+            .iter()
+            .all(|e| { repair.allowed.contains(&e.operation) && e.expires_at - now <= 24 * 3600 }));
+        let scopes: Vec<_> = repair
+            .exceptions
+            .iter()
+            .map(|e| (e.operation, e.scope))
+            .collect();
         assert!(
-            scopes.iter().enumerate().all(|(i, s)| !scopes[..i].contains(s)),
+            scopes
+                .iter()
+                .enumerate()
+                .all(|(i, s)| !scopes[..i].contains(s)),
             "no duplicate scoped exceptions"
         );
         // Running again does not stack duplicates.
@@ -1096,7 +1174,10 @@ mod tests {
         assert!(p.exceptions.iter().all(|e| e.expires_at > now));
     }
 
-    fn record(kind: RepairKind, states: &[(ops::StepState, Option<ops::Evidence>)]) -> Vec<ops::PlanRecord> {
+    fn record(
+        kind: RepairKind,
+        states: &[(ops::StepState, Option<ops::Evidence>)],
+    ) -> Vec<ops::PlanRecord> {
         // One record per chunk, in order.
         let mut next = states.iter();
         let mut out = Vec::new();
@@ -1106,8 +1187,15 @@ mod tests {
             let mut recs = Vec::new();
             for k in kinds {
                 let (state, evidence) = *next.next().unwrap();
-                steps.push(ops::PlanStep { operation: k.spec(), depends_on: vec![] });
-                recs.push(ops::StepRecord { state, evidence, ..Default::default() });
+                steps.push(ops::PlanStep {
+                    operation: k.spec(),
+                    depends_on: vec![],
+                });
+                recs.push(ops::StepRecord {
+                    state,
+                    evidence,
+                    ..Default::default()
+                });
             }
             out.push(ops::PlanRecord {
                 plan: ops::Plan {
@@ -1131,15 +1219,51 @@ mod tests {
     #[test]
     fn check_results_are_plain() {
         use ops::{Evidence as E, StepState as S};
-        let ok = record(RepairKind::Check, &[(S::Succeeded, Some(E::ComponentStoreHealthy)), (S::Succeeded, Some(E::DiagnosticCompleted))]);
-        assert_eq!(classify(RepairKind::Check, &ok, false), RepairResult::NoProblems);
-        let bad = record(RepairKind::Check, &[(S::Succeeded, Some(E::ComponentStoreRepairable)), (S::Succeeded, Some(E::DiagnosticCompleted))]);
-        assert_eq!(classify(RepairKind::Check, &bad, false), RepairResult::ProblemsFound);
-        let failed = record(RepairKind::Check, &[(S::Failed, None), (S::Cancelled, None)]);
-        assert_eq!(classify(RepairKind::Check, &failed, false), RepairResult::CouldNotFinish);
-        assert_eq!(classify(RepairKind::Check, &[], false), RepairResult::CouldNotFinish);
-        let half = record(RepairKind::Check, &[(S::Succeeded, Some(E::ComponentStoreHealthy)), (S::Cancelled, None)]);
-        assert_eq!(classify(RepairKind::Check, &half, true), RepairResult::Stopped);
+        let ok = record(
+            RepairKind::Check,
+            &[
+                (S::Succeeded, Some(E::ComponentStoreHealthy)),
+                (S::Succeeded, Some(E::DiagnosticCompleted)),
+            ],
+        );
+        assert_eq!(
+            classify(RepairKind::Check, &ok, false),
+            RepairResult::NoProblems
+        );
+        let bad = record(
+            RepairKind::Check,
+            &[
+                (S::Succeeded, Some(E::ComponentStoreRepairable)),
+                (S::Succeeded, Some(E::DiagnosticCompleted)),
+            ],
+        );
+        assert_eq!(
+            classify(RepairKind::Check, &bad, false),
+            RepairResult::ProblemsFound
+        );
+        let failed = record(
+            RepairKind::Check,
+            &[(S::Failed, None), (S::Cancelled, None)],
+        );
+        assert_eq!(
+            classify(RepairKind::Check, &failed, false),
+            RepairResult::CouldNotFinish
+        );
+        assert_eq!(
+            classify(RepairKind::Check, &[], false),
+            RepairResult::CouldNotFinish
+        );
+        let half = record(
+            RepairKind::Check,
+            &[
+                (S::Succeeded, Some(E::ComponentStoreHealthy)),
+                (S::Cancelled, None),
+            ],
+        );
+        assert_eq!(
+            classify(RepairKind::Check, &half, true),
+            RepairResult::Stopped
+        );
     }
 
     #[test]
@@ -1155,7 +1279,10 @@ mod tests {
             ],
         );
         // Unproven system-file repair always asks for a restart.
-        assert_eq!(classify(RepairKind::Repair, &finished, false), RepairResult::NeedsRestart);
+        assert_eq!(
+            classify(RepairKind::Repair, &finished, false),
+            RepairResult::NeedsRestart
+        );
         let reboot = record(
             RepairKind::Repair,
             &[
@@ -1165,7 +1292,10 @@ mod tests {
                 (S::Pending, None),
             ],
         );
-        assert_eq!(classify(RepairKind::Repair, &reboot, false), RepairResult::NeedsRestart);
+        assert_eq!(
+            classify(RepairKind::Repair, &reboot, false),
+            RepairResult::NeedsRestart
+        );
         let unproven = record(
             RepairKind::Repair,
             &[
@@ -1175,13 +1305,22 @@ mod tests {
                 (S::Cancelled, None),
             ],
         );
-        assert_eq!(classify(RepairKind::Repair, &unproven, false), RepairResult::CouldNotFinish);
+        assert_eq!(
+            classify(RepairKind::Repair, &unproven, false),
+            RepairResult::CouldNotFinish
+        );
     }
 
     #[test]
     fn technical_details_keep_the_raw_evidence() {
         use ops::{Evidence as E, StepState as S};
-        let r = record(RepairKind::Check, &[(S::Succeeded, Some(E::ComponentStoreHealthy)), (S::Succeeded, Some(E::DiagnosticCompleted))]);
+        let r = record(
+            RepairKind::Check,
+            &[
+                (S::Succeeded, Some(E::ComponentStoreHealthy)),
+                (S::Succeeded, Some(E::DiagnosticCompleted)),
+            ],
+        );
         let text = technical_lines(&r);
         assert!(text.contains("dism_check_health") && text.contains("sfc_verify"));
     }
@@ -1201,14 +1340,29 @@ mod tests {
             assert!(text.len() > 10);
             assert_no_dev_terms(text);
         }
-        assert_eq!(friendly_error("Owner-initiated reboot has not occurred"), "Restart your PC, then try again.");
+        assert_eq!(
+            friendly_error("Owner-initiated reboot has not occurred"),
+            "Restart your PC, then try again."
+        );
     }
 
     fn assert_no_dev_terms(text: &str) {
         let lower = text.to_ascii_lowercase();
         for banned in [
-            "dism", "sfc", "registry", "digest", "journal", "transaction", "provisioned",
-            "exit code", "elevated", "broker", "powershell", "control", "attention", "compliant",
+            "dism",
+            "sfc",
+            "registry",
+            "digest",
+            "journal",
+            "transaction",
+            "provisioned",
+            "exit code",
+            "elevated",
+            "broker",
+            "powershell",
+            "control",
+            "attention",
+            "compliant",
         ] {
             assert!(!lower.contains(banned), "{text:?} contains {banned:?}");
         }
@@ -1216,18 +1370,42 @@ mod tests {
 
     #[test]
     fn primary_text_has_no_developer_terms() {
-        for kind in [Op::DismCheckHealth, Op::DismScanHealth, Op::DismRestoreHealth, Op::SfcVerify, Op::SfcRepair, Op::DefenderQuickScan] {
+        for kind in [
+            Op::DismCheckHealth,
+            Op::DismScanHealth,
+            Op::DismRestoreHealth,
+            Op::SfcVerify,
+            Op::SfcRepair,
+            Op::DefenderQuickScan,
+        ] {
             assert_no_dev_terms(step_label(kind));
         }
-        for r in [RepairResult::NoProblems, RepairResult::ProblemsFound, RepairResult::Repaired, RepairResult::NeedsRestart, RepairResult::Stopped, RepairResult::CouldNotFinish] {
+        for r in [
+            RepairResult::NoProblems,
+            RepairResult::ProblemsFound,
+            RepairResult::Repaired,
+            RepairResult::NeedsRestart,
+            RepairResult::Stopped,
+            RepairResult::CouldNotFinish,
+        ] {
             assert_no_dev_terms(r.title());
             assert_no_dev_terms(r.detail());
         }
-        for r in [InstallResult::Installed, InstallResult::NeedsRestart, InstallResult::NotConfirmed, InstallResult::Stopped, InstallResult::CouldNotFinish] {
+        for r in [
+            InstallResult::Installed,
+            InstallResult::NeedsRestart,
+            InstallResult::NotConfirmed,
+            InstallResult::Stopped,
+            InstallResult::CouldNotFinish,
+        ] {
             assert_no_dev_terms(r.title());
             assert_no_dev_terms(r.detail());
         }
-        for s in [InstallStage::Preparing, InstallStage::Installing, InstallStage::Checking] {
+        for s in [
+            InstallStage::Preparing,
+            InstallStage::Installing,
+            InstallStage::Checking,
+        ] {
             assert_no_dev_terms(s.label());
         }
         for p in TipProfile::ALL {
@@ -1275,7 +1453,11 @@ mod tests {
         assert_eq!(tips.tips.last().unwrap().state, TipState::Good);
         assert_eq!(tips.count(TipState::Look), 1);
         assert_eq!(tips.count(TipState::Good), 1);
-        assert!(tips.tips.iter().filter(|t| t.state == TipState::Good).all(|t| t.advice.is_empty()));
+        assert!(tips
+            .tips
+            .iter()
+            .filter(|t| t.state == TipState::Good)
+            .all(|t| t.advice.is_empty()));
     }
 
     #[test]
@@ -1288,7 +1470,10 @@ mod tests {
 
     fn update(n: u128) -> patch::Update {
         patch::Update {
-            identity: patch::UpdateIdentity { update_id: Uuid::from_u128(n), revision: 1 },
+            identity: patch::UpdateIdentity {
+                update_id: Uuid::from_u128(n),
+                revision: 1,
+            },
             title: format!("2026-10 Cumulative Update {n}"),
             description: String::new(),
             kb_articles: vec![format!("50{n}")],
@@ -1307,7 +1492,10 @@ mod tests {
         patch::Plan {
             schema: 1,
             id: Uuid::nil(),
-            binding: patch::Binding { machine: String::new(), original_user: String::new() },
+            binding: patch::Binding {
+                machine: String::new(),
+                original_user: String::new(),
+            },
             created_at: 0,
             expires_at: 0,
             source: String::new(),
@@ -1321,7 +1509,10 @@ mod tests {
         let a = update(1);
         let b = update(2);
         let reviewed = vec![a.identity.clone(), b.identity.clone()];
-        assert!(plan_matches(&reviewed, &plan_of(vec![b.clone(), a.clone()])));
+        assert!(plan_matches(
+            &reviewed,
+            &plan_of(vec![b.clone(), a.clone()])
+        ));
         assert!(!plan_matches(&reviewed, &plan_of(vec![a.clone()])));
         assert!(!plan_matches(&reviewed, &plan_of(vec![a, b, update(3)])));
         assert!(!plan_matches(&[], &plan_of(vec![])));
@@ -1336,21 +1527,46 @@ mod tests {
             status,
             process: None,
             uncertain: false,
-            verification: Some(patch::Verification { installed, reboot_pending: false, checked_at: 0 }),
+            verification: Some(patch::Verification {
+                installed,
+                reboot_pending: false,
+                checked_at: 0,
+            }),
         };
         use patch::Status as S;
-        assert_eq!(classify_install(&record(S::Succeeded, vec![a.identity.clone()]), false), InstallResult::Installed);
-        assert_eq!(classify_install(&record(S::Succeeded, vec![]), false), InstallResult::NotConfirmed);
-        assert_eq!(classify_install(&record(S::RebootRequired, vec![]), false), InstallResult::NeedsRestart);
-        assert_eq!(classify_install(&record(S::NeedsReview, vec![]), false), InstallResult::NotConfirmed);
-        assert_eq!(classify_install(&record(S::Installing, vec![]), true), InstallResult::Stopped);
-        assert_eq!(classify_install(&record(S::Installing, vec![]), false), InstallResult::CouldNotFinish);
+        assert_eq!(
+            classify_install(&record(S::Succeeded, vec![a.identity.clone()]), false),
+            InstallResult::Installed
+        );
+        assert_eq!(
+            classify_install(&record(S::Succeeded, vec![]), false),
+            InstallResult::NotConfirmed
+        );
+        assert_eq!(
+            classify_install(&record(S::RebootRequired, vec![]), false),
+            InstallResult::NeedsRestart
+        );
+        assert_eq!(
+            classify_install(&record(S::NeedsReview, vec![]), false),
+            InstallResult::NotConfirmed
+        );
+        assert_eq!(
+            classify_install(&record(S::Installing, vec![]), true),
+            InstallResult::Stopped
+        );
+        assert_eq!(
+            classify_install(&record(S::Installing, vec![]), false),
+            InstallResult::CouldNotFinish
+        );
     }
 
     #[test]
     fn catalog_summary_counts_and_keeps_details_technical() {
         let catalog = patch::Catalog {
-            binding: patch::Binding { machine: String::new(), original_user: String::new() },
+            binding: patch::Binding {
+                machine: String::new(),
+                original_user: String::new(),
+            },
             searched_at: 0,
             source: "Microsoft Update".into(),
             updates: vec![update(1), update(2)],
@@ -1373,7 +1589,11 @@ mod tests {
             let events = seen.into_inner().unwrap();
             assert!(matches!(
                 events.last(),
-                Some(RepairEvent::Done { result: RepairResult::CouldNotFinish, note: Some(_), .. })
+                Some(RepairEvent::Done {
+                    result: RepairResult::CouldNotFinish,
+                    note: Some(_),
+                    ..
+                })
             ));
             assert!(discover_updates().is_err());
         }

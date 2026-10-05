@@ -24,7 +24,10 @@ pub const POLICY: &str = include_str!("scripts/policy.ps1");
 fn windows_dir() -> Result<PathBuf> {
     let mut buffer = vec![0u16; 32768];
     let count = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
-    ensure!(count > 0 && count < buffer.len(), "Windows folder not found");
+    ensure!(
+        count > 0 && count < buffer.len(),
+        "Windows folder not found"
+    );
     let path = PathBuf::from(OsString::from_wide(&buffer[..count]));
     ensure!(path.is_absolute(), "Windows folder is not absolute");
     Ok(path)
@@ -40,7 +43,10 @@ pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Res
     let win = windows_dir()?;
     let ps = win.join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let bootstrap = "$global:ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
-    let encoded: Vec<u8> = bootstrap.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded: Vec<u8> = bootstrap
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
     let mut command = Command::new(ps);
     command
         .args([
@@ -56,7 +62,10 @@ pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Res
         .env("SystemRoot", &win)
         .env("WINDIR", &win)
         .env("PATH", win.join("System32"))
-        .env("PSModulePath", win.join("System32/WindowsPowerShell/v1.0/Modules"))
+        .env(
+            "PSModulePath",
+            win.join("System32/WindowsPowerShell/v1.0/Modules"),
+        )
         .env("PSModuleAnalysisCachePath", "NUL")
         .current_dir(win.join("System32"))
         .creation_flags(CREATE_NO_WINDOW)
@@ -75,7 +84,10 @@ pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Res
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        let result = output.by_ref().take(MAX_OUTPUT as u64 + 1).read_to_end(&mut bytes);
+        let result = output
+            .by_ref()
+            .take(MAX_OUTPUT as u64 + 1)
+            .read_to_end(&mut bytes);
         let _ = tx.send(result.map(|_| bytes));
     });
     match rx.recv_timeout(timeout) {
@@ -89,7 +101,10 @@ pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Res
                 .rfind(|l| !l.is_empty())
                 .unwrap_or_default()
                 .to_string();
-            ensure!(status.success() || !last.is_empty(), "PowerShell failed ({status})");
+            ensure!(
+                status.success() || !last.is_empty(),
+                "PowerShell failed ({status})"
+            );
             Ok(last)
         }
         Ok(Err(e)) => {

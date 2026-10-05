@@ -102,6 +102,23 @@ try {
     Expect-Rejected { Assert-SafeItem $junction }
     [IO.Directory]::Delete($junction)
 
+    # The tray status directory lets LocalService modify status.json, nothing more.
+    $statusDir = Join-Path $root 'Status'
+    $statusSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)(A;OICI;0x1200a9;;;BU)'
+    $null = New-Item -ItemType Directory -Path $statusDir
+    $acl = Get-Acl -LiteralPath $statusDir
+    $acl.SetSecurityDescriptorSddlForm($statusSddl)
+    Set-Acl -LiteralPath $statusDir -AclObject $acl
+    $statusFile = Join-Path $statusDir 'status.json'
+    [IO.File]::WriteAllText($statusFile, '{}')
+    Assert-Tree $statusDir
+    Release-Pins
+    $acl = Get-Acl -LiteralPath $statusDir
+    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LS)(A;OICI;0x1200a9;;;BU)')
+    Set-Acl -LiteralPath $statusDir -AclObject $acl
+    Expect-Rejected { Assert-SafeItem $statusDir }
+    Remove-Item -LiteralPath $statusDir -Recurse -Force
+
     foreach ($extra in @('(A;;GW;;;BU)', '(A;OIIO;GW;;;BU)', '(A;;WD;;;BU)', '(A;;WO;;;BU)', '(A;;SD;;;BU)')) {
         $acl = Get-Acl -LiteralPath $root
         $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' + $extra)

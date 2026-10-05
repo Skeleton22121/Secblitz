@@ -97,6 +97,11 @@ public static class SecblitzPaths {
             if ($Path -eq (Join-Path $root 'Monitor\latest.json') -and $rule.IdentityReference.Value -eq 'S-1-5-19') {
                 $allowed = 0x12019f # Existing service-owned report only.
             }
+            # The tray status directory: the monitor (LocalService) writes status.json there.
+            $statusDir = Join-Path $root 'Status'
+            if (($Path -ieq $statusDir -or $Path.StartsWith($statusDir + '\', [StringComparison]::OrdinalIgnoreCase)) -and $rule.IdentityReference.Value -eq 'S-1-5-19') {
+                $allowed = 0x1301bf # Status files only: no delete-child, no ACL or owner change.
+            }
             if (([int]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw "Writable object refused: $Path" }
         }
         # Empty/null DACL distinctions must fail closed; require administrator access.

@@ -60,7 +60,10 @@ pub fn classify(r: &Outcome) -> Class {
             | "info"
             | "review"
     );
-    if r.status == "error" || unavailable || matches!(r.status.as_str(), "unknown" | "unsupported") || !known
+    if r.status == "error"
+        || unavailable
+        || matches!(r.status.as_str(), "unknown" | "unsupported")
+        || !known
     {
         return Class::Unknown;
     }
@@ -136,7 +139,10 @@ mod tests {
 
     #[test]
     fn all_protected() {
-        let s = Score::of(&rep(vec![out("uac.enabled", "compliant"), out("uac.consent", "ok")]));
+        let s = Score::of(&rep(vec![
+            out("uac.enabled", "compliant"),
+            out("uac.consent", "ok"),
+        ]));
         assert_eq!((s.protected, s.total), (2, 2));
         assert_eq!(s.verdict(), Verdict::Protected);
         assert_eq!(s.ratio(), 1.0);

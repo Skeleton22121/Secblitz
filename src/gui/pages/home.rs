@@ -8,7 +8,9 @@ use crate::gui::widgets::{self, ring, ButtonKind, StepState};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, row, stack, text};
-use iced::{mouse, Alignment, Element, Length, Point, Rectangle, Renderer, Subscription, Task, Theme};
+use iced::{
+    mouse, Alignment, Element, Length, Point, Rectangle, Renderer, Subscription, Task, Theme,
+};
 use secblitz::engine::{Outcome, Report};
 use secblitz::model::Probe;
 
@@ -70,7 +72,13 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 Icon::ShieldCheck,
                 ctx.t("Let's check your PC"),
                 ctx.t("This takes about a minute. Nothing is changed."),
-                Some(widgets::action(p, ButtonKind::Primary, ctx.t("Check my PC"), Some(Icon::Refresh), Some(Message::CheckNow))),
+                Some(widgets::action(
+                    p,
+                    ButtonKind::Primary,
+                    ctx.t("Check my PC"),
+                    Some(Icon::Refresh),
+                    Some(Message::CheckNow),
+                )),
             ),
         )
         .into();
@@ -88,7 +96,14 @@ struct Pulse {
 
 impl canvas::Program<Message> for Pulse {
     type State = ();
-    fn draw(&self, _: &(), renderer: &Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<Geometry> {
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &Renderer,
+        _: &Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
         let max = bounds.width.min(bounds.height) / 2.0 - 2.0;
@@ -101,7 +116,10 @@ impl canvas::Program<Message> for Pulse {
             let alpha = (1.0 - t) * 0.5;
             frame.stroke(
                 &Path::circle(center, radius),
-                Stroke::default().with_width(2.0).with_color(iced::Color { a: alpha, ..self.p.text_muted }),
+                Stroke::default().with_width(2.0).with_color(iced::Color {
+                    a: alpha,
+                    ..self.p.text_muted
+                }),
             );
         }
         frame.fill(&Path::circle(center, min + 8.0), self.p.surface_alt);
@@ -120,11 +138,20 @@ fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Elemen
     }
     let n = seen.len();
     let total = ctx.catalog.available.len().max(n + 1);
-    let ratio = if ctx.catalog.available.is_empty() { n as f32 / (n as f32 + 6.0) } else { (n as f32 / total as f32).min(0.96) };
+    let ratio = if ctx.catalog.available.is_empty() {
+        n as f32 / (n as f32 + 6.0)
+    } else {
+        (n as f32 / total as f32).min(0.96)
+    };
 
     let breathe = 1.0 + 0.06 * (state.phase * std::f32::consts::TAU / 2.4).sin();
     let hero = stack![
-        canvas::Canvas::new(Pulse { p, phase: state.phase }).width(220).height(220),
+        canvas::Canvas::new(Pulse {
+            p,
+            phase: state.phase
+        })
+        .width(220)
+        .height(220),
         container(widgets::icon(Icon::Shield, 64.0 * breathe, p.text)).center(Length::Fill),
     ]
     .width(220)
@@ -133,14 +160,25 @@ fn scanning<'a>(state: &State, ctx: &'a Ctx, progress: &CheckProgress) -> Elemen
     let mut list = column![].spacing(10);
     let start = n.saturating_sub(5);
     for id in &seen[start..] {
-        list = list.push(widgets::progress_row(p, ctx.t(advice::control_label(id)), StepState::Done));
+        list = list.push(widgets::progress_row(
+            p,
+            ctx.t(advice::control_label(id)),
+            StepState::Done,
+        ));
     }
-    list = list.push(widgets::progress_row(p, ctx.t("Looking at your settings…"), StepState::Running));
+    list = list.push(widgets::progress_row(
+        p,
+        ctx.t("Looking at your settings…"),
+        StepState::Running,
+    ));
 
     let body = column![
         container(hero).center_x(Length::Fill),
         column![
-            text(ctx.t("Checking your PC")).size(theme::H1).font(theme::BOLD).color(p.text),
+            text(ctx.t("Checking your PC"))
+                .size(theme::H1)
+                .font(theme::BOLD)
+                .color(p.text),
             widgets::muted(p, ctx.t("This takes about a minute. Nothing is changed.")),
         ]
         .spacing(6)
@@ -162,8 +200,17 @@ fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Ele
     let content = column![
         widgets::icon_badge(p, Icon::ShieldAlert, Tone::Bad),
         widgets::h2(p, ctx.t(title)),
-        widgets::muted(p, ctx.t("Something got in the way. Trying again usually fixes it.")),
-        widgets::action(p, ButtonKind::Primary, ctx.t("Try again"), Some(Icon::Refresh), Some(Message::CheckNow)),
+        widgets::muted(
+            p,
+            ctx.t("Something got in the way. Trying again usually fixes it.")
+        ),
+        widgets::action(
+            p,
+            ButtonKind::Primary,
+            ctx.t("Try again"),
+            Some(Icon::Refresh),
+            Some(Message::CheckNow)
+        ),
         widgets::expander(
             p,
             ctx.t("Technical details"),
@@ -185,7 +232,9 @@ fn attention_items(report: &Report) -> Vec<(&Outcome, advice::Advice)> {
         .results
         .iter()
         .map(|r| (r, advice::for_outcome(r)))
-        .filter(|(r, a)| a.group == Group::Recommended || (a.group == Group::Choice && r.status == "attention"))
+        .filter(|(r, a)| {
+            a.group == Group::Recommended || (a.group == Group::Choice && r.status == "attention")
+        })
         .collect()
 }
 
@@ -228,27 +277,44 @@ fn tips(report: &Report) -> Vec<advice::Advice> {
 /// Plain readiness notices; only conditions that matter to the user.
 fn readiness_notices(ctx: &Ctx, report: &Report) -> Vec<(Tone, String)> {
     let mut out = Vec::new();
-    let Some(r) = &report.readiness else { return out };
+    let Some(r) = &report.readiness else {
+        return out;
+    };
     if let Probe::Known(v) = &r.system_volume {
         if v.read_only {
-            out.push((Tone::Warn, ctx.t("Your disk can't be written to right now, so fixes will wait.")));
+            out.push((
+                Tone::Warn,
+                ctx.t("Your disk can't be written to right now, so fixes will wait."),
+            ));
         } else if v.available_bytes < LOW_DISK_BYTES {
-            out.push((Tone::Warn, ctx.t("Your disk is almost full. Free up some space so updates and fixes can finish.")));
+            out.push((
+                Tone::Warn,
+                ctx.t(
+                    "Your disk is almost full. Free up some space so updates and fixes can finish.",
+                ),
+            ));
         }
     }
     if let Probe::Known(pw) = &r.power {
         if pw.battery_present == Some(true) && pw.ac_connected == Some(false) {
-            out.push((Tone::Neutral, ctx.t("Your PC is running on battery. Plug it in before making changes.")));
+            out.push((
+                Tone::Neutral,
+                ctx.t("Your PC is running on battery. Plug it in before making changes."),
+            ));
         }
     }
     if matches!(r.windows_update_reboot, Probe::Known(true)) {
-        out.push((Tone::Neutral, ctx.t("A restart is waiting. Save your work and restart when you're ready.")));
+        out.push((
+            Tone::Neutral,
+            ctx.t("A restart is waiting. Save your work and restart when you're ready."),
+        ));
     }
     out
 }
 
 fn count_text(ctx: &Ctx, one: &str, many: &str, n: usize) -> String {
-    ctx.t(if n == 1 { one } else { many }).replace("{n}", &n.to_string())
+    ctx.t(if n == 1 { one } else { many })
+        .replace("{n}", &n.to_string())
 }
 
 fn last_checked(ctx: &Ctx) -> Option<String> {
@@ -256,9 +322,24 @@ fn last_checked(ctx: &Ctx) -> Option<String> {
     let secs = crate::app::history::now().saturating_sub(at);
     Some(match secs {
         0..=59 => ctx.t("Last checked just now"),
-        60..=3599 => count_text(ctx, "Last checked {n} minute ago", "Last checked {n} minutes ago", (secs / 60) as usize),
-        3600..=86399 => count_text(ctx, "Last checked {n} hour ago", "Last checked {n} hours ago", (secs / 3600) as usize),
-        _ => count_text(ctx, "Last checked {n} day ago", "Last checked {n} days ago", (secs / 86400) as usize),
+        60..=3599 => count_text(
+            ctx,
+            "Last checked {n} minute ago",
+            "Last checked {n} minutes ago",
+            (secs / 60) as usize,
+        ),
+        3600..=86399 => count_text(
+            ctx,
+            "Last checked {n} hour ago",
+            "Last checked {n} hours ago",
+            (secs / 3600) as usize,
+        ),
+        _ => count_text(
+            ctx,
+            "Last checked {n} day ago",
+            "Last checked {n} days ago",
+            (secs / 86400) as usize,
+        ),
     })
 }
 
@@ -277,7 +358,12 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
             let n = score.attention.max(1);
             (
                 Tone::Warn,
-                count_text(ctx, "{n} thing needs your attention", "{n} things need your attention", n),
+                count_text(
+                    ctx,
+                    "{n} thing needs your attention",
+                    "{n} things need your attention",
+                    n,
+                ),
                 if ids.is_empty() {
                     ctx.t("The steps below take just a moment in Windows Settings.")
                 } else {
@@ -332,7 +418,10 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     }
 
     let mut texts = column![
-        text(title).size(theme::DISPLAY - 4.0).font(theme::BOLD).color(p.text),
+        text(title)
+            .size(theme::DISPLAY - 4.0)
+            .font(theme::BOLD)
+            .color(p.text),
         widgets::muted(p, subtitle),
     ]
     .spacing(6);
@@ -341,9 +430,14 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     }
     let hero = widgets::card(
         p,
-        row![ring_view, column![texts, buttons].spacing(theme::GAP + 6.0).width(Length::Fill)]
-            .spacing(32)
-            .align_y(Alignment::Center),
+        row![
+            ring_view,
+            column![texts, buttons]
+                .spacing(theme::GAP + 6.0)
+                .width(Length::Fill)
+        ]
+        .spacing(32)
+        .align_y(Alignment::Center),
     );
 
     let mut page = column![].spacing(theme::GAP);
@@ -370,7 +464,11 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     if !tips.is_empty() {
         let mut c = column![widgets::section_label(p, ctx.t("Good to know"))].spacing(10);
         for a in tips.iter().take(3) {
-            c = c.push(widgets::inline_notice(p, Tone::Neutral, format!("{}. {}", ctx.t(a.label), ctx.t(a.next))));
+            c = c.push(widgets::inline_notice(
+                p,
+                Tone::Neutral,
+                format!("{}. {}", ctx.t(a.label), ctx.t(a.next)),
+            ));
         }
         page = page.push(c);
     }
@@ -388,12 +486,22 @@ fn attention_card<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Ele
     .align_y(Alignment::Center)]
     .spacing(6);
     for (r, a) in items.iter().take(4) {
-        let impact = if a.impact.is_empty() { String::new() } else { ctx.t(a.impact) };
+        let impact = if a.impact.is_empty() {
+            String::new()
+        } else {
+            format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact))
+        };
         let line = row![
             widgets::icon_badge(p, Icon::AlertTriangle, Tone::Warn),
             column![
-                text(ctx.t(advice::control_label(&r.id))).size(theme::BODY).font(theme::MEDIUM).color(p.text),
-                text(impact).size(theme::SMALL).font(theme::REGULAR).color(p.text_muted),
+                text(ctx.t(advice::control_label(&r.id)))
+                    .size(theme::BODY)
+                    .font(theme::MEDIUM)
+                    .color(p.text),
+                text(impact)
+                    .size(theme::SMALL)
+                    .font(theme::REGULAR)
+                    .color(p.text_muted),
             ]
             .spacing(2)
             .width(Length::Fill),
@@ -401,7 +509,11 @@ fn attention_card<'a>(ctx: &'a Ctx, items: &[(&Outcome, advice::Advice)]) -> Ele
         ]
         .spacing(14)
         .align_y(Alignment::Center);
-        c = c.push(widgets::list_button(p, line, Message::Navigate(Page::Fixes)));
+        c = c.push(widgets::list_button(
+            p,
+            line,
+            Message::Navigate(Page::Fixes),
+        ));
     }
     if items.len() > 4 {
         let more = count_text(ctx, "See {n} more", "See {n} more", items.len() - 4);
@@ -420,9 +532,12 @@ fn protected_card<'a>(ctx: &'a Ctx, count: usize, labels: &[&'static str]) -> El
     let header = row![
         widgets::icon_badge(p, Icon::ShieldCheck, Tone::Good),
         column![
-            row![widgets::h2(p, ctx.t("Protected")), widgets::pill(p, count.to_string(), Tone::Good)]
-                .spacing(10)
-                .align_y(Alignment::Center),
+            row![
+                widgets::h2(p, ctx.t("Protected")),
+                widgets::pill(p, count.to_string(), Tone::Good)
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
             widgets::small(p, summary),
         ]
         .spacing(2)
@@ -439,13 +554,20 @@ mod tests {
     use super::*;
 
     fn outcome(id: &str, status: &str) -> Outcome {
-        Outcome { id: id.into(), status: status.into(), ..Outcome::default() }
+        Outcome {
+            id: id.into(),
+            status: status.into(),
+            ..Outcome::default()
+        }
     }
 
     #[test]
     fn attention_and_protected_are_split_by_advice_group() {
         let report = Report {
-            results: vec![outcome("uac.enabled", "compliant"), outcome("uac.consent", "attention")],
+            results: vec![
+                outcome("uac.enabled", "compliant"),
+                outcome("uac.consent", "attention"),
+            ],
             ..Report::default()
         };
         assert_eq!(attention_items(&report).len(), 1);

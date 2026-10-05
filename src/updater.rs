@@ -12,9 +12,9 @@ use std::io::Read;
 mod delivery;
 #[path = "updater/health.rs"]
 mod health;
+pub(crate) mod interlock;
 #[path = "updater/tray_cmd.rs"]
 mod tray_cmd;
-pub(crate) mod interlock;
 pub use health::{health, MonitorHealth, TaskHealth, UpdateHealth};
 
 #[cfg(windows)]

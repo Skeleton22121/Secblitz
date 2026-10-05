@@ -62,7 +62,10 @@ fn sync(state: &mut State, ctx: &Ctx) {
 /// Selected ids in list order, limited to what is currently fixable.
 fn selection(state: &State, ctx: &Ctx, all: &[String]) -> Vec<String> {
     if state.synced_at == ctx.checked_at && ctx.checked_at.is_some() {
-        all.iter().filter(|id| state.selected.contains(*id)).cloned().collect()
+        all.iter()
+            .filter(|id| state.selected.contains(*id))
+            .cloned()
+            .collect()
     } else {
         all.to_vec()
     }
@@ -137,11 +140,18 @@ pub fn divider<'a>(p: Palette) -> Element<'a, Message> {
 
 /// Small text button with a trailing chevron-like label (expanders).
 pub fn link<'a>(p: Palette, label: String, open: bool, on_press: Message) -> Element<'a, Message> {
-    let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
+    let chevron = if open {
+        Icon::ChevronDown
+    } else {
+        Icon::ChevronRight
+    };
     button(
         row![
             widgets::icon(chevron, 14.0, p.text_muted),
-            text(label).size(theme::SMALL).font(theme::MEDIUM).color(p.text_muted)
+            text(label)
+                .size(theme::SMALL)
+                .font(theme::MEDIUM)
+                .color(p.text_muted)
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -155,7 +165,10 @@ pub fn link<'a>(p: Palette, label: String, open: bool, on_press: Message) -> Ele
             Color::TRANSPARENT
         })),
         text_color: p.text_muted,
-        border: Border { radius: theme::RADIUS_SMALL.into(), ..Border::default() },
+        border: Border {
+            radius: theme::RADIUS_SMALL.into(),
+            ..Border::default()
+        },
         ..button::Style::default()
     })
     .into()
@@ -168,9 +181,12 @@ fn section_header<'a>(
     tone: Tone,
     subtitle: Option<String>,
 ) -> Element<'a, Message> {
-    let mut c = column![row![widgets::h2(p, title), widgets::pill(p, count.to_string(), tone)]
-        .spacing(10)
-        .align_y(Alignment::Center)]
+    let mut c = column![row![
+        widgets::h2(p, title),
+        widgets::pill(p, count.to_string(), tone)
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)]
     .spacing(4);
     if let Some(s) = subtitle {
         c = c.push(widgets::muted(p, s));
@@ -223,7 +239,12 @@ fn others(ctx: &Ctx, report: &Report, fixable: &[String]) -> Vec<Other> {
             group: a.group,
             tone,
             bucket,
-            technical: format!("{} · {} · {}", r.id, r.status, sanitize(&r.detail)),
+            technical: format!(
+                "{} · {} · {}",
+                r.id,
+                r.status,
+                ctx.lang.detail(&sanitize(&r.detail))
+            ),
         });
     }
     for f in &report.findings {
@@ -231,13 +252,21 @@ fn others(ctx: &Ctx, report: &Report, fixable: &[String]) -> Vec<Other> {
         if a.group == Group::Protected {
             continue;
         }
-        let (bucket, tone) = if a.status == "Managed elsewhere" || a.step == NextStep::ReviewWithAdministrator {
-            (Bucket::Managed, Tone::Neutral)
-        } else if matches!(a.step, NextStep::CheckAgain) {
-            (Bucket::Unavailable, Tone::Neutral)
-        } else {
-            (Bucket::Look, if a.group == Group::Information { Tone::Neutral } else { Tone::Warn })
-        };
+        let (bucket, tone) =
+            if a.status == "Managed elsewhere" || a.step == NextStep::ReviewWithAdministrator {
+                (Bucket::Managed, Tone::Neutral)
+            } else if matches!(a.step, NextStep::CheckAgain) {
+                (Bucket::Unavailable, Tone::Neutral)
+            } else {
+                (
+                    Bucket::Look,
+                    if a.group == Group::Information {
+                        Tone::Neutral
+                    } else {
+                        Tone::Warn
+                    },
+                )
+            };
         list.push(Other {
             name: ctx.t(a.label),
             next: a.next,
@@ -246,7 +275,12 @@ fn others(ctx: &Ctx, report: &Report, fixable: &[String]) -> Vec<Other> {
             group: a.group,
             tone,
             bucket,
-            technical: format!("{} · {} · {}", f.title, f.status, sanitize(&f.detail)),
+            technical: format!(
+                "{} · {} · {}",
+                f.title,
+                f.status,
+                ctx.lang.detail(&sanitize(&f.detail))
+            ),
         });
     }
     list
@@ -285,7 +319,10 @@ fn other_row<'a>(state: &'a State, ctx: &'a Ctx, key: String, o: &Other) -> Elem
     let mut head = row![
         widgets::icon_badge(p, icon, o.tone),
         column![
-            text(o.name.clone()).size(theme::BODY).font(theme::MEDIUM).color(p.text),
+            text(o.name.clone())
+                .size(theme::BODY)
+                .font(theme::MEDIUM)
+                .color(p.text),
             widgets::small(p, ctx.t(o.next)),
         ]
         .spacing(2)
@@ -307,12 +344,15 @@ fn other_row<'a>(state: &'a State, ctx: &'a Ctx, key: String, o: &Other) -> Elem
     }
     let mut c = column![head].spacing(6);
     let open = state.technical.contains(&key);
-    c = c.push(
-        row![
-            space::horizontal().width(48),
-            link(p, ctx.t("Technical details"), open, Message::Fixes(Msg::Technical(key.clone())))
-        ],
-    );
+    c = c.push(row![
+        space::horizontal().width(48),
+        link(
+            p,
+            ctx.t("Technical details"),
+            open,
+            Message::Fixes(Msg::Technical(key.clone()))
+        )
+    ]);
     if open {
         c = c.push(row![
             space::horizontal().width(48),
@@ -340,12 +380,16 @@ fn attention_row<'a>(
         a.as_ref().map(|a| ctx.t(a.next)).unwrap_or_default()
     };
     let toggle_id = id.to_owned();
-    let boxed = checkbox(checked).on_toggle(move |_| Message::Fixes(Msg::Toggle(toggle_id.clone())));
+    let boxed =
+        checkbox(checked).on_toggle(move |_| Message::Fixes(Msg::Toggle(toggle_id.clone())));
     let open = state.expanded.contains(id);
     let mut head = row![
         boxed,
         column![
-            text(name).size(theme::BODY).font(theme::MEDIUM).color(p.text),
+            text(name)
+                .size(theme::BODY)
+                .font(theme::MEDIUM)
+                .color(p.text),
             widgets::small(p, one_liner),
         ]
         .spacing(2)
@@ -385,7 +429,12 @@ fn attention_row<'a>(
             if let Some(r) = outcome {
                 why = why.push(widgets::small(
                     p,
-                    format!("{} · {} · {}", r.id, r.status, sanitize(&r.detail)),
+                    format!(
+                        "{} · {} · {}",
+                        r.id,
+                        r.status,
+                        ctx.lang.detail(&sanitize(&r.detail))
+                    ),
                 ));
             }
         }
@@ -394,12 +443,20 @@ fn attention_row<'a>(
     c.into()
 }
 
-fn notice<'a>(p: Palette, icon: Icon, tone: Tone, title: String, body: String) -> Element<'a, Message> {
+fn notice<'a>(
+    p: Palette,
+    icon: Icon,
+    tone: Tone,
+    title: String,
+    body: String,
+) -> Element<'a, Message> {
     widgets::card(
         p,
         row![
             widgets::icon_badge(p, icon, tone),
-            column![widgets::h2(p, title), widgets::muted(p, body)].spacing(4).width(Length::Fill)
+            column![widgets::h2(p, title), widgets::muted(p, body)]
+                .spacing(4)
+                .width(Length::Fill)
         ]
         .spacing(14)
         .align_y(Alignment::Center),
@@ -423,9 +480,16 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 Icon::ShieldAlert,
                 Tone::Bad,
                 ctx.t("We couldn't start the protection check"),
-                ctx.t("Close Secblitz and open it again. If this keeps happening, restart your PC."),
+                ctx.t(
+                    "Close Secblitz and open it again. If this keeps happening, restart your PC."
+                ),
             ),
-            link(p, ctx.t("Technical details"), state.show_error, Message::Fixes(Msg::ErrorDetails)),
+            link(
+                p,
+                ctx.t("Technical details"),
+                state.show_error,
+                Message::Fixes(Msg::ErrorDetails)
+            ),
         ]
         .spacing(8);
         if state.show_error {
@@ -452,7 +516,12 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                         Some(Icon::Refresh),
                         (ctx.checking.is_none() && !ctx.busy).then_some(Message::CheckNow)
                     ),
-                    link(p, ctx.t("Technical details"), state.show_error, Message::Fixes(Msg::ErrorDetails)),
+                    link(
+                        p,
+                        ctx.t("Technical details"),
+                        state.show_error,
+                        Message::Fixes(Msg::ErrorDetails)
+                    ),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
@@ -469,7 +538,13 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             } else {
                 ctx.t("This takes about a minute. Nothing is changed.")
             };
-            notice(p, Icon::Scan, Tone::Neutral, ctx.t("Checking your PC"), body)
+            notice(
+                p,
+                Icon::Scan,
+                Tone::Neutral,
+                ctx.t("Checking your PC"),
+                body,
+            )
         };
         return page.push(card).into();
     };
@@ -492,10 +567,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 widgets::icon_badge(p, Icon::Undo, Tone::Warn),
                 column![
                     widgets::h2(p, ctx.t("An earlier change isn't finished")),
-                    widgets::muted(
-                        p,
-                        ctx.t("Undo your last fixes before making new ones."),
-                    ),
+                    widgets::muted(p, ctx.t("Undo your last fixes before making new ones."),),
                 ]
                 .spacing(4)
                 .width(Length::Fill),
@@ -533,8 +605,20 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
         let mut bar = row![
             widgets::body(p, selected_label),
-            widgets::action(p, ButtonKind::Ghost, ctx.t("Select all"), None, Some(Message::Fixes(Msg::SelectAll))),
-            widgets::action(p, ButtonKind::Ghost, ctx.t("Select none"), None, Some(Message::Fixes(Msg::SelectNone))),
+            widgets::action(
+                p,
+                ButtonKind::Ghost,
+                ctx.t("Select all"),
+                None,
+                Some(Message::Fixes(Msg::SelectAll))
+            ),
+            widgets::action(
+                p,
+                ButtonKind::Ghost,
+                ctx.t("Select none"),
+                None,
+                Some(Message::Fixes(Msg::SelectNone))
+            ),
             space::horizontal(),
         ]
         .spacing(8)
@@ -553,8 +637,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             }
             list = list.push(attention_row(state, ctx, report, id, chosen.contains(id)));
         }
-        page = page.push(
-            widgets::card(
+        page =
+            page.push(widgets::card(
                 p,
                 column![
                     section_header(
@@ -562,15 +646,16 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                         ctx.t("Needs your attention"),
                         fixable.len(),
                         Tone::Warn,
-                        Some(ctx.t("We've ticked what we recommend. Nothing changes until you review it.")),
+                        Some(ctx.t(
+                            "We've ticked what we recommend. Nothing changes until you review it."
+                        )),
                     ),
                     bar,
                     divider(p),
                     list,
                 ]
                 .spacing(14),
-            ),
-        );
+            ));
     }
 
     // Everything else that isn't protected.
@@ -610,7 +695,13 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         page = page.push(widgets::card(
             p,
             column![
-                section_header(p, ctx.t(title), items.len(), Tone::Neutral, Some(ctx.t(subtitle))),
+                section_header(
+                    p,
+                    ctx.t(title),
+                    items.len(),
+                    Tone::Neutral,
+                    Some(ctx.t(subtitle))
+                ),
                 list
             ]
             .spacing(14),
@@ -643,9 +734,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             let mut list = column![].spacing(12);
             for id in protected {
                 let impact = advice::control_impact(id);
-                let mut text_col = column![
-                    text(ctx.lang.control(id)).size(theme::BODY).font(theme::MEDIUM).color(p.text)
-                ]
+                let mut text_col = column![text(ctx.lang.control(id))
+                    .size(theme::BODY)
+                    .font(theme::MEDIUM)
+                    .color(p.text)]
                 .spacing(2)
                 .width(Length::Fill);
                 if !impact.is_empty() {

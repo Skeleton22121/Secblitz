@@ -11,7 +11,12 @@ pub enum Icon {
     Unknown,
 }
 
-pub const ALL: [Icon; 4] = [Icon::Protected, Icon::Attention, Icon::Problem, Icon::Unknown];
+pub const ALL: [Icon; 4] = [
+    Icon::Protected,
+    Icon::Attention,
+    Icon::Problem,
+    Icon::Unknown,
+];
 
 /// More than half of the checks failing is shown as a problem (red).
 pub fn icon_for(status: Option<&Status>) -> Icon {
@@ -133,7 +138,11 @@ pub fn render(icon: Icon, size: usize) -> Vec<u8> {
                         continue;
                     }
                     covered += 1;
-                    let c = if in_glyph(icon, x, y) { [255.0; 3] } else { base };
+                    let c = if in_glyph(icon, x, y) {
+                        [255.0; 3]
+                    } else {
+                        base
+                    };
                     for k in 0..3 {
                         sum[k] += c[k];
                     }
@@ -171,13 +180,21 @@ mod tests {
     fn icon_and_tooltip_follow_status() {
         assert_eq!(icon_for(None), Icon::Unknown);
         assert_eq!(icon_for(Some(&st(State::Ok, 5, 5, &[]))), Icon::Protected);
-        assert_eq!(icon_for(Some(&st(State::Unknown, 0, 0, &[]))), Icon::Unknown);
+        assert_eq!(
+            icon_for(Some(&st(State::Unknown, 0, 0, &[]))),
+            Icon::Unknown
+        );
         assert_eq!(
             icon_for(Some(&st(State::Attention, 8, 10, &["a", "b"]))),
             Icon::Attention
         );
         assert_eq!(
-            icon_for(Some(&st(State::Attention, 2, 10, &["a", "b", "c", "d", "e", "f"]))),
+            icon_for(Some(&st(
+                State::Attention,
+                2,
+                10,
+                &["a", "b", "c", "d", "e", "f"]
+            ))),
             Icon::Problem
         );
         let lang = Lang::parse("en").unwrap();
@@ -204,8 +221,14 @@ mod tests {
         assert!(!worsened(&before, &st(State::Attention, 5, 6, &["a"])));
         assert!(worsened(&before, &st(State::Attention, 3, 6, &["a", "b"])));
         assert!(worsened(&before, &st(State::Attention, 4, 6, &["a", "c"])));
-        assert!(!worsened(&st(State::Ok, 6, 6, &[]), &st(State::Ok, 6, 6, &[])));
-        assert!(worsened(&st(State::Ok, 6, 6, &[]), &st(State::Attention, 5, 6, &["z"])));
+        assert!(!worsened(
+            &st(State::Ok, 6, 6, &[]),
+            &st(State::Ok, 6, 6, &[])
+        ));
+        assert!(worsened(
+            &st(State::Ok, 6, 6, &[]),
+            &st(State::Attention, 5, 6, &["z"])
+        ));
     }
 
     #[test]

@@ -3,46 +3,16 @@ use super::{icon, ButtonKind};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
-use iced::widget::{button, column, container, progress_bar, row, text, toggler};
+use iced::widget::{button, column, container, progress_bar, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Vector};
-
-/// Thin horizontal separator line.
-pub fn divider<'a>(p: Palette) -> Element<'a, Message> {
-    container(iced::widget::space::horizontal())
-        .width(Length::Fill)
-        .height(1)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(p.border)),
-            ..container::Style::default()
-        })
-        .into()
-}
 
 /// Small caption that introduces a group of rows or cards.
 pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
-    text(s.into()).size(theme::SMALL).font(theme::SEMIBOLD).color(p.text_muted).into()
-}
-
-/// One row of a list: leading element, title with optional subtitle, optional trailing element.
-pub fn list_row<'a>(
-    p: Palette,
-    leading: impl Into<Element<'a, Message>>,
-    title: impl Into<String>,
-    subtitle: Option<String>,
-    trailing: Option<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    let mut label =
-        column![text(title.into()).size(theme::BODY).font(theme::MEDIUM).color(p.text)].spacing(2);
-    if let Some(s) = subtitle {
-        label = label.push(text(s).size(theme::SMALL).font(theme::REGULAR).color(p.text_muted));
-    }
-    let mut r = row![leading.into(), container(label).width(Length::Fill)]
-        .spacing(14)
-        .align_y(Alignment::Center);
-    if let Some(t) = trailing {
-        r = r.push(t);
-    }
-    r.into()
+    text(s.into())
+        .size(theme::SMALL)
+        .font(theme::SEMIBOLD)
+        .color(p.text_muted)
+        .into()
 }
 
 /// Wraps a row so the whole line is clickable (soft hover highlight) and sends `on_press`.
@@ -62,70 +32,14 @@ pub fn list_button<'a>(
                 Color::TRANSPARENT
             })),
             text_color: p.text,
-            border: Border { radius: theme::RADIUS_SMALL.into(), ..Border::default() },
+            border: Border {
+                radius: theme::RADIUS_SMALL.into(),
+                ..Border::default()
+            },
             shadow: Shadow::default(),
             snap: true,
         })
         .into()
-}
-
-/// On/off switch in the product colours; `on_toggle: None` shows it disabled.
-pub fn switch<'a>(
-    p: Palette,
-    is_on: bool,
-    on_toggle: Option<impl Fn(bool) -> Message + 'a>,
-) -> Element<'a, Message> {
-    let mut t = toggler(is_on).size(22.0).style(move |_, status| {
-        use toggler::Status;
-        let on = matches!(
-            status,
-            Status::Active { is_toggled: true }
-                | Status::Hovered { is_toggled: true }
-                | Status::Disabled { is_toggled: true }
-        );
-        let disabled = matches!(status, Status::Disabled { .. });
-        let bg = if on { p.good } else { p.border };
-        toggler::Style {
-            background: Background::Color(Color { a: if disabled { 0.5 } else { 1.0 }, ..bg }),
-            background_border_width: 0.0,
-            background_border_color: Color::TRANSPARENT,
-            foreground: Background::Color(Color::WHITE),
-            foreground_border_width: 0.0,
-            foreground_border_color: Color::TRANSPARENT,
-            text_color: Some(p.text),
-            border_radius: None,
-            padding_ratio: 0.14,
-        }
-    });
-    if let Some(f) = on_toggle {
-        t = t.on_toggle(f);
-    }
-    t.into()
-}
-
-/// Settings-style row: title, optional explanation and a control (usually `switch`) on the right.
-pub fn toggle_row<'a>(
-    p: Palette,
-    title: impl Into<String>,
-    subtitle: Option<String>,
-    toggler: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let mut label =
-        column![text(title.into()).size(theme::BODY).font(theme::MEDIUM).color(p.text)].spacing(2);
-    if let Some(s) = subtitle {
-        label = label.push(text(s).size(theme::SMALL).font(theme::REGULAR).color(p.text_muted));
-    }
-    row![container(label).width(Length::Fill), toggler].spacing(16).align_y(Alignment::Center).into()
-}
-
-/// A number or short value with a caption underneath, for summaries.
-pub fn stat<'a>(p: Palette, label: impl Into<String>, value: impl Into<String>) -> Element<'a, Message> {
-    column![
-        text(value.into()).size(theme::H1).font(theme::BOLD).color(p.text),
-        text(label.into()).size(theme::SMALL).font(theme::REGULAR).color(p.text_muted),
-    ]
-    .spacing(2)
-    .into()
 }
 
 /// Friendly placeholder for an empty list or missing data: icon, title, one line of help, optional action.
@@ -137,12 +51,20 @@ pub fn empty_state<'a>(
     action: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut c = column![
-        container(icon(i, 26.0, p.text_muted)).center(56).style(move |_| container::Style {
-            background: Some(Background::Color(p.surface_alt)),
-            border: Border { radius: 28.0.into(), ..Border::default() },
-            ..container::Style::default()
-        }),
-        text(title.into()).size(theme::H2).font(theme::SEMIBOLD).color(p.text),
+        container(icon(i, 26.0, p.text_muted))
+            .center(56)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(p.surface_alt)),
+                border: Border {
+                    radius: 28.0.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            }),
+        text(title.into())
+            .size(theme::H2)
+            .font(theme::SEMIBOLD)
+            .color(p.text),
         text(body_text.into())
             .size(theme::BODY)
             .font(theme::REGULAR)
@@ -161,21 +83,19 @@ pub fn empty_state<'a>(
 /// State of one step in a progress checklist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepState {
-    Pending,
     Running,
     Done,
-    Failed,
-    Skipped,
 }
 
 /// Checklist line: status icon on the left, label on the right.
-pub fn progress_row<'a>(p: Palette, label: impl Into<String>, state: StepState) -> Element<'a, Message> {
+pub fn progress_row<'a>(
+    p: Palette,
+    label: impl Into<String>,
+    state: StepState,
+) -> Element<'a, Message> {
     let (glyph, color, text_color) = match state {
-        StepState::Pending => (None, p.border, p.text_muted),
         StepState::Running => (Some(Icon::Refresh), p.text_muted, p.text),
         StepState::Done => (Some(Icon::CheckCircle), p.good, p.text),
-        StepState::Failed => (Some(Icon::AlertTriangle), p.bad, p.text),
-        StepState::Skipped => (Some(Icon::X), p.text_muted, p.text_muted),
     };
     let lead: Element<'a, Message> = match glyph {
         Some(g) => icon(g, 18.0, color),
@@ -183,7 +103,11 @@ pub fn progress_row<'a>(p: Palette, label: impl Into<String>, state: StepState) 
             .width(14)
             .height(14)
             .style(move |_| container::Style {
-                border: Border { radius: 7.0.into(), width: 1.5, color },
+                border: Border {
+                    radius: 7.0.into(),
+                    width: 1.5,
+                    color,
+                },
                 ..container::Style::default()
             })
             .into(),
@@ -192,7 +116,11 @@ pub fn progress_row<'a>(p: Palette, label: impl Into<String>, state: StepState) 
         container(lead).center_x(18),
         text(label.into())
             .size(theme::BODY)
-            .font(if state == StepState::Running { theme::MEDIUM } else { theme::REGULAR })
+            .font(if state == StepState::Running {
+                theme::MEDIUM
+            } else {
+                theme::REGULAR
+            })
             .color(text_color)
     ]
     .spacing(12)
@@ -208,7 +136,10 @@ pub fn bar<'a>(p: Palette, ratio: f32, tone: Tone) -> Element<'a, Message> {
         .style(move |_| progress_bar::Style {
             background: Background::Color(p.surface_alt),
             bar: Background::Color(fill),
-            border: Border { radius: 4.0.into(), ..Border::default() },
+            border: Border {
+                radius: 4.0.into(),
+                ..Border::default()
+            },
         })
         .into()
 }
@@ -223,13 +154,24 @@ fn tone_icon(tone: Tone) -> Icon {
 }
 
 /// Calm tinted message box with an icon, for tips, warnings and errors inside a page.
-pub fn inline_notice<'a>(p: Palette, tone: Tone, message: impl Into<String>) -> Element<'a, Message> {
+pub fn inline_notice<'a>(
+    p: Palette,
+    tone: Tone,
+    message: impl Into<String>,
+) -> Element<'a, Message> {
     let tint = p.tint(tone);
-    let line = Color { a: 0.32, ..p.tone(tone) };
+    let line = Color {
+        a: 0.32,
+        ..p.tone(tone)
+    };
     container(
         row![
             icon(tone_icon(tone), 18.0, p.tone(tone)),
-            text(message.into()).size(theme::BODY).font(theme::REGULAR).color(p.text).width(Length::Fill)
+            text(message.into())
+                .size(theme::BODY)
+                .font(theme::REGULAR)
+                .color(p.text)
+                .width(Length::Fill)
         ]
         .spacing(12)
         .align_y(Alignment::Center),
@@ -238,7 +180,11 @@ pub fn inline_notice<'a>(p: Palette, tone: Tone, message: impl Into<String>) -> 
     .width(Length::Fill)
     .style(move |_| container::Style {
         background: Some(Background::Color(tint)),
-        border: Border { radius: theme::RADIUS_SMALL.into(), width: 1.0, color: line },
+        border: Border {
+            radius: theme::RADIUS_SMALL.into(),
+            width: 1.0,
+            color: line,
+        },
         ..container::Style::default()
     })
     .into()
@@ -255,7 +201,15 @@ pub fn expander<'a>(
     let head = button(
         row![
             text(title.into()).size(theme::SMALL).font(theme::MEDIUM),
-            icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, 14.0, p.text_muted),
+            icon(
+                if open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                14.0,
+                p.text_muted
+            ),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -264,33 +218,56 @@ pub fn expander<'a>(
     .on_press(on_toggle)
     .style(move |_, status| button::Style {
         background: None,
-        text_color: if status == button::Status::Hovered { p.text } else { p.text_muted },
+        text_color: if status == button::Status::Hovered {
+            p.text
+        } else {
+            p.text_muted
+        },
         border: Border::default(),
         shadow: Shadow::default(),
         snap: true,
     });
     let mut c = column![head].spacing(8);
     if open {
-        c = c.push(container(content).padding(12).width(Length::Fill).style(move |_| container::Style {
-            background: Some(Background::Color(p.surface_alt)),
-            border: Border { radius: theme::RADIUS_SMALL.into(), width: 1.0, color: p.border },
-            ..container::Style::default()
-        }));
+        c = c.push(
+            container(content)
+                .padding(12)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(p.surface_alt)),
+                    border: Border {
+                        radius: theme::RADIUS_SMALL.into(),
+                        width: 1.0,
+                        color: p.border,
+                    },
+                    ..container::Style::default()
+                }),
+        );
     }
     c.into()
 }
 
 /// Small floating confirmation message with a close button; the shell places it bottom-centre.
 pub fn toast<'a>(p: Palette, message: impl Into<String>, tone: Tone) -> Element<'a, Message> {
-    let accent = if matches!(tone, Tone::Neutral | Tone::Brand) { p.on_brand } else { p.tone(tone) };
+    let accent = if matches!(tone, Tone::Neutral | Tone::Brand) {
+        p.on_brand
+    } else {
+        p.tone(tone)
+    };
     container(
         row![
             icon(tone_icon(tone), 16.0, accent),
-            text(message.into()).size(theme::BODY).font(theme::MEDIUM).color(p.on_brand),
+            text(message.into())
+                .size(theme::BODY)
+                .font(theme::MEDIUM)
+                .color(p.on_brand),
             button(icon(Icon::X, 14.0, p.on_brand))
                 .padding(2)
                 .on_press(Message::DismissToast)
-                .style(|_, _| button::Style { background: None, ..button::Style::default() }),
+                .style(|_, _| button::Style {
+                    background: None,
+                    ..button::Style::default()
+                }),
         ]
         .spacing(10)
         .align_y(Alignment::Center),
@@ -299,7 +276,10 @@ pub fn toast<'a>(p: Palette, message: impl Into<String>, tone: Tone) -> Element<
     .max_width(520)
     .style(move |_| container::Style {
         background: Some(Background::Color(p.brand)),
-        border: Border { radius: theme::RADIUS.into(), ..Border::default() },
+        border: Border {
+            radius: theme::RADIUS.into(),
+            ..Border::default()
+        },
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
             offset: Vector::new(0.0, 6.0),

@@ -87,9 +87,11 @@ fn write_to(path: &Path, prefs: &Prefs) -> anyhow::Result<()> {
 // ----- tray autostart -----
 
 /// Run-key value that starts the tray agent at logon.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const TRAY_VALUE: &str = "SecblitzTray";
 
 /// The command stored in the Run key.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn tray_command(exe: &Path) -> String {
     format!("\"{}\" tray", exe.display())
 }
@@ -181,7 +183,14 @@ mod run_key {
         let name = wide(TRAY_VALUE);
         let mut size = 0u32;
         let status = unsafe {
-            RegQueryValueExW(key, name.as_ptr(), null_mut(), null_mut(), null_mut(), &mut size)
+            RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut size,
+            )
         };
         let out = if status == 0 && size > 0 && size <= 4096 {
             let mut buf = vec![0u16; (size as usize).div_ceil(2)];
@@ -208,7 +217,8 @@ mod run_key {
     }
 
     pub fn set(command: &str) -> anyhow::Result<()> {
-        let key = open(KEY_SET_VALUE).map_err(|s| anyhow::anyhow!("Cannot open the startup list ({s})"))?;
+        let key = open(KEY_SET_VALUE)
+            .map_err(|s| anyhow::anyhow!("Cannot open the startup list ({s})"))?;
         let name = wide(TRAY_VALUE);
         let data = wide(command);
         let status = unsafe {
@@ -227,7 +237,8 @@ mod run_key {
     }
 
     pub fn remove() -> anyhow::Result<()> {
-        let key = open(KEY_SET_VALUE).map_err(|s| anyhow::anyhow!("Cannot open the startup list ({s})"))?;
+        let key = open(KEY_SET_VALUE)
+            .map_err(|s| anyhow::anyhow!("Cannot open the startup list ({s})"))?;
         let name = wide(TRAY_VALUE);
         let status = unsafe { RegDeleteValueW(key, name.as_ptr()) };
         unsafe { RegCloseKey(key) };
@@ -293,7 +304,10 @@ fn stop_monitor() -> anyhow::Result<()> {
         let _ = service.stop();
         let deadline = Instant::now() + Duration::from_secs(30);
         while service.query_status()?.current_state != ServiceState::Stopped {
-            anyhow::ensure!(Instant::now() < deadline, "The background check did not stop in time");
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "The background check did not stop in time"
+            );
             std::thread::sleep(Duration::from_millis(300));
         }
     }

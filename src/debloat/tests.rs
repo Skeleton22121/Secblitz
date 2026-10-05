@@ -33,7 +33,11 @@ fn indices_are_unique_and_names_are_unique() {
     let mut families = HashSet::new();
     let mut names = HashSet::new();
     for app in catalog() {
-        assert!(families.insert(app.family.to_ascii_lowercase()), "{}", app.family);
+        assert!(
+            families.insert(app.family.to_ascii_lowercase()),
+            "{}",
+            app.family
+        );
         assert!(names.insert(app.name), "{}", app.name);
     }
     assert!(catalog().len() < u16::MAX as usize);
@@ -51,10 +55,18 @@ fn protected_packages_are_protected_and_never_in_the_catalog() {
     }
     for app in catalog() {
         let stem = app.family.trim_end_matches('*');
-        assert!(!is_protected(stem), "catalog entry {} is protected", app.family);
+        assert!(
+            !is_protected(stem),
+            "catalog entry {} is protected",
+            app.family
+        );
         assert!(catalog::is_valid_package_name(stem), "{}", app.family);
         if let Some(rest) = app.family.strip_suffix('*') {
-            assert!(!rest.is_empty() && rest.ends_with(['.', '-']), "{}", app.family);
+            assert!(
+                !rest.is_empty() && rest.ends_with(['.', '-']),
+                "{}",
+                app.family
+            );
         }
     }
 }
@@ -74,7 +86,9 @@ fn store_ids_look_like_store_ids() {
     for app in catalog() {
         if let Some(id) = app.store_id {
             assert_eq!(id.len(), 12, "{}", app.name);
-            assert!(id.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
+            assert!(id
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
         }
     }
     let ids: Vec<_> = catalog().iter().filter_map(|a| a.store_id).collect();
@@ -87,12 +101,21 @@ fn prefix_patterns_match_only_their_publisher() {
     assert!(pattern_matches("king.com.*", "King.com.CandyCrushSodaSaga"));
     assert!(!pattern_matches("king.com.*", "kingdom.thing"));
     assert!(pattern_matches("Microsoft.BingNews", "microsoft.bingnews"));
-    assert!(!pattern_matches("Microsoft.BingNews", "Microsoft.BingNewsPlus"));
+    assert!(!pattern_matches(
+        "Microsoft.BingNews",
+        "Microsoft.BingNewsPlus"
+    ));
 }
 
 #[test]
 fn invalid_names_never_match() {
-    for bad in ["", "king.com.x; calc", "Microsoft.BingNews\"", "a b", "Microsoft.BingNews\n"] {
+    for bad in [
+        "",
+        "king.com.x; calc",
+        "Microsoft.BingNews\"",
+        "a b",
+        "Microsoft.BingNews\n",
+    ] {
         assert_eq!(catalog::owner(bad), None, "{bad:?}");
     }
 }
@@ -111,7 +134,8 @@ fn inventory_json_is_filtered_strictly_to_the_catalog() {
     let names: Vec<_> = found.iter().map(|p| p.package.as_str()).collect();
     assert_eq!(names, ["Microsoft.BingNews", "king.com.CandyCrushSaga"]);
     // A lone object (PowerShell unwraps single items) is accepted too.
-    let one = r#"{"name":"Microsoft.BingNews","version":"1.0","nonRemovable":false,"framework":false}"#;
+    let one =
+        r#"{"name":"Microsoft.BingNews","version":"1.0","nonRemovable":false,"framework":false}"#;
     assert_eq!(parse_inventory(one).unwrap().len(), 1);
     assert_eq!(parse_inventory("[]").unwrap().len(), 0);
     assert!(parse_inventory("garbage").is_err());
@@ -119,9 +143,17 @@ fn inventory_json_is_filtered_strictly_to_the_catalog() {
 
 #[test]
 fn outcome_parsing() {
-    assert_eq!(parse_outcome(r#"{"removed":true,"protected":false,"error":null}"#), PackageOutcome::Removed);
-    assert_eq!(parse_outcome(r#"{"removed":false,"protected":true}"#), PackageOutcome::Protected);
-    assert!(matches!(parse_outcome(r#"{"removed":false,"protected":false,"error":"x"}"#), PackageOutcome::Failed(e) if e == "x"));
+    assert_eq!(
+        parse_outcome(r#"{"removed":true,"protected":false,"error":null}"#),
+        PackageOutcome::Removed
+    );
+    assert_eq!(
+        parse_outcome(r#"{"removed":false,"protected":true}"#),
+        PackageOutcome::Protected
+    );
+    assert!(
+        matches!(parse_outcome(r#"{"removed":false,"protected":false,"error":"x"}"#), PackageOutcome::Failed(e) if e == "x")
+    );
     assert!(matches!(parse_outcome("nope"), PackageOutcome::Failed(_)));
 }
 
@@ -139,10 +171,22 @@ fn request_for_unknown_index_is_refused() {
 fn removal_never_runs_for_protected_or_foreign_packages() {
     let news = idx("Microsoft.BingNews");
     let installed = vec![
-        Installed { index: news, package: "Microsoft.BingNews".into(), version: "1".into() },
+        Installed {
+            index: news,
+            package: "Microsoft.BingNews".into(),
+            version: "1".into(),
+        },
         // A forged inventory entry pointing a catalog index at a protected package.
-        Installed { index: news, package: "Microsoft.WindowsStore".into(), version: "1".into() },
-        Installed { index: news, package: "Evil; calc".into(), version: "1".into() },
+        Installed {
+            index: news,
+            package: "Microsoft.WindowsStore".into(),
+            version: "1".into(),
+        },
+        Installed {
+            index: news,
+            package: "Evil; calc".into(),
+            version: "1".into(),
+        },
     ];
     let seen = RefCell::new(Vec::new());
     let batch = remove_with(
@@ -166,9 +210,21 @@ fn removal_reports_removed_protected_and_failed() {
     let weather = idx("Microsoft.BingWeather");
     let maps = idx("Microsoft.WindowsMaps");
     let installed = vec![
-        Installed { index: news, package: "Microsoft.BingNews".into(), version: "1".into() },
-        Installed { index: weather, package: "Microsoft.BingWeather".into(), version: "2".into() },
-        Installed { index: maps, package: "Microsoft.WindowsMaps".into(), version: "3".into() },
+        Installed {
+            index: news,
+            package: "Microsoft.BingNews".into(),
+            version: "1".into(),
+        },
+        Installed {
+            index: weather,
+            package: "Microsoft.BingWeather".into(),
+            version: "2".into(),
+        },
+        Installed {
+            index: maps,
+            package: "Microsoft.WindowsMaps".into(),
+            version: "3".into(),
+        },
     ];
     let events = RefCell::new(Vec::new());
     let batch = remove_with(
@@ -184,19 +240,34 @@ fn removal_reports_removed_protected_and_failed() {
     .unwrap();
     assert_eq!(batch.removed.len(), 1);
     assert_eq!(batch.skipped, [weather]);
-    assert_eq!(batch.failed, [Failure { index: maps, reason: "boom".into() }]);
+    assert_eq!(
+        batch.failed,
+        [Failure {
+            index: maps,
+            reason: "boom".into()
+        }]
+    );
     let events = events.into_inner();
     assert_eq!(events.len(), 6, "each app starts and finishes once");
     assert_eq!(events[0], Progress::Started(news));
     assert_eq!(events[1], Progress::Finished(news, ItemResult::Removed));
-    assert_eq!(events[3], Progress::Finished(weather, ItemResult::Protected));
+    assert_eq!(
+        events[3],
+        Progress::Finished(weather, ItemResult::Protected)
+    );
 }
 
 #[test]
 fn apps_that_are_not_installed_are_ignored() {
     let news = idx("Microsoft.BingNews");
     let batch = remove_with(&[news], &[], &|_| panic!("must not run"), &|_| {}).unwrap();
-    assert_eq!(batch, Batch { t: batch.t, ..Batch::default() });
+    assert_eq!(
+        batch,
+        Batch {
+            t: batch.t,
+            ..Batch::default()
+        }
+    );
 }
 
 #[test]
@@ -208,15 +279,28 @@ fn journal_round_trip_and_restore_marking() {
     assert!(journal::load_from(&path).is_empty());
     let batch = Batch {
         t: 42,
-        removed: vec![Removed { index: 3, package: "Microsoft.GetHelp".into(), version: "1".into(), restored: false }],
+        removed: vec![Removed {
+            index: 3,
+            package: "Microsoft.GetHelp".into(),
+            version: "1".into(),
+            restored: false,
+        }],
         skipped: vec![5],
-        failed: vec![Failure { index: 7, reason: "x".into() }],
+        failed: vec![Failure {
+            index: 7,
+            reason: "x".into(),
+        }],
     };
     journal::append_to(&path, &batch).unwrap();
     journal::append_to(&path, &batch).unwrap();
-    assert_eq!(journal::load_from(&path), vec![batch.clone(), batch.clone()]);
+    assert_eq!(
+        journal::load_from(&path),
+        vec![batch.clone(), batch.clone()]
+    );
     journal::mark_restored_in(&path, 3).unwrap();
-    assert!(journal::load_from(&path).iter().all(|b| b.removed[0].restored));
+    assert!(journal::load_from(&path)
+        .iter()
+        .all(|b| b.removed[0].restored));
     // Malformed lines are skipped.
     std::fs::write(&path, "not json\n").unwrap();
     assert!(journal::load_from(&path).is_empty());

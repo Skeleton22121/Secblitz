@@ -192,13 +192,9 @@ fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
     format!("{} {} {}", d, ctx.t(MONTHS[(m as usize - 1) % 12]), y)
 }
 
-fn timeline_card<'a>(
-    state: &'a State,
-    ctx: &'a Ctx,
-    days: &[Day],
-) -> Element<'a, Message> {
+fn timeline_card<'a>(state: &'a State, ctx: &'a Ctx, days: &[Day]) -> Element<'a, Message> {
     let p = ctx.palette;
-    let today = log::now() / 86_400;
+    let today = log::local_day(log::now());
     let mut c = column![widgets::h2(p, ctx.t("What happened"))].spacing(theme::GAP);
     let mut budget = state.shown.max(PAGE_SIZE);
     let mut truncated = false;
@@ -310,7 +306,11 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     };
     page = page.push(widgets::card(
         p,
-        column![widgets::h2(p, ctx.t("Your protection over time")), trend_body].spacing(10),
+        column![
+            widgets::h2(p, ctx.t("Your protection over time")),
+            trend_body
+        ]
+        .spacing(10),
     ));
 
     // Undo.

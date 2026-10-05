@@ -124,7 +124,6 @@ pub enum Msg {
 }
 
 /// Call when the page opens.
-#[allow(dead_code)]
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     update(state, Msg::Load, ctx)
 }
@@ -215,7 +214,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     move |result| Message::Settings(Msg::BackgroundDone(on, result)),
                 ),
                 Confirm::Tray(on) => Task::perform(
-                    blocking(move || prefs_store::set_tray_enabled(on).map_err(|e| format!("{e:#}"))),
+                    blocking(move || {
+                        prefs_store::set_tray_enabled(on).map_err(|e| format!("{e:#}"))
+                    }),
                     move |result| Message::Settings(Msg::TrayDone(on, result)),
                 ),
             }
@@ -290,7 +291,11 @@ fn item<'a>(
     hint: Option<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut label = column![text(title).size(theme::BODY).font(theme::MEDIUM).color(p.text)].spacing(2);
+    let mut label = column![text(title)
+        .size(theme::BODY)
+        .font(theme::MEDIUM)
+        .color(p.text)]
+    .spacing(2);
     if let Some(hint) = hint {
         label = label.push(widgets::small(p, hint));
     }
@@ -300,11 +305,7 @@ fn item<'a>(
         .into()
 }
 
-fn section<'a>(
-    p: Palette,
-    title: String,
-    rows: Vec<Element<'a, Message>>,
-) -> Element<'a, Message> {
+fn section<'a>(p: Palette, title: String, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     let mut body = column![widgets::h2(p, title)].spacing(theme::GAP);
     for (i, r) in rows.into_iter().enumerate() {
         if i > 0 {
@@ -342,11 +343,13 @@ fn segmented<'a>(p: Palette, ctx: &Ctx) -> Element<'a, Message> {
         .padding([7, 16])
         .on_press(Message::Settings(Msg::SetTheme(value)))
         .style(move |_, status| button::Style {
-            background: Some(Background::Color(if !active && status == button::Status::Hovered {
-                p.surface
-            } else {
-                bg
-            })),
+            background: Some(Background::Color(
+                if !active && status == button::Status::Hovered {
+                    p.surface
+                } else {
+                    bg
+                },
+            )),
             text_color: fg,
             border: Border {
                 radius: theme::RADIUS_SMALL.into(),
@@ -355,11 +358,13 @@ fn segmented<'a>(p: Palette, ctx: &Ctx) -> Element<'a, Message> {
             ..button::Style::default()
         })
     };
-    container(row![
-        choice(ctx.t("Light"), Icon::Sun, ThemeChoice::Light),
-        choice(ctx.t("Dark"), Icon::Moon, ThemeChoice::Dark),
-    ]
-    .spacing(2))
+    container(
+        row![
+            choice(ctx.t("Light"), Icon::Sun, ThemeChoice::Light),
+            choice(ctx.t("Dark"), Icon::Moon, ThemeChoice::Dark),
+        ]
+        .spacing(2),
+    )
     .padding(3)
     .style(move |_| container::Style {
         background: Some(Background::Color(p.surface_alt)),
@@ -397,7 +402,10 @@ fn confirm_panel<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Mes
         ),
     };
     let body = column![
-        text(ctx.t(title)).size(theme::BODY).font(theme::SEMIBOLD).color(p.text),
+        text(ctx.t(title))
+            .size(theme::BODY)
+            .font(theme::SEMIBOLD)
+            .color(p.text),
         widgets::muted(p, ctx.t(text_key)),
         row![
             widgets::action(
@@ -451,7 +459,12 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let appearance = section(
         p,
         t("Appearance"),
-        vec![item(p, t("Theme"), Some(t("Light or dark, whichever is easier on your eyes.")), segmented(p, ctx))],
+        vec![item(
+            p,
+            t("Theme"),
+            Some(t("Light or dark, whichever is easier on your eyes.")),
+            segmented(p, ctx),
+        )],
     );
 
     // Language
@@ -478,21 +491,30 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     } else {
         match &state.background {
             Remote::Loading => widgets::pill(p, t("Checking…"), Tone::Neutral),
-            Remote::Failed => row![widgets::pill(p, t("Couldn't check"), Tone::Warn), refresh(p, ctx)]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
+            Remote::Failed => row![
+                widgets::pill(p, t("Couldn't check"), Tone::Warn),
+                refresh(p, ctx)
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
             Remote::Ready(on) => switch(*on, Msg::Ask, true),
         }
     };
     let mut rows = vec![item(
         p,
         t("Check my PC automatically"),
-        Some(t("Looks for problems in the background and tells you if something changes.")),
+        Some(t(
+            "Looks for problems in the background and tells you if something changes.",
+        )),
         background_control,
     )];
     if let Some(Confirm::Background(_)) = state.confirm {
-        rows.push(confirm_panel(p, ctx, state.confirm.unwrap_or(Confirm::Background(true))));
+        rows.push(confirm_panel(
+            p,
+            ctx,
+            state.confirm.unwrap_or(Confirm::Background(true)),
+        ));
     }
     let tray_control = switch(state.tray, Msg::AskTray, state.installed && !state.working);
     rows.push(item(
@@ -506,13 +528,20 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         tray_control,
     ));
     if let Some(Confirm::Tray(_)) = state.confirm {
-        rows.push(confirm_panel(p, ctx, state.confirm.unwrap_or(Confirm::Tray(true))));
+        rows.push(confirm_panel(
+            p,
+            ctx,
+            state.confirm.unwrap_or(Confirm::Tray(true)),
+        ));
     }
     let protection = section(p, t("Background protection"), rows);
 
     // Updates
     let (pill, line) = match &state.update {
-        Remote::Loading => (widgets::pill(p, t("Checking…"), Tone::Neutral), t("Looking for updates.")),
+        Remote::Loading => (
+            widgets::pill(p, t("Checking…"), Tone::Neutral),
+            t("Looking for updates."),
+        ),
         Remote::Failed | Remote::Ready(UpdateView::Unknown) => (
             widgets::pill(p, t("Couldn't check"), Tone::Warn),
             t("We couldn't check for updates. We'll try again later."),
@@ -533,11 +562,20 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let updates = section(
         p,
         t("Updates"),
-        vec![item(p, line, Some(t("Secblitz updates itself. You don't need to do anything.")), pill)],
+        vec![item(
+            p,
+            line,
+            Some(t("Secblitz updates itself. You don't need to do anything.")),
+            pill,
+        )],
     );
 
     // About
-    let chevron = if state.technical { Icon::ChevronDown } else { Icon::ChevronRight };
+    let chevron = if state.technical {
+        Icon::ChevronDown
+    } else {
+        Icon::ChevronRight
+    };
     let mut about = column![
         row![
             widgets::icon(Icon::ShieldCheck, 28.0, p.brand),
@@ -577,9 +615,16 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             widgets::small(p, format!("{}: {folder}", t("Data folder"))),
             widgets::small(
                 p,
-                format!("{}: {}", t("Protection checks available"), ctx.catalog.available.len())
+                format!(
+                    "{}: {}",
+                    t("Protection checks available"),
+                    ctx.catalog.available.len()
+                )
             ),
-            widgets::small(p, format!("{}: {}", t("Version"), env!("CARGO_PKG_VERSION"))),
+            widgets::small(
+                p,
+                format!("{}: {}", t("Version"), env!("CARGO_PKG_VERSION"))
+            ),
         ]
         .spacing(4);
         if let Some(error) = &ctx.engine_error {
@@ -599,7 +644,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 }),
         );
     }
-    let about = widgets::card(p, column![widgets::h2(p, t("About")), about].spacing(theme::GAP));
+    let about = widgets::card(
+        p,
+        column![widgets::h2(p, t("About")), about].spacing(theme::GAP),
+    );
 
     column![
         widgets::page_header(p, t("Settings"), Some(t("Make Secblitz work your way."))),
@@ -626,11 +674,21 @@ mod tests {
     fn update_status_is_shown_in_three_plain_states() {
         assert_eq!(update_view(&status(O::UpToDate, 5)), UpdateView::UpToDate);
         assert_eq!(
-            update_view(&status(O::Installed { version: "1.0.0".into() }, 5)),
+            update_view(&status(
+                O::Installed {
+                    version: "1.0.0".into()
+                },
+                5
+            )),
             UpdateView::UpToDate
         );
         assert_eq!(
-            update_view(&status(O::WorkerStarted { version: "1.0.0".into() }, 5)),
+            update_view(&status(
+                O::WorkerStarted {
+                    version: "1.0.0".into()
+                },
+                5
+            )),
             UpdateView::Ready
         );
         assert_eq!(update_view(&status(O::DeferredBusy, 5)), UpdateView::Ready);
@@ -644,7 +702,17 @@ mod tests {
     #[test]
     fn all_six_languages_are_offered_with_native_names() {
         let names: Vec<String> = LangItem::ALL.iter().map(ToString::to_string).collect();
-        assert_eq!(names, ["English", "Español", "Français", "Deutsch", "Português", "Italiano"]);
+        assert_eq!(
+            names,
+            [
+                "English",
+                "Español",
+                "Français",
+                "Deutsch",
+                "Português",
+                "Italiano"
+            ]
+        );
         let codes: Vec<_> = LangItem::ALL.iter().map(|l| l.0.code()).collect();
         assert_eq!(codes, ["en", "es", "fr", "de", "pt", "it"]);
     }

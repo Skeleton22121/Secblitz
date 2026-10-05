@@ -21,59 +21,58 @@ fn command(lang: Lang) -> Command {
         Box::leak(s.into_boxed_str())
     }
     let sub = |name, key| Command::new(name).about(text(lang.t(key)));
-    let cmd =
-        Command::new("secblitz")
-            .version(env!("CARGO_PKG_VERSION"))
-            .about(text(lang.t("A safer PC. Without headaches.")))
-            .arg(
-                Arg::new("lang")
-                    .long("lang")
-                    .global(true)
-                    .value_name("en|es|fr|de|pt|it")
-                    .hide_possible_values(true)
-                    .value_parser(["en", "es", "fr", "de", "pt", "it"])
-                    .help(text(lang.t("Language (default: Windows display language)"))),
-            )
-            .arg(
-                Arg::new("no-animation")
-                    .long("no-animation")
-                    .global(true)
-                    .action(ArgAction::SetTrue)
-                    .help(text(lang.t("Disable terminal animation"))),
-            )
-            .arg(
-                Arg::new("json")
-                    .long("json")
-                    .global(true)
-                    .action(ArgAction::SetTrue)
-                    .help(text(
-                        lang.t("Output raw JSON reports (including update check/status)"),
-                    )),
-            )
-            .arg(
-                Arg::new("details")
-                    .long("details")
-                    .global(true)
-                    .action(ArgAction::SetTrue)
-                    .help(text(lang.t("Show technical report details"))),
-            )
-            .subcommand(
-                sub("update", "Keep Secblitz up to date")
-                    .subcommand_required(true)
-                    .subcommand(sub("check", "Check for Secblitz updates"))
-                    .subcommand(sub("status", "Show the latest update status"))
-                    .subcommand(Command::new("health").hide(true))
-                    .subcommand(Command::new("install-staged").hide(true)),
-            )
-            .subcommand(
-                sub("service", "Manage the optional service")
-                    .subcommand_required(true)
-                    .subcommand(sub("install", "Install the service"))
-                    .subcommand(sub("start", "Start the optional monitoring service"))
-                    .subcommand(sub("uninstall", "Uninstall the service"))
-                    .subcommand(sub("status", "Query service status"))
-                    .subcommand(sub("run", "Run the service dispatcher")),
-            );
+    let cmd = Command::new("secblitz")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about(text(lang.t("A safer PC. Without headaches.")))
+        .arg(
+            Arg::new("lang")
+                .long("lang")
+                .global(true)
+                .value_name("en|es|fr|de|pt|it")
+                .hide_possible_values(true)
+                .value_parser(["en", "es", "fr", "de", "pt", "it"])
+                .help(text(lang.t("Language (default: Windows display language)"))),
+        )
+        .arg(
+            Arg::new("no-animation")
+                .long("no-animation")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help(text(lang.t("Disable terminal animation"))),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help(text(
+                    lang.t("Output raw JSON reports (including update check/status)"),
+                )),
+        )
+        .arg(
+            Arg::new("details")
+                .long("details")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help(text(lang.t("Show technical report details"))),
+        )
+        .subcommand(
+            sub("update", "Keep Secblitz up to date")
+                .subcommand_required(true)
+                .subcommand(sub("check", "Check for Secblitz updates"))
+                .subcommand(sub("status", "Show the latest update status"))
+                .subcommand(Command::new("health").hide(true))
+                .subcommand(Command::new("install-staged").hide(true)),
+        )
+        .subcommand(
+            sub("service", "Manage the optional service")
+                .subcommand_required(true)
+                .subcommand(sub("install", "Install the service"))
+                .subcommand(sub("start", "Start the optional monitoring service"))
+                .subcommand(sub("uninstall", "Uninstall the service"))
+                .subcommand(sub("status", "Query service status"))
+                .subcommand(sub("run", "Run the service dispatcher")),
+        );
     fn localize(cmd: Command, lang: Lang, parent: &str) -> Command {
         let path = if parent.is_empty() {
             cmd.get_name().to_owned()
@@ -219,7 +218,9 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
             writeln!(
                 out,
                 "{}",
-                lang.t("Monitoring is running. Check reports separately to verify their freshness.")
+                lang.t(
+                    "Monitoring is running. Check reports separately to verify their freshness."
+                )
             )?;
         }
         "install" => {
@@ -447,7 +448,11 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
             launcher::Instance::First(guard) => guard,
             launcher::Instance::Existing => return Ok(0),
         };
-        gui::run(gui::Options { lang, broker, start })?;
+        gui::run(gui::Options {
+            lang,
+            broker,
+            start,
+        })?;
         Ok(0)
     })();
     result.unwrap_or_else(|error| {
@@ -576,7 +581,7 @@ mod tests {
                 .try_get_matches_from(["secblitz", "update", word])
                 .unwrap();
             assert_eq!(update_command(&matches), Some(expected));
-                assert_eq!(
+            assert_eq!(
                 json_allowed(&matches),
                 expected != UpdateCommand::InstallStaged
             );
@@ -875,23 +880,42 @@ mod tests {
     fn gui_entry_points_are_found_past_language_options() {
         assert_eq!(first_word(&os(&["secblitz"])), None);
         assert_eq!(first_word(&os(&["secblitz", "--lang", "es"])), None);
-        assert_eq!(first_word(&os(&["secblitz", "--lang", "es", "gui"])), Some("gui"));
-        assert_eq!(first_word(&os(&["secblitz", "tray", "--lang=fr"])), Some("tray"));
-        assert_eq!(first_word(&os(&["secblitz", "update", "check"])), Some("update"));
+        assert_eq!(
+            first_word(&os(&["secblitz", "--lang", "es", "gui"])),
+            Some("gui")
+        );
+        assert_eq!(
+            first_word(&os(&["secblitz", "tray", "--lang=fr"])),
+            Some("tray")
+        );
+        assert_eq!(
+            first_word(&os(&["secblitz", "update", "check"])),
+            Some("update")
+        );
         let args = os(&["secblitz", "gui", "--broker", "abc", "--self-test", "home"]);
         assert_eq!(flag_value(&args, "--broker"), Some("abc"));
         assert_eq!(flag_value(&args, "--self-test"), Some("home"));
         assert_eq!(flag_value(&args, "--missing"), None);
         // No arguments never parse as a subcommand: the launcher handles it.
-        let m = command(Lang::En).try_get_matches_from(["secblitz"]).unwrap();
+        let m = command(Lang::En)
+            .try_get_matches_from(["secblitz"])
+            .unwrap();
         assert!(m.subcommand_name().is_none());
     }
 
     #[test]
     fn human_cli_commands_are_gone() {
         for word in [
-            "guide", "audit", "apply", "revert", "history", "password", "tools",
-            "diagnostics", "operations", "quality-updates",
+            "guide",
+            "audit",
+            "apply",
+            "revert",
+            "history",
+            "password",
+            "tools",
+            "diagnostics",
+            "operations",
+            "quality-updates",
         ] {
             assert!(command(Lang::En)
                 .try_get_matches_from(["secblitz", word])

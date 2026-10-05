@@ -19,7 +19,7 @@ use secblitz::actions;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-pub use view::view;
+pub use view::{modal, view};
 
 /// A review sheet waiting for the person's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +214,14 @@ fn plain(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
+/// Escape closes an open review sheet (same as Cancel).
+pub fn escape(state: &mut State) {
+    if state.sheet.is_some() {
+        state.sheet = None;
+        state.close_detail(Detail::Sheet);
+    }
+}
+
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Ask(sheet) => {
@@ -261,9 +269,18 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             match event {
                 RepairEvent::Preparing => {}
                 RepairEvent::Progress(p) => *progress = Some(p),
-                RepairEvent::Done { result, note, technical } => {
+                RepairEvent::Done {
+                    result,
+                    note,
+                    technical,
+                } => {
                     let kind = *kind;
-                    state.repair = Repair::Done { kind, result, note, technical };
+                    state.repair = Repair::Done {
+                        kind,
+                        result,
+                        note,
+                        technical,
+                    };
                     ctx.busy = false;
                 }
             }
@@ -285,7 +302,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::LookForUpdates => {
             if !matches!(
                 state.updates,
-                Updates::Idle | Updates::UpToDate | Updates::Found(_) | Updates::Failed { .. } | Updates::Done { .. }
+                Updates::Idle
+                    | Updates::UpToDate
+                    | Updates::Found(_)
+                    | Updates::Failed { .. }
+                    | Updates::Done { .. }
             ) {
                 return Task::none();
             }
@@ -308,12 +329,23 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             };
             match event {
-                InstallEvent::Stage { stage: s, elapsed: e } => {
+                InstallEvent::Stage {
+                    stage: s,
+                    elapsed: e,
+                } => {
                     *stage = s;
                     *elapsed = e;
                 }
-                InstallEvent::Done { result, note, technical } => {
-                    state.updates = Updates::Done { result, note, technical };
+                InstallEvent::Done {
+                    result,
+                    note,
+                    technical,
+                } => {
+                    state.updates = Updates::Done {
+                        result,
+                        note,
+                        technical,
+                    };
                     ctx.busy = false;
                 }
             }
@@ -326,7 +358,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::ClearUpdates => {
-            if matches!(state.updates, Updates::Done { .. } | Updates::Failed { .. } | Updates::UpToDate) {
+            if matches!(
+                state.updates,
+                Updates::Done { .. } | Updates::Failed { .. } | Updates::UpToDate
+            ) {
                 state.updates = Updates::Idle;
                 state.close_detail(Detail::Updates);
             }
@@ -364,7 +399,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::CopyPassword => match &state.password.secret {
             Some(secret) => Task::batch([
                 iced::clipboard::write(secret.reveal().to_owned()),
-                Task::done(Message::Toast(ctx.t("Copied. Paste it where you need it."), Tone::Good)),
+                Task::done(Message::Toast(
+                    ctx.t("Copied. Paste it where you need it."),
+                    Tone::Good,
+                )),
             ]),
             None => Task::none(),
         },
@@ -386,7 +424,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Open(shortcut) => ctx.broker_task(shortcut.request(), |r| tools(Msg::Opened(r))),
-        Msg::OpenSecurity => ctx.broker_task(broker::Request::OpenWindowsSecurity, |r| tools(Msg::Opened(r))),
+        Msg::OpenSecurity => ctx.broker_task(broker::Request::OpenWindowsSecurity, |r| {
+            tools(Msg::Opened(r))
+        }),
         Msg::Opened(reply) => match reply {
             Ok(broker::Reply::Done | broker::Reply::OpenedStore) => Task::none(),
             _ => Task::done(Message::Toast(
@@ -424,14 +464,22 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
         Sheet::Scan => {
             state.scan = Run::Working;
             Task::perform(
-                blocking(|| actions::run(actions::Action::QuickScan).map(|_| ()).map_err(plain)),
+                blocking(|| {
+                    actions::run(actions::Action::QuickScan)
+                        .map(|_| ())
+                        .map_err(plain)
+                }),
                 |r| tools(Msg::ScanDone(r)),
             )
         }
         Sheet::DefenderUpdate => {
             state.defender = Run::Working;
             Task::perform(
-                blocking(|| actions::run(actions::Action::UpdateDefender).map(|_| ()).map_err(plain)),
+                blocking(|| {
+                    actions::run(actions::Action::UpdateDefender)
+                        .map(|_| ())
+                        .map_err(plain)
+                }),
                 |r| tools(Msg::DefenderDone(r)),
             )
         }
@@ -441,7 +489,11 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             }
             ctx.busy = true;
             let cancel = Arc::new(AtomicBool::new(false));
-            state.repair = Repair::Working { kind, cancel: cancel.clone(), progress: None };
+            state.repair = Repair::Working {
+                kind,
+                cancel: cancel.clone(),
+                progress: None,
+            };
             state.close_detail(Detail::Repair);
             Task::run(
                 blocking_stream(move |emit| logic::run_repair(kind, cancel, emit)),
@@ -473,7 +525,9 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
         }
         Sheet::Bitwarden => {
             state.bitwarden = Run::Working;
-            ctx.broker_task(broker::Request::InstallBitwarden, |r| tools(Msg::BitwardenDone(r)))
+            ctx.broker_task(broker::Request::InstallBitwarden, |r| {
+                tools(Msg::BitwardenDone(r))
+            })
         }
     }
 }
