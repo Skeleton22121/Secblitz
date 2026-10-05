@@ -243,7 +243,7 @@ h3 { font-size: 17px; line-height: 1.35; font-weight: 600; letter-spacing: -0.00
 .fact-list .icon { width: 22px; height: 22px; margin-top: 1px; color: var(--text); }
 
 /* ---- Sections ---- */
-.section { padding: var(--s24) 0; }
+.section { padding-block: var(--s24); }
 .section-head { max-width: 640px; }
 .section-head p { margin-top: var(--s4); color: var(--muted); font-size: 18px; line-height: 1.55; text-wrap: pretty; }
 
@@ -384,7 +384,7 @@ details[open] > summary .chevron { transform: rotate(180deg); }
 @media (max-width: 600px) {
   .wrap, .wrap-wide { padding: 0 var(--s4); }
   .hero { padding: var(--s12) 0 var(--s10); }
-  .section, .download { padding: var(--s16) 0; }
+  .section, .download { padding-block: var(--s16); }
   .fact-list, .steps, .check-groups, .rows { grid-template-columns: 1fr; }
   .fact-list { gap: var(--s5); }
   .cta { flex-direction: column; align-items: stretch; width: 100%; max-width: 320px; }
