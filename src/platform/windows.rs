@@ -224,9 +224,15 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
     );
     super::validate_request(action, id, value)?;
     if let Some(id) = id.filter(|id| crate::hardening::is_hardening(id)) {
+        // Windows feature servicing (DISM) is slow; everything else is quick.
+        let limit = if id == "ps.v2_engine" && action == "write" {
+            900
+        } else {
+            90
+        };
         return run_script(
             super::hardening_script(action, id, value)?,
-            Duration::from_secs(90),
+            Duration::from_secs(limit),
         );
     }
     let script = format!(

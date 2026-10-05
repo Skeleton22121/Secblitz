@@ -10,6 +10,17 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
     if spec.source == Source::WifiProfiles {
         return json!({"items": {"Cafe Guest": 1, "John's Home": 0}});
     }
+    if spec.source == Source::LegacyServices {
+        // Automatic+running, already disabled, disabled but still running.
+        return json!({"items": {"RemoteRegistry": 10, "sshd": 4, "WinRM": 12}});
+    }
+    if spec.source == Source::DefenderExclusions {
+        return json!({"items": {
+            "path:C:\\Users\\Bob\\Downloads": 1,
+            "ext:exe": 1,
+            "proc:powershell.exe": 1,
+        }});
+    }
     let mut items = serde_json::Map::new();
     for (i, k) in spec.keys.iter().enumerate() {
         let Rule::Set { safe, absent_safe, .. } = k.rule else { unreachable!() };
@@ -240,4 +251,118 @@ fn hardening_journal_images_are_strict() {
             "accepted journal line {line}"
         );
     }
+}
+
+// ---- system area (OS / credentials / update / privacy) -------------------
+
+#[test]
+fn legacy_services_stop_and_disable_only_what_is_unsafe_and_undo_restores_each() {
+    let id = "services.legacy_remote";
+    let before = json!({"items": {"RemoteRegistry": 10, "WinRM": 3, "sshd": 13, "SNMP": 4}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, "attention");
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    // Manual+stopped and already-disabled services keep their state exactly.
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"RemoteRegistry": 4, "WinRM": 3, "sshd": 4, "SNMP": 4}})
+    );
+    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    e.revert(|_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn risky_exclusion_removal_is_recorded_and_undo_re_adds_it() {
+    let id = "defender.exclusions_risky";
+    let before = json!({"items": {"path:C:\\": 1, "ext:dll": 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"path:C:\\": 0, "ext:dll": 0}})
+    );
+    // After removal the real backend no longer lists the entries at all: that
+    // still counts as the recorded safe state, so undo is not seen as drift.
+    state.borrow_mut().values.insert(id.into(), json!({"items": {}}));
+    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn update_pause_undo_restores_every_saved_time() {
+    let id = "update.paused";
+    let before = json!({"items": {
+        "PauseUpdatesExpiryTime": 29_800_000,
+        "PauseFeatureUpdatesEndTime": 29_800_000,
+        "PauseQualityUpdatesEndTime": 29_800_000,
+        "PauseFeatureUpdatesStartTime": 29_700_000,
+        "PauseQualityUpdatesStartTime": 0,
+    }});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    for k in ["PauseUpdatesExpiryTime", "PauseFeatureUpdatesStartTime", "PauseQualityUpdatesStartTime"] {
+        assert_eq!(state.borrow().values[id]["items"][k], 0, "{k}");
+    }
+    e.revert(|_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn exploit_mitigations_only_move_switched_off_protections() {
+    let id = "system.exploit_mitigations";
+    // Default (not set) and on are left alone; only the explicit OFF is repaired.
+    let before = json!({"items": {"DEP": 2, "SEHOP": 0, "BottomUp": 1, "HighEntropy": 0, "CFG": 2}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"DEP": 2, "SEHOP": 1, "BottomUp": 1, "HighEntropy": 1, "CFG": 2}})
+    );
+    e.revert(|_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], before);
+    // The Windows default alone is never a repair request.
+    let stock = json!({"items": {"DEP": 1, "SEHOP": 1, "BottomUp": 2, "HighEntropy": 1, "CFG": 1}});
+    let (_dir, state, mut e) = fixture(id, stock);
+    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert!(state.borrow().writes.is_empty());
+}
+
+#[test]
+fn absent_windows_defaults_are_protected_for_the_system_controls() {
+    for (id, items) in [
+        ("driver.vulnerable_blocklist", json!({"VulnerableDriverBlocklistEnable": null})),
+        ("ntlm.extras", json!({"NoLMHash": null, "allownullsessionfallback": null})),
+        ("update.store_autoupdate_policy", json!({"AutoDownload": null})),
+        ("smartscreen.apps", json!({"SmartScreenEnabled": null, "EnableSmartScreen": null})),
+    ] {
+        let (_dir, state, mut e) = fixture(id, json!({ "items": items }));
+        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        assert!(state.borrow().writes.is_empty(), "{id}");
+    }
+    // Absent is NOT protected where Windows' default leaves the exposure.
+    for (id, items) in [
+        ("privacy.recall", json!({"DisableAIDataAnalysis": null})),
+        ("privacy.diagnostic_data_level", json!({"AllowTelemetry": null})),
+        ("privacy.delivery_optimization", json!({"DODownloadMode": null})),
+        ("privacy.clipboard_sync", json!({"AllowCrossDeviceClipboard": null})),
+        ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
+    ] {
+        let (_dir, _state, mut e) = fixture(id, json!({ "items": items }));
+        assert_eq!(e.audit().unwrap().results[0].status, "attention", "{id}");
+    }
+}
+
+#[test]
+fn diagnostic_data_is_never_lowered_to_zero_and_zero_is_left_alone() {
+    let id = "privacy.diagnostic_data_level";
+    for full in [2, 3] {
+        let (_dir, state, mut e) = fixture(id, json!({"items": {"AllowTelemetry": full}}));
+        e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+        assert_eq!(state.borrow().values[id], json!({"items": {"AllowTelemetry": 1}}));
+    }
+    let (_dir, state, mut e) = fixture(id, json!({"items": {"AllowTelemetry": 0}}));
+    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert!(state.borrow().writes.is_empty());
 }
