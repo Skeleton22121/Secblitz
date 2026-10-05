@@ -99,6 +99,22 @@ impl Backend for PermissionBackend {
             self.delegate.observe(id)
         }
     }
+    fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
+        let ours = |id: &&str| id.starts_with("permissions.");
+        let theirs: Vec<&str> = ids.iter().copied().filter(|id| !ours(id)).collect();
+        let mut delegated = self.delegate.observe_many(&theirs).into_iter();
+        ids.iter()
+            .map(|id| {
+                if ours(id) {
+                    observe(id)
+                } else {
+                    delegated
+                        .next()
+                        .unwrap_or_else(|| Err(anyhow::anyhow!("Some details for a check could not be read.")))
+                }
+            })
+            .collect()
+    }
     fn write(&mut self, id: &str, value: &Value) -> Result<()> {
         if id.starts_with("permissions.") {
             write(id, value)
@@ -149,6 +165,9 @@ impl Backend for AuditedBackend {
     }
     fn observe(&mut self, id: &str) -> Result<Observation> {
         self.delegate.observe(id)
+    }
+    fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
+        self.delegate.observe_many(ids)
     }
     fn write(&mut self, id: &str, value: &Value) -> Result<()> {
         self.delegate.write(id, value)
