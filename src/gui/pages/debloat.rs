@@ -656,8 +656,13 @@ fn on_restored_offline(
             restored_ok(state, ctx, index, text, Tone::Neutral)
         }
         Ok(Restored::Damaged) => {
+            // With a Store listing the app still comes back: say how.
             let text = ctx
-                .t("The saved copy of {name} is damaged, so it can't be brought back from Secblitz.")
+                .t(if can_use_store {
+                    "The saved copy of {name} is damaged, so Secblitz is getting it from the Microsoft Store instead."
+                } else {
+                    "The saved copy of {name} is damaged, so it can't be brought back from Secblitz."
+                })
                 .replace("{name}", &name);
             let mut tasks = vec![toast(text, Tone::Warn), copies_task()];
             if can_use_store {
