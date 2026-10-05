@@ -10,9 +10,21 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
     if spec.source == Source::WifiProfiles {
         return json!({"items": {"Cafe Guest": 1, "John's Home": 0}});
     }
+    if spec.source == Source::NetbiosAdapters {
+        return json!({"items": {
+            "{11111111-1111-1111-1111-111111111111}": 0,
+            "{22222222-2222-2222-2222-222222222222}": 1,
+            "{33333333-3333-3333-3333-333333333333}": 2,
+        }});
+    }
     let mut items = serde_json::Map::new();
     for (i, k) in spec.keys.iter().enumerate() {
-        let Rule::Set { safe, absent_safe, .. } = k.rule else { unreachable!() };
+        let Rule::Set {
+            safe, absent_safe, ..
+        } = k.rule
+        else {
+            unreachable!()
+        };
         let value = if i == 0 {
             (0..=k.max)
                 .find(|n| (k.allowed.is_empty() || k.allowed.contains(n)) && !safe.contains(n))
@@ -35,7 +47,12 @@ fn hardening_safe_state(spec: &Spec) -> Value {
     // Explicit absence of a safe-by-default value must also be accepted.
     if let Some(items) = safe["items"].as_object_mut() {
         for k in spec.keys {
-            if let Rule::Set { absent_safe: true, fix: None, .. } = k.rule {
+            if let Rule::Set {
+                absent_safe: true,
+                fix: None,
+                ..
+            } = k.rule
+            {
                 items.insert(k.name.into(), Value::Null);
             }
         }
@@ -56,7 +73,11 @@ fn every_hardening_control_audits_applies_and_undoes_exactly() {
         assert_eq!(report.results[0].status, "applied", "{id}");
         let target = spec.derive_target(&before).unwrap();
         assert_eq!(state.borrow().values[id], target, "{id}");
-        assert_eq!(state.borrow().writes, vec![(id.to_string(), target)], "{id}");
+        assert_eq!(
+            state.borrow().writes,
+            vec![(id.to_string(), target)],
+            "{id}"
+        );
         // The journal holds the exact original slice.
         let tx = e.load().unwrap().pop().unwrap();
         assert_eq!(tx.entries[0].before, before, "{id}");
@@ -156,7 +177,10 @@ fn hardening_undo_never_overwrites_a_setting_changed_after_the_fix() {
         .values
         .insert(id.into(), json!({"items": {"RunAsPPL": 2}}));
     assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
-    assert_eq!(state.borrow().values[id], json!({"items": {"RunAsPPL": null}}));
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"RunAsPPL": null}})
+    );
 }
 
 #[test]
