@@ -9,13 +9,16 @@
 
 pub mod anim;
 pub mod appear;
+pub mod chart;
 pub mod controls;
 pub mod cursor;
 pub mod menu;
 pub mod parts;
 pub mod press;
+pub mod progress;
 pub mod ring;
 pub mod section;
+pub mod scan;
 
 pub use controls::{checkbox, dropdown, segmented, slide_marker, switch, text_field, CheckState};
 pub use cursor::arrow;

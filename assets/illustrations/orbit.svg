@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" fill="none">
+  <!-- Orbit ring with three dots, used while idle and under reduced motion. -->
+  <circle cx="80" cy="80" r="72" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5"/>
+  <circle cx="80" cy="8" r="4.5" fill="currentColor"/>
+  <circle cx="142.35" cy="116" r="4.5" fill="currentColor" fill-opacity="0.6"/>
+  <circle cx="17.65" cy="116" r="4.5" fill="currentColor" fill-opacity="0.35"/>
+</svg>
