@@ -387,7 +387,7 @@ fn inspect_status_descriptor(sd: *mut c_void) -> Result<()> {
             !owner.is_null()
                 && IsValidSid(owner) != 0
                 && (EqualSid(owner, system.0) != 0 || EqualSid(owner, admins.0) != 0),
-            "Untrusted status owner"
+            "StatusOwnerUntrusted"
         );
         ensure!(
             !acl.is_null() && IsValidAcl(acl) != 0,
@@ -398,7 +398,7 @@ fn inspect_status_descriptor(sd: *mut c_void) -> Result<()> {
         ensure!(
             GetSecurityDescriptorControl(sd, &mut control, &mut revision) != 0
                 && control & SE_DACL_PROTECTED != 0,
-            "Unprotected status DACL"
+            "StatusDaclUnprotected"
         );
         let mut seen = [false; 4];
         for index in 0..(*acl).AceCount as u32 {
@@ -407,14 +407,14 @@ fn inspect_status_descriptor(sd: *mut c_void) -> Result<()> {
             let header = &*(ace as *const ACE_HEADER);
             ensure!(
                 header.AceSize as usize >= size_of::<ACCESS_ALLOWED_ACE>() && header.AceType == 0,
-                "Unsupported status ACL entry"
+                "StatusAclEntryUnsupported"
             );
             ensure!(header.AceFlags & 3 == 3, "Missing ACL propagation");
             ensure!(
                 header.AceFlags
                     & !(OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERITED_ACE) as u8
                     == 0,
-                "Unexpected ACE flags"
+                "StatusAceFlagsUnexpected"
             );
             let a = &*(ace as *const ACCESS_ALLOWED_ACE);
             let trustee = &a.SidStart as *const u32 as *mut c_void;
@@ -434,12 +434,12 @@ fn inspect_status_descriptor(sd: *mut c_void) -> Result<()> {
             } else if EqualSid(trustee, users.0) != 0 {
                 (3, RX)
             } else {
-                bail!("Unexpected status trustee");
+                bail!("StatusTrusteeUnexpected");
             };
-            ensure!(a.Mask == mask, "Unexpected status rights");
+            ensure!(a.Mask == mask, "StatusRightsUnexpected");
             seen[slot] = true;
         }
-        ensure!(seen.iter().all(|x| *x), "Missing status trustees");
+        ensure!(seen.iter().all(|x| *x), "StatusTrusteesMissing");
     }
     Ok(())
 }
@@ -544,7 +544,7 @@ impl Layout {
         ensure!(
             i.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
                 && i.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
-            "Invalid status directory"
+            "StatusDirectoryInvalid"
         );
         unsafe {
             let mut sd = null_mut();
@@ -558,7 +558,7 @@ impl Layout {
                 null_mut(),
                 &mut sd,
             );
-            ensure!(rc == 0, "Cannot inspect status ACL ({rc})");
+            ensure!(rc == 0, "StatusAclUnreadable({rc})");
             let _sd = Local(sd);
             inspect_status_descriptor(sd)?;
         }
