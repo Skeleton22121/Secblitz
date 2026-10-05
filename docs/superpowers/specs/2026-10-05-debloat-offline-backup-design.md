@@ -155,8 +155,12 @@ length limits, at most 50 000 files and 4 GB per backup.
    `LocalAppData\Packages\<family>`. The target path is built from the
    profile list (not environment variables); every component is opened
    without following reparse points and checked to be a plain directory;
-   the package folder is created fresh; files are created new
-   (`CREATE_NEW`) and owned by that account. A planted junction or symlink
+   the app's data folder itself is created by Windows when the app is
+   registered for that account (Secblitz never creates it); files are
+   written without following links and owned by that account. Accounts
+   that are signed out have no folder yet: their data waits in the backup
+   (`pending.json`) and is put back the next time that account opens
+   Secblitz. A planted junction or symlink
    anywhere on the path stops the data restore for that account with a
    plain message; the app itself stays restored.
 8. Verify `Get-AppxPackage` shows the packages with `Status = Ok`, mark the
