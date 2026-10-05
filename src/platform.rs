@@ -32,8 +32,7 @@ fn validate_support_id(id: &str) -> Result<()> {
 // Reuse the compiled backend's module bootstrap and policy helper definitions,
 // but never its control dispatcher. Exact delimiter changes fail closed.
 #[cfg(any(windows, test))]
-fn support_script(id: &str) -> Result<String> {
-    validate_support_id(id)?;
+fn backend_definitions() -> Result<&'static str> {
     let source = include_str!("platform/backend.ps1");
     let delimiter = "\ntry {\n    switch -CaseSensitive ($action) {";
     let (definitions, _) = source
@@ -42,9 +41,39 @@ fn support_script(id: &str) -> Result<String> {
     if source.matches(delimiter).count() != 1 {
         bail!("Ambiguous embedded backend dispatcher boundary");
     }
+    Ok(definitions)
+}
+
+#[cfg(any(windows, test))]
+fn support_script(id: &str) -> Result<String> {
+    validate_support_id(id)?;
     Ok(format!(
-        "$inputJson=$null\n{definitions}\n$supportId='{id}'\n{}",
+        "$inputJson=$null\n{}\n$supportId='{id}'\n{}",
+        backend_definitions()?,
         include_str!("actions/defender.ps1")
+    ))
+}
+
+/// Script for one extended hardening control: the backend's helper definitions
+/// (never its dispatcher), the compiled catalog entry for exactly this id, and
+/// the hardening dispatcher. The wire value is re-validated here and embedded
+/// as a PowerShell single-quoted literal with quotes doubled.
+#[cfg(any(windows, test))]
+fn hardening_script(action: &str, id: &str, value: Option<&Value>) -> Result<String> {
+    let spec = crate::hardening::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown control id"))?;
+    let input = match (action, value) {
+        ("observe", None) => "$null".to_string(),
+        ("write", Some(v)) => {
+            spec.validate(v)?;
+            format!("'{}'", v.to_string().replace('\'', "''"))
+        }
+        _ => bail!("Invalid platform action arguments"),
+    };
+    Ok(format!(
+        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson='{}'\n{}\n{}",
+        spec.script_json().replace('\'', "''"),
+        backend_definitions()?,
+        include_str!("platform/hardening.ps1")
     ))
 }
 
@@ -224,11 +253,23 @@ fn controls() -> Vec<Control> {
             reboot,
         });
     }
+    for spec in crate::hardening::all() {
+        out.push(Control {
+            id: spec.id.into(),
+            title: spec.title.into(),
+            description: spec.description.into(),
+            target: spec.catalog_target(),
+            reboot: spec.reboot,
+        });
+    }
     out
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn validate_value(id: &str, value: &Value) -> Result<()> {
+    if let Some(spec) = crate::hardening::spec(id) {
+        return spec.validate(value);
+    }
     let control = controls()
         .into_iter()
         .find(|c| c.id == id)
@@ -356,7 +397,7 @@ mod tests {
     }
     #[test]
     fn permission_gate_is_an_exact_isolated_action() {
-        assert_eq!(controls().len(), 16);
+        assert_eq!(controls().len(), 16 + crate::hardening::all().len());
         for id in ["permissions.service.bits", "permissions.service.wuauserv"] {
             validate_request("permission_gate", Some(id), None).unwrap();
             assert!(validate_request("permission_gate", Some(id), Some(&Value::Null)).is_err());
@@ -381,7 +422,9 @@ mod tests {
         for control in controls() {
             assert!(validate_request("permission_gate", Some(&control.id), None).is_err());
             validate_request("observe", Some(&control.id), None).unwrap();
-            validate_request("write", Some(&control.id), Some(&control.target)).unwrap();
+            if !crate::hardening::spec(&control.id).is_some_and(|s| s.dynamic()) {
+                validate_request("write", Some(&control.id), Some(&control.target)).unwrap();
+            }
         }
         assert!(validate_request("permission_gate", None, None).is_err());
         assert!(
@@ -436,8 +479,74 @@ mod tests {
         }
     }
     #[test]
+    fn hardening_controls_are_cataloged_with_restart_flags_and_wire_validation() {
+        let ids: Vec<_> = controls().into_iter().map(|c| c.id).collect();
+        for spec in crate::hardening::all() {
+            let c = controls().into_iter().find(|c| c.id == spec.id).unwrap();
+            assert_eq!(c.reboot, spec.reboot, "{}", spec.id);
+            assert!(ids.contains(&spec.id.to_string()));
+            validate_request("observe", Some(spec.id), None).unwrap();
+            assert!(validate_request("observe", Some(spec.id), Some(&json!({"items":{}}))).is_err());
+            assert!(validate_request("write", Some(spec.id), Some(&json!(true))).is_err());
+            assert!(validate_request("write", Some(spec.id), Some(&json!({"present":true,"value":1}))).is_err());
+        }
+        for restart in ["lsa.run_as_ppl", "net.llmnr", "autorun.disabled", "ntlm.lm_compat_level", "lsa.restrict_anonymous"] {
+            assert!(crate::hardening::spec(restart).unwrap().reboot, "{restart}");
+        }
+        assert!(!crate::hardening::spec("defender.pua").unwrap().reboot);
+    }
+
+    #[test]
+    fn hardening_scripts_embed_only_the_compiled_spec_and_escape_values() {
+        for spec in crate::hardening::all() {
+            let observe = hardening_script("observe", spec.id, None).unwrap();
+            assert!(observe.starts_with(&format!("$action='observe'\n$id='{}'\n$inputJson=$null\n", spec.id)));
+            assert!(observe.contains("$hardeningSpecJson='"));
+            assert!(observe.contains("function HWrite"));
+            // Helper definitions are present; the backend dispatcher is not.
+            assert!(observe.contains("function Gate("));
+            assert_eq!(observe.matches("switch -CaseSensitive ($action)").count(), 1);
+            assert!(hardening_script("write", spec.id, None).is_err());
+            assert!(hardening_script("observe", spec.id, Some(&json!({"items":{}}))).is_err());
+        }
+        assert!(hardening_script("observe", "uac.enabled", None).is_err());
+        assert!(hardening_script("findings", "net.llmnr", None).is_err());
+        assert!(hardening_script("write", "net.llmnr", Some(&json!({"items":{"x":1}}))).is_err());
+        // Quotes in a Wi-Fi name cannot end the PowerShell literal.
+        let wifi = json!({"items": {"Joe's '; Remove-Item x; '": 0}});
+        let script = hardening_script("write", "wifi.risky_profiles", Some(&wifi)).unwrap();
+        assert!(script.contains("$inputJson='{\"items\":{\"Joe''s ''; Remove-Item x; ''\":0}}'"));
+        // Double quotes are rejected outright (they would break netsh-style quoting).
+        assert!(hardening_script("write", "wifi.risky_profiles", Some(&json!({"items": {"a\"b": 0}}))).is_err());
+    }
+
+    #[test]
+    fn powershell_tamper_exemptions_match_the_catalog() {
+        let source = include_str!("platform/backend.ps1");
+        let start = source.find("function TamperExempt").unwrap();
+        let body = &source[start..source[start..].find("\n}\n").unwrap() + start];
+        let mut listed: Vec<&str> = body
+            .split('\'')
+            .filter(|s| s.starts_with("defender."))
+            .collect();
+        listed.sort_unstable();
+        let mut compiled: Vec<&str> = crate::hardening::all()
+            .iter()
+            .filter(|s| s.gate.tamper_exempt)
+            .map(|s| s.id)
+            .collect();
+        compiled.sort_unstable();
+        assert_eq!(listed, compiled);
+    }
+
+    #[test]
     fn fixed_targets_validate() {
         for c in controls() {
+            if crate::hardening::spec(&c.id).is_some_and(|s| s.dynamic()) {
+                // Derived per before-image; the catalog holds a sentinel.
+                assert!(validate_value(&c.id, &c.target).is_err());
+                continue;
+            }
             validate_value(&c.id, &c.target).unwrap();
         }
     }
@@ -480,6 +589,9 @@ mod tests {
                     "{} accepted {value}",
                     control.id
                 );
+            }
+            if crate::hardening::is_hardening(&control.id) {
+                continue;
             }
             if control.id.starts_with("defender.")
                 || control.id.starts_with("firewall.") && control.id.ends_with(".enabled")
