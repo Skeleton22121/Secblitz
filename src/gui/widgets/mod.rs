@@ -2,7 +2,8 @@
 //!
 //! Every page builds its UI from these so the product looks consistent
 //! (see docs/DESIGN-SYSTEM.md). Signatures are a contract; styling may be
-//! refined. No widget here draws a shadow or a gradient.
+//! refined. No widget here draws a shadow, a gradient or a surface border:
+//! tonal steps and spacing separate content (see `region`, `group`, `row_item`).
 // The catalogue is larger than what pages use today; pages migrate to it next.
 #![allow(dead_code, unused_imports)]
 
@@ -10,12 +11,16 @@ pub mod anim;
 pub mod appear;
 pub mod controls;
 pub mod cursor;
+pub mod menu;
 pub mod parts;
 pub mod ring;
+pub mod section;
 
 pub use controls::{checkbox, dropdown, segmented, switch, text_field, CheckState};
 pub use cursor::arrow;
+pub use menu::overflow_menu;
 pub use parts::*;
+pub use section::*;
 
 use super::icons::Icon;
 use super::theme::{self, Palette, Tone};
@@ -85,42 +90,26 @@ pub fn icon_filled<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message>
         .into()
 }
 
-/// Round tinted badge with an icon inside (list leading element).
+/// Plain leading icon (20 px, tinted glyph only). There is no badge, circle
+/// or square behind icons anywhere in the app; the name is kept so older call
+/// sites compile. Neutral uses the muted text tone. Prefer [`row_item`].
 pub fn icon_badge<'a>(p: Palette, i: Icon, tone: Tone) -> Element<'a, Message> {
-    let fg = p.tone(tone);
-    let bg = p.tint(tone);
-    container(icon(i, 18.0, fg))
-        .center(theme::CONTROL)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(bg)),
-            border: Border {
-                radius: (theme::CONTROL / 2.0).into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        })
+    let fg = if tone == Tone::Neutral {
+        p.text_muted
+    } else {
+        p.tone(tone)
+    };
+    container(icon(i, theme::ICON_ROW, fg))
+        .center_x(theme::S6)
         .into()
 }
 
-/// Rounded surface with border. Use for every content block (padding S6).
+/// Borderless tonal block. Adapter for [`region`]; prefer `region`/`group`.
 pub fn card<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
 ) -> container::Container<'a, Message> {
-    container(content)
-        .padding(theme::S6)
-        .width(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(p.surface)),
-            border: Border {
-                radius: theme::R_LARGE.into(),
-                width: 1.0,
-                color: p.border,
-            },
-            shadow: Shadow::default(), // never: tiny-skia draws shadows unclipped
-            text_color: Some(p.text),
-            snap: true,
-        })
+    region(p, content)
 }
 
 /// Small status label, e.g. "Needs attention".
@@ -170,7 +159,7 @@ fn button_colors(
     if status == Disabled {
         return match kind {
             ButtonKind::Ghost => (None, p.disabled_fg, Color::TRANSPARENT),
-            ButtonKind::Secondary => (Some(p.surface), p.disabled_fg, p.border),
+            ButtonKind::Secondary => (Some(p.disabled_bg), p.disabled_fg, Color::TRANSPARENT),
             _ => (Some(p.disabled_bg), p.disabled_fg, p.disabled_bg),
         };
     }
@@ -193,11 +182,11 @@ fn button_colors(
         }
         ButtonKind::Secondary => {
             let bg = match status {
-                Hovered => p.hover,
+                Hovered => p.hover_strong,
                 Pressed => p.pressed,
-                _ => p.surface,
+                _ => p.hover,
             };
-            (Some(bg), p.text, p.border_strong)
+            (Some(bg), p.text, Color::TRANSPARENT)
         }
         ButtonKind::Ghost => {
             let bg = match status {
@@ -215,14 +204,13 @@ fn button_style(
     kind: ButtonKind,
 ) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
     move |_, status| {
-        let (bg, fg, border) = button_colors(&p, kind, status);
+        let (bg, fg, _) = button_colors(&p, kind, status);
         button::Style {
             background: bg.map(Background::Color),
             text_color: fg,
             border: Border {
                 radius: theme::R.into(),
-                width: 1.0,
-                color: border,
+                ..Border::default()
             },
             shadow: Shadow::default(),
             snap: true,
@@ -290,7 +278,7 @@ pub fn icon_button<'a>(
 }
 
 /// Modal sheet layer (scrim + panel) to stack above the page. The scrim is one static flat colour (no
-/// blur), the panel has a 1 px border, R_LARGE corners and S6 padding. Esc
+/// blur), the panel is a borderless surface tone, R_LARGE corners and S6 padding. Esc
 /// handling is done by the shell via `Message::Escape`.
 pub fn sheet_layer<'a>(
     p: Palette,
@@ -303,8 +291,7 @@ pub fn sheet_layer<'a>(
             background: Some(Background::Color(p.surface)),
             border: Border {
                 radius: theme::R_LARGE.into(),
-                width: 1.0,
-                color: p.border_strong,
+                ..Border::default()
             },
             shadow: Shadow::default(), // never: tiny-skia draws shadows unclipped
             text_color: Some(p.text),
