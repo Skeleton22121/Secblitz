@@ -825,7 +825,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         p,
         ctx.t("Clean up apps"),
         Some(ctx.t(
-            "Remove apps that came with Windows but you don't need. You can reinstall most of them later.",
+            "Remove apps that came with Windows but you don't need. Secblitz keeps a copy, so you can bring them back any time.",
         )),
     );
     let removed_label = if state.removed.is_empty() {
@@ -1046,24 +1046,12 @@ fn group_card<'a>(
             None,
             Some(wrap(Msg::Toggle(index))),
         );
-        // A quiet note instead of a loud pill: muted icon plus small text.
-        let (note, trailing): (Option<String>, Element<'a, Message>) = if app.store_id.is_none() {
-            (
-                Some(ctx.t("Can't be restored automatically")),
-                row![widgets::icon(Icon::Info, 16.0, p.text_muted), box_]
-                    .spacing(theme::S3)
-                    .align_y(Alignment::Center)
-                    .into(),
-            )
-        } else {
-            (None, box_)
-        };
         body = body.push(widgets::row_item_lead(
             p,
             Some(app_glyph(p, state, index, theme::ICON_ROW)),
             ctx.t(app.name),
-            note,
-            trailing,
+            None,
+            box_,
             Vec::new(),
             Some(wrap(Msg::Toggle(index))),
         ));
