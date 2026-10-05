@@ -82,6 +82,11 @@ pub fn classify(r: &Outcome) -> Class {
         // "Check again" means we could not confirm the state.
         return Class::Unknown;
     }
+    if a.status == "Left as it is" {
+        // Deliberately not edited (an unusual permission layout): nothing for
+        // the person to do and never claimed as protected. A note only.
+        return Class::Excluded;
+    }
     match a.group {
         Group::Protected => Class::Protected,
         Group::Recommended => Class::Fixable,
@@ -369,5 +374,10 @@ mod tests {
             ..out("uac.enabled", "applied")
         };
         assert_eq!(classify(&restart), Class::Review);
+        let kept = Outcome {
+            detail: "Service permissions preserved: deny ACE".into(),
+            ..out("permissions.service.bits", "skipped")
+        };
+        assert_eq!(classify(&kept), Class::Excluded);
     }
 }
