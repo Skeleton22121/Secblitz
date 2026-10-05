@@ -4,12 +4,17 @@
 
 pub mod adapters;
 pub mod config;
+pub mod control;
 pub mod dns;
 pub mod fetch;
 pub mod lists;
 pub mod matcher;
+#[cfg(windows)]
+pub mod routing;
+#[cfg(windows)]
+pub mod scm;
 pub mod server;
 pub mod service;
 
-/// Name of the Windows service that answers on loopback.
+/// The Windows service that answers lookups for web protection.
 pub const SERVICE_NAME: &str = "SecblitzFilter";
