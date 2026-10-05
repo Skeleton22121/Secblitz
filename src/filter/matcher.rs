@@ -103,7 +103,9 @@ impl Filter {
     }
 
     /// Which enabled switch blocks `name`, if any. The never-block set wins over
-    /// everything; otherwise Dangerous, then Tracking, then Ads.
+    /// everything; otherwise Dangerous, then Ads, then Tracking. Ad networks are
+    /// on the tracking lists too, so ads go first or "Blocked today" would show
+    /// no ads while plenty are blocked.
     pub fn decide(&self, name: &str, on: Switches) -> Option<Kind> {
         if self.never.any_suffix(name) {
             return None;
@@ -111,11 +113,11 @@ impl Filter {
         if on.dangerous && self.dangerous.blocks(name) {
             return Some(Kind::Dangerous);
         }
-        if on.tracking && self.tracking.blocks(name) {
-            return Some(Kind::Tracking);
-        }
         if on.ads && self.ads.blocks(name) {
             return Some(Kind::Ads);
+        }
+        if on.tracking && self.tracking.blocks(name) {
+            return Some(Kind::Tracking);
         }
         None
     }
@@ -194,12 +196,12 @@ mod tests {
             dangerous: false,
             ..ALL
         };
-        assert_eq!(f.decide("x.com", no_danger), Some(Kind::Tracking));
-        let ads_only = Switches {
-            ads: true,
+        assert_eq!(f.decide("x.com", no_danger), Some(Kind::Ads));
+        let tracking_only = Switches {
+            tracking: true,
             ..Switches::default()
         };
-        assert_eq!(f.decide("x.com", ads_only), Some(Kind::Ads));
+        assert_eq!(f.decide("x.com", tracking_only), Some(Kind::Tracking));
     }
 
     #[test]
