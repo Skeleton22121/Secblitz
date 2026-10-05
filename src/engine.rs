@@ -35,6 +35,8 @@ const MAX_WAL: u64 = 1024 * 1024;
 const MAX_TRANSACTIONS: usize = 2048;
 const LOCK_NAME: &str = "engine.lock";
 const MAX_EVIDENCE: usize = 4096;
+/// Controls read side by side during a check.
+const READ_BATCH: usize = 4;
 const LEGACY_UPDATE_FILES: [&str; 5] = [
     "update.lock",
     "update-status.json",
@@ -714,6 +716,29 @@ impl Engine {
         validate_value(id, &obs.value)?;
         validate_observation(id, &obs)?;
         Ok(obs)
+    }
+
+    /// [`Self::observe`] for a batch, read side by side when the backend can.
+    /// A reply of the wrong length fails the whole batch rather than letting
+    /// one control's reading land on another.
+    fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
+        let mut observed = self.backend.observe_many(ids);
+        if observed.len() != ids.len() {
+            observed = ids
+                .iter()
+                .map(|_| Err(anyhow::anyhow!("Some details for a check could not be read.")))
+                .collect();
+        }
+        observed
+            .into_iter()
+            .zip(ids)
+            .map(|(obs, id)| {
+                let obs = obs?;
+                validate_value(id, &obs.value)?;
+                validate_observation(id, &obs)?;
+                Ok(obs)
+            })
+            .collect()
     }
 
     fn decode(&self, stem: &str, file: Option<File>, bytes: Vec<u8>) -> Result<Transaction> {
@@ -1397,16 +1422,21 @@ impl Engine {
             findings: Vec::new(),
             readiness: None,
         };
-        for c in self.controls.clone() {
-            let result = match self.observe(&c.id) {
-                Ok(o) => match assessment_status(&c.id, &o) {
-                    Ok(status) => Self::observed_outcome(&c, status, &o.reason, &o),
-                    Err(e) => Self::observed_outcome(&c, "error", format!("{e:#}"), &o),
-                },
-                Err(e) => Self::outcome(&c, "error", format!("{e:#}")),
-            };
-            callback(&result.id, &result.status);
-            report.results.push(result);
+        // Small batches keep progress moving while the reads run side by side.
+        let controls = self.controls.clone();
+        for batch in controls.chunks(READ_BATCH) {
+            let ids: Vec<&str> = batch.iter().map(|c| c.id.as_str()).collect();
+            for (c, observed) in batch.iter().zip(self.observe_many(&ids)) {
+                let result = match observed {
+                    Ok(o) => match assessment_status(&c.id, &o) {
+                        Ok(status) => Self::observed_outcome(c, status, &o.reason, &o),
+                        Err(e) => Self::observed_outcome(c, "error", format!("{e:#}"), &o),
+                    },
+                    Err(e) => Self::outcome(c, "error", format!("{e:#}")),
+                };
+                callback(&result.id, &result.status);
+                report.results.push(result);
+            }
         }
         report.readiness = Some(self.readiness(&mut callback));
         callback("findings", "pending");
@@ -2776,6 +2806,7 @@ mod tests {
         evidence_at: Option<(usize, Option<EffectiveFirewall>, Option<Authority>)>,
         readiness: Readiness,
         readiness_count: usize,
+        short_batch: bool,
     }
     struct Fake {
         state: Rc<RefCell<FakeState>>,
@@ -2783,6 +2814,13 @@ mod tests {
         machine: String,
     }
     impl Backend for Fake {
+        fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
+            let mut all: Vec<_> = ids.iter().map(|id| self.observe(id)).collect();
+            if self.state.borrow().short_batch {
+                all.pop();
+            }
+            all
+        }
         fn machine_id(&mut self) -> Result<String> {
             if self.state.borrow().fail_machine {
                 bail!("Simulated machine identity transport failure");
@@ -3867,6 +3905,25 @@ mod tests {
         e.revert(|_, _| {}).unwrap();
         assert!(e.load().unwrap()[0].reverted);
         assert!(e.apply(|_, _| {}).unwrap().transaction.is_none());
+    }
+
+    #[test]
+    fn audit_reads_in_order_and_fails_a_short_batch_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Rc::new(RefCell::new(FakeState::default()));
+        state.borrow_mut().values.insert(DEFENDER.into(), json!(true));
+        state.borrow_mut().values.insert(FIREWALL.into(), json!("Allow"));
+        let mut e =
+            Engine::open(dir.path().into(), backend(&state, &[DEFENDER, FIREWALL], "machine-a"))
+                .unwrap();
+        let report = e.audit().unwrap();
+        let ids: Vec<&str> = report.results.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, [DEFENDER, FIREWALL]);
+        assert!(report.results.iter().all(|r| r.status != "error"));
+        // A reply missing one reading never shifts the other onto a wrong id.
+        state.borrow_mut().short_batch = true;
+        let report = e.audit().unwrap();
+        assert!(report.results.iter().all(|r| r.status == "error"));
     }
 
     #[test]

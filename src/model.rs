@@ -128,6 +128,11 @@ pub trait Backend {
     fn machine_id(&mut self) -> anyhow::Result<String>;
     fn controls(&self) -> Vec<Control>;
     fn observe(&mut self, id: &str) -> anyhow::Result<Observation>;
+    /// Observe several controls, results in the order of `ids`. Reads one at
+    /// a time unless a backend knows its reads are independent.
+    fn observe_many(&mut self, ids: &[&str]) -> Vec<anyhow::Result<Observation>> {
+        ids.iter().map(|id| self.observe(id)).collect()
+    }
     fn write(&mut self, id: &str, value: &serde_json::Value) -> anyhow::Result<()>;
     fn findings(&mut self) -> anyhow::Result<Vec<Finding>>;
     fn readiness(&mut self) -> Readiness {

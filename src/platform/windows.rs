@@ -441,6 +441,12 @@ pub fn backend() -> Result<Box<dyn Backend>> {
     );
     Ok(Box::new(WindowsBackend))
 }
+fn observe_one(id: &str) -> Result<Observation> {
+    let obs: Observation = run("observe", Some(id), None)?;
+    validate_value(id, &obs.value)?;
+    crate::model::validate_observation(id, &obs)?;
+    Ok(obs)
+}
 impl Backend for WindowsBackend {
     fn machine_id(&mut self) -> Result<String> {
         let id: String = run("machine", None, None)?;
@@ -451,10 +457,21 @@ impl Backend for WindowsBackend {
         super::controls()
     }
     fn observe(&mut self, id: &str) -> Result<Observation> {
-        let obs: Observation = run("observe", Some(id), None)?;
-        validate_value(id, &obs.value)?;
-        crate::model::validate_observation(id, &obs)?;
-        Ok(obs)
+        observe_one(id)
+    }
+    fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
+        // Each read is its own PowerShell process in its own job object and
+        // changes nothing, so a batch runs side by side.
+        std::thread::scope(|s| {
+            let reads: Vec<_> = ids.iter().map(|id| s.spawn(move || observe_one(id))).collect();
+            reads
+                .into_iter()
+                .map(|read| {
+                    read.join()
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("Some details for a check could not be read.")))
+                })
+                .collect()
+        })
     }
     fn write(&mut self, id: &str, value: &Value) -> Result<()> {
         validate_value(id, value)?;
