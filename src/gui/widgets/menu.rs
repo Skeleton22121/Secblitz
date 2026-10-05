@@ -1,0 +1,404 @@
+//! Icon-only overflow button ("More", three dots) with a small popup menu.
+//!
+//! Secondary actions live here so a region keeps one visible primary action.
+//! The menu is drawn by hand as an overlay anchored under the button and
+//! right-aligned to it: `popup` tone, `R` corners, `S1` padding, 32 px rows
+//! (icon + label), tonal hover. It closes on a click outside, on Esc and on
+//! selection. It slides 6 px into place over `FAST` and asks for redraws only
+//! while doing so. No shadow, normal arrow cursor.
+use super::anim;
+use crate::gui::icons::Icon;
+use crate::gui::theme::{self, Palette};
+use crate::gui::Message;
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::renderer::{self, Quad};
+use iced::advanced::svg::{self, Renderer as _};
+use iced::advanced::text::{self, Renderer as _, Text};
+use iced::advanced::widget::{tree, Tree};
+use iced::advanced::{overlay, Clipboard, Renderer as _, Shell, Widget};
+use iced::keyboard::{self, key::Named, Key};
+use iced::{
+    alignment, mouse, window, Background, Border, Color, Element, Event, Length, Pixels, Point,
+    Radians, Rectangle, Renderer, Shadow, Size, Theme, Vector,
+};
+use std::time::Instant;
+
+/// Fluent UI System Icons, "More Horizontal 20 Regular".
+const MORE_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6.25 10C6.25 10.6904 5.69036 11.25 5 11.25C4.30964 11.25 3.75 10.6904 3.75 10C3.75 9.30964 4.30964 8.75 5 8.75C5.69036 8.75 6.25 9.30964 6.25 10ZM11.25 10C11.25 10.6904 10.6904 11.25 10 11.25C9.30964 11.25 8.75 10.6904 8.75 10C8.75 9.30964 9.30964 8.75 10 8.75C10.6904 8.75 11.25 9.30964 11.25 10ZM15 11.25C15.6904 11.25 16.25 10.6904 16.25 10C16.25 9.30964 15.6904 8.75 15 8.75C14.3096 8.75 13.75 9.30964 13.75 10C13.75 10.6904 14.3096 11.25 15 11.25Z" fill="currentColor"/></svg>"#;
+
+const BUTTON: f32 = 32.0;
+const SLIDE_PX: f32 = 6.0;
+const SLIDE_MS: f32 = anim::FAST.as_millis() as f32;
+const ICON: f32 = 16.0;
+
+/// One menu entry.
+pub struct MenuItem {
+    pub icon: Icon,
+    pub label: String,
+    pub message: Message,
+    /// Destructive entries are tinted with the bad tone.
+    pub danger: bool,
+}
+
+#[derive(Default)]
+struct State {
+    open: bool,
+    hover: Option<usize>,
+    opened_at: Option<Instant>,
+}
+
+struct Overflow {
+    p: Palette,
+    items: Vec<MenuItem>,
+}
+
+fn menu_size(items: &[MenuItem]) -> Size {
+    let longest = items.iter().map(|i| i.label.chars().count()).max().unwrap_or(4) as f32;
+    let w = (longest * 7.6 + theme::S3 * 2.0 + ICON + theme::S3 + theme::S2 * 2.0)
+        .clamp(168.0, 300.0);
+    Size::new(
+        w,
+        items.len() as f32 * theme::MENU_ROW + theme::S1 * 2.0,
+    )
+}
+
+fn row_rect(menu: Rectangle, i: usize) -> Rectangle {
+    Rectangle {
+        x: menu.x + theme::S1,
+        y: menu.y + theme::S1 + i as f32 * theme::MENU_ROW,
+        width: menu.width - theme::S1 * 2.0,
+        height: theme::MENU_ROW,
+    }
+}
+
+impl Widget<Message, Theme, Renderer> for Overflow {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<State>()
+    }
+    fn state(&self) -> tree::State {
+        tree::State::new(State::default())
+    }
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(BUTTON), Length::Fixed(BUTTON))
+    }
+    fn layout(&mut self, _: &mut Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
+        layout::atomic(limits, BUTTON, BUTTON)
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Rectangle,
+    ) {
+        let st = tree.state.downcast_ref::<State>();
+        let b = layout.bounds();
+        let p = self.p;
+        let bg = if st.open {
+            Some(p.selected)
+        } else if cursor.is_over(b) {
+            Some(p.hover_strong)
+        } else {
+            None
+        };
+        if let Some(c) = bg {
+            renderer.fill_quad(
+                Quad {
+                    bounds: b,
+                    border: Border {
+                        radius: theme::R.into(),
+                        ..Border::default()
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                Background::Color(c),
+            );
+        }
+        let fg = if st.open || cursor.is_over(b) {
+            p.text
+        } else {
+            p.text_muted
+        };
+        let ib = Rectangle {
+            x: b.center_x() - 10.0,
+            y: b.center_y() - 10.0,
+            width: 20.0,
+            height: 20.0,
+        };
+        renderer.draw_svg(
+            svg::Svg {
+                handle: svg::Handle::from_memory(MORE_SVG),
+                color: Some(fg),
+                rotation: Radians(0.0),
+                opacity: 1.0,
+            },
+            ib,
+            b,
+        );
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _: &Rectangle,
+    ) {
+        let st = tree.state.downcast_mut::<State>();
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(layout.bounds()) =>
+            {
+                st.open = !st.open;
+                st.hover = None;
+                st.opened_at = None;
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+            | Event::Mouse(mouse::Event::CursorLeft) => shell.request_redraw(),
+            _ => {}
+        }
+    }
+    fn mouse_interaction(
+        &self,
+        _: &Tree,
+        _: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Rectangle,
+        _: &Renderer,
+    ) -> mouse::Interaction {
+        mouse::Interaction::Idle
+    }
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        _: &Renderer,
+        _: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let st = tree.state.downcast_mut::<State>();
+        if !st.open {
+            return None;
+        }
+        Some(overlay::Element::new(Box::new(Menu {
+            p: self.p,
+            items: &self.items,
+            state: st,
+            anchor: layout.bounds() + translation,
+        })))
+    }
+}
+
+struct Menu<'b> {
+    p: Palette,
+    items: &'b [MenuItem],
+    state: &'b mut State,
+    anchor: Rectangle,
+}
+
+impl Menu<'_> {
+    fn slide(&self, now: Instant) -> f32 {
+        if anim::reduced() {
+            return 0.0;
+        }
+        match self.state.opened_at {
+            Some(s) => {
+                let t = now.saturating_duration_since(s).as_secs_f32() * 1000.0 / SLIDE_MS;
+                SLIDE_PX * (1.0 - anim::DECELERATE.at(t))
+            }
+            None => SLIDE_PX,
+        }
+    }
+}
+
+impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_> {
+    fn layout(&mut self, _: &Renderer, bounds: Size) -> layout::Node {
+        let size = menu_size(self.items);
+        let gap = theme::S1;
+        let mut x = self.anchor.x + self.anchor.width - size.width;
+        x = x.clamp(0.0, (bounds.width - size.width).max(0.0));
+        let below = self.anchor.y + self.anchor.height + gap;
+        let y = if below + size.height <= bounds.height {
+            below
+        } else {
+            (self.anchor.y - gap - size.height).max(0.0)
+        };
+        layout::Node::new(size).move_to(Point::new(x, y))
+    }
+    fn draw(
+        &self,
+        renderer: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+    ) {
+        let p = self.p;
+        let menu = layout.bounds();
+        let dy = self.slide(Instant::now());
+            renderer.with_translation(Vector::new(0.0, -dy), |renderer| {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: menu,
+                        border: Border {
+                            radius: theme::R.into(),
+                            width: theme::HAIRLINE,
+                            color: p.border,
+                        },
+                        shadow: Shadow::default(), // never: tiny-skia draws shadows unclipped
+                        snap: true,
+                    },
+                    Background::Color(p.popup),
+                );
+                for (i, item) in self.items.iter().enumerate() {
+                    let r = row_rect(menu, i);
+                    if self.state.hover == Some(i) {
+                        renderer.fill_quad(
+                            Quad {
+                                bounds: r,
+                                border: Border {
+                                    radius: theme::R_SMALL.into(),
+                                    ..Border::default()
+                                },
+                                shadow: Shadow::default(),
+                                snap: true,
+                            },
+                            Background::Color(p.hover_strong),
+                        );
+                    }
+                    let fg: Color = if item.danger { p.bad_text } else { p.text };
+                    let ig = if item.danger { p.bad_text } else { p.text_muted };
+                    let ib = Rectangle {
+                        x: r.x + theme::S3,
+                        y: r.center_y() - ICON / 2.0,
+                        width: ICON,
+                        height: ICON,
+                    };
+                    renderer.draw_svg(
+                        svg::Svg {
+                            handle: svg::Handle::from_memory(item.icon.svg()),
+                            color: Some(ig),
+                            rotation: Radians(0.0),
+                            opacity: 1.0,
+                        },
+                        ib,
+                        r,
+                    );
+                    let tx = ib.x + ICON + theme::S3;
+                    renderer.fill_text(
+                        Text {
+                            content: item.label.clone(),
+                            bounds: Size::new(r.x + r.width - tx - theme::S3, r.height),
+                            size: Pixels(theme::BODY),
+                            line_height: text::LineHeight::Absolute(Pixels(theme::LINE_BODY)),
+                            font: theme::REGULAR,
+                            align_x: text::Alignment::Left,
+                            align_y: alignment::Vertical::Center,
+                            shaping: text::Shaping::Advanced,
+                            wrapping: text::Wrapping::None,
+                        },
+                        Point::new(tx, r.center_y()),
+                        fg,
+                        r,
+                    );
+                }
+            });
+    }
+    fn update(
+        &mut self,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let menu = layout.bounds();
+        match event {
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                let s = *self.state.opened_at.get_or_insert(*now);
+                if !anim::reduced()
+                    && now.saturating_duration_since(s).as_secs_f32() * 1000.0 < SLIDE_MS
+                {
+                    shell.request_redraw();
+                }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let h = (0..self.items.len())
+                    .find(|&i| cursor.is_over(row_rect(menu, i)));
+                if h != self.state.hover {
+                    self.state.hover = h;
+                    shell.request_redraw();
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if cursor.is_over(menu) {
+                    if let Some(i) =
+                        (0..self.items.len()).find(|&i| cursor.is_over(row_rect(menu, i)))
+                    {
+                        shell.publish(self.items[i].message.clone());
+                        self.state.open = false;
+                    }
+                    shell.capture_event();
+                } else {
+                    self.state.open = false;
+                    // A press on the button itself only closes (it must not
+                    // reach the button and reopen the menu).
+                    if cursor.is_over(self.anchor) {
+                        shell.capture_event();
+                    }
+                }
+                shell.request_redraw();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Escape),
+                ..
+            }) => {
+                self.state.open = false;
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Idle
+        } else {
+            mouse::Interaction::None
+        }
+    }
+}
+
+/// Icon-only "More" button (three dots) that opens a small popup menu of
+/// `(icon, label, message, danger)` entries. Use for secondary actions so a
+/// region shows at most one visible primary. Labels: two or three words.
+pub fn overflow_menu<'a>(
+    p: Palette,
+    items: Vec<(Icon, String, Message, bool)>,
+) -> Element<'a, Message> {
+    let items = items
+        .into_iter()
+        .map(|(icon, label, message, danger)| MenuItem {
+            icon,
+            label,
+            message,
+            danger,
+        })
+        .collect();
+    super::arrow(Element::new(Overflow { p, items }))
+}
