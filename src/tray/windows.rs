@@ -1,0 +1,438 @@
+use super::logic::{self, Icon};
+use crate::i18n::Lang;
+use anyhow::{bail, Result};
+use secblitz::status::{self, Status};
+use std::{
+    cell::RefCell,
+    os::windows::ffi::OsStrExt,
+    ptr::{null, null_mut},
+    time::{Duration, Instant},
+};
+use windows_sys::Win32::{
+    Foundation::{
+        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, WAIT_OBJECT_0,
+        WPARAM,
+    },
+    Graphics::Gdi::{
+        CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO,
+        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    },
+    System::{
+        LibraryLoader::GetModuleHandleW,
+        Threading::{CreateMutexW, OpenEventW, WaitForSingleObject},
+    },
+    UI::{
+        Shell::{
+            ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP,
+            NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
+            NIN_BALLOONUSERCLICK, NIN_SELECT, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
+        },
+        WindowsAndMessaging::{
+            AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+            DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
+            GetSystemMetrics, KillTimer, PostMessageW, PostQuitMessage, RegisterClassExW,
+            RegisterWindowMessageW, SetForegroundWindow, SetTimer, TrackPopupMenu,
+            TranslateMessage, HICON, ICONINFO, MF_SEPARATOR, MF_STRING, MSG, SM_CXSMICON,
+            SW_SHOWNORMAL, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
+            WM_CONTEXTMENU, WM_DESTROY, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL, WM_QUERYENDSESSION,
+            WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP,
+        },
+    },
+};
+
+const MUTEX: &str = "Local\\SecblitzTray";
+const QUIESCE_EVENT: &str = "Global\\SecblitzUpdateQuiesce";
+const SYNCHRONIZE: u32 = 0x0010_0000;
+const CALLBACK: u32 = WM_APP + 1;
+const POLL_TIMER: usize = 1;
+const QUIESCE_TIMER: usize = 2;
+const POLL_EVERY: u32 = 60_000;
+const QUIESCE_EVERY: u32 = 5_000;
+const ID_OPEN: usize = 1;
+const ID_CHECK: usize = 2;
+const ID_QUIT: usize = 3;
+
+struct Tray {
+    lang: Lang,
+    icons: [HICON; 4],
+    taskbar_created: u32,
+    last: Option<Status>,
+    shown: Option<(usize, String)>,
+    opened: Option<Instant>,
+}
+thread_local! {
+    static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
+}
+
+/// Run `f` on the tray state unless it is already borrowed (a nested message
+/// delivered while we are inside Shell or menu calls); skipping is harmless.
+fn with_tray<R>(f: impl FnOnce(&mut Tray) -> R) -> Option<R> {
+    TRAY.with(|cell| cell.try_borrow_mut().ok().and_then(|mut t| t.as_mut().map(f)))
+}
+
+fn wide(s: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
+    s.as_ref().encode_wide().chain(Some(0)).collect()
+}
+fn index(icon: Icon) -> usize {
+    logic::ALL.iter().position(|i| *i == icon).unwrap_or(3)
+}
+fn copy_text<const N: usize>(dst: &mut [u16; N], text: &str) {
+    for (slot, unit) in dst.iter_mut().zip(text.encode_utf16().take(N - 1)) {
+        *slot = unit;
+    }
+}
+
+/// Draw a shield into a 32-bit DIB and wrap it as an icon.
+fn make_icon(icon: Icon, size: usize) -> Option<HICON> {
+    let pixels = logic::render(icon, size);
+    unsafe {
+        let header = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: size as i32,
+            biHeight: -(size as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        };
+        let info = BITMAPINFO {
+            bmiHeader: header,
+            bmiColors: [std::mem::zeroed()],
+        };
+        let dc = GetDC(null_mut());
+        let mut bits = null_mut();
+        let color = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+        ReleaseDC(null_mut(), dc);
+        if color.is_null() || bits.is_null() {
+            return None;
+        }
+        std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits.cast::<u8>(), pixels.len());
+        let mask = CreateBitmap(size as i32, size as i32, 1, 1, null());
+        let info = ICONINFO {
+            fIcon: 1,
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: mask,
+            hbmColor: color,
+        };
+        let handle = CreateIconIndirect(&info);
+        DeleteObject(color);
+        if !mask.is_null() {
+            DeleteObject(mask);
+        }
+        (!handle.is_null()).then_some(handle)
+    }
+}
+
+fn data(hwnd: HWND) -> NOTIFYICONDATAW {
+    let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid
+}
+
+fn add_icon(hwnd: HWND, t: &mut Tray, icon: usize, tip: &str) {
+    let mut nid = data(hwnd);
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    nid.uCallbackMessage = CALLBACK;
+    nid.hIcon = t.icons[icon];
+    copy_text(&mut nid.szTip, tip);
+    unsafe {
+        if Shell_NotifyIconW(NIM_ADD, &nid) != 0 {
+            nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            Shell_NotifyIconW(NIM_SETVERSION, &nid);
+            t.shown = Some((icon, tip.to_owned()));
+        } else {
+            t.shown = None; // Taskbar not ready yet; TaskbarCreated re-adds.
+        }
+    }
+}
+
+fn set_icon(hwnd: HWND, t: &mut Tray, icon: usize, tip: &str) {
+    if t.shown.as_ref().is_some_and(|(i, s)| *i == icon && s == tip) {
+        return;
+    }
+    if t.shown.is_none() {
+        return add_icon(hwnd, t, icon, tip);
+    }
+    let mut nid = data(hwnd);
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    nid.hIcon = t.icons[icon];
+    copy_text(&mut nid.szTip, tip);
+    if unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) } != 0 {
+        t.shown = Some((icon, tip.to_owned()));
+    } else {
+        add_icon(hwnd, t, icon, tip);
+    }
+}
+
+fn remove_icon(hwnd: HWND) {
+    let nid = data(hwnd);
+    unsafe {
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+    }
+}
+
+fn balloon(hwnd: HWND, lang: Lang) {
+    let mut nid = data(hwnd);
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    copy_text(&mut nid.szInfoTitle, "Secblitz");
+    copy_text(
+        &mut nid.szInfo,
+        &lang.t("Something changed on your PC. Open Secblitz to check."),
+    );
+    unsafe {
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+/// Start the app (it asks for administrator permission itself).
+fn open_app(t: &mut Tray) {
+    if t.opened.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+        return; // One click can arrive as several notification messages.
+    }
+    t.opened = Some(Instant::now());
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let file = wide(&exe);
+    let dir = exe.parent().map(wide);
+    let verb = wide("open");
+    unsafe {
+        ShellExecuteW(
+            null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            null(),
+            dir.as_ref().map_or(null(), |d| d.as_ptr()),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+fn refresh(hwnd: HWND, t: &mut Tray) {
+    let now = status::read();
+    let icon = index(logic::icon_for(now.as_ref()));
+    let tip = logic::tooltip(t.lang, now.as_ref());
+    set_icon(hwnd, t, icon, &tip);
+    if let Some(now) = now {
+        // The first status we see only sets the baseline; it never alerts.
+        if t.last.as_ref().is_some_and(|prev| logic::worsened(prev, &now)) {
+            balloon(hwnd, t.lang);
+        }
+        t.last = Some(now);
+    }
+}
+
+fn quiesce_requested() -> bool {
+    let name = wide(QUIESCE_EVENT);
+    unsafe {
+        let h = OpenEventW(SYNCHRONIZE, 0, name.as_ptr());
+        if h.is_null() {
+            return false;
+        }
+        let signalled = WaitForSingleObject(h, 0) == WAIT_OBJECT_0;
+        CloseHandle(h);
+        signalled
+    }
+}
+
+/// Show the context menu (modal) and return the chosen command, 0 for none.
+fn menu(hwnd: HWND, lang: Lang) -> usize {
+    unsafe {
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            return 0;
+        }
+        let open = wide(lang.t("Open Secblitz"));
+        let check = wide(lang.t("Check now"));
+        let quit = wide(lang.t("Quit"));
+        AppendMenuW(menu, MF_STRING, ID_OPEN, open.as_ptr());
+        AppendMenuW(menu, MF_STRING, ID_CHECK, check.as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        AppendMenuW(menu, MF_STRING, ID_QUIT, quit.as_ptr());
+        let mut at = POINT { x: 0, y: 0 };
+        GetCursorPos(&mut at);
+        SetForegroundWindow(hwnd);
+        let chosen = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+            at.x,
+            at.y,
+            0,
+            hwnd,
+            null(),
+        );
+        PostMessageW(hwnd, WM_NULL, 0, 0);
+        DestroyMenu(menu);
+        chosen as usize
+    }
+}
+
+fn menu_choice(hwnd: HWND, chosen: usize) {
+    match chosen {
+        // The app checks on start, so "Check now" starts it the same way.
+        ID_OPEN | ID_CHECK => {
+            with_tray(open_app);
+        }
+        ID_QUIT => unsafe {
+            DestroyWindow(hwnd);
+        },
+        _ => {}
+    }
+}
+
+unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        CALLBACK => {
+            let event = (lparam & 0xFFFF) as u32;
+            match event {
+                WM_LBUTTONUP | NIN_SELECT | NIN_BALLOONUSERCLICK => {
+                    with_tray(open_app);
+                }
+                WM_RBUTTONUP | WM_CONTEXTMENU => {
+                    // The menu is modal and pumps messages: no borrow may be held.
+                    if let Some(lang) = with_tray(|t| t.lang) {
+                        menu_choice(hwnd, menu(hwnd, lang));
+                    }
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_TIMER => {
+            match wparam {
+                POLL_TIMER => {
+                    with_tray(|t| refresh(hwnd, t));
+                }
+                QUIESCE_TIMER if quiesce_requested() => {
+                    DestroyWindow(hwnd);
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_QUERYENDSESSION => 1,
+        WM_ENDSESSION => {
+            if wparam != 0 {
+                DestroyWindow(hwnd);
+            }
+            0
+        }
+        WM_CLOSE => {
+            DestroyWindow(hwnd);
+            0
+        }
+        WM_DESTROY => {
+            KillTimer(hwnd, POLL_TIMER);
+            KillTimer(hwnd, QUIESCE_TIMER);
+            remove_icon(hwnd);
+            PostQuitMessage(0);
+            0
+        }
+        m => {
+            let rebuilt = with_tray(|t| {
+                if t.taskbar_created != m {
+                    return false;
+                }
+                // Explorer restarted: our icon is gone, add it again.
+                t.shown = None;
+                refresh(hwnd, t);
+                true
+            });
+            if rebuilt == Some(true) {
+                return 0;
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+    }
+}
+
+pub fn run(lang: Lang) -> Result<i32> {
+    let mutex_name = wide(MUTEX);
+    let mutex = unsafe { CreateMutexW(null(), 0, mutex_name.as_ptr()) };
+    if mutex.is_null() {
+        bail!("Cannot create tray mutex ({})", unsafe { GetLastError() });
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(mutex) };
+        return Ok(0); // Already running in this session.
+    }
+    // A pending update asked trays to leave; do not appear just to vanish.
+    if quiesce_requested() {
+        unsafe { CloseHandle(mutex) };
+        return Ok(0);
+    }
+    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.clamp(16, 64) as usize;
+    let mut icons = [null_mut(); 4];
+    for (slot, icon) in icons.iter_mut().zip(logic::ALL) {
+        match make_icon(icon, size) {
+            Some(h) => *slot = h,
+            None => bail!("Cannot create tray icons"),
+        }
+    }
+    let class_name = wide("SecblitzTrayWindow");
+    let title = wide("SecblitzTray");
+    let taskbar = wide("TaskbarCreated");
+    let hwnd = unsafe {
+        let hinstance = GetModuleHandleW(null());
+        let mut class: WNDCLASSEXW = std::mem::zeroed();
+        class.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+        class.lpfnWndProc = Some(proc);
+        class.hInstance = hinstance;
+        class.lpszClassName = class_name.as_ptr();
+        if RegisterClassExW(&class) == 0 {
+            bail!("Cannot register tray window");
+        }
+        TRAY.with(|cell| {
+            *cell.borrow_mut() = Some(Tray {
+                lang,
+                icons,
+                taskbar_created: RegisterWindowMessageW(taskbar.as_ptr()),
+                last: None,
+                shown: None,
+                opened: None,
+            })
+        });
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            hinstance,
+            null(),
+        )
+    };
+    if hwnd.is_null() {
+        bail!("Cannot create tray window");
+    }
+    with_tray(|t| refresh(hwnd, t));
+    unsafe {
+        SetTimer(hwnd, POLL_TIMER, POLL_EVERY, None);
+        SetTimer(hwnd, QUIESCE_TIMER, QUIESCE_EVERY, None);
+        let mut msg: MSG = std::mem::zeroed();
+        while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        with_tray(|t| {
+            for icon in t.icons {
+                DestroyIcon(icon);
+            }
+        });
+        CloseHandle(mutex);
+    }
+    Ok(0)
+}

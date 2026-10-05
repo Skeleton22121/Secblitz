@@ -32,7 +32,7 @@ def check(source):
             assert value.strip(), f"Empty message: {locale}.{key}"
             messages[locale, key] = value
     keys = {key for _, key in messages} | set(re.findall(r"\{cm:([\w]+)\}", source))
-    assert {"Monitor", "Failed", "DesktopIcon", "LaunchSecblitz", "AutoUpdates"} == keys
+    assert {"Monitor", "Failed", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon"} == keys
     for locale in languages:
         for key in keys:
             assert (locale, key) in messages, f"Missing message: {locale}.{key}"
@@ -58,10 +58,20 @@ def check(source):
     desktop = [entry for entry in entries('Icons') if entry.get('Name', '').startswith('{commondesktop}')]
     assert desktop == [{'Name': r'{commondesktop}\Secblitz', 'Filename': r'{app}\secblitz.exe',
                         'WorkingDir': '{app}', 'Tasks': 'desktopicon'}]
-    assert entries('Run') == [{'Filename': r'{app}\secblitz.exe', 'Parameters': 'guide',
-                               'WorkingDir': '{app}', 'Description': '{cm:LaunchSecblitz}',
-                               'Flags': 'nowait postinstall skipifsilent runasoriginaluser',
-                               'Check': 'CanLaunchSecblitz'}]
+    assert tasks['trayicon'] == {'Name': 'trayicon', 'Description': '{cm:TrayIcon}'}
+    registry = [line for line in sections.get('Registry', []) if line.strip() and not line.lstrip().startswith(';')]
+    assert registry == [
+        'Root: HKLM; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueType: string; '
+        'ValueName: "SecblitzTray"; ValueData: """{app}\\secblitz.exe"" tray"; '
+        'Flags: uninsdeletevalue; Tasks: trayicon'], registry
+    assert entries('Run') == [
+        {'Filename': r'{app}\secblitz.exe',
+         'WorkingDir': '{app}', 'Description': '{cm:LaunchSecblitz}',
+         'Flags': 'nowait postinstall skipifsilent runasoriginaluser',
+         'Check': 'CanLaunchSecblitz'},
+        {'Filename': r'{app}\secblitz.exe', 'Parameters': 'tray', 'WorkingDir': '{app}',
+         'Flags': 'nowait skipifsilent runasoriginaluser', 'Tasks': 'trayicon',
+         'Check': 'CanLaunchSecblitz'}]
     code = '\n'.join(sections['Code'])
     initialize = re.search(r'procedure InitializeWizard;.*?\nend;', code, re.DOTALL)
     assert initialize, 'Preferences must be cached before uninstall data is rewritten'
@@ -90,7 +100,8 @@ def check(source):
     assert "RegQueryDWordValue(HKLM64, 'Software\\Secblitz', 'AutoUpdatesEnabled', Enabled)" in code
     assert "ExpandConstant('{param:SECBLITZUPDATE|0}') = '1'" in code
     assert not entries('InstallDelete'), 'Installation must not delete unrelated files'
-    assert not entries('UninstallDelete'), 'Uninstall must rely on its owned-file log'
+    assert entries('UninstallDelete') == [{'Type': 'filesandordirs', 'Name': r'{app}\Status'}], \
+        'Uninstall removes only the fixed Status directory beyond its owned-file log'
     latch = code.index('PostInstallFailed := True;')
     clear = code.index('PostInstallFailed := False;')
     for action in ('Secure', 'InstallMonitor', 'ResumeMonitor', 'PreserveUpdates', 'EnableUpdates', 'DisableUpdates'):
@@ -102,12 +113,14 @@ def check(source):
 def regression_checks(source):
     mutations = []
     for locale in ('en', 'es', 'fr', 'de', 'pt', 'it'):
-        for key in ('Monitor', 'Failed', 'DesktopIcon', 'LaunchSecblitz', 'AutoUpdates'):
+        for key in ('Monitor', 'Failed', 'DesktopIcon', 'LaunchSecblitz', 'AutoUpdates', 'TrayIcon'):
             mutations.append(re.sub(rf'^{locale}\.{key}=.*$', '', source, flags=re.MULTILINE))
     for before, after in (
         ('Flags: nowait postinstall', 'Flags: unchecked nowait postinstall'),
         (' skipifsilent', ''), (' runasoriginaluser', ''),
-        ('Parameters: "guide"', 'Parameters: "apply"'),
+        ('Parameters: "tray"', 'Parameters: "apply"'),
+        ('Flags: uninsdeletevalue', ''),
+        ('Tasks: trayicon', ''),
         ('Check: CanLaunchSecblitz', ''),
         ('Result := not PostInstallFailed;', 'Result := True;'),
         ('Description: "{cm:DesktopIcon}"', 'Description: "{cm:DesktopIcon}"; Flags: unchecked'),
@@ -132,6 +145,7 @@ def regression_checks(source):
         mutations.append(source.replace(before, after))
     for section in ('InstallDelete', 'UninstallDelete'):
         mutations.append(source + f'\n[{section}]\nType: filesandordirs; Name: "{{app}}"\n')
+    mutations.append(source.replace('Name: "{app}\\Status"', 'Name: "{app}"'))
     for mutated in mutations:
         try:
             check(mutated)
