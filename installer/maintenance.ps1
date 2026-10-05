@@ -74,7 +74,7 @@ public static class SecblitzPaths {
 '@
     $pins = [Collections.Generic.List[IDisposable]]::new()
 
-    function Assert-SafeItem([string]$Path, [bool]$Ancestor = $false) {
+    function Assert-SafeItem([string]$Path, [bool]$Ancestor = $false, [bool]$ProgramDataDir = $false) {
         if ($UninstallerDataPath -and $Path -ieq $UninstallerDataPath) {
             # Do NOT skip metadata, link-count, owner or DACL validation.
             $pins.Add([SecblitzPaths]::Metadata($Path))
@@ -98,6 +98,8 @@ public static class SecblitzPaths {
             if ($Ancestor -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
             $allowed = 0x1200a9 # Read/execute, never write/delete/change owner or ACL.
             if ($Ancestor) { $allowed = $allowed -bor 6 } # Windows root/Program Files create-child ACEs.
+            # Stock C:\ProgramData grants Users (CI)(WD,AD,WEA,WA): create-child plus EA/attribute writes only.
+            if ($Ancestor -and $ProgramDataDir) { $allowed = $allowed -bor 0x110 }
             if ($Path -eq (Join-Path $root 'Monitor\latest.json') -and $rule.IdentityReference.Value -eq 'S-1-5-19') {
                 $allowed = 0x12019f # Existing service-owned report only.
             }
@@ -704,7 +706,7 @@ public static class SecblitzPaths {
                     foreach ($part in $programData.Substring($path.Length).Split('\')) {
                         if ($part) {
                             $path = Join-Path $path $part
-                            Assert-SafeItem $path $true
+                            Assert-SafeItem $path $true ($path -ieq $programData)
                         }
                     }
                     Remove-OwnedTree $dataRoot
