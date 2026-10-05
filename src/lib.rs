@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod debloat;
 pub mod diagnostics;
 pub mod engine;
 pub mod model;
@@ -8,5 +9,6 @@ pub mod permissions;
 pub mod platform;
 pub mod readiness;
 pub mod service;
+pub mod status;
 pub mod tools;
 pub mod updater;

@@ -7,8 +7,7 @@ use std::{
     time::Duration,
 };
 
-#[path = "advice.rs"]
-pub mod advice;
+pub(crate) use crate::advice;
 
 pub struct Ui {
     lang: Lang,
