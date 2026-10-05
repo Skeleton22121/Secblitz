@@ -244,7 +244,7 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
         "$action='{action}'\n$id='{}'\n$inputJson={}\n{}",
         id.unwrap_or(""),
         value
-            .map(|v| format!("'{}'", v))
+            .map(|v| super::ps_text(&v.to_string()))
             .unwrap_or_else(|| "$null".into()),
         include_str!("backend.ps1")
     );

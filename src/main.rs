@@ -474,6 +474,17 @@ fn dispatch_gui(args: &[std::ffi::OsString], lang: Lang) -> Option<i32> {
 }
 
 fn main() {
+    // Before anything loads a DLL by bare name (wgpu looks for vulkan-1.dll):
+    // search only this program's folder and System32, never the current
+    // directory or PATH, which a standard user may control.
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::LibraryLoader::{
+            SetDefaultDllDirectories, SetDllDirectoryW, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+        };
+        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        SetDllDirectoryW([0u16].as_ptr());
+    }
     let args: Vec<_> = std::env::args_os().collect();
     let lang = selected_language(&args);
     if let Some(code) = dispatch_gui(&args, lang) {

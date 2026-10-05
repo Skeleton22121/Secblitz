@@ -54,10 +54,24 @@ fn support_script(id: &str) -> Result<String> {
     ))
 }
 
+/// A PowerShell expression that evaluates to `text`. Data never becomes script
+/// source: it travels as base64, which has no quote characters, so no value
+/// can end a literal. Doubling quotes is not enough, because PowerShell also
+/// treats the typographic quotes U+2018 to U+201B as single quotes, and a
+/// Wi-Fi network can be named with them.
+#[cfg(any(windows, test))]
+fn ps_text(text: &str) -> String {
+    use base64::Engine as _;
+    format!(
+        "([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}')))",
+        base64::engine::general_purpose::STANDARD.encode(text)
+    )
+}
+
 /// Script for one extended hardening control: the backend's helper definitions
 /// (never its dispatcher), the compiled catalog entry for exactly this id, and
-/// the hardening dispatcher. The wire value is re-validated here and embedded
-/// as a PowerShell single-quoted literal with quotes doubled.
+/// the hardening dispatcher. The wire value is re-validated here and passed
+/// as data with [`ps_text`], never as script text.
 #[cfg(any(windows, test))]
 fn hardening_script(action: &str, id: &str, value: Option<&Value>) -> Result<String> {
     let spec = crate::hardening::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown control id"))?;
@@ -65,13 +79,13 @@ fn hardening_script(action: &str, id: &str, value: Option<&Value>) -> Result<Str
         ("observe", None) => "$null".to_string(),
         ("write", Some(v)) => {
             spec.validate(v)?;
-            format!("'{}'", v.to_string().replace('\'', "''"))
+            ps_text(&v.to_string())
         }
         _ => bail!("Invalid platform action arguments"),
     };
     Ok(format!(
-        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson='{}'\n{}\n{}",
-        spec.script_json().replace('\'', "''"),
+        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson={}\n{}\n{}",
+        ps_text(&spec.script_json()),
         backend_definitions()?,
         include_str!("platform/hardening.ps1")
     ))
@@ -515,6 +529,21 @@ mod tests {
     }
 
     #[test]
+    fn ps_text_is_quote_free_and_round_trips() {
+        use base64::Engine as _;
+        for text in ["", "plain", "it's", "\u{2018}\u{2019}\u{201A}\u{201B}", "{\"a\":\"\u{e9}\"}"] {
+            let expr = ps_text(text);
+            let inner = expr
+                .strip_prefix("([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('")
+                .and_then(|r| r.strip_suffix("')))"))
+                .unwrap();
+            assert!(inner.is_ascii() && !inner.contains('\''));
+            let bytes = base64::engine::general_purpose::STANDARD.decode(inner).unwrap();
+            assert_eq!(String::from_utf8(bytes).unwrap(), text);
+        }
+    }
+
+    #[test]
     fn hardening_scripts_embed_only_the_compiled_spec_and_escape_values() {
         for spec in crate::hardening::all() {
             let observe = hardening_script("observe", spec.id, None).unwrap();
@@ -522,7 +551,10 @@ mod tests {
                 "$action='observe'\n$id='{}'\n$inputJson=$null\n",
                 spec.id
             )));
-            assert!(observe.contains("$hardeningSpecJson='"));
+            assert!(observe.contains(&format!(
+                "$hardeningSpecJson={}\n",
+                ps_text(&spec.script_json())
+            )));
             assert!(observe.contains("function HWrite"));
             // Helper definitions are present; the backend dispatcher is not.
             assert!(observe.contains("function Gate("));
@@ -536,10 +568,19 @@ mod tests {
         assert!(hardening_script("observe", "uac.enabled", None).is_err());
         assert!(hardening_script("findings", "net.llmnr", None).is_err());
         assert!(hardening_script("write", "net.llmnr", Some(&json!({"items":{"x":1}}))).is_err());
-        // Quotes in a Wi-Fi name cannot end the PowerShell literal.
-        let wifi = json!({"items": {"Joe's '; Remove-Item x; '": 0}});
-        let script = hardening_script("write", "wifi.risky_profiles", Some(&wifi)).unwrap();
-        assert!(script.contains("$inputJson='{\"items\":{\"Joe''s ''; Remove-Item x; ''\":0}}'"));
+        // No quote in a Wi-Fi name can end a PowerShell literal: ASCII or the
+        // typographic ones PowerShell also accepts, as in "Joe’s iPhone".
+        for name in [
+            "Joe's '; Remove-Item x; '",
+            "Joe\u{2019}s iPhone",
+            "\u{2018};x;\u{2019}\u{201A}\u{201B}",
+        ] {
+            let wifi = json!({"items": {name: 0}});
+            let script = hardening_script("write", "wifi.risky_profiles", Some(&wifi)).unwrap();
+            assert!(script.contains(&format!("$inputJson={}\n", ps_text(&wifi.to_string()))));
+            let head = &script[..script.find("$hardeningSpecJson").unwrap()];
+            assert!(head.is_ascii() && !head.contains(name), "{head}");
+        }
         // Double quotes are rejected outright (they would break netsh-style quoting).
         assert!(hardening_script(
             "write",

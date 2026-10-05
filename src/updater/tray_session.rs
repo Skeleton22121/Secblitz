@@ -32,8 +32,10 @@ use windows_sys::Win32::{
 };
 
 pub(super) const QUIESCE_EVENT: &str = "Global\\SecblitzUpdateQuiesce";
-/// SYSTEM full control; Users may only wait on it (SYNCHRONIZE).
-const QUIESCE_SD: &str = "D:P(A;;GA;;;SY)(A;;0x00100000;;;BU)";
+/// SYSTEM full control; Users may only wait on it and read its owner
+/// (SYNCHRONIZE | READ_CONTROL): trays honour the event only when SYSTEM or
+/// Administrators own it, so without READ_CONTROL no tray could ever check.
+const QUIESCE_SD: &str = "D:P(A;;GA;;;SY)(A;;0x00120000;;;BU)";
 
 #[link(name = "ntdll")]
 extern "system" {
