@@ -4,9 +4,9 @@
 //! working sheet with per-app progress -> result. A second tab lists removed
 //! apps with a Restore button.
 use crate::gui::icons::Icon;
-use crate::gui::theme::{self, Tone};
-use crate::gui::widgets::anim;
+use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
+use crate::gui::widgets::{anim, progress};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
@@ -81,6 +81,10 @@ pub struct State {
     block_again: bool,
     sheet: Sheet,
     details: bool,
+    /// Groups whose list is unfolded (Recommended starts open).
+    open: Vec<Group>,
+    /// Groups showing every row instead of the first few.
+    expanded: Vec<Group>,
     journal: Vec<Batch>,
     restoring: Option<u16>,
     /// Machine-wide setting result, arrives just before the batch result.
@@ -105,6 +109,8 @@ impl Default for State {
             block_again: false,
             sheet: Sheet::None,
             details: false,
+            open: vec![Group::Recommended],
+            expanded: Vec::new(),
             journal: Vec::new(),
             restoring: None,
             policy: None,
@@ -132,6 +138,8 @@ pub enum Msg {
     SetTab(Tab),
     Toggle(u16),
     ToggleGroup(Group),
+    ToggleOpen(Group),
+    ToggleMore(Group),
     ToggleBlock,
     Review,
     Cancel,
@@ -310,6 +318,14 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             Task::none()
         }
+        Msg::ToggleOpen(g) => {
+            flip(&mut state.open, g);
+            Task::none()
+        }
+        Msg::ToggleMore(g) => {
+            flip(&mut state.expanded, g);
+            Task::none()
+        }
         Msg::Frame(now) => {
             state.now = now;
             Task::none()
@@ -414,6 +430,18 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
         }
     }
+}
+
+fn flip(list: &mut Vec<Group>, g: Group) {
+    if let Some(pos) = list.iter().position(|x| *x == g) {
+        list.remove(pos);
+    } else {
+        list.push(g);
+    }
+}
+
+fn pal(ctx: &Ctx) -> Palette {
+    Palette::of(ctx.palette.mode)
 }
 
 fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
@@ -529,7 +557,7 @@ fn count_text(ctx: &Ctx, n: usize, one: &str, many: &str) -> String {
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     let header = widgets::page_header(
         p,
         ctx.t("Clean up apps"),
@@ -574,7 +602,7 @@ pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>>
 }
 
 fn loading_state<'a>(state: &State, ctx: &Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     container(
         column![
             anim::spinner(32.0, p.text_muted, state.spin.elapsed_at(state.now)),
@@ -590,7 +618,7 @@ fn loading_state<'a>(state: &State, ctx: &Ctx) -> Element<'a, Message> {
 }
 
 fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     match &state.scan {
         Scan::Loading if state.groups.is_empty() => loading_state(state, ctx),
         Scan::Failed(technical) => column![
@@ -639,7 +667,7 @@ pub fn footer<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>
 
 /// Selected count plus the one primary action.
 fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     let n = state.selected.len();
     let can = n > 0 && !ctx.busy;
     let button_label = if n == 0 {
@@ -701,14 +729,17 @@ fn group_text(group: Group) -> (&'static str, &'static str, Icon) {
     }
 }
 
+/// Rows shown before "Show more" in one group.
+const GROUP_ROWS: usize = 8;
+
 fn group_card<'a>(
     state: &'a State,
     ctx: &'a Ctx,
     group: Group,
     members: &'a [u16],
 ) -> Element<'a, Message> {
-    let p = ctx.palette;
-    let (title, subtitle, icon) = group_text(group);
+    let p = pal(ctx);
+    let (title, subtitle, _) = group_text(group);
     let chosen = members
         .iter()
         .filter(|i| state.selected.contains(i))
@@ -724,60 +755,80 @@ fn group_card<'a>(
         .t("{a} of {b} selected")
         .replace("{a}", &chosen.to_string())
         .replace("{b}", &members.len().to_string());
-    let head = row![
-        widgets::checkbox(p, check, None, Some(wrap(Msg::ToggleGroup(group)))),
-        widgets::list_button(
-            p,
-            row![
-                widgets::icon_badge(p, icon, Tone::Neutral),
-                column![
-                    widgets::h2(p, ctx.t(title)),
-                    widgets::small(p, ctx.t(subtitle))
-                ]
-                .spacing(theme::S1)
-                .width(Length::Fill),
-                widgets::small(p, count),
-            ]
-            .spacing(theme::S3)
-            .align_y(Alignment::Center),
-            wrap(Msg::ToggleGroup(group)),
-        ),
-    ]
-    .spacing(theme::S2)
-    .align_y(Alignment::Center);
-    let mut col = column![head].spacing(theme::S1);
+    let open = state.open.contains(&group);
+    let expanded = state.expanded.contains(&group);
+    let mut body = column![].spacing(theme::S1);
+    body = body.push(container(widgets::small(p, ctx.t(subtitle))).padding([theme::S1, theme::S4]));
     if group == Group::Gaming {
-        col = col.push(widgets::inline_notice(
+        body = body.push(widgets::inline_notice(
             p,
             Tone::Warn,
             ctx.t("Game Bar recording and Xbox games may stop working"),
         ));
     }
-    for &index in members {
+    for &index in widgets::limited(members, GROUP_ROWS, expanded) {
         let app = app_of(index);
-        let mut line = row![widgets::checkbox(
+        let box_ = widgets::checkbox(
             p,
             state.selected.contains(&index).into(),
-            Some(ctx.t(app.name)),
+            None,
             Some(wrap(Msg::Toggle(index))),
-        )]
-        .spacing(theme::S3)
-        .align_y(Alignment::Center);
-        if app.store_id.is_none() {
-            line = line.push(widgets::pill(
-                p,
-                ctx.t("Can't be restored automatically"),
-                Tone::Warn,
-            ));
-        }
-        col = col.push(
-            container(line)
-                .height(theme::CONTROL)
-                .center_y(theme::CONTROL)
-                .padding([0.0, theme::S2]),
         );
+        // A quiet note instead of a loud pill: muted icon plus small text.
+        let (note, trailing): (Option<String>, Element<'a, Message>) = if app.store_id.is_none() {
+            (
+                Some(ctx.t("Can't be restored automatically")),
+                row![widgets::icon(Icon::Info, 16.0, p.text_muted), box_]
+                    .spacing(theme::S3)
+                    .align_y(Alignment::Center)
+                    .into(),
+            )
+        } else {
+            (None, box_)
+        };
+        body = body.push(widgets::row_item(
+            p,
+            Some(Icon::Package),
+            ctx.t(app.name),
+            note,
+            trailing,
+            Some(wrap(Msg::Toggle(index))),
+        ));
     }
-    widgets::card(p, col).padding(theme::S3).into()
+    if members.len() > GROUP_ROWS {
+        let label = if expanded {
+            ctx.t("Show less")
+        } else {
+            ctx.t("Show {n} more")
+                .replace("{n}", &(members.len() - GROUP_ROWS).to_string())
+        };
+        body = body.push(widgets::show_more_button(
+            p,
+            label,
+            wrap(Msg::ToggleMore(group)),
+        ));
+    }
+    row![
+        container(widgets::checkbox(
+            p,
+            check,
+            None,
+            Some(wrap(Msg::ToggleGroup(group)))
+        ))
+        .padding([0.0, theme::S2])
+        .height(theme::CONTROL + theme::S2)
+        .center_y(theme::CONTROL + theme::S2),
+        widgets::collapsible(
+            p,
+            ctx.t(title),
+            Some(count),
+            open,
+            wrap(Msg::ToggleOpen(group)),
+            body,
+        ),
+    ]
+    .align_y(Alignment::Start)
+    .into()
 }
 
 // ---- removed apps tab ---------------------------------------------------
@@ -792,7 +843,7 @@ fn ago(ctx: &Ctx, t: u64) -> String {
 }
 
 fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     if state.removed.is_empty() {
         return widgets::empty_state(
             p,
@@ -802,61 +853,48 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             None,
         );
     }
-    let mut col = column![].spacing(theme::S1);
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for &(index, t) in &state.removed {
         let app = app_of(index);
         let restoring = state.restoring == Some(index);
-        let mut info = column![
-            widgets::body(p, ctx.t(app.name)),
-            widgets::small(p, ago(ctx, t))
-        ]
-        .spacing(theme::S1);
-        let control: Element<'a, Message> = if app.store_id.is_none() {
-            info = info.push(widgets::small(
-                p,
-                ctx.t("You can look for it in the Microsoft Store yourself."),
-            ));
-            widgets::pill(p, ctx.t("Can't be restored automatically"), Tone::Warn)
-        } else {
-            let label = if restoring {
-                ctx.t("Restoring…")
-            } else {
-                ctx.t("Restore")
-            };
-            let enabled = state.restoring.is_none() && !ctx.busy;
-            let button = widgets::action(
-                p,
-                ButtonKind::Secondary,
-                label,
-                (!restoring).then_some(Icon::Undo),
-                enabled.then(|| wrap(Msg::Restore(index))),
-            );
-            if restoring {
-                row![
-                    anim::spinner(18.0, p.text_muted, state.spin.elapsed_at(state.now)),
-                    button
-                ]
-                .spacing(theme::S2)
-                .align_y(Alignment::Center)
-                .into()
-            } else {
-                button
-            }
-        };
-        col = col.push(
-            container(
-                row![
-                    widgets::icon_badge(p, Icon::Package, Tone::Neutral),
-                    info.width(Length::Fill),
-                    control
-                ]
-                .spacing(theme::S3)
-                .align_y(Alignment::Center),
+        let (subtitle, trailing): (String, Element<'a, Message>) = if app.store_id.is_none() {
+            (
+                format!(
+                    "{} - {}",
+                    ago(ctx, t),
+                    ctx.t("You can look for it in the Microsoft Store yourself.")
+                ),
+                widgets::icon(Icon::Info, 16.0, p.text_muted),
             )
-            .padding([theme::S2, theme::S3]),
-        );
+        } else if restoring {
+            (
+                ago(ctx, t),
+                anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
+            )
+        } else {
+            let enabled = state.restoring.is_none() && !ctx.busy;
+            let items = if enabled {
+                vec![(
+                    Icon::Undo,
+                    ctx.t("Restore"),
+                    wrap(Msg::Restore(index)),
+                    false,
+                )]
+            } else {
+                Vec::new()
+            };
+            (ago(ctx, t), widgets::overflow_menu(p, items))
+        };
+        rows.push(widgets::row_item(
+            p,
+            Some(Icon::Package),
+            ctx.t(app.name),
+            Some(subtitle),
+            trailing,
+            None,
+        ));
     }
-    widgets::card(p, col).padding(theme::S3).into()
+    widgets::group(p, ctx.t("Removed apps"), None, None, rows)
 }
 
 // ---- sheets --------------------------------------------------------------
@@ -884,7 +922,7 @@ fn scroll_list<'a>(
 }
 
 fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     let indices: Vec<u16> = state.selected.iter().copied().collect();
     let n = indices.len();
     let mut list = column![].spacing(theme::S2);
@@ -988,7 +1026,7 @@ fn working_sheet<'a>(
     items: &'a [(u16, Step)],
     ctx: &'a Ctx,
 ) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     let finished = items
         .iter()
         .filter(|(_, s)| matches!(s, Step::Done(..)))
@@ -1001,7 +1039,7 @@ fn working_sheet<'a>(
                 widgets::icon(Icon::Package, 18.0, p.text_muted),
                 ctx.t("Waiting"),
             ),
-            Step::Working => (anim::spinner(18.0, p.text, spin), ctx.t("Removing…")),
+            Step::Working => (anim::spinner(20.0, p.text, spin), ctx.t("Removing…")),
             Step::Done(ItemResult::Removed, at) => (
                 anim::check_draw(
                     18.0,
@@ -1045,7 +1083,7 @@ fn working_sheet<'a>(
             p,
             ctx.t("Please keep this window open. This can take a few minutes.")
         ),
-        widgets::bar(p, ratio, Tone::Brand),
+        progress::bar_eased(p, ratio, Tone::Brand),
         scroll_list(p, list, 300.0),
     ]
     .spacing(theme::S3)
@@ -1080,7 +1118,7 @@ fn result_block<'a>(
 }
 
 fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     let t = anim::Clock::at(done.at).progress_at(anim::SLOW, state.now);
     let mut col = column![].spacing(theme::S3);
     let mut technical: Vec<String> = Vec::new();
@@ -1158,7 +1196,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
     if done.asked_to_block {
         let note: Element<'a, Message> = match (done.policy_ok, done.user_ok) {
             (_, None) => row![
-                anim::spinner(18.0, p.text_muted, state.spin.elapsed_at(state.now)),
+                anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
                 widgets::muted(p, ctx.t("Asking Windows not to add suggested apps…"))
             ]
             .spacing(theme::S3)
@@ -1201,7 +1239,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
 
 /// "More details" expander with the raw lines (closed by default).
 fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a, Message> {
-    let p = ctx.palette;
+    let p = pal(ctx);
     let mut block = column![].spacing(theme::S1);
     for line in lines {
         block = block.push(widgets::small(p, line));
