@@ -42,6 +42,17 @@ pub(super) fn decode(id: ProbeId, bytes: &[u8]) -> Result<Evidence, UnknownReaso
         ProbeId::Proxy => parse!(Proxy),
         ProbeId::Vpn => parse!(Vpn),
         ProbeId::Permissions => parse!(Permissions),
+        ProbeId::OsSupport => parse!(OsSupport),
+        ProbeId::SecureBootCerts => parse!(SecureBootCerts),
+        ProbeId::DefenderProtection => parse!(DefenderProtection),
+        ProbeId::SmartScreen => parse!(SmartScreen),
+        ProbeId::UpdatePolicy => parse!(UpdatePolicy),
+        ProbeId::LegacyFeatures => parse!(LegacyFeatures),
+        ProbeId::HostsFile => parse!(HostsFile),
+        ProbeId::Persistence => parse!(Persistence),
+        ProbeId::AccountHygiene => parse!(AccountHygiene),
+        ProbeId::Sharing => parse!(Sharing),
+        ProbeId::FirewallRules => parse!(FirewallRules),
     }
 }
 
