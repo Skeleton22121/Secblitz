@@ -1,7 +1,14 @@
-//! Score ring drawn on a canvas. OWNER: design-system agent.
+//! Score ring drawn on a canvas.
+//!
+//! A thin, calm ring: a barely-there track, a round-capped arc in the status
+//! tone, and the number in the middle. The arc eases to a new value on the
+//! Fluent decelerate curve ([`anim::SLOW`]); with [`ring_counting`] the number
+//! counts up in step with it.
 //!
 //! The geometry lives in a `canvas::Cache`: it is rebuilt only when the
-//! value, label, tone or theme changes, never on hover or unrelated redraws.
+//! shown value, label, tone or theme changes, never on hover or unrelated
+//! redraws. The widget asks for redraws only while it is tweening, so it
+//! costs nothing at rest.
 use super::anim;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
@@ -20,9 +27,17 @@ pub struct Ring {
     pub caption: String,
 }
 
-/// Shown ratio bits, tone, hash of label + caption, theme mode. The text is
-/// hashed, not cloned, so an idle redraw allocates nothing.
-type RingKey = (u32, Tone, u64, theme::Mode);
+/// Shown ratio bits, tone, hash of label + caption, theme mode, shown count.
+/// The text is hashed, not cloned, so an idle redraw allocates nothing.
+type RingKey = (u32, Tone, u64, theme::Mode, i64);
+
+/// Ring plus the optional number that counts up inside it.
+struct Counted {
+    ring: Ring,
+    /// When set, the centre label is this number, counted up from the one
+    /// shown before; `ring.label` is ignored.
+    count: Option<i64>,
+}
 
 /// Canvas state: the cached geometry and the inputs it was built from.
 #[derive(Default)]
@@ -33,10 +48,18 @@ pub struct RingState {
     shown: f32,
     from: f32,
     target: f32,
+    shown_n: i64,
+    from_n: i64,
+    target_n: i64,
     start: Option<std::time::Instant>,
 }
 
-impl canvas::Program<Message> for Ring {
+/// Stroke width of the arc for a ring of `size` px: thin and calm.
+pub fn stroke_width(size: f32) -> f32 {
+    (size * 0.045).clamp(4.0, 9.0)
+}
+
+impl canvas::Program<Message> for Counted {
     type State = RingState;
     fn update(
         &self,
@@ -48,24 +71,30 @@ impl canvas::Program<Message> for Ring {
         let iced::Event::Window(iced::window::Event::RedrawRequested(now)) = event else {
             return None;
         };
-        let target = self.ratio.clamp(0.0, 1.0);
-        if (state.target - target).abs() > f32::EPSILON {
+        let target = self.ring.ratio.clamp(0.0, 1.0);
+        let target_n = self.count.unwrap_or(0);
+        if (state.target - target).abs() > f32::EPSILON || state.target_n != target_n {
             state.from = state.shown;
+            state.from_n = state.shown_n;
             state.target = target;
+            state.target_n = target_n;
             state.start = Some(*now);
         }
         let start = state.start?;
         if anim::reduced() {
             state.start = None;
             state.shown = target;
+            state.shown_n = target_n;
             return Some(canvas::Action::request_redraw());
         }
         let t = now.saturating_duration_since(start).as_secs_f32() / anim::SLOW.as_secs_f32();
         if t >= 1.0 {
             state.start = None;
             state.shown = target;
+            state.shown_n = target_n;
         } else {
             state.shown = anim::ring_fill(state.from, target, t);
+            state.shown_n = anim::count_up_int(state.from_n, target_n, t);
         }
         Some(canvas::Action::request_redraw())
     }
@@ -79,34 +108,50 @@ impl canvas::Program<Message> for Ring {
     ) -> Vec<Geometry> {
         use std::hash::{Hash, Hasher};
         let mut text = std::collections::hash_map::DefaultHasher::new();
-        self.label.hash(&mut text);
-        self.caption.hash(&mut text);
-        let key = (state.shown.to_bits(), self.tone, text.finish(), self.p.mode);
+        self.ring.label.hash(&mut text);
+        self.ring.caption.hash(&mut text);
+        let key = (
+            state.shown.to_bits(),
+            self.ring.tone,
+            text.finish(),
+            self.ring.p.mode,
+            if self.count.is_some() {
+                state.shown_n
+            } else {
+                i64::MIN
+            },
+        );
         if state.key.borrow().as_ref() != Some(&key) {
             state.cache.clear();
             *state.key.borrow_mut() = Some(key);
         }
         vec![state.cache.draw(renderer, bounds.size(), |frame| {
-            self.paint(frame, state.shown)
+            let label = match self.count {
+                Some(_) => state.shown_n.to_string(),
+                None => self.ring.label.clone(),
+            };
+            self.ring.paint(frame, state.shown, label);
         })]
     }
 }
 
 impl Ring {
-    fn paint(&self, frame: &mut canvas::Frame, ratio: f32) {
-        let bounds = Rectangle::with_size(frame.size());
+    fn paint(&self, frame: &mut canvas::Frame, ratio: f32, label: String) {
+        let size = frame.width().min(frame.height());
         let center = frame.center();
-        let radius = bounds.width.min(bounds.height) / 2.0 - 10.0;
-        let track = Path::circle(center, radius);
+        let w = stroke_width(size);
+        let radius = size / 2.0 - w / 2.0 - 2.0;
+        // A whisper of the text colour: reads as a track on both bg and surface.
         frame.stroke(
-            &track,
+            &Path::circle(center, radius),
             Stroke::default()
-                .with_width(12.0)
-                .with_color(self.p.surface_alt),
+                .with_width(w)
+                .with_color(self.p.text.scale_alpha(0.07)),
         );
         let start = -std::f32::consts::FRAC_PI_2;
         let sweep = std::f32::consts::TAU * ratio.clamp(0.0, 1.0);
-        if sweep > 0.0 {
+        let tone = self.p.tone(self.tone);
+        if sweep > 0.001 {
             let arc = Path::new(|b| {
                 b.arc(Arc {
                     center,
@@ -118,13 +163,13 @@ impl Ring {
             frame.stroke(
                 &arc,
                 Stroke::default()
-                    .with_width(12.0)
-                    .with_color(self.p.tone(self.tone))
+                    .with_width(w)
+                    .with_color(tone)
                     .with_line_cap(canvas::LineCap::Round),
             );
         }
         frame.fill_text(Text {
-            content: self.label.clone(),
+            content: label,
             position: Point::new(center.x, center.y - 8.0),
             color: self.p.text,
             size: theme::DISPLAY.into(),
@@ -146,9 +191,34 @@ impl Ring {
     }
 }
 
+/// The ring with `ring.label` shown as given (the page may count it up).
 pub fn ring<'a>(ring: Ring, size: f32) -> Element<'a, Message> {
-    canvas::Canvas::new(ring)
+    canvas::Canvas::new(Counted { ring, count: None })
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
         .into()
+}
+
+/// The ring whose centre number counts up (and down) to `number` together
+/// with the arc, so the page keeps no count-up state. `ring.label` is ignored.
+pub fn ring_counting<'a>(ring: Ring, number: i64, size: f32) -> Element<'a, Message> {
+    canvas::Canvas::new(Counted {
+        ring,
+        count: Some(number),
+    })
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stroke_is_thin_and_bounded() {
+        assert_eq!(stroke_width(40.0), 4.0);
+        assert!(stroke_width(176.0) < 9.0 && stroke_width(176.0) > 6.0);
+        assert_eq!(stroke_width(1000.0), 9.0);
+    }
 }
