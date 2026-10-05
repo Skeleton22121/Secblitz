@@ -92,7 +92,7 @@ pub fn local_day(t: u64) -> u64 {
 
 /// `t` shifted to local wall-clock time (still counted from the Unix epoch).
 #[cfg(windows)]
-fn local_seconds(t: u64) -> u64 {
+pub fn local_seconds(t: u64) -> u64 {
     use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
     use windows_sys::Win32::System::Time::{
         FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
@@ -121,7 +121,7 @@ fn local_seconds(t: u64) -> u64 {
 }
 
 #[cfg(not(windows))]
-fn local_seconds(t: u64) -> u64 {
+pub fn local_seconds(t: u64) -> u64 {
     t
 }
 
