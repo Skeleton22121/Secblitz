@@ -2,6 +2,7 @@ pub mod actions;
 pub mod debloat;
 pub mod diagnostics;
 pub mod engine;
+pub mod filter;
 pub mod hardening;
 pub mod model;
 pub mod operations;
