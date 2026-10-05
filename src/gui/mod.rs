@@ -169,6 +169,10 @@ pub enum Message {
     ToastTick(std::time::Instant),
     /// The toast's exit animation has finished: remove it.
     ToastGone,
+    /// Frame clock of the page entrance (only while it runs).
+    PageFrame(std::time::Instant),
+    /// Tab / Shift+Tab: move keyboard focus between buttons.
+    Tab(bool),
     Home(home::Msg),
     Fixes(fixes::Msg),
     Fix(fixflow::Msg),
@@ -192,6 +196,14 @@ pub struct App {
     toast_seen: Option<(String, std::time::Instant)>,
     /// The toast is sliding out; it is removed on `ToastGone`.
     toast_leaving: bool,
+    /// When the running page entrance began (`None` = settled).
+    entered: Option<std::time::Instant>,
+    /// Eased 0..1 progress of the entrance (1 = settled).
+    enter_t: f32,
+    /// History, Clean up apps, Settings: loaded in the background once.
+    warmed: [bool; 3],
+    /// A background load of that page is running (no duplicate loads).
+    flight: [bool; 3],
 }
 
 /// Write the history entry and the tray status off the UI thread: both fsync
@@ -312,6 +324,10 @@ impl App {
             settings: Default::default(),
             toast_seen: None,
             toast_leaving: false,
+            entered: None,
+            enter_t: 1.0,
+            warmed: [false; 3],
+            flight: [false; 3],
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
@@ -323,8 +339,30 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Navigate(page) => {
+                if page == self.page {
+                    return Task::none();
+                }
                 self.page = page;
-                self.enter_page(page)
+                self.begin_entrance();
+                Task::batch([
+                    self.enter_page(page),
+                    // A new page starts at its top.
+                    iced::widget::operation::snap_to(
+                        PAGE_SCROLL,
+                        iced::widget::operation::RelativeOffset::START,
+                    ),
+                ])
+            }
+            Message::PageFrame(now) => {
+                self.step_entrance(now);
+                Task::none()
+            }
+            Message::Tab(back) => {
+                if back {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                }
             }
             Message::CheckNow => {
                 if self.ctx.checking.is_some() || self.ctx.busy {
@@ -390,10 +428,25 @@ impl App {
             Message::Home(m) => home::update(&mut self.home, m, &mut self.ctx),
             Message::Fixes(m) => fixes::update(&mut self.fixes, m, &mut self.ctx),
             Message::Fix(m) => fixflow::update(&mut self.fix, m, &mut self.ctx),
-            Message::Debloat(m) => debloat::update(&mut self.debloat, m, &mut self.ctx),
+            Message::Debloat(m) => {
+                if matches!(m, debloat::Msg::Scanned(_)) {
+                    self.flight[WARM_DEBLOAT] = false;
+                }
+                debloat::update(&mut self.debloat, m, &mut self.ctx)
+            }
             Message::Tools(m) => tools::update(&mut self.tools, m, &mut self.ctx),
-            Message::History(m) => history::update(&mut self.history, m, &mut self.ctx),
-            Message::Settings(m) => settings::update(&mut self.settings, m, &mut self.ctx),
+            Message::History(m) => {
+                if matches!(m, history::Msg::Loaded(_)) {
+                    self.flight[WARM_HISTORY] = false;
+                }
+                history::update(&mut self.history, m, &mut self.ctx)
+            }
+            Message::Settings(m) => {
+                if matches!(m, settings::Msg::Loaded { .. }) {
+                    self.flight[WARM_SETTINGS] = false;
+                }
+                settings::update(&mut self.settings, m, &mut self.ctx)
+            }
         }
     }
 
@@ -443,10 +496,18 @@ impl App {
             }
             E::History(_) => {}
         }
+        // The engine just opened or a check just finished: warm the other
+        // pages in the background so navigating to them is instant.
+        let warm = if matches!(&event, E::Opened(Ok(_)) | E::Checked(_)) {
+            self.preload_all()
+        } else {
+            Task::none()
+        };
         // Let the flows react (fix result card, history list).
         Task::batch([
             fixflow::on_worker(&mut self.fix, &event, &mut self.ctx),
             history::on_worker(&mut self.history, &event, &mut self.ctx),
+            warm,
         ])
     }
 
@@ -514,14 +575,95 @@ impl App {
         }
     }
 
-    /// Load whatever a page needs when it becomes the visible one.
+    /// Load whatever a page needs when it becomes the visible one. A page
+    /// that was already warmed in the background is refreshed silently (its
+    /// data stays on screen), never reset to a spinner.
     fn enter_page(&mut self, page: Page) -> Task<Message> {
         match page {
-            Page::History => history::on_enter(&mut self.history, &mut self.ctx),
-            Page::Debloat => debloat::on_enter(&mut self.debloat, &mut self.ctx),
-            Page::Settings => settings::on_enter(&mut self.settings, &mut self.ctx),
+            Page::History => self.warm(WARM_HISTORY),
+            Page::Debloat => self.warm(WARM_DEBLOAT),
+            Page::Settings => self.warm(WARM_SETTINGS),
             _ => Task::none(),
         }
+    }
+
+    /// Start (or silently refresh) the background load of one warmable page,
+    /// unless one is already running.
+    fn warm(&mut self, which: usize) -> Task<Message> {
+        if self.flight[which] {
+            return Task::none();
+        }
+        self.flight[which] = true;
+        let first = !std::mem::replace(&mut self.warmed[which], true);
+        let task = match (which, first) {
+            (WARM_HISTORY, true) => history::on_enter(&mut self.history, &mut self.ctx),
+            (WARM_HISTORY, false) => history::preload(&mut self.history, &mut self.ctx),
+            (WARM_DEBLOAT, true) => debloat::on_enter(&mut self.debloat, &mut self.ctx),
+            (WARM_DEBLOAT, false) => debloat::preload(&mut self.debloat, &mut self.ctx),
+            (_, true) => settings::on_enter(&mut self.settings, &mut self.ctx),
+            (_, false) => settings::preload(&mut self.settings, &mut self.ctx),
+        };
+        // A page that declined to load (sheet open) must not stay "in flight".
+        if self.page_declined(which) {
+            self.flight[which] = false;
+        }
+        task
+    }
+
+    /// Debloat refuses to reload under an open sheet; nothing will arrive.
+    fn page_declined(&self, which: usize) -> bool {
+        which == WARM_DEBLOAT && self.debloat_busy()
+    }
+
+    fn debloat_busy(&self) -> bool {
+        debloat::is_busy(&self.debloat)
+    }
+
+    /// Warm every page that has data to load.
+    fn preload_all(&mut self) -> Task<Message> {
+        Task::batch([
+            self.warm(WARM_HISTORY),
+            self.warm(WARM_DEBLOAT),
+            self.warm(WARM_SETTINGS),
+        ])
+    }
+
+    /// Start the short fade + rise of the incoming page.
+    fn begin_entrance(&mut self) {
+        if widgets::anim::reduced() {
+            self.finish_entrance();
+            return;
+        }
+        self.entered = Some(std::time::Instant::now());
+        self.enter_t = 0.0;
+        self.apply_fade();
+    }
+
+    fn step_entrance(&mut self, now: std::time::Instant) {
+        let Some(start) = self.entered else {
+            return;
+        };
+        let t = widgets::appear::enter_progress(start, now);
+        if t >= 1.0 {
+            self.finish_entrance();
+        } else {
+            self.enter_t = t;
+            self.apply_fade();
+        }
+    }
+
+    fn finish_entrance(&mut self) {
+        self.entered = None;
+        self.enter_t = 1.0;
+        self.ctx.palette = Palette::of(self.ctx.palette.mode);
+    }
+
+    /// The page is built from a palette faded towards the background: it
+    /// starts at 30% strength and reaches full colour with the rise.
+    fn apply_fade(&mut self) {
+        let base = Palette::of(self.ctx.palette.mode);
+        self.ctx.palette =
+            widgets::appear::fade_palette(&base, base.bg, 0.3 + 0.7 * self.enter_t);
     }
 
     /// Start the short slide-out; `ToastGone` removes the toast afterwards.
@@ -543,7 +685,8 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let p = self.ctx.palette;
+        // Chrome (sidebar, footer) keeps full colour while the page fades in.
+        let p = Palette::of(self.ctx.palette.mode);
         let content: Element<'_, Message> = match self.page {
             Page::Home => home::view(&self.home, &self.ctx),
             Page::Fixes => fixes::view(&self.fixes, &self.ctx),
@@ -553,9 +696,12 @@ impl App {
             Page::Settings => settings::view(&self.settings, &self.ctx),
         };
         // Content is centred with a readable maximum width.
-        let column_content = container(content)
-            .max_width(PAGE_MAX_WIDTH)
-            .width(Length::Fill);
+        let column_content = widgets::appear::lift(
+            container(content)
+                .max_width(PAGE_MAX_WIDTH)
+                .width(Length::Fill),
+            widgets::appear::ENTER_RISE * (1.0 - self.enter_t),
+        );
         // A page may pin an action bar below its scrolling content.
         let footer = match self.page {
             Page::Debloat => debloat::footer(&self.debloat, &self.ctx),
@@ -588,6 +734,7 @@ impl App {
                     .padding([theme::S8, theme::S10])
                     .width(Length::Fill),
             )
+            .id(PAGE_SCROLL)
             .direction(widgets::controls::scrollbar())
             .style(widgets::controls::scroll_style(p)),
         )
@@ -647,7 +794,7 @@ impl App {
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let p = self.ctx.palette;
+        let p = Palette::of(self.ctx.palette.mode);
         let brand = row![
             widgets::brand_mark(24.0, p.text),
             text("Secblitz")
@@ -658,7 +805,7 @@ impl App {
         .spacing(theme::S3)
         .align_y(Alignment::Center)
         .padding([0.0, theme::S3]);
-        let mut nav = column![].spacing(theme::S1);
+        let mut nav = column![].spacing(NAV_GAP);
         for page in Page::ALL {
             let active = self.page == page;
             let fg = if active { p.text } else { p.text_muted };
@@ -700,17 +847,20 @@ impl App {
                         }),
                 );
             }
+            // The selected look is drawn by the sliding marker behind the
+            // list, so an item only paints its hover / press tint.
             nav = nav.push(widgets::arrow(
-                button(container(item).center_y(Length::Fill))
+                widgets::press::button(container(item).center_y(Length::Fill))
                     .width(Length::Fill)
                     .height(theme::CONTROL)
                     .padding([0.0, theme::S3])
+                    .scale(false)
+                    .focus_color(p.focus_ring)
                     .on_press(Message::Navigate(page))
                     .style(move |_, status| button::Style {
-                        background: match (active, status) {
-                            (_, button::Status::Pressed) => Some(Background::Color(p.pressed)),
-                            (true, _) => Some(Background::Color(p.selected)),
-                            (false, button::Status::Hovered) => {
+                        background: match status {
+                            button::Status::Pressed => Some(Background::Color(p.pressed)),
+                            button::Status::Hovered if !active => {
                                 Some(Background::Color(p.hover_strong))
                             }
                             _ => None,
@@ -725,6 +875,12 @@ impl App {
                     }),
             ));
         }
+        let index = Page::ALL.iter().position(|q| *q == self.page).unwrap_or(0);
+        let nav = stack![
+            widgets::slide_marker(p, index, Page::ALL.len(), theme::CONTROL, NAV_GAP),
+            nav
+        ]
+        .width(Length::Fill);
         let version = container(widgets::small(
             p,
             format!("{} {}", self.ctx.t("Version"), env!("CARGO_PKG_VERSION")),
@@ -751,8 +907,19 @@ impl App {
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
             } => Some(Message::Escape),
+            keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Tab),
+                modifiers,
+                ..
+            } => Some(Message::Tab(modifiers.shift())),
             _ => None,
         });
+        // Frames run only for the ~220 ms page entrance; idle = no redraws.
+        let entrance = if self.entered.is_some() {
+            iced::window::frames().map(Message::PageFrame)
+        } else {
+            Subscription::none()
+        };
         let toast = if self.ctx.toast.is_some() && !self.toast_leaving {
             ticks_100ms().map(Message::ToastTick)
         } else {
@@ -762,6 +929,7 @@ impl App {
             escape,
             iced::window::close_requests().map(Message::CloseRequested),
             toast,
+            entrance,
             // Frame clocks run only for the page on screen: a job started on
             // Tools must not keep the whole window redrawing from another page.
             // Each page catches up on its next frame when it is shown again.
@@ -773,6 +941,15 @@ impl App {
         ])
     }
 }
+
+/// Gap between sidebar items (the marker's pitch is `CONTROL + NAV_GAP`).
+const NAV_GAP: f32 = theme::S1;
+/// Id of the page scrollable (reset to the top on navigation).
+const PAGE_SCROLL: &str = "page-scroll";
+/// Indexes into `warmed` / `flight`.
+const WARM_HISTORY: usize = 0;
+const WARM_DEBLOAT: usize = 1;
+const WARM_SETTINGS: usize = 2;
 
 /// Widest the page content grows on large windows.
 const PAGE_MAX_WIDTH: f32 = 960.0;

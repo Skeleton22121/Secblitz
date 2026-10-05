@@ -1219,3 +1219,22 @@ fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a
         .max_height(theme::DETAILS_MAX),
     )
 }
+
+/// The app list must not be reloaded under an open sheet.
+pub fn is_busy(state: &State) -> bool {
+    !matches!(state.sheet, Sheet::None)
+}
+
+/// Warm the page in the background. A list already on screen is refreshed
+/// silently; only a page without data shows its loading state.
+#[allow(clippy::items_after_test_module)]
+pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    let _ = ctx;
+    if is_busy(state) {
+        return Task::none();
+    }
+    if !matches!(state.scan, Scan::Ready) {
+        start_scan(state);
+    }
+    scan_task()
+}
