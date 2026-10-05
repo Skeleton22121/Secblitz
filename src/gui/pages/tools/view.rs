@@ -1140,7 +1140,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ctx.t("Update now"),
         ),
         Sheet::Repair(RepairKind::Check) => (
-            Icon::Scan,
+            Icon::Wrench,
             ctx.t("Check for problems?"),
             vec![
                 ctx.t("Secblitz will look at Windows for damage. Nothing is changed."),

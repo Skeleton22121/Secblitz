@@ -48,7 +48,7 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 Name: "de"; MessagesFile: "compiler:Languages\German.isl"
-Name: "pt"; MessagesFile: "compiler:Languages\Portuguese.isl"
+Name: "pt"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "it"; MessagesFile: "compiler:Languages\Italian.isl"
 
 [CustomMessages]
@@ -62,7 +62,7 @@ en.DesktopIcon=Keep Secblitz handy - create a desktop shortcut
 es.DesktopIcon=Ten Secblitz a mano: crea un acceso directo en el escritorio
 fr.DesktopIcon=Gardez Secblitz à portée de main : créez un raccourci sur le bureau
 de.DesktopIcon=Secblitz griffbereit halten – Desktop-Verknüpfung erstellen
-pt.DesktopIcon=Tenha o Secblitz à mão - criar um atalho no ambiente de trabalho
+pt.DesktopIcon=Tenha o Secblitz à mão - criar um atalho na área de trabalho
 it.DesktopIcon=Secblitz a portata di mano: crea un collegamento sul desktop
 en.LaunchSecblitz=Open Secblitz
 es.LaunchSecblitz=Abrir Secblitz
@@ -76,17 +76,17 @@ fr.TrayIcon=Afficher le bouclier Secblitz dans le coin de la barre des tâches
 de.TrayIcon=Secblitz-Schild in der Ecke der Taskleiste anzeigen
 pt.TrayIcon=Mostrar o escudo do Secblitz no canto da barra de tarefas
 it.TrayIcon=Mostra lo scudo di Secblitz nell'angolo della barra delle applicazioni
-en.Monitor=Install the optional read-only monitor (starts at next Windows boot)
-es.Monitor=Instalar el monitor opcional de solo lectura (se inicia al reiniciar Windows)
-fr.Monitor=Installer le moniteur facultatif en lecture seule (au prochain démarrage de Windows)
-de.Monitor=Optionalen schreibgeschützten Monitor installieren (ab nächstem Windows-Start)
-pt.Monitor=Instalar o monitor opcional apenas de leitura (no próximo arranque do Windows)
-it.Monitor=Installa il monitor facoltativo in sola lettura (si avvia al prossimo avvio di Windows)
+en.Monitor=Check my PC automatically in the background (from the next restart)
+es.Monitor=Comprobar mi PC automáticamente en segundo plano (desde el próximo reinicio)
+fr.Monitor=Vérifier mon PC automatiquement en arrière-plan (dès le prochain redémarrage)
+de.Monitor=Meinen PC automatisch im Hintergrund prüfen (ab dem nächsten Neustart)
+pt.Monitor=Verificar meu PC automaticamente em segundo plano (a partir da próxima reinicialização)
+it.Monitor=Controlla il mio PC automaticamente in background (dal prossimo riavvio)
 en.Failed=Secblitz maintenance failed. See the setup log. No security settings were applied.
 es.Failed=Error de mantenimiento de Secblitz. Consulte el registro. No se aplicaron ajustes de seguridad.
 fr.Failed=Échec de la maintenance Secblitz. Consultez le journal. Aucun réglage de sécurité appliqué.
 de.Failed=Secblitz-Wartung fehlgeschlagen. Siehe Protokoll. Keine Sicherheitseinstellungen angewendet.
-pt.Failed=A manutenção do Secblitz falhou. Consulte o registo. Nenhuma definição de segurança foi aplicada.
+pt.Failed=A manutenção do Secblitz falhou. Consulte o log de instalação. Nenhuma configuração de segurança foi aplicada.
 it.Failed=Manutenzione di Secblitz non riuscita. Consulta il registro di installazione. Nessuna impostazione di sicurezza è stata applicata.
 
 [Tasks]
