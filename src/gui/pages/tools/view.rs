@@ -800,7 +800,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip) -> El<'a> {
         TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
-    widgets::row_item_tinted(
+    let head = widgets::row_item_tinted(
         p,
         Some(icon),
         Some(tone),
@@ -808,7 +808,14 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip) -> El<'a> {
         Some(words),
         space::horizontal().width(0),
         None,
-    )
+    );
+    match &tip.explain {
+        // Tips only report: the third line says what the person can do.
+        Some(id) => {
+            widgets::explain::with_disclosure(ctx, "tips", id, true, widgets::explain::INDENT, head)
+        }
+        None => head,
+    }
 }
 
 // ---------------------------------------------------------------------------

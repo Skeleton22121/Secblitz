@@ -12,6 +12,7 @@ pub mod appear;
 pub mod chart;
 pub mod controls;
 pub mod cursor;
+pub mod explain;
 pub mod menu;
 pub mod parts;
 pub mod press;
