@@ -45,6 +45,17 @@ pub fn update_view(status: &secblitz::updater::UpdateStatus) -> UpdateView {
     }
 }
 
+/// What the Updates row shows. Only the installed copy can update itself
+/// (the updater refuses any other path), so a copy run from anywhere else
+/// says updates aren't set up instead of "couldn't check" forever.
+fn shown_update(installed: bool, update: Option<UpdateView>) -> Remote<UpdateView> {
+    match update {
+        _ if !installed => Remote::Ready(UpdateView::Off),
+        Some(view) => Remote::Ready(view),
+        None => Remote::Failed,
+    }
+}
+
 /// A change waiting for the person's yes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirm {
@@ -193,10 +204,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Ok(on) => Remote::Ready(on),
                 Err(_) => Remote::Failed,
             };
-            state.update = match update {
-                Some(view) => Remote::Ready(view),
-                None => Remote::Failed,
-            };
+            state.update = shown_update(state.installed, update);
             Task::none()
         }
         Msg::SetTheme(choice) => {
@@ -630,6 +638,23 @@ mod tests {
             UpdateView::Unknown
         );
         assert_eq!(update_view(&status(O::NotConfigured, 0)), UpdateView::Off);
+    }
+
+    #[test]
+    fn a_copy_that_is_not_installed_says_updates_are_not_set_up() {
+        assert!(matches!(
+            shown_update(false, Some(UpdateView::Unknown)),
+            Remote::Ready(UpdateView::Off)
+        ));
+        assert!(matches!(
+            shown_update(false, None),
+            Remote::Ready(UpdateView::Off)
+        ));
+        assert!(matches!(
+            shown_update(true, Some(UpdateView::Unknown)),
+            Remote::Ready(UpdateView::Unknown)
+        ));
+        assert!(matches!(shown_update(true, None), Remote::Failed));
     }
 
     #[test]
