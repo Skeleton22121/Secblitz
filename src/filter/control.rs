@@ -131,6 +131,19 @@ pub fn resumed_config(mut config: Config) -> Config {
     config
 }
 
+/// Runs every step even when an earlier one failed, and returns the first
+/// error. Uninstall must never stop halfway.
+pub fn run_all(steps: Vec<Box<dyn FnOnce() -> anyhow::Result<()> + '_>>) -> anyhow::Result<()> {
+    let mut first = Ok(());
+    for step in steps {
+        let result = step();
+        if first.is_ok() {
+            first = result;
+        }
+    }
+    first
+}
+
 #[cfg(windows)]
 mod glue {
     use super::*;
@@ -225,9 +238,13 @@ mod glue {
     /// belongs to `maintenance.ps1` (installer), which deletes it after this.
     pub fn remove_everything() -> Result<()> {
         require_admin()?;
-        routing::remove_rule().context("Remove the web protection rule")?;
-        scm::delete().context("Remove the web protection service")?;
-        scm::remove_dir()
+        // A failed rule removal still deletes the service and folder; the
+        // rule's Quad9 fallback servers keep lookups working.
+        super::run_all(vec![
+            Box::new(|| routing::remove_rule().context("Remove the web protection rule")),
+            Box::new(|| scm::delete().context("Remove the web protection service")),
+            Box::new(scm::remove_dir),
+        ])
     }
 
     /// `secblitz filter install`: folders first, then the registration.
@@ -243,6 +260,28 @@ pub use glue::{apply_switches, install_all, pause_for, reconcile, remove_everyth
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn run_all_runs_every_step_and_keeps_first_error() {
+        use std::cell::Cell;
+        let ran = Cell::new(0);
+        let r = super::run_all(vec![
+            Box::new(|| {
+                ran.set(ran.get() + 1);
+                Err(anyhow::anyhow!("first"))
+            }),
+            Box::new(|| {
+                ran.set(ran.get() + 1);
+                Err(anyhow::anyhow!("second"))
+            }),
+            Box::new(|| {
+                ran.set(ran.get() + 1);
+                Ok(())
+            }),
+        ]);
+        assert_eq!(ran.get(), 3);
+        assert_eq!(r.unwrap_err().to_string(), "first");
+    }
+
     use super::*;
 
     fn ip(s: &str) -> IpAddr {
