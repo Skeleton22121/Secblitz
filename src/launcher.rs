@@ -132,6 +132,7 @@ mod imp {
                 RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
                 KEY_SET_VALUE, REG_DWORD,
             },
+            SystemInformation::GetSystemDirectoryW,
             Threading::{
                 CreateEventW, CreateMutexW, GetCurrentProcess, GetExitCodeProcess, GetProcessId,
                 OpenProcessToken, ResetEvent, WaitForMultipleObjects, WaitForSingleObject,
@@ -190,12 +191,20 @@ mod imp {
             .collect();
         let params = wide(&args.join(" "));
         let verb = wide("runas");
+        // Start in System32, never in the launcher's current directory, which
+        // a standard user chooses.
+        let mut dir = vec![0u16; 32768];
+        let n = unsafe { GetSystemDirectoryW(dir.as_mut_ptr(), dir.len() as u32) } as usize;
+        ensure!(n > 0 && n < dir.len(), "Cannot resolve the System32 directory");
+        dir.truncate(n);
+        dir.push(0);
         let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
         info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
         info.fMask = 0x40 | 0x100; // SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
         info.lpVerb = verb.as_ptr();
         info.lpFile = exe.as_ptr();
         info.lpParameters = params.as_ptr();
+        info.lpDirectory = dir.as_ptr();
         info.nShow = SW_SHOWNORMAL;
         if unsafe { ShellExecuteExW(&mut info) } == 0 {
             if unsafe { GetLastError() } == ERROR_CANCELLED {
