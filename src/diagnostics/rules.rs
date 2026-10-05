@@ -117,6 +117,76 @@ fn inventory<T>(id: &str, value: &Reading<Inventory<T>>, detail: &str) -> Assess
     )
 }
 
+const DAY: u64 = 86_400;
+/// A quality update is expected at least monthly (Patch Tuesday plus slack).
+const UPDATE_MAX_AGE_DAYS: u64 = 35;
+const BACKUP_MAX_AGE_DAYS: u64 = 45;
+
+/// Age of the newest plausible timestamp, in whole days. Zero and future dates
+/// (clock errors) are ignored rather than trusted.
+fn newest_age_days(dates: impl Iterator<Item = u64>, now: u64) -> Option<u64> {
+    dates
+        .filter(|d| *d > 0 && *d <= now + DAY)
+        .max()
+        .map(|d| now.saturating_sub(d) / DAY)
+}
+
+/// Freshness from local Windows Update history only: the newest successful
+/// install whose title looks like a quality update. History proves what was
+/// installed, not that nothing newer is available.
+pub(super) fn update_freshness(
+    entries: Option<&[UpdateEvent]>,
+    now: Option<u64>,
+) -> (Status, String) {
+    let (Some(entries), Some(now)) = (entries, now) else {
+        return (
+            Status::Unknown,
+            "Windows Update history could not be read, so recent updates are unknown.".into(),
+        );
+    };
+    // Operation 1 = install, result 2 = succeeded.
+    let age = newest_age_days(
+        entries
+            .iter()
+            .filter(|e| e.operation == 1 && e.result_code == 2 && e.quality_title_hint)
+            .map(|e| e.date_unix_seconds),
+        now,
+    );
+    match age {
+        Some(days) if days <= UPDATE_MAX_AGE_DAYS => (Status::Healthy, format!("The latest successful quality update in Windows Update history was installed {days} day(s) ago. History does not prove nothing newer is waiting.")),
+        Some(days) => (Status::Attention, format!("No recent security update found: the latest successful quality update in history was installed {days} days ago (more than {UPDATE_MAX_AGE_DAYS}).")),
+        None => (Status::Attention, "No recent security update found in Windows Update history (quality updates are recognized by English titles; other languages may not match).".into()),
+    }
+}
+
+/// Backup evidence: Windows Backup success events (last 90 days, supplied by
+/// the probe) and same-PC shadow copies. Neither proves what is covered or that
+/// a restore works, so this is never more than "a backup was seen".
+pub(super) fn backup_coverage(
+    events: Option<&[BackupEvent]>,
+    shadow_copies: Option<u32>,
+    now: Option<u64>,
+) -> (Status, String) {
+    let (Some(events), Some(now)) = (events, now) else {
+        return (
+            Status::Unknown,
+            "Backup history could not be read, so backups are unknown.".into(),
+        );
+    };
+    let shadows = match shadow_copies {
+        Some(0) => "No restore points on this PC.",
+        Some(_) => {
+            "This PC has restore points, but those live on the same drive and are not a backup."
+        }
+        None => "Restore points could not be counted.",
+    };
+    match newest_age_days(events.iter().map(|e| e.date_unix_seconds), now) {
+        Some(days) if days <= BACKUP_MAX_AGE_DAYS => (Status::Healthy, format!("A Windows Backup finished {days} day(s) ago. What it covers and whether a restore works are not tested. {shadows}")),
+        Some(days) => (Status::Attention, format!("No recent backup found: the last Windows Backup finished {days} days ago. {shadows}")),
+        None => (Status::Attention, format!("No backup found. Cloud backups such as OneDrive and third-party backup tools are not checked. {shadows}")),
+    }
+}
+
 pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
     use Status::*;
     let mut out = Vec::new();
@@ -129,7 +199,6 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
             };
             out.push(a("update.cached_quality", status, "Missing security/update-rollup/critical software updates, including hidden entries, are classified by WUA category GUIDs. These can include Microsoft application updates. An empty offline cache does not establish that Windows is up to date."));
             out.push(inventory("update.cache_coverage", &v.missing, "Offline metadata may be stale or absent; only the first 512 missing software updates are inspected."));
-            out.push(a("update.freshness", Unknown, "No online search or metadata refresh was performed; cache freshness is not established."));
         }
         Evidence::UpdateHistory(v) => {
             out.push(inventory("update.history_coverage", &v.entries, "At most 256 history records. Quality classification from localized titles is a hint; histories do not expose update categories."));
@@ -139,6 +208,8 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
                 Some(_) => Informational,
                 None => Unknown,
             };
+            let (freshness, detail) = update_freshness(v.entries.known().map(|x| x.items.as_slice()), super::now());
+            out.push(a("update.freshness", freshness, detail));
             out.push(a("update.failed_install", status, "Failed, aborted or partially successful installation entries need review, including entries with a quality-update title hint. A later success may supersede a failure; unresolved failure is not inferred."));
         }
         Evidence::DefenderHealth(v) => {
@@ -265,7 +336,8 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::Backup(v) => {
             out.push(a("backup.shadow_copies", if v.shadow_copy_count.known().is_some() { Informational } else { Unknown }, "Local shadow copies are same-device recovery evidence, not an independent backup."));
             out.push(inventory("backup.events", &v.success_events, "At most 64 Windows Backup success event timestamps from the last 90 days. Success-event evidence does not identify protected data or prove restore viability."));
-            out.push(a("backup.coverage", Unknown, "Backup coverage, offline/off-device copies, retention and restore verification are unassessed; configuration and event success never count as a verified restore."));
+            let (coverage, detail) = backup_coverage(v.success_events.known().map(|x| x.items.as_slice()), v.shadow_copy_count.known().copied(), super::now());
+            out.push(a("backup.coverage", coverage, detail));
         }
         Evidence::Adapters(v) => {
             out.push(inventory("network.adapters", &v.adapters, "Operational state without interface names, hardware identifiers or addresses; virtual adapters do not imply a VPN."));

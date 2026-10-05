@@ -79,6 +79,28 @@ impl std::fmt::Debug for Secret {
 /// "blocked" or "clock" and "source" does not fire on "resource". Policy is
 /// checked before busy/network because a message such as "blocked by policy"
 /// will never succeed on a retry.
+pub const ERR_USE_WINDOWS_UPDATE: &str =
+    "Updates can't be installed from this account. Open Windows Update to install them.";
+pub const ERR_UNAVAILABLE: &str = "This isn't available on this PC.";
+pub const ERR_SETTINGS_BLOCK: &str = "Your PC's settings don't allow this.";
+
+/// False when trying again cannot help (the GUI should show a different next
+/// step instead of Retry). For `ERR_USE_WINDOWS_UPDATE` the next step is an
+/// "Open Windows Update" button (`advice::NextStep::OpenWindowsUpdate`).
+#[allow(dead_code)] // consumed by the GUI integration
+pub fn is_retryable(note: &str) -> bool {
+    !matches!(
+        note,
+        ERR_USE_WINDOWS_UPDATE | ERR_UNAVAILABLE | ERR_SETTINGS_BLOCK
+    )
+}
+
+/// True when the friendly note says to finish in Windows Update itself.
+#[allow(dead_code)] // consumed by the GUI integration
+pub fn suggests_windows_update(note: &str) -> bool {
+    note == ERR_USE_WINDOWS_UPDATE
+}
+
 pub fn friendly_error(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
@@ -87,8 +109,12 @@ pub fn friendly_error(raw: &str) -> &'static str {
         .filter(|w| !w.is_empty())
         .collect();
     let word = |needles: &[&str]| words.iter().any(|w| needles.contains(w));
-    if has(&["requires windows", "not implemented", "unsupported"]) {
-        "This isn't available on this PC."
+    // Deliberate security property: only a real, interactive split-token
+    // administrator may install updates (the built-in Administrator may not).
+    if has(&["split-token"]) {
+        ERR_USE_WINDOWS_UPDATE
+    } else if has(&["requires windows", "not implemented", "unsupported"]) {
+        ERR_UNAVAILABLE
     } else if has(&["reboot", "restart"]) {
         "Restart your PC, then try again."
     } else if has(&["deferred", "readiness", "not ready", "stale", "ac/storage"]) {
@@ -96,7 +122,7 @@ pub fn friendly_error(raw: &str) -> &'static str {
     } else if has(&["unresolved", "independent verification", "interrupted"]) {
         "An earlier repair or update still needs to be checked. Restart Secblitz and try again."
     } else if word(&["policy", "opt-in", "managed", "ownership"]) || has(&["not enabled"]) {
-        "Your PC's settings don't allow this."
+        ERR_SETTINGS_BLOCK
     } else if word(&["busy", "lock", "locked", "contention"])
         || has(&[
             "another operation",
@@ -958,7 +984,9 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
 pub fn tip_advice(id: diag::ProbeId) -> &'static str {
     use diag::ProbeId as P;
     match id {
-        P::UpdateCache | P::UpdateHistory => "Install the latest Windows updates.",
+        P::UpdateCache | P::UpdateHistory => {
+            "Your PC may be missing security updates. Open Windows Update to install them."
+        }
         P::DefenderHealth | P::DefenderPolicy => "Turn on and update Windows virus protection.",
         P::SecurityProviders => "Make sure one virus protection and the firewall are on.",
         P::Management => "Your PC is managed by an organization. Ask them before changing it.",
@@ -973,7 +1001,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::BrowserExtensions => "Remove browser add-ons you don't use.",
         P::Storage => "A drive is showing signs of wear. Back up your files soon.",
         P::Ntfs => "Free up disk space or check your drive for errors.",
-        P::Backup => "Set up a regular backup of your files.",
+        P::Backup => "No backup found. Set up a regular backup of your files.",
         P::Adapters | P::Dns | P::Proxy => "Check your internet connection settings.",
         P::Vpn => "Check your VPN settings.",
         P::Permissions => "Some protected services have loose settings. A fix may be available.",
@@ -992,6 +1020,9 @@ pub struct Tip {
     pub title: &'static str,
     pub state: TipState,
     pub advice: &'static str,
+    /// What a button next to a `Look` tip should open.
+    #[allow(dead_code)] // consumed by the GUI integration
+    pub step: crate::advice::NextStep,
 }
 
 #[derive(Debug, Clone)]
@@ -1023,7 +1054,21 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         let Some(probe) = report.probes.iter().find(|p| p.id == id) else {
             continue;
         };
-        let state = tip_state(probe.status);
+        let mut state = tip_state(probe.status);
+        if id == diag::ProbeId::UpdateCache && probe.status != diag::Status::Attention {
+            // The offline cache can only add problems; whether updates are
+            // current comes from the install history.
+            if let Some(h) = report
+                .probes
+                .iter()
+                .find(|p| p.id == diag::ProbeId::UpdateHistory)
+            {
+                state = tip_state(h.status);
+                for a in &h.assessments {
+                    technical.push_str(&format!("  history {:?}: {}\n", a.status, a.detail));
+                }
+            }
+        }
         technical.push_str(&format!("{id:?}: {:?} ({})\n", probe.status, probe.source));
         for a in &probe.assessments {
             technical.push_str(&format!("  {:?}: {}\n", a.status, a.detail));
@@ -1035,6 +1080,14 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 tip_advice(id)
             } else {
                 ""
+            },
+            step: match id {
+                diag::ProbeId::UpdateCache | diag::ProbeId::UpdateHistory
+                    if state == TipState::Look =>
+                {
+                    crate::advice::NextStep::OpenWindowsUpdate
+                }
+                _ => crate::advice::NextStep::None,
             },
         });
     }
@@ -1362,6 +1415,15 @@ mod tests {
             "Restart your PC, then try again."
         );
         // Whole-word matching and policy first: no busy or network advice.
+        // Built-in Administrator: explain, and do not offer a useless Retry.
+        let raw = "Interactive split-token administrator required; service/over-the-shoulder elevation unsupported";
+        assert_eq!(friendly_error(raw), ERR_USE_WINDOWS_UPDATE);
+        assert_no_dev_terms(friendly_error(raw));
+        assert!(!is_retryable(friendly_error(raw)));
+        assert!(suggests_windows_update(friendly_error(raw)));
+        assert!(is_retryable(friendly_error(
+            "The file is locked by another operation"
+        )));
         assert_eq!(
             friendly_error("Request blocked by policy"),
             "Your PC's settings don't allow this."

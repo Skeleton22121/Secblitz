@@ -1,5 +1,13 @@
 # Invoked only through a compiled script and an allowlisted action. No journal
 # strings, paths, commands, update IDs, package IDs, or credentials enter here.
+function ServicingSourcePolicyConfigured([string]$path) {
+    if (!(Test-Path -LiteralPath $path)) { return $false }
+    $key = Get-Item -LiteralPath $path
+    foreach ($name in @('LocalSourcePath','RepairContentServerSource','UseWindowsUpdate')) {
+        if ($null -ne $key.GetValue($name, $null)) { return $true }
+    }
+    return $false
+}
 function MaintenanceGate {
     Load 'CimCmdlets'
     $os = Get-CimInstance Win32_OperatingSystem
@@ -17,8 +25,10 @@ function MaintenanceGate {
     CheckRsop 'permissions.service.wuauserv'
     # /LimitAccess blocks Windows Update, not a configured alternate repair
     # source (which can be a network share). Do not execute under such policy.
+    # Only the documented component-repair policy values count: Windows itself
+    # writes unrelated stock values (e.g. CountryCode) under ...\Policies\Servicing.
     foreach ($p in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Servicing','HKLM:\SOFTWARE\Policies\Microsoft\Windows\Servicing')) {
-        if (HasValues $p) { throw 'Configured servicing source/policy' }
+        if (ServicingSourcePolicyConfigured $p) { throw 'Configured servicing source/policy' }
     }
     if ($maintenanceKind -ceq 'defender') {
         CheckScopedPolicy 'defender.support'

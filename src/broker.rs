@@ -27,6 +27,8 @@ pub enum Reply {
     /// Restore fell back to opening the Store page for the user.
     OpenedStore,
     Unavailable,
+    /// No internet connection (install could not download). Nothing was opened.
+    Offline,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -37,6 +39,7 @@ impl Reply {
             Reply::Failed => 2,
             Reply::OpenedStore => 3,
             Reply::Unavailable => 4,
+            Reply::Offline => 5,
         }
     }
     pub fn decode(byte: u8) -> Option<Self> {
@@ -45,6 +48,7 @@ impl Reply {
             2 => Reply::Failed,
             3 => Reply::OpenedStore,
             4 => Reply::Unavailable,
+            5 => Reply::Offline,
             _ => return None,
         })
     }
@@ -427,10 +431,11 @@ mod tests {
             Reply::Failed,
             Reply::OpenedStore,
             Reply::Unavailable,
+            Reply::Offline,
         ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
-        for byte in [0u8, 5, 255] {
+        for byte in [0u8, 6, 255] {
             assert_eq!(Reply::decode(byte), None);
         }
     }
