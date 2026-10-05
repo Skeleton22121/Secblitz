@@ -2,6 +2,7 @@
 //!
 //! Every page builds its UI from these so the product looks consistent.
 //! Signatures are a contract; styling may be refined.
+pub mod anim;
 pub mod parts;
 pub mod ring;
 
