@@ -4,8 +4,9 @@
 //! Contract:
 //! - `record(dir, entry)` appends one line, keeps at most 500 lines.
 //! - `load(dir)` returns entries oldest→newest, skipping malformed lines.
-//! - `timeline(entries, engine_history, debloat_batches)` merges for display.
+//! - `timeline(entries)` merges for display (newest first, grouped by day).
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::Path;
 
 pub const FILE: &str = "checks.jsonl";
@@ -33,16 +34,48 @@ pub struct Entry {
     pub n: usize,
 }
 
+/// Append one line and keep only the newest `MAX_LINES`. The file is replaced
+/// atomically (temp file in the same folder, then rename), so a crash never
+/// leaves a half-written log.
 pub fn record(dir: &Path, entry: &Entry) -> anyhow::Result<()> {
-    // TODO(app-core): append + trim to MAX_LINES atomically.
-    let _ = (dir, entry);
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(FILE);
+    let mut lines: Vec<String> = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_owned)
+        .collect();
+    lines.push(serde_json::to_string(entry)?);
+    if lines.len() > MAX_LINES {
+        let excess = lines.len() - MAX_LINES;
+        lines.drain(..excess);
+    }
+    let tmp = dir.join(format!("{FILE}.tmp"));
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        for line in &lines {
+            file.write_all(line.as_bytes())?;
+            file.write_all(b"\n")?;
+        }
+        file.sync_all()?;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 
+/// Entries oldest→newest. Missing file, unreadable file and malformed lines
+/// all degrade to "fewer entries", never an error.
 pub fn load(dir: &Path) -> Vec<Entry> {
-    // TODO(app-core)
-    let _ = dir;
-    Vec::new()
+    let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<Entry>(l.trim()).ok())
+        .collect()
 }
 
 pub fn now() -> u64 {
@@ -50,4 +83,228 @@ pub fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// One row of the timeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    pub t: u64,
+    pub kind: Kind,
+    pub n: usize,
+    pub protected: usize,
+    pub total: usize,
+    /// How many identical back-to-back checks this row stands for (>= 1).
+    pub repeats: usize,
+}
+
+/// All items of one calendar day (UTC), newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Day {
+    /// Days since 1970-01-01.
+    pub day: u64,
+    pub items: Vec<Item>,
+}
+
+/// Merge log entries for display: newest first, grouped by day. Back-to-back
+/// checks with the same result on the same day collapse into one row so a
+/// background check every few hours never floods the list.
+pub fn timeline(entries: &[Entry]) -> Vec<Day> {
+    let mut sorted: Vec<&Entry> = entries.iter().collect();
+    sorted.sort_by(|a, b| b.t.cmp(&a.t));
+    let mut days: Vec<Day> = Vec::new();
+    for e in sorted {
+        let day = e.t / 86_400;
+        if days.last().is_none_or(|d| d.day != day) {
+            days.push(Day {
+                day,
+                items: Vec::new(),
+            });
+        }
+        let items = &mut days.last_mut().expect("day pushed").items;
+        if let Some(prev) = items.last_mut() {
+            if prev.kind == Kind::Check
+                && e.kind == Kind::Check
+                && prev.protected == e.protected
+                && prev.total == e.total
+            {
+                prev.repeats += 1;
+                continue;
+            }
+        }
+        items.push(Item {
+            t: e.t,
+            kind: e.kind,
+            n: e.n,
+            protected: e.protected,
+            total: e.total,
+            repeats: 1,
+        });
+    }
+    days
+}
+
+/// Plain English label (translation source key). `{n}` is replaced by the
+/// view after translating.
+pub fn label(kind: Kind, n: usize) -> &'static str {
+    match (kind, n) {
+        (Kind::Check, _) => "Checked your PC",
+        (Kind::Fix, 0) => "Fixed problems",
+        (Kind::Fix, 1) => "Fixed 1 problem",
+        (Kind::Fix, _) => "Fixed {n} problems",
+        (Kind::Undo, _) => "Undid your last fixes",
+        (Kind::Debloat, 0 | 1) => "Removed 1 app",
+        (Kind::Debloat, _) => "Removed {n} apps",
+        (Kind::Restore, _) => "Restored an app",
+    }
+}
+
+/// Protected ratios (0..=1) of the newest `max` entries, oldest first, for the
+/// trend line. Entries without any checks are skipped.
+pub fn trend(entries: &[Entry], max: usize) -> Vec<f32> {
+    let mut v: Vec<(u64, f32)> = entries
+        .iter()
+        .filter(|e| e.total > 0)
+        .map(|e| (e.t, e.protected.min(e.total) as f32 / e.total as f32))
+        .collect();
+    v.sort_by_key(|(t, _)| *t);
+    let skip = v.len().saturating_sub(max);
+    v.into_iter().skip(skip).map(|(_, r)| r).collect()
+}
+
+/// (year, month 1..=12, day 1..=31) for days since the Unix epoch.
+pub fn civil(days: u64) -> (i64, u32, u32) {
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn e(t: u64, kind: Kind, protected: usize, total: usize, n: usize) -> Entry {
+        Entry {
+            t,
+            kind,
+            protected,
+            total,
+            n,
+        }
+    }
+
+    #[test]
+    fn record_then_load_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), &e(10, Kind::Check, 3, 5, 0)).unwrap();
+        record(dir.path(), &e(20, Kind::Fix, 5, 5, 2)).unwrap();
+        let all = load(dir.path());
+        assert_eq!(all, vec![e(10, Kind::Check, 3, 5, 0), e(20, Kind::Fix, 5, 5, 2)]);
+        assert!(!dir.path().join("checks.jsonl.tmp").exists());
+    }
+
+    #[test]
+    fn record_trims_to_max_lines_dropping_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..(MAX_LINES as u64 + 7) {
+            record(dir.path(), &e(i, Kind::Check, 1, 2, 0)).unwrap();
+        }
+        let all = load(dir.path());
+        assert_eq!(all.len(), MAX_LINES);
+        assert_eq!(all[0].t, 7);
+        assert_eq!(all.last().unwrap().t, MAX_LINES as u64 + 6);
+    }
+
+    #[test]
+    fn load_skips_malformed_and_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load(dir.path()).is_empty());
+        let good = serde_json::to_string(&e(5, Kind::Undo, 1, 2, 0)).unwrap();
+        std::fs::write(
+            dir.path().join(FILE),
+            format!("not json\n{good}\n\n{{\"t\":1}}\n{{\"t\":1,\"kind\":\"nope\",\"protected\":0,\"total\":0}}\n"),
+        )
+        .unwrap();
+        assert_eq!(load(dir.path()), vec![e(5, Kind::Undo, 1, 2, 0)]);
+        // Recording after damage keeps only valid-looking data readable.
+        record(dir.path(), &e(6, Kind::Check, 2, 2, 0)).unwrap();
+        assert_eq!(load(dir.path()).len(), 2);
+    }
+
+    #[test]
+    fn n_defaults_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(FILE),
+            "{\"t\":1,\"kind\":\"check\",\"protected\":1,\"total\":2}\n",
+        )
+        .unwrap();
+        assert_eq!(load(dir.path())[0].n, 0);
+    }
+
+    #[test]
+    fn timeline_is_newest_first_grouped_by_day() {
+        let d = 86_400;
+        let entries = vec![
+            e(100, Kind::Check, 1, 3, 0),
+            e(d + 50, Kind::Fix, 3, 3, 2),
+            e(d + 10, Kind::Check, 1, 3, 0),
+        ];
+        let days = timeline(&entries);
+        assert_eq!(days.len(), 2);
+        assert_eq!(days[0].day, 1);
+        assert_eq!(days[0].items[0].kind, Kind::Fix);
+        assert_eq!(days[0].items[1].kind, Kind::Check);
+        assert_eq!(days[1].day, 0);
+        assert!(timeline(&[]).is_empty());
+    }
+
+    #[test]
+    fn identical_back_to_back_checks_collapse() {
+        let entries = vec![
+            e(10, Kind::Check, 2, 4, 0),
+            e(20, Kind::Check, 2, 4, 0),
+            e(30, Kind::Check, 2, 4, 0),
+            e(40, Kind::Check, 3, 4, 0),
+        ];
+        let days = timeline(&entries);
+        let items = &days[0].items;
+        assert_eq!(items.len(), 2);
+        assert_eq!((items[0].protected, items[0].repeats), (3, 1));
+        assert_eq!((items[1].t, items[1].repeats), (30, 3));
+    }
+
+    #[test]
+    fn labels_are_plain() {
+        assert_eq!(label(Kind::Check, 0), "Checked your PC");
+        assert_eq!(label(Kind::Fix, 1), "Fixed 1 problem");
+        assert_eq!(label(Kind::Fix, 3), "Fixed {n} problems");
+        assert_eq!(label(Kind::Undo, 0), "Undid your last fixes");
+        assert_eq!(label(Kind::Debloat, 12), "Removed {n} apps");
+        assert_eq!(label(Kind::Debloat, 1), "Removed 1 app");
+        assert_eq!(label(Kind::Restore, 1), "Restored an app");
+    }
+
+    #[test]
+    fn trend_takes_newest_window_oldest_first() {
+        let entries: Vec<Entry> = (0..40u64).map(|i| e(i, Kind::Check, (i % 4) as usize, 4, 0)).collect();
+        let t = trend(&entries, 30);
+        assert_eq!(t.len(), 30);
+        assert_eq!(t[0], 10.0f32 % 4.0 / 4.0);
+        assert!(trend(&[e(1, Kind::Check, 0, 0, 0)], 30).is_empty());
+    }
+
+    #[test]
+    fn civil_dates() {
+        assert_eq!(civil(0), (1970, 1, 1));
+        assert_eq!(civil(19_723), (2024, 1, 1));
+        assert_eq!(civil(20_366), (2025, 10, 5));
+        assert_eq!(civil(11_016), (2000, 2, 29));
+    }
 }
