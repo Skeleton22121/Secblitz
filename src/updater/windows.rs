@@ -9,6 +9,7 @@ use std::{
         ffi::OsStrExt,
         fs::OpenOptionsExt,
         io::{AsRawHandle, FromRawHandle},
+        process::CommandExt,
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -20,7 +21,8 @@ use windows_sys::Win32::{
     Security::{Authorization::*, *},
     Storage::FileSystem::*,
     System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        OpenProcess, QueryFullProcessImageNameW, CREATE_NO_WINDOW,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     },
     UI::Shell::{FOLDERID_ProgramData, FOLDERID_ProgramFiles, SHGetKnownFolderPath},
 };
@@ -761,7 +763,8 @@ fn child_command(path: &Path, root: &Path) -> Result<Command> {
         .env("TEMP", root)
         .env("TMP", root)
         .current_dir(root)
-        .stdin(Stdio::null());
+        .stdin(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
     Ok(command)
 }
 fn wait_read_only_child(child: &mut std::process::Child) -> Result<()> {

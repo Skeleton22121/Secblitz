@@ -235,11 +235,16 @@ pub struct State {
     bitwarden_why: Option<broker::Reply>,
     /// Already installed when the page was opened: nothing to offer.
     pub bitwarden_present: bool,
+    /// Installation is not possible from this account (checked on page enter).
+    /// The Install button is replaced by the "can't install from this account"
+    /// presentation when this is true and Bitwarden is not already installed.
+    bitwarden_not_here: bool,
     open_details: Vec<Detail>,
     personal: personal::State,
     /// Time of the latest animation frame (never read from the clock in `view`).
     now: Instant,
-    /// Zero point for the endless spinners.
+    /// Zero point for the spinners on rows that are working.
+    spin: Instant,
     /// Finished-state draw-ins that are still moving.
     shots: Vec<(Slot, Clock)>,
 }
@@ -247,6 +252,15 @@ pub struct State {
 impl std::fmt::Debug for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("tools::State").finish_non_exhaustive()
+    }
+}
+
+impl State {
+    /// Record what the status check found: `Done` means installed,
+    /// `Unavailable` that this account can't install it.
+    fn bitwarden_known(&mut self, reply: &Result<broker::Reply, String>) {
+        self.bitwarden_present = matches!(reply, Ok(broker::Reply::Done));
+        self.bitwarden_not_here = matches!(reply, Ok(broker::Reply::Unavailable));
     }
 }
 
@@ -268,9 +282,11 @@ impl Default for State {
             bitwarden: Run::Idle,
             bitwarden_why: None,
             bitwarden_present: false,
+            bitwarden_not_here: false,
             open_details: Vec::new(),
             personal: Default::default(),
             now: Instant::now(),
+            spin: Instant::now(),
             shots: Vec::new(),
         }
     }
@@ -552,7 +568,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::BitwardenKnown(reply) => {
-            state.bitwarden_present = matches!(reply, Ok(broker::Reply::Done));
+            state.bitwarden_known(&reply);
             Task::none()
         }
         Msg::ClearBitwarden => {
@@ -616,7 +632,20 @@ impl State {
     /// True while a draw-in mark is animating. Progress bars ask for their
     /// own redraws, so running jobs need no page-wide frame clock.
     fn needs_frames(&self) -> bool {
-        !self.shots.is_empty()
+        !self.shots.is_empty() || self.spinning()
+    }
+
+    /// A row shows the working spinner: a job of unknown length is running.
+    fn spinning(&self) -> bool {
+        matches!(self.scan, Run::Working)
+            || matches!(self.defender, Run::Working)
+            || matches!(self.bitwarden, Run::Working)
+            || matches!(self.updates, Updates::Looking)
+    }
+
+    /// Time on the spinners' clock, read from the last frame.
+    pub(super) fn spin_elapsed(&self) -> std::time::Duration {
+        self.now.saturating_duration_since(self.spin)
     }
 
     fn close_detail(&mut self, detail: Detail) {
@@ -728,5 +757,39 @@ mod followup_tests {
         for action in [A::UpdateDefender, A::QuickScan, A::StartMonitoring] {
             assert!(request_for(action).is_none());
         }
+    }
+
+    /// bitwarden_not_here starts false and is set correctly from BitwardenKnown replies.
+    #[test]
+    fn bitwarden_known_sets_not_here_and_present_correctly() {
+        let fresh = State::default();
+        assert!(!fresh.bitwarden_not_here, "default: not_here is false");
+        assert!(!fresh.bitwarden_present, "default: present is false");
+
+        // Unavailable: install is not possible from this account.
+        let mut state = State::default();
+        state.bitwarden_known(&Ok(broker::Reply::Unavailable));
+        assert!(!state.bitwarden_present, "Unavailable: not present");
+        assert!(state.bitwarden_not_here, "Unavailable: not_here is set");
+
+        // Done: Bitwarden is installed.
+        let mut state = State::default();
+        state.bitwarden_known(&Ok(broker::Reply::Done));
+        assert!(state.bitwarden_present, "Done: present");
+        assert!(!state.bitwarden_not_here, "Done: not_here stays false");
+
+        // NotApplicable: not installed, install is possible.
+        let mut state = State::default();
+        state.bitwarden_known(&Ok(broker::Reply::NotApplicable));
+        assert!(!state.bitwarden_present, "NotApplicable: not present");
+        assert!(!state.bitwarden_not_here, "NotApplicable: not_here is false");
+
+        // Unavailable then Done: re-entering with installed clears not_here.
+        let mut state = State::default();
+        state.bitwarden_known(&Ok(broker::Reply::Unavailable));
+        assert!(state.bitwarden_not_here);
+        state.bitwarden_known(&Ok(broker::Reply::Done));
+        assert!(state.bitwarden_present, "second call Done: present");
+        assert!(!state.bitwarden_not_here, "second call Done: not_here cleared");
     }
 }

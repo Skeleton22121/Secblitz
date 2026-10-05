@@ -15,16 +15,13 @@ use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim;
-use crate::gui::widgets::scan::{self, HeroPhase};
+use crate::gui::widgets::scan;
 use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use crate::i18n::Lang;
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::widget::Tree;
-use iced::advanced::{renderer, Clipboard, Shell, Widget};
-use iced::widget::{column, container, row, space, stack, Column};
-use iced::{mouse, window, Alignment, Background, Border, Element, Event, Length};
-use iced::{Rectangle, Renderer, Size, Task, Theme};
+use iced::widget::{column, container, row, space, Column};
+use iced::{Alignment, Background, Border, Element, Length};
+use iced::{Subscription, Task};
 use secblitz::engine::Report;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -500,51 +497,6 @@ pub fn well<'a>(
         })
 }
 
-/// Zero-size widget that asks for the next frame and publishes it, but only
-/// while it is in the tree, i.e. while a check runs on this page. Idle cost
-/// is nil because the page stops including it.
-struct Frames;
-
-impl Widget<Message, Theme, Renderer> for Frames {
-    fn size(&self) -> Size<Length> {
-        Size::new(Length::Fixed(0.0), Length::Fixed(0.0))
-    }
-    fn layout(&mut self, _: &mut Tree, _: &Renderer, _: &layout::Limits) -> layout::Node {
-        layout::Node::new(Size::ZERO)
-    }
-    fn draw(
-        &self,
-        _: &Tree,
-        _: &mut Renderer,
-        _: &Theme,
-        _: &renderer::Style,
-        _: Layout<'_>,
-        _: mouse::Cursor,
-        _: &Rectangle,
-    ) {
-    }
-    fn update(
-        &mut self,
-        _: &mut Tree,
-        event: &Event,
-        _: Layout<'_>,
-        _: mouse::Cursor,
-        _: &Renderer,
-        _: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        _: &Rectangle,
-    ) {
-        if let Event::Window(window::Event::RedrawRequested(now)) = event {
-            shell.publish(Message::Fixes(Msg::Frame(*now)));
-            shell.request_redraw();
-        }
-    }
-}
-
-fn frames<'a>() -> Element<'a, Message> {
-    Element::new(Frames)
-}
-
 /// `[lead] [row] [trailing]`, vertically centred, `S1` apart.
 fn line<'a>(
     lead: Option<Element<'a, Message>>,
@@ -763,9 +715,8 @@ fn count_text(ctx: &Ctx, n: usize) -> String {
 
 // -------------------------------------------------------------------- view
 
-/// Compact check hero with the live status ticker (first check or re-check).
-fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
+/// How far the running check is: (share done, subtitle, time since it began).
+fn check_status(state: &State, ctx: &Ctx) -> (f32, String, std::time::Duration) {
     let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
     let total = ctx.catalog.available.len().max(done + 1);
     let ratio = (done as f32 / total as f32).min(0.96);
@@ -776,11 +727,34 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     } else {
         ctx.t("This takes about a minute. Nothing is changed.")
     };
-    let live = anim::animating();
     let elapsed = state
         .scan
         .map(|s| state.now.saturating_duration_since(s))
         .unwrap_or_default();
+    (ratio, sub, elapsed)
+}
+
+/// The first check: the radar, title, bar and ticker centred in the page.
+fn first_check<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
+    let (ratio, sub, elapsed) = check_status(state, ctx);
+    let screen = scan::checking_screen(
+        ctx.palette,
+        ctx.t("Checking your PC"),
+        sub,
+        ratio,
+        &state.lines,
+        state.now,
+        elapsed,
+    );
+    screen
+}
+
+/// Compact radar with the live status ticker, above the last results while
+/// a new check runs.
+fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let (_, sub, elapsed) = check_status(state, ctx);
+    let live = anim::animating();
     let mut text = column![
         widgets::h2(p, ctx.t("Checking your PC")),
         widgets::muted(p, sub)
@@ -793,17 +767,30 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             .push(scan::status_ticker(p, &state.lines, state.now));
     }
     let content = row![
-        scan::check_hero(p, HeroPhase::Checking, elapsed, ratio),
+        scan::check_hero(p, elapsed, scan::HERO),
         text,
     ]
     .spacing(theme::S6)
     .align_y(Alignment::Center);
-    let content: Element<'a, Message> = if live {
-        stack![content, frames()].into()
-    } else {
-        content.into()
-    };
     widgets::region(p, content).into()
+}
+
+/// Frames while a check runs, for the radar and the ticker. Only asked for
+/// while the page is on screen.
+pub fn subscription(ctx: &Ctx) -> Subscription<Message> {
+    if ctx.checking.is_some() && anim::animating() {
+        iced::window::frames().map(|now| Message::Fixes(Msg::Frame(now)))
+    } else {
+        Subscription::none()
+    }
+}
+
+/// Whether the page is the first check's screen, which fills the window
+/// instead of scrolling: no result yet, and a check running or about to.
+pub fn fills_window(ctx: &Ctx) -> bool {
+    ctx.engine_error.is_none()
+        && ctx.report.is_none()
+        && (ctx.checking.is_some() || ctx.check_error.is_none())
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
@@ -850,6 +837,9 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
     // First check not finished yet, or it failed.
     let Some(report) = ctx.report.as_ref() else {
+        if fills_window(ctx) {
+            return page(column![first_check(state, ctx)].height(Length::Fill));
+        }
         if let Some(error) = &ctx.check_error {
             let details = widgets::expander(
                 p,
@@ -883,7 +873,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 )),
             );
         }
-        return page(body.push(checking_region(state, ctx)));
+        return page(body);
     };
 
     ensure(state, ctx, report);

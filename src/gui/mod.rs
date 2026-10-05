@@ -733,11 +733,19 @@ impl App {
             Page::History => history::view(&self.history, &self.ctx),
             Page::Settings => settings::view(&self.settings, &self.ctx),
         };
+        // The first check's screen fills the window, centred, instead of
+        // scrolling with the other pages.
+        let fills = match self.page {
+            Page::Home => home::fills_window(&self.ctx),
+            Page::Fixes => fixes::fills_window(&self.ctx),
+            _ => false,
+        };
         // Content is centred with a readable maximum width.
         let column_content = widgets::appear::lift(
             container(content)
                 .max_width(PAGE_MAX_WIDTH)
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .height(if fills { Length::Fill } else { Length::Shrink }),
             widgets::appear::ENTER_RISE * (1.0 - self.enter_t),
         );
         // A page may pin an action bar below its scrolling content.
@@ -765,19 +773,23 @@ impl App {
             .into(),
             None => iced::widget::space().into(),
         };
-        let scroll = container(
-            scrollable(
-                container(column_content)
-                    .center_x(Length::Fill)
-                    .padding([theme::S8, theme::S10])
-                    .width(Length::Fill),
+        let page = container(column_content)
+            .center_x(Length::Fill)
+            .padding([theme::S8, theme::S10])
+            .width(Length::Fill);
+        let scroll: Element<'_, Message> = if fills {
+            page.height(Length::Fill).into()
+        } else {
+            container(
+                scrollable(page)
+                    .id(PAGE_SCROLL)
+                    .direction(widgets::controls::scrollbar())
+                    .style(widgets::controls::scroll_style(p)),
             )
-            .id(PAGE_SCROLL)
-            .direction(widgets::controls::scrollbar())
-            .style(widgets::controls::scroll_style(p)),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill);
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        };
         let main = container(column![scroll, footer_bar])
             .width(Length::Fill)
             .height(Length::Fill)
@@ -972,6 +984,7 @@ impl App {
             // Tools must not keep the whole window redrawing from another page.
             // Each page catches up on its next frame when it is shown again.
             self.on_page(Page::Home, home::subscription(&self.home, &self.ctx)),
+            self.on_page(Page::Fixes, fixes::subscription(&self.ctx)),
             fixflow::subscription(&self.fix),
             self.on_page(Page::Debloat, debloat::subscription(&self.debloat)),
             self.on_page(Page::Tools, tools::subscription(&self.tools, &self.ctx)),

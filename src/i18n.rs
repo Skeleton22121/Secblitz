@@ -539,7 +539,7 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["Install the latest Windows updates.", "Instala las últimas actualizaciones de Windows.", "Installez les dernières mises à jour Windows.", "Installiere die neuesten Windows-Updates.", "Instale as atualizações mais recentes do Windows.", "Installa gli ultimi aggiornamenti di Windows."],
     ["Install updates", "Instalar actualizaciones", "Installer les mises à jour", "Updates installieren", "Instalar atualizações", "Installa gli aggiornamenti"],
     ["Installing 1 update", "Instalando 1 actualización", "Installation de 1 mise à jour", "1 Update wird installiert", "Instalando 1 atualização", "Installazione di 1 aggiornamento"],
-    ["Installing Bitwarden. This can take a minute…", "Instalando Bitwarden. Puede tardar un minuto…", "Installation de Bitwarden. Cela peut prendre une minute…", "Bitwarden wird installiert. Das kann eine Minute dauern …", "Instalando o Bitwarden. Isso pode levar um minuto…", "Installazione di Bitwarden. Può richiedere un minuto…"],
+    ["Installing Bitwarden. This can take a few minutes.", "Instalando Bitwarden. Puede tardar unos minutos.", "Installation de Bitwarden. Cela peut prendre quelques minutes.", "Bitwarden wird installiert. Das kann ein paar Minuten dauern.", "Instalando o Bitwarden. Isso pode levar alguns minutos.", "Installazione di Bitwarden. Può richiedere alcuni minuti."],
     ["Internet route", "Ruta de internet", "Itinéraire internet", "Internetroute", "Rota da internet", "Percorso internet"],
     ["It changed while we were working", "Cambió mientras trabajábamos", "Cela a changé pendant notre travail", "Es hat sich währenddessen geändert", "Mudou enquanto trabalhávamos", "È cambiato mentre lavoravamo"],
     ["Jan", "ene", "janv.", "Jan.", "jan", "gen"],

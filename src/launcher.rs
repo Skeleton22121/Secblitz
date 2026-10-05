@@ -530,11 +530,22 @@ mod imp {
                 Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
                 Err(_) => Reply::Failed,
             },
-            Request::BitwardenStatus => match secblitz::tools::bitwarden_installed() {
-                Ok(true) => Reply::Done,
-                Ok(false) => Reply::NotApplicable,
-                Err(_) => Reply::Unknown,
-            },
+            Request::BitwardenStatus => {
+                // Installed wins regardless of installability.
+                match secblitz::tools::bitwarden_installed() {
+                    Ok(true) => Reply::Done,
+                    Err(_) => Reply::Unknown,
+                    Ok(false) => {
+                        // Check upfront whether installing would even be possible
+                        // from this account (same token, same process as Install).
+                        match secblitz::tools::bitwarden_installable() {
+                            Ok(()) => Reply::NotApplicable,
+                            Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                            Err(_) => Reply::Unknown,
+                        }
+                    }
+                }
+            }
             Request::BlockSuggestedApps => match block_suggested_apps() {
                 Ok(()) => Reply::Done,
                 Err(_) => Reply::Failed,

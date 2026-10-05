@@ -29,6 +29,21 @@ pub fn bitwarden_installed() -> anyhow::Result<bool> {
     Ok(false)
 }
 
+/// Check whether Bitwarden installation is possible from the current account,
+/// without installing anything. Returns `Ok(())` when it would proceed;
+/// returns `Err` with `NotHere` as the cause when it cannot (elevated token,
+/// no desktop shell, wrong account, or App Installer not available for this user).
+///
+/// Call from the same process and token context that would call `install_bitwarden`.
+pub fn bitwarden_installable() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        windows::install_check()
+    }
+    #[cfg(not(windows))]
+    Err(NotHere.into())
+}
+
 /// The signed-in user's registered App Installer `winget.exe`, found through
 /// the package manager. Never searches PATH: the user's WindowsApps alias
 /// folder is writable by any program the user runs.
@@ -743,6 +758,15 @@ mod windows {
             }
         }
         // Closing the job on every return also terminates remaining descendants.
+    }
+
+    /// Same prerequisite checks as the first phase of `install`, without
+    /// actually downloading or installing anything. Used by the GUI to show
+    /// the "can't install from this account" state upfront.
+    pub(super) fn install_check() -> Result<()> {
+        require_desktop_user().context(super::NotHere)?;
+        winget().context(super::NotHere)?;
+        Ok(())
     }
 
     pub(super) fn install() -> Result<()> {
