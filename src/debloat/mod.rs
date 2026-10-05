@@ -14,6 +14,7 @@ pub mod catalog;
 pub mod icons;
 pub mod journal;
 pub mod offline;
+pub mod suggested;
 pub mod vault;
 #[cfg(windows)]
 pub(crate) mod wincrypto;
@@ -384,19 +385,73 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
 
 /// Ask Windows (machine-wide policy) not to push suggested apps. Needs an
 /// elevated caller. Fully enforced only on Enterprise and Education editions.
+/// What was there before is recorded, so Remove Secblitz can put it back.
 pub fn set_consumer_features_policy() -> Result<()> {
     #[cfg(windows)]
     {
-        let json = windows::run(windows::POLICY, &[], std::time::Duration::from_secs(60))?;
-        let value: serde_json::Value = serde_json::from_str(&json).context("Read the answer")?;
-        if value.get("ok") == Some(&serde_json::Value::Bool(true)) {
-            Ok(())
-        } else {
-            bail!("Windows did not confirm the setting")
-        }
+        suggested::block(&mut suggested::MachinePolicy, &suggested::journal_path()?)
     }
     #[cfg(not(windows))]
     {
         bail!("Only available on Windows")
     }
+}
+
+/// Bookkeeping after an app is installed again: mark it restored in the
+/// removed-apps list and drop its saved copy (which has done its job).
+pub fn finish_restore(index: u16) {
+    let _ = journal::mark_restored(index);
+    offline::forget(index);
+}
+
+/// What `restore_all` did, as catalog indices.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RestoreAll {
+    pub restored: Vec<u16>,
+    /// Back only through the Microsoft Store.
+    pub needs_store: Vec<u16>,
+    pub failed: Vec<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Bucket {
+    Restored,
+    NeedsStore,
+    Failed,
+}
+
+/// Where one restore attempt ends up. `None` means there was no saved copy.
+pub(crate) fn classify(outcome: Option<Result<offline::Restored>>, has_store_id: bool) -> Bucket {
+    use offline::Restored::*;
+    match outcome {
+        Some(Ok(Back | BackWithoutSomeData | AlreadyThere)) => Bucket::Restored,
+        _ if has_store_id => Bucket::NeedsStore,
+        _ => Bucket::Failed,
+    }
+}
+
+/// Put back every app that is still removed, from saved copies. Newest first.
+/// Blocking. `emit(index, ok)` after each app.
+pub fn restore_all(emit: &dyn Fn(u16, bool)) -> RestoreAll {
+    let mut result = RestoreAll::default();
+    for (index, _) in journal::still_removed(&journal::load(), catalog().len()) {
+        let outcome = offline::has_copy(index).then(|| offline::restore_index(index));
+        let has_store_id = catalog()[index as usize].store_id.is_some();
+        match classify(outcome, has_store_id) {
+            Bucket::Restored => {
+                finish_restore(index);
+                result.restored.push(index);
+                emit(index, true);
+            }
+            Bucket::NeedsStore => {
+                result.needs_store.push(index);
+                emit(index, false);
+            }
+            Bucket::Failed => {
+                result.failed.push(index);
+                emit(index, false);
+            }
+        }
+    }
+    result
 }
