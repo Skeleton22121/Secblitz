@@ -747,19 +747,7 @@ function HSetMitigation([string]$name, $v) {
 }
 
 # ---- ps.v2_engine
-function HFeatureState([string]$name) {
-    Load 'Dism'
-    $hit = $null
-    try { $hit = @(Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction Stop) } catch { $hit = $null }
-    if ($null -ne $hit -and $hit.Count -eq 1) { return [string]$hit[0].State }
-    # Unknown name (or an empty answer): only believe "not present" when the full list is healthy.
-    $all = @(Get-WindowsOptionalFeature -Online -ErrorAction Stop)
-    if ($all.Count -lt 5) { throw 'The Windows feature list is not readable' }
-    $match = @($all | Where-Object { [string]$_.FeatureName -ieq $name })
-    if ($match.Count -eq 0) { return 'Missing' }
-    if ($match.Count -eq 1) { return [string]$match[0].State }
-    throw 'The Windows feature list is ambiguous'
-}
+function HFeatureState([string]$name) { return (FeatureState $name) }
 function HV2Value([string]$state) {
     switch -CaseSensitive ($state) {
         'Enabled' { return 1 }
@@ -778,6 +766,8 @@ function HReadPowerShellV2() {
 }
 function HSetPowerShellV2($v) {
     if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid feature state' }
+    # Changing a feature needs DISM (DismHost.exe): the engine runs only this
+    # write with a job that allows that one child process.
     Load 'Dism'
     $names = @('MicrosoftWindowsPowerShellV2Root', 'MicrosoftWindowsPowerShellV2')
     foreach ($name in $names) {

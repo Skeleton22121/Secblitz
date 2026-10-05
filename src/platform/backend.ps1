@@ -475,6 +475,21 @@ function Finding([string]$title, [scriptblock]$probe) {
         $result[0]
     } catch { @{title=$title; status='unknown'; detail=('Assessment unavailable: ' + $_.Exception.Message)} }
 }
+function FeatureState([string]$name) {
+    # Windows optional features via WMI (served by the WMI service). The DISM
+    # cmdlets start DismHost.exe, which the single-process job forbids.
+    if ($name -cnotmatch '^[A-Za-z0-9-]+$') { throw 'Invalid feature name' }
+    Load 'CimCmdlets'
+    $hit = @(Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='$name'" -OperationTimeoutSec 30)
+    if ($hit.Count -gt 1) { throw 'The Windows feature list is ambiguous' }
+    if ($hit.Count -eq 0) {
+        # Only believe "not present" when the full list is healthy.
+        if (@(Get-CimInstance -ClassName Win32_OptionalFeature -OperationTimeoutSec 60).Count -lt 5) { throw 'The Windows feature list is not readable' }
+        return 'Missing'
+    }
+    switch ([int]$hit[0].InstallState) { 1 { return 'Enabled' } 2 { return 'Disabled' } 3 { return 'Missing' } }
+    throw 'The Windows feature state is not readable'
+}
 function AutoLogonFinding {
     $key = Get-Item -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction Stop
     $names = @($key.GetValueNames())
@@ -541,7 +556,7 @@ function Findings {
         @{title='Windows updates';status='info';detail="Locally cached pending updates=$($r.Updates.Count). This offline result does not establish current patch compliance; open Windows Update and check for updates."}
     }
     Finding 'Remote Desktop' { $v=Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections'; @{title='Remote Desktop';status=$(if ($v -eq 1) {'ok'} else {'attention'});detail="Deny incoming Remote Desktop connections=$v. Review need, network exposure and Network Level Authentication; no changes made."} }
-    Finding 'SMB1' { Load 'Dism'; $v=Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol; @{title='SMB1';status=$(if ($v.State -eq 'Disabled') {'ok'} else {'attention'});detail="SMB1 optional feature state=$($v.State). Review dependencies before removing legacy protocol support."} }
+    Finding 'SMB1' { $v=FeatureState 'SMB1Protocol'; @{title='SMB1';status=$(if ($v -cin @('Disabled','Missing')) {'ok'} else {'attention'});detail="SMB1 optional feature state=$v. Review dependencies before removing legacy protocol support."} }
     @{title='SmartScreen';status='info';detail='Review reputation-based protection and SmartScreen in Windows Security and your browser. Per-user, browser and policy settings differ; effective protection is not inferred from a single registry value.'}
     Finding 'Local accounts' { Load 'Microsoft.PowerShell.LocalAccounts'; $a=@(Get-LocalUser); $b=@($a | Where-Object {$_.Enabled -and !$_.PasswordRequired}); @{title='Local accounts';status=$(if ($b.Count) {'attention'} else {'info'});detail="Enabled local accounts whose PasswordRequired flag is false: $($b.Count). This flag does not reveal password presence, strength, reuse or Windows Hello security. Review account access and use strong unique passwords/MFA where supported."} }
     Finding 'Memory integrity' { Load 'CimCmdlets'; $v=Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard; @{title='Memory integrity';status=$(if ($v.SecurityServicesRunning -contains 2) {'ok'} else {'attention'});detail="HVCI running=$($v.SecurityServicesRunning -contains 2); configured=$($v.SecurityServicesConfigured -contains 2). Review Core isolation in Windows Security and driver compatibility before enabling."} }

@@ -154,7 +154,7 @@ probe_ids! {
     DefenderProtection => "Defender/Get-MpComputerStatus, Get-MpThreat, Get-MpThreatDetection and exclusion counts only (no paths)",
     SmartScreen => "HKLM SmartScreen, Smart App Control and browser safe-browsing policy indicators",
     UpdatePolicy => "HKLM Windows Update policy and pause values, service start types, pending restart and uptime",
-    LegacyFeatures => "Dism/Get-WindowsOptionalFeature: legacy PowerShell 2.0 engine state",
+    LegacyFeatures => "CIM Win32_OptionalFeature: legacy PowerShell 2.0 engine state",
     HostsFile => "Hosts file size and bounded counts of redirects and blocks (no host names or contents)",
     Persistence => "root/subscription WMI consumers and bounded service image path shape (counts only)",
     AccountHygiene => "LocalAccounts: built-in Administrator RID 500 state and stale enabled account count",

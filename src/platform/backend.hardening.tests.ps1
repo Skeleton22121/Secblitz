@@ -708,7 +708,15 @@ Reject { HSetMitigation 'DEP' 2 } 'Invalid exploit protection state'
 Assert ((HV2Value 'Enabled') -eq 1 -and (HV2Value 'EnablePending') -eq 1 -and (HV2Value 'Disabled') -eq 0 -and (HV2Value 'DisabledWithPayloadRemoved') -eq 0 -and (HV2Value 'Missing') -eq 0) 'feature state words'
 Reject { HV2Value 'Weird' } 'not readable'
 $script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'Enabled' })
-function Get-WindowsOptionalFeature { param([switch]$Online, $FeatureName, $ErrorAction); if ($FeatureName) { $hit = @($script:features | Where-Object { $_.FeatureName -eq $FeatureName }); if ($hit.Count -eq 0) { throw 'Feature name is unknown' }; return $hit }; return $script:features }
+function Get-CimInstance {
+    param($ClassName, $Filter, $OperationTimeoutSec)
+    if ($ClassName -cne 'Win32_OptionalFeature') { throw "Unexpected probe $ClassName" }
+    $rows = @($script:features | ForEach-Object { [pscustomobject]@{ Name = $_.FeatureName; InstallState = [uint32]$(switch ($_.State) { 'Enabled' { 1 } 'Disabled' { 2 } default { 3 } }) } })
+    if (!$Filter) { return $rows }
+    if ($Filter -cnotmatch "^Name='([A-Za-z0-9-]+)'$") { throw 'Unexpected feature filter' }
+    $name = $Matches[1]
+    return @($rows | Where-Object { $_.Name -ceq $name })
+}
 Assert ((HFeatureState 'MicrosoftWindowsPowerShellV2Root') -ceq 'Enabled') 'feature state'
 Assert ((HFeatureState 'Recall') -ceq 'Missing') 'unknown feature in a healthy list is missing'
 Assert ((HReadPowerShellV2)['Enabled'] -eq 1) 'root enabled'
@@ -718,6 +726,10 @@ $script:features = @()
 Reject { HReadPowerShellV2 } 'not readable'
 $script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'Disabled' })
 Assert ((HReadPowerShellV2)['Enabled'] -eq 0) 'disabled root'
+Reject { HFeatureState "x' or Name like '%" } 'Invalid feature name'
+$script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'DisabledWithPayloadRemoved' })
+Assert ((HReadPowerShellV2)['Enabled'] -eq 0) 'payload removed is off'
+$script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'Disabled' })
 $script:calls = @()
 function Disable-WindowsOptionalFeature { param([switch]$Online, $FeatureName, [switch]$NoRestart, $ErrorAction); $script:calls += ,@('disable', $FeatureName) }
 function Enable-WindowsOptionalFeature { param([switch]$Online, $FeatureName, [switch]$All, [switch]$NoRestart, $ErrorAction); $script:calls += ,@('enable', $FeatureName) }
