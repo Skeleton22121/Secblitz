@@ -58,16 +58,7 @@ pub fn empty_state<'a>(
     action: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut c = column![
-        container(icon(i, 26.0, p.text_muted))
-            .center(56)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.surface_alt)),
-                border: Border {
-                    radius: 28.0.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            }),
+        icon(i, 32.0, p.text_muted),
         text(title.into())
             .size(theme::H2)
             .font(theme::SEMIBOLD)
@@ -131,7 +122,7 @@ pub fn bar<'a>(p: Palette, ratio: f32, tone: Tone) -> Element<'a, Message> {
     progress_bar(0.0..=1.0, ratio.clamp(0.0, 1.0))
         .girth(6)
         .style(move |_| progress_bar::Style {
-            background: Background::Color(p.surface_alt),
+            background: Background::Color(p.hover_strong),
             bar: Background::Color(fill),
             border: Border {
                 radius: 3.0.into(),
@@ -157,10 +148,6 @@ pub fn inline_notice<'a>(
     message: impl Into<String>,
 ) -> Element<'a, Message> {
     let tint = p.tint(tone);
-    let line = Color {
-        a: 0.32,
-        ..p.tone(tone)
-    };
     container(
         row![
             icon(tone_icon(tone), 18.0, p.tone(tone)),
@@ -179,8 +166,7 @@ pub fn inline_notice<'a>(
         background: Some(Background::Color(tint)),
         border: Border {
             radius: theme::R.into(),
-            width: 1.0,
-            color: line,
+            ..Border::default()
         },
         ..container::Style::default()
     })
@@ -239,8 +225,7 @@ pub fn expander<'a>(
                     background: Some(Background::Color(p.surface_alt)),
                     border: Border {
                         radius: theme::R.into(),
-                        width: 1.0,
-                        color: p.border,
+                        ..Border::default()
                     },
                     ..container::Style::default()
                 }),
