@@ -101,7 +101,7 @@ read from the registry as the upstream), and revise this spec.
   not switch on its own encrypted DNS, which would bypass the filter.
 - Lookups are a binary search over sorted 64-bit hashes of every suffix of the
   name (`a.b.example.com`, `b.example.com`, `example.com`). Memory stays small
-  (about 3 MB for 400,000 domains), and a lookup takes microseconds.
+  (8 bytes per domain: about 23 MB for all three switches), and a lookup takes microseconds.
 - Lists are rebuilt on a background thread and swapped in atomically, so lookups
   never wait.
 
@@ -117,14 +117,16 @@ downloads them and never ships them.
 |---|---|
 | Ads | AdGuard DNS filter (registry id 1), minus every domain classified as tracking |
 | Tracking and telemetry | AdGuard DNS filter entries that also appear in AdGuard Tracking Protection or EasyPrivacy, plus HaGeZi's Windows/Office Tracker Blocklist (id 63) |
-| Dangerous websites | URLHaus malicious URL list (id 11), Dandelion Sprout's Anti-Malware List (id 12), Phishing Army (id 18) |
+| Dangerous websites | HaGeZi's Threat Intelligence Feeds (id 44): phishing, malware, scam and cryptojacking domains |
 
 The AdGuard DNS filter is one merged list of ads and trackers (about 178,000
 domains, no markers saying which is which). Classifying entries with AdGuard's
 own tracking lists keeps AdGuard's DNS-specific curation and exclusions for
-both switches. HaGeZi's Threat Intelligence Feeds were rejected for
-dangerous websites: 2.5 million entries is too heavy for a background service
-on an ordinary PC.
+both switches. HaGeZi's Threat Intelligence Feeds (owner's choice) hold about
+2.5 million domains: a 13 MB compressed download (52 MB unpacked), about 20 MB
+of memory as 64-bit hashes, and under a second to rebuild. To spare metered
+and mobile connections, no list is refreshed while Windows reports the
+connection as metered; the last good set stays in use.
 
 Parser: accepts only `||domain^` (optionally `$important`) and `@@||domain^`
 exceptions, valid hostnames with at least two labels. Everything else is
@@ -190,7 +192,7 @@ updates and cloud protection, Microsoft Store downloads, `secblitz.lol` and
   - stopping the service: the internet keeps working through the failover, and
     the status line says so;
   - uninstall with both choices leaves no NRPT rule and no service;
-  - memory and lookup time within budget (under 40 MB and 1 ms).
+  - memory and lookup time within budget (under 60 MB and 1 ms).
 
 ## Not in v1
 
