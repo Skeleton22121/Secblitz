@@ -436,6 +436,12 @@ pub fn overflow_menu<'a>(
     if items.is_empty() {
         return iced::widget::space::horizontal().width(0).into();
     }
+    // A menu is only worth a click when it holds a choice. One action is
+    // shown as itself; destructive ones still confirm in their own sheet.
+    if items.len() == 1 {
+        let (_, label, message, _) = items.into_iter().next().expect("one item");
+        return super::action(p, super::ButtonKind::Secondary, label, None, Some(message));
+    }
     let items = items
         .into_iter()
         .map(|(icon, label, message, danger)| MenuItem {

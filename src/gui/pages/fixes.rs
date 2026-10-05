@@ -573,14 +573,13 @@ fn attention_row<'a>(
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &a.id) {
         tools = tools.push(t);
     }
-    tools = tools.push(widgets::overflow_menu(
+    // One action per row: a light text button keeps the long list calm.
+    tools = tools.push(widgets::action(
         p,
-        vec![(
-            Icon::Info,
-            ctx.t(if open { "Hide details" } else { "Details" }),
-            Message::Fixes(Msg::Expand(a.id.clone())),
-            false,
-        )],
+        ButtonKind::Ghost,
+        ctx.t(if open { "Hide details" } else { "Details" }),
+        None,
+        Some(Message::Fixes(Msg::Expand(a.id.clone()))),
     ));
     let head = line(
         Some(widgets::checkbox(
