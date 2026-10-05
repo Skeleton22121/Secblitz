@@ -75,6 +75,7 @@ enum Busy {
     Switch(Switch),
     Pause,
     Resume,
+    Retry,
 }
 
 #[derive(Debug, Default)]
@@ -97,6 +98,8 @@ pub enum Msg {
     Toggle(Switch, bool),
     Pause,
     Resume,
+    /// Start the filter again with the same switches.
+    Retry,
     Done(u32, Result<(), String>),
     ToggleDetail(Switch),
 }
@@ -142,6 +145,24 @@ pub fn status_line(
     match status.state {
         ListState::Ready => Line::On,
         ListState::Starting | ListState::NoLists => Line::GettingReady,
+    }
+}
+
+/// The button next to the status line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusAction {
+    Pause,
+    Resume,
+    /// The filter is down: start it again rather than offer a pause of nothing.
+    Retry,
+}
+
+pub fn status_action(line: Line) -> Option<StatusAction> {
+    match line {
+        Line::Off => None,
+        Line::Paused(_) => Some(StatusAction::Resume),
+        Line::NotWorking => Some(StatusAction::Retry),
+        Line::On | Line::GettingReady => Some(StatusAction::Pause),
     }
 }
 
@@ -318,6 +339,16 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             start(state, Busy::Resume, resume)
+        }
+        Msg::Retry => {
+            let Some(snapshot) = state.snapshot.as_ref() else {
+                return Task::none();
+            };
+            if !controls_enabled(Some(snapshot), state.busy.is_some()) {
+                return Task::none();
+            }
+            let config = snapshot.config.clone();
+            start(state, Busy::Retry, move || apply(config))
         }
         Msg::Done(generation, result) => {
             if generation != state.generation {
@@ -532,25 +563,23 @@ fn status_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<E
     );
     let (icon, tone) = line_look(line);
     let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
-    let working = matches!(state.busy, Some(Busy::Pause | Busy::Resume));
-    let button: El<'a> = if !snapshot.config.any_on() {
-        space::horizontal().width(0).into()
-    } else if matches!(line, Line::Paused(_)) {
-        widgets::action(
-            p,
-            ButtonKind::Secondary,
-            ctx.t("Resume now"),
-            None,
-            enabled.then_some(wrap(Msg::Resume)),
-        )
-    } else {
-        widgets::action(
-            p,
-            ButtonKind::Secondary,
-            ctx.t("Pause for 1 hour"),
-            None,
-            enabled.then_some(wrap(Msg::Pause)),
-        )
+    let working = matches!(state.busy, Some(Busy::Pause | Busy::Resume | Busy::Retry));
+    let button: El<'a> = match status_action(line) {
+        None => space::horizontal().width(0).into(),
+        Some(action) => {
+            let (label, msg) = match action {
+                StatusAction::Resume => ("Resume now", Msg::Resume),
+                StatusAction::Retry => ("Try again", Msg::Retry),
+                StatusAction::Pause => ("Pause for 1 hour", Msg::Pause),
+            };
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t(label),
+                None,
+                enabled.then_some(wrap(msg)),
+            )
+        }
     };
     let head = widgets::row_item_tinted(
         p,
@@ -669,6 +698,15 @@ mod tests {
         assert_eq!(at(Page::Web), at(Page::Debloat) + 1);
         assert_eq!(Page::parse("web"), Some(Page::Web));
         assert_eq!(Page::Web.label(), "Web protection");
+    }
+
+    #[test]
+    fn status_button_fits_each_state() {
+        assert_eq!(status_action(Line::Off), None);
+        assert_eq!(status_action(Line::On), Some(StatusAction::Pause));
+        assert_eq!(status_action(Line::GettingReady), Some(StatusAction::Pause));
+        assert_eq!(status_action(Line::Paused(NOW)), Some(StatusAction::Resume));
+        assert_eq!(status_action(Line::NotWorking), Some(StatusAction::Retry));
     }
 
     #[test]
