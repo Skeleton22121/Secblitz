@@ -887,6 +887,12 @@ impl TipProfile {
                 P::Storage,
                 P::Ntfs,
                 P::Accounts,
+                P::OsSupport,
+                P::SecureBootCerts,
+                P::DefenderProtection,
+                P::SmartScreen,
+                P::UpdatePolicy,
+                P::HostsFile,
             ],
             Self::Gaming => &[
                 P::UpdateCache,
@@ -896,6 +902,10 @@ impl TipProfile {
                 P::Ntfs,
                 P::Adapters,
                 P::Software,
+                P::OsSupport,
+                P::SecureBootCerts,
+                P::DefenderProtection,
+                P::UpdatePolicy,
             ],
             Self::Work => &[
                 P::UpdateCache,
@@ -907,6 +917,16 @@ impl TipProfile {
                 P::Accounts,
                 P::Software,
                 P::Vpn,
+                P::OsSupport,
+                P::SecureBootCerts,
+                P::DefenderProtection,
+                P::SmartScreen,
+                P::UpdatePolicy,
+                P::HostsFile,
+                P::LegacyFeatures,
+                P::Sharing,
+                P::AccountHygiene,
+                P::FirewallRules,
             ],
             Self::Extra => &[
                 P::DefenderHealth,
@@ -919,6 +939,17 @@ impl TipProfile {
                 P::Accounts,
                 P::Permissions,
                 P::UpdateCache,
+                P::OsSupport,
+                P::SecureBootCerts,
+                P::DefenderProtection,
+                P::SmartScreen,
+                P::UpdatePolicy,
+                P::HostsFile,
+                P::LegacyFeatures,
+                P::Persistence,
+                P::AccountHygiene,
+                P::Sharing,
+                P::FirewallRules,
             ],
         }
     }
@@ -951,6 +982,17 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
         P::Proxy => "Internet route",
         P::Vpn => "VPN",
         P::Permissions => "Protected services",
+        P::OsSupport => "Windows version support",
+        P::SecureBootCerts => "Startup security renewal",
+        P::DefenderProtection => "Virus protection safeguards",
+        P::SmartScreen => "Download and website warnings",
+        P::UpdatePolicy => "Automatic updates",
+        P::LegacyFeatures => "Old Windows tools",
+        P::HostsFile => "Website redirects",
+        P::Persistence => "Hidden background tasks",
+        P::AccountHygiene => "Old and hidden accounts",
+        P::Sharing => "Shared folders",
+        P::FirewallRules => "Apps allowed through the firewall",
     }
 }
 
@@ -977,6 +1019,66 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::Adapters | P::Dns | P::Proxy => "Check your internet connection settings.",
         P::Vpn => "Check your VPN settings.",
         P::Permissions => "Some protected services have loose settings. A fix may be available.",
+        P::OsSupport => "Your Windows version is running out of safety updates. Install the newest version in Windows Update.",
+        P::SecureBootCerts => "Your PC's startup security needs a renewal. Install all Windows updates and check your PC maker's website.",
+        P::DefenderProtection => "Open Windows Security and check your virus protection settings.",
+        P::SmartScreen => "Turn on warnings for risky downloads and websites in Windows Security.",
+        P::UpdatePolicy => "Turn automatic Windows updates back on and restart your PC when asked.",
+        P::LegacyFeatures => "Remove an old Windows tool that attackers like to use.",
+        P::HostsFile => "A hidden file may be sending trusted websites somewhere else. Ask someone you trust to check it.",
+        P::Persistence => "Something is set up to run quietly in the background. Ask someone you trust to look at it.",
+        P::AccountHygiene => "Turn off hidden or unused accounts on this PC.",
+        P::Sharing => "Stop sharing folders you don't need.",
+        P::FirewallRules => "Some apps in your personal folders are allowed through the firewall. Remove ones you don't know.",
+    }
+}
+
+/// A more exact one-line next step for a single check, when one exists.
+/// Short, calm and jargon-free; the probe-level line is the fallback.
+pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
+    Some(match rule_id {
+        "os.feature_release_support" => "Your version of Windows is running out of safety updates. Install the newest version in Windows Update.",
+        "boot.secure_boot_certs" => "Your PC's startup security needs a renewal. Install all Windows updates, then check your PC maker's website.",
+        "defender.tamper_protection" => "Turn on Tamper Protection so malware can't switch off your virus protection.",
+        "defender.threats" => "Windows found something harmful. Open Windows Security and follow the steps.",
+        "defender.exclusions_risky" => "Your virus protection skips some risky places. Look at the list in Windows Security.",
+        "defender.scan_age" => "Your PC hasn't been scanned for a while. Run a quick scan in Windows Security.",
+        "smartscreen.apps" => "Turn on warnings for unknown downloads in Windows Security.",
+        "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Ask whoever set up this PC.",
+        "update.auto_policy_disabled" => "Automatic updates are switched off. Turn them back on in Windows Update.",
+        "update.paused" => "Updates are paused. Resume them in Windows Update.",
+        "update.reboot_overdue" => "Restart your PC to finish installing updates.",
+        "ps.v2_engine" => "An old Windows tool that attackers like to use is still installed. Remove it in Windows Features.",
+        "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
+        "persistence.wmi_subscriptions" => "Something is set to run quietly in the background. Ask someone you trust to look at it.",
+        "services.unquoted_paths" => "A background program has a risky setup. Ask someone you trust to look at it.",
+        "accounts.builtin_administrator" => "A hidden administrator account is switched on. Turn it off if you don't use it.",
+        "accounts.stale_enabled" => "Some old accounts are still switched on. Remove the ones nobody uses.",
+        "smb.shares_exposed" => "Some folders are shared with everyone on your network. Stop sharing what you don't need.",
+        "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.",
+        _ => return None,
+    })
+}
+
+/// Which existing Settings page helps with this check (no new links are added here).
+pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
+    use secblitz::actions::Action;
+    match rule_id {
+        "os.feature_release_support"
+        | "boot.secure_boot_certs"
+        | "update.auto_policy_disabled"
+        | "update.paused"
+        | "update.reboot_overdue" => Some(Action::OpenWindowsUpdate),
+        "defender.tamper_protection"
+        | "defender.threats"
+        | "defender.exclusions_risky"
+        | "defender.scan_age"
+        | "smartscreen.apps"
+        | "smartscreen.browser_policy" => Some(Action::OpenWindowsSecurity),
+        "accounts.builtin_administrator" | "accounts.stale_enabled" => {
+            Some(Action::OpenSignInSettings)
+        }
+        _ => None,
     }
 }
 
@@ -992,6 +1094,10 @@ pub struct Tip {
     pub title: &'static str,
     pub state: TipState,
     pub advice: &'static str,
+    /// Existing Settings page that helps, when one applies. The Tools page
+    /// wires this to its "Open Settings" button.
+    #[allow(dead_code)]
+    pub open: Option<secblitz::actions::Action>,
 }
 
 #[derive(Debug, Clone)]
@@ -1028,14 +1134,22 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         for a in &probe.assessments {
             technical.push_str(&format!("  {:?}: {}\n", a.status, a.detail));
         }
+        // The first check that needs a look decides the exact next step.
+        let first = probe
+            .assessments
+            .iter()
+            .filter(|a| a.status == diag::Status::Attention)
+            .find_map(|a| rule_advice(&a.rule.id).map(|text| (text, rule_open(&a.rule.id))));
+        let look = state == TipState::Look;
         tips.push(Tip {
             title: tip_title(id),
             state,
-            advice: if state == TipState::Look {
-                tip_advice(id)
-            } else {
-                ""
+            advice: match (look, first) {
+                (false, _) => "",
+                (true, Some((text, _))) => text,
+                (true, None) => tip_advice(id),
             },
+            open: first.filter(|_| look).and_then(|(_, open)| open),
         });
     }
     let rank = |s: TipState| match s {
@@ -1457,6 +1571,95 @@ mod tests {
                 assert!(!ids[..i].contains(id));
             }
         }
+    }
+
+    #[test]
+    fn exact_check_advice_is_plain_and_picks_the_first_problem() {
+        for rule in [
+            "os.feature_release_support",
+            "boot.secure_boot_certs",
+            "defender.tamper_protection",
+            "defender.threats",
+            "defender.exclusions_risky",
+            "defender.scan_age",
+            "smartscreen.apps",
+            "smartscreen.browser_policy",
+            "update.auto_policy_disabled",
+            "update.paused",
+            "update.reboot_overdue",
+            "ps.v2_engine",
+            "net.hosts_file",
+            "persistence.wmi_subscriptions",
+            "services.unquoted_paths",
+            "accounts.builtin_administrator",
+            "accounts.stale_enabled",
+            "smb.shares_exposed",
+            "firewall.user_dir_inbound_allow",
+        ] {
+            let text = rule_advice(rule).expect(rule);
+            assert_no_dev_terms(text);
+            assert!(text.len() <= 130, "{rule}: keep it to one short line");
+        }
+        assert_eq!(rule_advice("update.freshness"), None);
+        assert_eq!(
+            rule_open("os.feature_release_support"),
+            Some(secblitz::actions::Action::OpenWindowsUpdate)
+        );
+        assert_eq!(rule_open("net.hosts_file"), None);
+
+        // A probe with two problems shows the first one that has an exact step.
+        let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::DefenderProtection)
+            .unwrap();
+        probe.status = diag::Status::Attention;
+        probe.assessments = ["defender.tamper_protection", "defender.scan_age"]
+            .iter()
+            .map(|id| diag::Assessment {
+                status: diag::Status::Attention,
+                detail: String::new(),
+                rule: diag::RuleReference {
+                    id: (*id).into(),
+                    revision: 1,
+                    mapping_version: String::new(),
+                    documentation: vec![],
+                },
+            })
+            .collect();
+        let tips = summarize_tips(TipProfile::Everyday, &report);
+        let tip = tips
+            .tips
+            .iter()
+            .find(|t| t.title == tip_title(diag::ProbeId::DefenderProtection))
+            .unwrap();
+        assert_eq!(tip.state, TipState::Look);
+        assert_eq!(
+            tip.advice,
+            rule_advice("defender.tamper_protection").unwrap()
+        );
+        assert_eq!(
+            tip.open,
+            Some(secblitz::actions::Action::OpenWindowsSecurity)
+        );
+    }
+
+    #[test]
+    fn new_checks_are_in_the_expected_profiles() {
+        use diag::ProbeId as P;
+        for p in TipProfile::ALL {
+            for id in [
+                P::OsSupport,
+                P::SecureBootCerts,
+                P::DefenderProtection,
+                P::UpdatePolicy,
+            ] {
+                assert!(p.probes().contains(&id), "{p:?} {id:?}");
+            }
+        }
+        assert!(TipProfile::Extra.probes().contains(&P::Persistence));
+        assert!(!TipProfile::Everyday.probes().contains(&P::Persistence));
     }
 
     #[test]

@@ -85,3 +85,25 @@ function MdmRegistered {
     if ($hr -ne 0 -or $registered -notin @(0,1)) { throw 'MDM state unavailable' }
     return ($registered -eq 1)
 }
+# Optional-value readers for the checks below: an absent value is null, never an error.
+function HklmValue([string]$relative, [string]$name) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($relative, $false)
+    if ($null -eq $key) { return $null }
+    try { return $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } finally { $key.Dispose() }
+}
+function HklmDword([string]$relative, [string]$name) {
+    $value = HklmValue $relative $name
+    if ($null -eq $value) { return $null }
+    if ($value -isnot [int]) { throw 'Wrong registry type' }
+    return $value
+}
+function HklmKeyExists([string]$relative) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($relative, $false)
+    if ($null -eq $key) { return $false }
+    $key.Dispose()
+    return $true
+}
+function Counted($value) {
+    if ($null -eq $value) { return (Unknown) }
+    return (Known ([int]$value))
+}

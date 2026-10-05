@@ -149,6 +149,17 @@ probe_ids! {
     Proxy => "WinHTTP/WinHttpGetDefaultProxyConfiguration: access type only",
     Vpn => "VpnClient/Get-VpnConnection -AllUserConnection: status only",
     Permissions => "permissions::audit: bounded fixed-service broad-principal DACL audit",
+    OsSupport => "HKLM Windows version values: DisplayVersion, build and edition id only",
+    SecureBootCerts => "System event ids 1795-1798/1801/1808, Secure Boot servicing status and db certificate presence (no firmware data emitted)",
+    DefenderProtection => "Defender/Get-MpComputerStatus, Get-MpThreat, Get-MpThreatDetection and exclusion counts only (no paths)",
+    SmartScreen => "HKLM SmartScreen, Smart App Control and browser safe-browsing policy indicators",
+    UpdatePolicy => "HKLM Windows Update policy and pause values, service start types, pending restart and uptime",
+    LegacyFeatures => "Dism/Get-WindowsOptionalFeature: legacy PowerShell 2.0 engine state",
+    HostsFile => "Hosts file size and bounded counts of redirects and blocks (no host names or contents)",
+    Persistence => "root/subscription WMI consumers and bounded service image path shape (counts only)",
+    AccountHygiene => "LocalAccounts: built-in Administrator RID 500 state and stale enabled account count",
+    Sharing => "SmbShare: non-special share counts, broad access and server encryption setting",
+    FirewallRules => "NetSecurity: enabled inbound allow rules whose program sits in a risky user folder (counts only)",
 }
 
 macro_rules! facts {
@@ -330,6 +341,82 @@ facts!(VpnConnection {
     connected: bool,
     split_tunneling: bool
 });
+facts!(OsSupport {
+    display_version: String,
+    build: u32,
+    edition_id: String,
+});
+facts!(SecureBootCerts {
+    // Event 1808: the certificate update completed.
+    update_completed_event: bool,
+    // Event 1801: the update is staged and waiting.
+    update_staged_event: bool,
+    // Events 1795-1798: the update failed or was blocked.
+    update_error_event: bool,
+    // Servicing status text, limited to the compiled known values.
+    servicing_status: String,
+    // The 2023 Windows certificate is present in the Secure Boot database.
+    ca2023_in_db: bool,
+    secure_boot_enabled: bool,
+});
+facts!(DefenderProtection {
+    // Antivirus running mode; scan, threat and exclusion checks apply to Normal only.
+    running_mode: String,
+    tamper_protected: bool,
+    // Raw TamperProtection feature value (5 = on, 4 = off).
+    tamper_feature_value: u32,
+    active_threats: u32,
+    recent_detections: u32,
+    // Days since the last quick scan; u32::MAX means never.
+    quick_scan_age_days: u32,
+    full_scan_age_days: u32,
+    exclusion_count: u32,
+    risky_exclusion_count: u32,
+});
+facts!(SmartScreen {
+    apps_off_local: bool,
+    apps_off_policy: bool,
+    edge_off_policy: bool,
+    chrome_off_policy: bool,
+    // One of On, Evaluation, Off, Absent.
+    smart_app_control: String,
+});
+facts!(UpdatePolicy {
+    auto_updates_blocked: bool,
+    update_access_blocked: bool,
+    update_service_disabled: bool,
+    paused: bool,
+    drivers_excluded: bool,
+    reboot_pending: bool,
+    uptime_days: u32,
+});
+facts!(LegacyFeatures {
+    powershell_v2_enabled: bool
+});
+facts!(HostsFile {
+    size_bytes: u64,
+    redirect_count: u32,
+    sensitive_redirect_count: u32,
+    sensitive_block_count: u32,
+});
+facts!(Persistence {
+    wmi_consumers: u32,
+    unquoted_service_paths: u32,
+    unquoted_service_paths_writable: u32,
+});
+facts!(AccountHygiene {
+    builtin_admin_enabled: bool,
+    stale_enabled_accounts: u32,
+});
+facts!(Sharing {
+    share_count: u32,
+    broad_access_shares: u32,
+    encrypt_data: bool,
+});
+facts!(FirewallRules {
+    risky_inbound_allow_rules: u32,
+    user_folder_inbound_allow_rules: u32,
+});
 facts!(Permissions { services: Inventory<PermissionFinding> });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -364,6 +451,17 @@ pub enum Evidence {
     Proxy(Proxy),
     Vpn(Vpn),
     Permissions(Permissions),
+    OsSupport(OsSupport),
+    SecureBootCerts(SecureBootCerts),
+    DefenderProtection(DefenderProtection),
+    SmartScreen(SmartScreen),
+    UpdatePolicy(UpdatePolicy),
+    LegacyFeatures(LegacyFeatures),
+    HostsFile(HostsFile),
+    Persistence(Persistence),
+    AccountHygiene(AccountHygiene),
+    Sharing(Sharing),
+    FirewallRules(FirewallRules),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
