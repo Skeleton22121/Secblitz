@@ -604,8 +604,13 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 }
 
 /// Bar position for a repair step (the current step counts as half done).
+/// Each step owns an equal span of the bar. Within it the bar creeps toward
+/// the end without reaching it, so a long system-file check never looks
+/// frozen and the next step never jumps backwards.
 fn repair_ratio(p: &RepairProgress) -> f32 {
-    (p.step as f32 - 0.5) / p.total.max(1) as f32
+    const PACE: f32 = 180.0;
+    let creep = 1.0 - (-(p.step_elapsed as f32) / PACE).exp();
+    (p.step.saturating_sub(1) as f32 + 0.9 * creep) / p.total.max(1) as f32
 }
 
 fn stage_ratio(stage: InstallStage) -> f32 {
@@ -737,6 +742,23 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
 #[cfg(test)]
 mod followup_tests {
     use super::*;
+
+    #[test]
+    fn repair_bar_creeps_inside_its_step_and_never_goes_back() {
+        let at = |step, secs| {
+            repair_ratio(&RepairProgress {
+                label: "",
+                step,
+                total: 2,
+                elapsed: secs,
+                step_elapsed: secs,
+            })
+        };
+        assert_eq!(at(1, 0), 0.0);
+        assert!(at(2, 30) > at(2, 0) && at(2, 600) > at(2, 30));
+        assert!(at(1, 100_000) < at(2, 0), "the next step starts ahead");
+        assert!(at(2, 100_000) < 1.0, "only Done fills the bar");
+    }
 
     #[test]
     fn every_open_action_has_a_broker_request() {
