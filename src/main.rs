@@ -1,6 +1,8 @@
 // GUI program: no console window is ever created.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 pub(crate) mod advice;
+#[allow(dead_code)] // wired into the pages as the catalogs fill in
+pub(crate) mod explain;
 mod app;
 mod broker;
 mod gui;
