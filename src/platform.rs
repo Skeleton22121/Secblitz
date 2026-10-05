@@ -491,11 +491,24 @@ mod tests {
             assert_eq!(c.reboot, spec.reboot, "{}", spec.id);
             assert!(ids.contains(&spec.id.to_string()));
             validate_request("observe", Some(spec.id), None).unwrap();
-            assert!(validate_request("observe", Some(spec.id), Some(&json!({"items":{}}))).is_err());
+            assert!(
+                validate_request("observe", Some(spec.id), Some(&json!({"items":{}}))).is_err()
+            );
             assert!(validate_request("write", Some(spec.id), Some(&json!(true))).is_err());
-            assert!(validate_request("write", Some(spec.id), Some(&json!({"present":true,"value":1}))).is_err());
+            assert!(validate_request(
+                "write",
+                Some(spec.id),
+                Some(&json!({"present":true,"value":1}))
+            )
+            .is_err());
         }
-        for restart in ["lsa.run_as_ppl", "net.llmnr", "autorun.disabled", "ntlm.lm_compat_level", "lsa.restrict_anonymous"] {
+        for restart in [
+            "lsa.run_as_ppl",
+            "net.llmnr",
+            "autorun.disabled",
+            "ntlm.lm_compat_level",
+            "lsa.restrict_anonymous",
+        ] {
             assert!(crate::hardening::spec(restart).unwrap().reboot, "{restart}");
         }
         assert!(!crate::hardening::spec("defender.pua").unwrap().reboot);
@@ -505,12 +518,18 @@ mod tests {
     fn hardening_scripts_embed_only_the_compiled_spec_and_escape_values() {
         for spec in crate::hardening::all() {
             let observe = hardening_script("observe", spec.id, None).unwrap();
-            assert!(observe.starts_with(&format!("$action='observe'\n$id='{}'\n$inputJson=$null\n", spec.id)));
+            assert!(observe.starts_with(&format!(
+                "$action='observe'\n$id='{}'\n$inputJson=$null\n",
+                spec.id
+            )));
             assert!(observe.contains("$hardeningSpecJson='"));
             assert!(observe.contains("function HWrite"));
             // Helper definitions are present; the backend dispatcher is not.
             assert!(observe.contains("function Gate("));
-            assert_eq!(observe.matches("switch -CaseSensitive ($action)").count(), 1);
+            assert_eq!(
+                observe.matches("switch -CaseSensitive ($action)").count(),
+                1
+            );
             assert!(hardening_script("write", spec.id, None).is_err());
             assert!(hardening_script("observe", spec.id, Some(&json!({"items":{}}))).is_err());
         }
@@ -522,7 +541,12 @@ mod tests {
         let script = hardening_script("write", "wifi.risky_profiles", Some(&wifi)).unwrap();
         assert!(script.contains("$inputJson='{\"items\":{\"Joe''s ''; Remove-Item x; ''\":0}}'"));
         // Double quotes are rejected outright (they would break netsh-style quoting).
-        assert!(hardening_script("write", "wifi.risky_profiles", Some(&json!({"items": {"a\"b": 0}}))).is_err());
+        assert!(hardening_script(
+            "write",
+            "wifi.risky_profiles",
+            Some(&json!({"items": {"a\"b": 0}}))
+        )
+        .is_err());
     }
 
     #[test]

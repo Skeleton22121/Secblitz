@@ -135,7 +135,8 @@ fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
 
 /// A working row whose length is unknown.
 fn busy_row<'a>(p: Palette, icon: Icon, title: String, sub: String) -> El<'a> {
-    running(p,
+    running(
+        p,
         Running {
             icon,
             title,
@@ -288,7 +289,8 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             secondary(p, ctx.t("Scan"), Some(Msg::Ask(Sheet::Scan))),
             None,
         ),
-        Run::Working => busy_row(p,
+        Run::Working => busy_row(
+            p,
             Icon::Bug,
             ctx.t("Scan for viruses"),
             ctx.t("Starting the scan…"),
@@ -339,7 +341,8 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             secondary(p, ctx.t("Update"), Some(Msg::Ask(Sheet::DefenderUpdate))),
             None,
         ),
-        Run::Working => busy_row(p,
+        Run::Working => busy_row(
+            p,
             Icon::Download,
             ctx.t("Update virus protection"),
             ctx.t("Updating…"),
@@ -459,7 +462,8 @@ fn repair_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     Msg::StopRepair,
                 )]
             };
-            running(p,
+            running(
+                p,
                 Running {
                     icon: Icon::Wrench,
                     title,
@@ -534,7 +538,8 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ),
             None,
         ),
-        Updates::Looking => busy_row(p,
+        Updates::Looking => busy_row(
+            p,
             Icon::Download,
             ctx.t("Windows updates"),
             ctx.t("Looking for updates…"),
@@ -627,7 +632,8 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     Msg::StopInstall,
                 )]
             };
-            running(p,
+            running(
+                p,
                 Running {
                     icon: Icon::Download,
                     title: count_installing(ctx, *count),
@@ -1004,7 +1010,8 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ),
             None,
         ),
-        Run::Working => busy_row(p,
+        Run::Working => busy_row(
+            p,
             Icon::Lock,
             ctx.t("Password manager"),
             ctx.t("Installing Bitwarden. This can take a minute…"),
