@@ -537,10 +537,10 @@ var
   RemoveButton, CancelButton: TNewButton;
   Top: Integer;
 begin
-  Form := CreateCustomForm;
+  { Inno 6.3+: client size, then whether to keep it when the dialog font scales. }
+  Form := CreateCustomForm(ScaleX(470), ScaleY(300), False, False);
   try
     Form.Caption := CustomMessage('RemoveTitle');
-    Form.ClientWidth := ScaleX(470);
     Top := ScaleY(16);
     Question := AddText(Form, Top, 0, CustomMessage('RemoveQuestion'), True);
     Top := Question.Top + Question.Height + ScaleY(14);
