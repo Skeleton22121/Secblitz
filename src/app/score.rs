@@ -253,6 +253,32 @@ mod tests {
         }
     }
 
+    /// Protection lists every fix candidate: counted ones under "Needs your
+    /// attention", Excluded ones (privacy extras) in their own group. No
+    /// candidate may fall outside those two, or the page and count disagree.
+    #[test]
+    fn every_fix_candidate_is_counted_or_a_privacy_extra() {
+        let report = rep(vec![
+            out("uac.enabled", "attention"),
+            out("autorun.disabled", "attention"),
+            out("privacy.advertising_id", "attention"),
+            out("privacy.clipboard_sync", "attention"),
+        ]);
+        let available: Vec<String> = report.results.iter().map(|r| r.id.clone()).collect();
+        let counted = to_check_ids(&report);
+        let mut extras = Vec::new();
+        for id in crate::app::flow::candidates(&report, &available) {
+            let r = report.results.iter().find(|r| r.id == id).unwrap();
+            match classify(r) {
+                Class::Fixable | Class::Review => assert!(counted.contains(&id), "{id}"),
+                Class::Excluded => extras.push(id),
+                other => panic!("{id} is a fix candidate classified {other:?}"),
+            }
+        }
+        assert_eq!(counted, ["uac.enabled", "autorun.disabled"]);
+        assert_eq!(extras, ["privacy.advertising_id", "privacy.clipboard_sync"]);
+    }
+
     #[test]
     fn empty_report_is_unknown() {
         let s = Score::of(&Report::default());
