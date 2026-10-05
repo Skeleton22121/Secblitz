@@ -54,9 +54,12 @@ fn parse_question(packet: &[u8]) -> Option<(Question, usize)> {
         }
         let label = packet.get(at..at + len)?;
         at += len;
+        // Any printable ASCII except the separator. Odd but well-formed names
+        // (`*`, spaces in local names) are forwarded, never dropped: a dropped
+        // query stalls the lookup until Windows gives up on the filter.
         if !label
             .iter()
-            .all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_')
+            .all(|b| (b' '..=b'~').contains(b) && *b != b'.')
         {
             return None;
         }
@@ -263,12 +266,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_long_name_and_odd_characters() {
+    fn parse_rejects_long_name_and_control_bytes() {
         let label = "a".repeat(60);
         let name = format!("{label}.{label}.{label}.{label}.{label}");
         assert!(parse_query(&query_bytes(&name, 1)).is_none());
-        assert!(parse_query(&query_bytes("exa mple.com", 1)).is_none());
+        assert!(parse_query(&query_bytes("exa\u{1}mple.com", 1)).is_none());
+        assert!(parse_query(&query_bytes("caf\u{e9}.com", 1)).is_none());
         assert!(parse_query(&query_bytes("_dmarc.example.com", 16)).is_some());
+    }
+
+    #[test]
+    fn parse_accepts_odd_printable_names_so_they_are_forwarded() {
+        let q = parse_query(&query_bytes("My PC.*.Local", 1)).unwrap();
+        assert_eq!(q.question.name, "my pc.*.local");
     }
 
     #[test]
