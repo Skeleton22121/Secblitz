@@ -277,21 +277,26 @@ struct Split {
 }
 
 /// The recommended fix ids among `items`, and how `items` split up.
-fn split(report: &Report, available: &[String], items: &[ToCheck]) -> (Vec<String>, Split) {
+/// Also orders the list the way the headline reads it:
+/// what we can fix first, then the person's choices, then their own steps.
+fn split(report: &Report, available: &[String], items: &mut [ToCheck]) -> (Vec<String>, Split) {
     let recommended = crate::app::flow::recommended(report, available);
     let candidates = crate::app::flow::candidates(report, available);
-    let mut ids = Vec::new();
-    let mut choices = 0;
-    for item in items {
-        if let ToCheck::Control(r) = item {
-            if recommended.contains(&r.id) {
-                ids.push(r.id.clone());
-            } else if candidates.contains(&r.id) && advice::is_choice(&r.id) {
-                choices += 1;
-            }
-        }
-    }
+    let part = |item: &ToCheck| match item {
+        ToCheck::Control(r) if recommended.contains(&r.id) => 0,
+        ToCheck::Control(r) if candidates.contains(&r.id) && advice::is_choice(&r.id) => 1,
+        _ => 2,
+    };
+    items.sort_by_key(|item| part(item));
+    let ids: Vec<String> = items
+        .iter()
+        .filter_map(|item| match item {
+            ToCheck::Control(r) if part(item) == 0 => Some(r.id.clone()),
+            _ => None,
+        })
+        .collect();
     let fixable = ids.len();
+    let choices = items.iter().filter(|item| part(item) == 1).count();
     let manual = items.len() - fixable - choices;
     (
         ids,
@@ -391,7 +396,7 @@ fn last_checked(ctx: &Ctx) -> Option<String> {
 fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, Message> {
     let p = ctx.palette;
     let score = Score::of(report);
-    let items = score::to_check(report);
+    let mut items = score::to_check(report);
     // After a failed check the report is stale: never claim protection from it
     // and offer no fix that cannot open.
     let stale = ctx.check_error.is_some();
@@ -405,7 +410,7 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
             },
         )
     } else {
-        split(report, &ctx.catalog.available, &items)
+        split(report, &ctx.catalog.available, &mut items)
     };
     let verdict = if stale {
         Verdict::Unknown
@@ -763,10 +768,20 @@ mod tests {
         let available: Vec<String> = ["uac.consent", "autorun.disabled"]
             .map(String::from)
             .to_vec();
-        let items = score::to_check(&report);
-        let (ids, split) = split(&report, &available, &items);
+        let mut items = score::to_check(&report);
+        let (ids, split) = split(&report, &available, &mut items);
         assert_eq!(split.fixable + split.choices + split.manual, items.len());
         assert_eq!(ids.len(), split.fixable);
         assert!(ids.iter().all(|id| !advice::is_choice(id)));
+        // The list leads with what the button fixes, in the headline's order.
+        let lead: Vec<&str> = items
+            .iter()
+            .take(ids.len())
+            .filter_map(|item| match item {
+                ToCheck::Control(r) => Some(r.id.as_str()),
+                ToCheck::Finding(_) => None,
+            })
+            .collect();
+        assert_eq!(lead, ids.iter().map(String::as_str).collect::<Vec<_>>());
     }
 }
