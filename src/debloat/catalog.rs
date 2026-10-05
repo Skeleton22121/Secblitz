@@ -82,7 +82,8 @@ pub static CATALOG: &[App] = &[
         "Microsoft.WindowsMaps",
         "Maps",
         Group::Recommended,
-        Some("9WZDNCRDTBVB"),
+        // Retired: Microsoft removed Maps from the Store in July 2025.
+        None,
     ),
     app(
         "Microsoft.ZuneVideo",
@@ -180,7 +181,7 @@ pub static CATALOG: &[App] = &[
         "MSTeams",
         "Microsoft Teams",
         Group::Promotions,
-        Some("9MSPC6MP8FM4"),
+        Some("XP8BT8DW290MPQ"),
     ),
     app(
         "MicrosoftTeams",
@@ -198,7 +199,8 @@ pub static CATALOG: &[App] = &[
         "Microsoft.Windows.DevHome",
         "Dev Home",
         Group::Promotions,
-        Some("9N8MHTPHNGVV"),
+        // Retired: its Store id now opens "Windows Advanced Settings".
+        None,
     ),
     app(
         "Microsoft.Todos",

@@ -85,7 +85,13 @@ fn defaults_come_only_from_recommended_and_sponsored() {
 fn store_ids_look_like_store_ids() {
     for app in catalog() {
         if let Some(id) = app.store_id {
-            assert_eq!(id.len(), 12, "{}", app.name);
+            // Packaged apps have 12-character ids (9N...), Store-listed
+            // desktop apps 14 (XP...).
+            assert!(
+                id.len() == 12 || (id.len() == 14 && id.starts_with("XP")),
+                "{}",
+                app.name
+            );
             assert!(id
                 .bytes()
                 .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
