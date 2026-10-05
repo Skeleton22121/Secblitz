@@ -3,24 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f3f6f4">
+  <meta name="theme-color" content="#F7F7F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E0E10" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex">
-  <title>Page not found | Secblitz</title>
-  <link rel="icon" href="/assets/secblitz.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=marketing">
+  <title>Page not found – Secblitz</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=070">
 </head>
 <body>
-  <header class="header wrap">
-    <a class="brand" href="/" aria-label="Secblitz home"><img src="/assets/secblitz.svg" width="26" height="29" alt="">secblitz</a>
+  <header class="header">
+    <div class="wrap header-inner">
+      <a class="brand" href="/" aria-label="Secblitz home"><img class="brand-mark" src="/assets/favicon.svg" width="24" height="24" alt="">Secblitz</a>
+    </div>
   </header>
-  <main>
-    <section class="hero wrap" aria-labelledby="page-title">
-      <h1 id="page-title">Page not found.</h1>
-      <div class="hero-side">
-        <p class="lead">We couldn't find that page.</p>
-        <div class="cta"><a class="button" href="/">Back to Secblitz</a></div>
-      </div>
-    </section>
+  <main class="wrap not-found">
+    <h1>Page not found.</h1>
+    <p class="lead">We couldn't find that page.</p>
+    <a class="button" href="/">Back to Secblitz</a>
   </main>
 </body>
 </html>
