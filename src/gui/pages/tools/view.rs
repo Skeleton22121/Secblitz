@@ -283,7 +283,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             Some(Icon::Bug),
             ctx.t("Scan for viruses"),
             Some(ctx.t("Look for harmful software on your PC.")),
-            secondary(p, ctx.t("Scan now"), Some(Msg::Ask(Sheet::Scan))),
+            secondary(p, ctx.t("Scan"), Some(Msg::Ask(Sheet::Scan))),
             None,
         ),
         Run::Working => busy_row(
@@ -336,11 +336,7 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             Some(Icon::Download),
             ctx.t("Update virus protection"),
             Some(ctx.t("Get the newest virus information.")),
-            secondary(
-                p,
-                ctx.t("Update now"),
-                Some(Msg::Ask(Sheet::DefenderUpdate)),
-            ),
+            secondary(p, ctx.t("Update"), Some(Msg::Ask(Sheet::DefenderUpdate))),
             None,
         ),
         Run::Working => busy_row(
@@ -416,7 +412,7 @@ fn repair_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 trailing(vec![
                     secondary(
                         p,
-                        ctx.t("Check for problems"),
+                        ctx.t("Check"),
                         free.then_some(Msg::Ask(Sheet::Repair(RepairKind::Check))),
                     ),
                     more(p, menu),
@@ -717,7 +713,7 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let picker: El<'a> = container(widgets::segmented(p, &profiles, state.tip_choice, |t| {
         tools(Msg::TipChoice(t))
     }))
-    .max_width(560)
+    .max_width(theme::CONTENT_MAX)
     .into();
 
     if let Tips::Running(profile) = &state.tips {
@@ -900,7 +896,7 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     widgets::body(p, ctx.t("Password generator")),
                     widgets::small(p, caption)
                 ]
-                .spacing(2)
+                .spacing(theme::S1)
                 .width(Length::Fill),
             ]
             .spacing(theme::S4)
@@ -930,7 +926,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             }),
             secondary(
                 p,
-                ctx.t("Install Bitwarden"),
+                ctx.t("Install"),
                 has_broker.then_some(Msg::Ask(Sheet::Bitwarden)),
             ),
             None,
@@ -1100,7 +1096,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
         ),
     };
     let mut content = column![row![
-        widgets::icon_badge(p, icon, Tone::Neutral),
+        widgets::icon(icon, theme::ICON_ROW, p.text_muted),
         widgets::h2(p, title)
     ]
     .spacing(theme::S3)

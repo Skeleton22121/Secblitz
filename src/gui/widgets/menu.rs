@@ -144,6 +144,7 @@ impl Widget<Message, Theme, Renderer> for Overflow {
         viewport: &Rectangle,
     ) {
         // The press button animates hover / press; its own message is a no-op.
+        let captured_before = shell.is_event_captured();
         self.button.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -165,8 +166,17 @@ impl Widget<Message, Theme, Renderer> for Overflow {
                 shell.capture_event();
                 shell.request_redraw();
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. })
-            | Event::Mouse(mouse::Event::CursorLeft) => shell.request_redraw(),
+            // Enter / Space on the focused trigger (the button captures only
+            // then) opens or closes the menu.
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Enter | Named::Space),
+                ..
+            }) if !captured_before && shell.is_event_captured() => {
+                st.open = !st.open;
+                st.hover = if st.open { Some(0) } else { None };
+                st.opened_at = None;
+                shell.request_redraw();
+            }
             _ => {}
         }
     }
@@ -373,6 +383,31 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_> {
                 shell.capture_event();
                 shell.request_redraw();
             }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(key @ (Named::ArrowDown | Named::ArrowUp)),
+                ..
+            }) if !self.items.is_empty() => {
+                let n = self.items.len();
+                self.state.hover = Some(match (self.state.hover, key) {
+                    (None, Named::ArrowUp) => n - 1,
+                    (None, _) => 0,
+                    (Some(i), Named::ArrowUp) => (i + n - 1) % n,
+                    (Some(i), _) => (i + 1) % n,
+                });
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Enter),
+                ..
+            }) => {
+                if let Some(item) = self.state.hover.and_then(|i| self.items.get(i)) {
+                    shell.publish(item.message.clone());
+                    self.state.open = false;
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+            }
             _ => {}
         }
     }
@@ -397,6 +432,10 @@ pub fn overflow_menu<'a>(
     p: Palette,
     items: Vec<(Icon, String, Message, bool)>,
 ) -> Element<'a, Message> {
+    // Nothing to offer: no trigger, so no empty popup.
+    if items.is_empty() {
+        return iced::widget::space::horizontal().width(0).into();
+    }
     let items = items
         .into_iter()
         .map(|(icon, label, message, danger)| MenuItem {

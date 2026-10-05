@@ -73,6 +73,8 @@ impl Default for Finished {
 
 #[derive(Debug)]
 pub struct State {
+    /// Generation of the newest scan; results from older ones are ignored.
+    scan_gen: u32,
     tab: Tab,
     scan: Scan,
     installed: Vec<Installed>,
@@ -101,6 +103,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         State {
+            scan_gen: 0,
             tab: Tab::Apps,
             scan: Scan::Loading,
             installed: Vec::new(),
@@ -132,7 +135,7 @@ pub enum Run {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    Scanned(Result<Vec<Installed>, String>),
+    Scanned(u32, Result<Vec<Installed>, String>),
     JournalLoaded(Vec<Batch>),
     Rescan,
     SetTab(Tab),
@@ -158,11 +161,15 @@ fn wrap(msg: Msg) -> Message {
     Message::Debloat(msg)
 }
 
-fn scan_task() -> Task<Message> {
+/// Start an inventory tagged with a fresh generation; an older scan that
+/// lands later is dropped.
+fn scan_task(state: &mut State) -> Task<Message> {
+    state.scan_gen = state.scan_gen.wrapping_add(1);
+    let generation = state.scan_gen;
     Task::batch([
         Task::perform(
             blocking(|| debloat::inventory().map_err(|e| format!("{e:#}"))),
-            |r| wrap(Msg::Scanned(r)),
+            move |r| wrap(Msg::Scanned(generation, r)),
         ),
         Task::perform(blocking(debloat::journal::load), |j| {
             wrap(Msg::JournalLoaded(j))
@@ -176,7 +183,7 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         return Task::none();
     }
     start_scan(state);
-    scan_task()
+    scan_task(state)
 }
 
 fn start_scan(state: &mut State) {
@@ -254,7 +261,8 @@ fn toast(text: String, tone: Tone) -> Task<Message> {
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
-        Msg::Scanned(Ok(found)) => {
+        Msg::Scanned(generation, _) if generation != state.scan_gen => Task::none(),
+        Msg::Scanned(_, Ok(found)) => {
             state.installed = found;
             let present: BTreeSet<u16> = installed_indices(state).into_iter().collect();
             if state.initialised {
@@ -281,7 +289,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.scan = Scan::Ready;
             Task::none()
         }
-        Msg::Scanned(Err(e)) => {
+        Msg::Scanned(_, Err(e)) => {
             state.scan = Scan::Failed(e);
             Task::none()
         }
@@ -292,7 +300,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::Rescan => {
             start_scan(state);
-            scan_task()
+            scan_task(state)
         }
         Msg::SetTab(tab) => {
             state.tab = tab;
@@ -527,7 +535,7 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
             }
             state.now = done.at;
             state.sheet = Sheet::Done(Box::new(done));
-            tasks.push(scan_task());
+            tasks.push(scan_task(state));
             Task::batch(tasks)
         }
     }
@@ -647,7 +655,7 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             None,
         ),
         _ => {
-            let mut col = column![].spacing(theme::S4);
+            let mut col = column![].spacing(theme::S1);
             for (group, members) in &state.groups {
                 col = col.push(group_card(state, ctx, *group, members));
             }
@@ -1063,7 +1071,7 @@ fn working_sheet<'a>(
         };
         list = list.push(
             row![
-                container(lead).center(18),
+                container(lead).center(theme::CHECK),
                 widgets::body(p, ctx.t(app_of(*index).name)),
                 space::horizontal(),
                 widgets::small(p, note),
@@ -1258,6 +1266,11 @@ fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a
     )
 }
 
+/// Whether a finished scan is the newest one started.
+pub fn is_current_scan(state: &State, generation: u32) -> bool {
+    state.scan_gen == generation
+}
+
 /// The app list must not be reloaded under an open sheet.
 pub fn is_busy(state: &State) -> bool {
     !matches!(state.sheet, Sheet::None)
@@ -1274,5 +1287,5 @@ pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if !matches!(state.scan, Scan::Ready) {
         start_scan(state);
     }
-    scan_task()
+    scan_task(state)
 }

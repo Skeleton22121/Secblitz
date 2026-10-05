@@ -976,6 +976,9 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["Manage apps", "Gestionar apps", "Gérer les applications", "Apps verwalten", "Gerenciar apps", "Gestisci app"],
     ["Show {n} more", "Mostrar {n} más", "Afficher {n} de plus", "{n} weitere anzeigen", "Mostrar mais {n}", "Mostra altri {n}"],
     ["Check", "Comprobar", "Vérifier", "Prüfen", "Verificar", "Controlla"],
+    ["Hide details", "Ocultar detalles", "Masquer les détails", "Details ausblenden", "Ocultar detalhes", "Nascondi dettagli"],
+    ["Scan", "Analizar", "Analyser", "Scannen", "Analisar", "Analizza"],
+    ["Update", "Actualizar", "Mettre à jour", "Aktualisieren", "Atualizar", "Aggiorna"],
     ["System tray icon", "Icono en la bandeja del sistema", "Icône dans la zone de notification", "Symbol im Infobereich", "Ícone na bandeja do sistema", "Icona nell'area di notifica"],
 ];
 

@@ -95,7 +95,7 @@ pub const LIGHT: Palette = Palette {
     popup: rgb(0xFFFFFF),
     border: rgb(0xE8E8EB),
     border_strong: rgb(0xDEDEE2),
-    hover: rgb(0xF0F0F2),
+    hover: rgb(0xEDEDF0),
     hover_strong: rgb(0xE8E8EB),
     pressed: rgb(0xE1E1E5),
     selected: rgb(0xEAEAED),
@@ -130,10 +130,10 @@ pub const DARK: Palette = Palette {
     popup: rgb(0x212124),
     border: rgb(0x2A2A2E),
     border_strong: rgb(0x36363B),
-    hover: rgb(0x1C1C1F),
-    hover_strong: rgb(0x252528),
-    pressed: rgb(0x2D2D31),
-    selected: rgb(0x26262A),
+    hover: rgb(0x212125),
+    hover_strong: rgb(0x2A2A2F),
+    pressed: rgb(0x36363C),
+    selected: rgb(0x303036),
     focus_ring: rgb(0xD4D4D8),
     disabled_bg: rgb(0x1C1C1F),
     disabled_fg: rgb(0x636368),
@@ -250,6 +250,8 @@ pub const ROW_ITEM: f32 = 56.0;
 pub const ICON_ROW: f32 = 20.0;
 /// Height of a popup-menu row.
 pub const MENU_ROW: f32 = 32.0;
+/// Widest readable content block (sheet panels).
+pub const CONTENT_MAX: f32 = 560.0;
 /// Checkbox box edge.
 pub const CHECK: f32 = 18.0;
 /// Settings row height: ROW plus S2, so single and two line rows align.
