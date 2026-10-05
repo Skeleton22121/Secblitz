@@ -13,11 +13,13 @@ use crate::app::tools::{
 };
 use crate::broker;
 use crate::gui::theme::Tone;
+use crate::gui::widgets::anim::{self, Clock, Tween};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
-use iced::Task;
+use iced::{Subscription, Task};
 use secblitz::actions;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub use view::{modal, view};
 
@@ -57,7 +59,7 @@ impl Shortcut {
     }
 }
 
-/// Which "Technical details" expander is open.
+/// Which "More details" expander is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
     Scan,
@@ -92,6 +94,10 @@ pub enum Msg {
     NewPassword,
     CopyPassword,
     TogglePassword,
+    /// The brief "Copied" confirmation on the password card is over.
+    CopiedReset,
+    /// Animation frame; only delivered while something moves.
+    Frame(Instant),
     BitwardenDone(Result<broker::Reply, String>),
     ClearBitwarden,
     Open(Shortcut),
@@ -167,7 +173,22 @@ pub enum Tips {
 pub struct Password {
     secret: Option<Secret>,
     shown: bool,
+    copied: bool,
 }
+
+/// Which card a one-shot "finished" animation (check, cross, warning) belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Scan,
+    Defender,
+    Repair,
+    Updates,
+    Bitwarden,
+    Copy,
+}
+
+/// How long the check mark replaces the copy button.
+const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 
 pub struct State {
     sheet: Option<Sheet>,
@@ -179,6 +200,14 @@ pub struct State {
     password: Password,
     bitwarden: Run<Result<(), String>>,
     open_details: Vec<Detail>,
+    /// Time of the latest animation frame (never read from the clock in `view`).
+    now: Instant,
+    /// Zero point for the endless spinners.
+    epoch: Instant,
+    /// Finished-state draw-ins that are still moving.
+    shots: Vec<(Slot, Clock)>,
+    /// Smooth progress bar of the running repair or update job.
+    bar: Option<Tween>,
 }
 
 impl std::fmt::Debug for State {
@@ -199,9 +228,14 @@ impl Default for State {
             password: Password {
                 secret: Secret::generate().ok(),
                 shown: true,
+                copied: false,
             },
             bitwarden: Run::Idle,
             open_details: Vec::new(),
+            now: Instant::now(),
+            epoch: Instant::now(),
+            shots: Vec::new(),
+            bar: None,
         }
     }
 }
@@ -219,6 +253,17 @@ pub fn escape(state: &mut State) {
     if state.sheet.is_some() {
         state.sheet = None;
         state.close_detail(Detail::Sheet);
+    }
+}
+
+/// Frames for the spinners and draw-ins, only while one is on screen.
+/// The shell merges this into its subscriptions (see `home::subscription`).
+#[allow(dead_code)]
+pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
+    if state.needs_frames() && anim::animating() {
+        iced::window::frames().map(|at| Message::Tools(Msg::Frame(at)))
+    } else {
+        Subscription::none()
     }
 }
 
@@ -246,10 +291,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::ScanDone(r) => {
             state.scan = Run::Done(r);
+            state.finish(Slot::Scan);
             Task::none()
         }
         Msg::DefenderDone(r) => {
             state.defender = Run::Done(r);
+            state.finish(Slot::Defender);
             Task::none()
         }
         Msg::ClearScan => {
@@ -268,7 +315,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             };
             match event {
                 RepairEvent::Preparing => {}
-                RepairEvent::Progress(p) => *progress = Some(p),
+                RepairEvent::Progress(p) => {
+                    let ratio = repair_ratio(&p);
+                    *progress = Some(p);
+                    state.retarget_bar(ratio);
+                }
                 RepairEvent::Done {
                     result,
                     note,
@@ -281,6 +332,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         note,
                         technical,
                     };
+                    state.bar = None;
+                    state.finish(Slot::Repair);
                     ctx.busy = false;
                 }
             }
@@ -321,6 +374,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     Ok(found) => Updates::Found(found),
                     Err((technical, note)) => Updates::Failed { technical, note },
                 };
+                if !matches!(state.updates, Updates::Found(_)) {
+                    state.finish(Slot::Updates);
+                }
             }
             Task::none()
         }
@@ -335,6 +391,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 } => {
                     *stage = s;
                     *elapsed = e;
+                    state.retarget_bar(stage_ratio(s));
                 }
                 InstallEvent::Done {
                     result,
@@ -346,6 +403,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         note,
                         technical,
                     };
+                    state.bar = None;
+                    state.finish(Slot::Updates);
                     ctx.busy = false;
                 }
             }
@@ -394,18 +453,32 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             // The old secret is wiped when it is replaced.
             state.password.secret = Secret::generate().ok();
             state.password.shown = true;
+            state.password.copied = false;
+            state.shots.retain(|(slot, _)| *slot != Slot::Copy);
             Task::none()
         }
-        Msg::CopyPassword => match &state.password.secret {
-            Some(secret) => Task::batch([
-                iced::clipboard::write(secret.reveal().to_owned()),
-                Task::done(Message::Toast(
-                    ctx.t("Copied. Paste it where you need it."),
-                    Tone::Good,
-                )),
-            ]),
+        Msg::CopyPassword => match state.password.secret.as_ref().map(|s| s.reveal().to_owned()) {
+            Some(secret) => {
+                state.password.copied = true;
+                state.finish(Slot::Copy);
+                Task::batch([
+                    iced::clipboard::write(secret),
+                    Task::perform(blocking(|| std::thread::sleep(COPIED_SHOWN)), |()| {
+                        tools(Msg::CopiedReset)
+                    }),
+                ])
+            }
             None => Task::none(),
         },
+        Msg::CopiedReset => {
+            state.password.copied = false;
+            Task::none()
+        }
+        Msg::Frame(now) => {
+            state.now = now;
+            state.shots.retain(|(_, clock)| !clock.done(anim::SLOW, now));
+            Task::none()
+        }
         Msg::TogglePassword => {
             state.password.shown = !state.password.shown;
             Task::none()
@@ -416,6 +489,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Ok(other) => Err(format!("{other:?}")),
                 Err(e) => Err(e),
             });
+            state.finish(Slot::Bitwarden);
             Task::none()
         }
         Msg::ClearBitwarden => {
@@ -445,7 +519,59 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
+/// Bar position for a repair step (the current step counts as half done).
+fn repair_ratio(p: &RepairProgress) -> f32 {
+    (p.step as f32 - 0.5) / p.total.max(1) as f32
+}
+
+fn stage_ratio(stage: InstallStage) -> f32 {
+    match stage {
+        InstallStage::Preparing => 0.12,
+        InstallStage::Installing => 0.55,
+        InstallStage::Checking => 0.9,
+    }
+}
+
 impl State {
+    /// A job just ended: start its draw-in (check, cross or warning).
+    fn finish(&mut self, slot: Slot) {
+        self.shots.retain(|(s, _)| *s != slot);
+        self.shots.push((slot, Clock::new()));
+    }
+    /// 0..1 draw-in progress of a finished state; 1 when it is not moving.
+    fn shot(&self, slot: Slot) -> f32 {
+        self.shots
+            .iter()
+            .find(|(s, _)| *s == slot)
+            .map_or(1.0, |(_, clock)| clock.progress_at(anim::SLOW, self.now))
+    }
+    /// Time since the spinners' zero point.
+    fn spin(&self) -> Duration {
+        self.now.saturating_duration_since(self.epoch)
+    }
+    fn start_bar(&mut self, at: f32) {
+        self.bar = Some(Tween::new(at, at, anim::SLOW));
+    }
+    fn retarget_bar(&mut self, to: f32) {
+        let now = Instant::now();
+        if let Some(bar) = &mut self.bar {
+            bar.retarget(now, to);
+        }
+    }
+    fn bar_value(&self, fallback: f32) -> f32 {
+        self.bar.map_or(fallback, |b| b.value(self.now))
+    }
+    /// True while any spinner or draw-in is on screen.
+    fn needs_frames(&self) -> bool {
+        !self.shots.is_empty()
+            || matches!(self.scan, Run::Working)
+            || matches!(self.defender, Run::Working)
+            || matches!(self.bitwarden, Run::Working)
+            || matches!(self.repair, Repair::Working { .. })
+            || matches!(self.updates, Updates::Looking | Updates::Installing { .. })
+            || matches!(self.tips, Tips::Running(_))
+    }
+
     fn close_detail(&mut self, detail: Detail) {
         self.open_details.retain(|d| *d != detail);
     }
@@ -494,6 +620,7 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                 cancel: cancel.clone(),
                 progress: None,
             };
+            state.start_bar(0.03);
             state.close_detail(Detail::Repair);
             Task::run(
                 blocking_stream(move |emit| logic::run_repair(kind, cancel, emit)),
@@ -517,6 +644,7 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                 elapsed: 0,
                 count,
             };
+            state.start_bar(stage_ratio(InstallStage::Preparing));
             state.close_detail(Detail::Updates);
             Task::run(
                 blocking_stream(move |emit| logic::run_install(reviewed, cancel, emit)),
