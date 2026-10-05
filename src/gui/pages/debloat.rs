@@ -9,7 +9,7 @@ use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::widgets::{anim, progress};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
-use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Subscription, Task};
 use secblitz::debloat::{self, Batch, Group, Installed, ItemResult, Progress};
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -166,14 +166,19 @@ fn wrap(msg: Msg) -> Message {
 
 /// Start an inventory tagged with a fresh generation; an older scan that
 /// lands later is dropped.
-fn scan_task(state: &mut State) -> Task<Message> {
+fn inventory_task(state: &mut State) -> Task<Message> {
     state.scan_gen = state.scan_gen.wrapping_add(1);
     let generation = state.scan_gen;
+    Task::perform(
+        blocking(|| debloat::inventory().map_err(|e| format!("{e:#}"))),
+        move |r| wrap(Msg::Scanned(generation, r)),
+    )
+}
+
+/// Inventory plus the removal journal.
+fn scan_task(state: &mut State) -> Task<Message> {
     Task::batch([
-        Task::perform(
-            blocking(|| debloat::inventory().map_err(|e| format!("{e:#}"))),
-            move |r| wrap(Msg::Scanned(generation, r)),
-        ),
+        inventory_task(state),
         Task::perform(blocking(debloat::journal::load), |j| {
             wrap(Msg::JournalLoaded(j))
         }),
@@ -418,6 +423,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                             }),
                             |j| wrap(Msg::JournalLoaded(j)),
                         ),
+                        // The app is installed again: list it under "Apps to
+                        // remove" without a loading state (the journal is
+                        // reloaded above, after it is marked).
+                        inventory_task(state),
                         toast(
                             format!("{name} {}", ctx.t("is back on your PC.")),
                             Tone::Good,
@@ -774,7 +783,13 @@ fn group_card<'a>(
     let open = state.open.contains(&group);
     let expanded = state.expanded.contains(&group);
     let mut body = column![].spacing(theme::S1);
-    body = body.push(container(widgets::small(p, ctx.t(subtitle))).padding([theme::S1, theme::S4]));
+    // Lined up with the app names below it.
+    body = body.push(container(widgets::small(p, ctx.t(subtitle))).padding(Padding {
+        top: theme::S1,
+        right: theme::S4,
+        bottom: theme::S1,
+        left: widgets::explain::INDENT,
+    }));
     if group == Group::Gaming {
         body = body.push(widgets::inline_notice(
             p,
@@ -876,7 +891,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         let (subtitle, trailing): (String, Element<'a, Message>) = if app.store_id.is_none() {
             (
                 format!(
-                    "{} - {}",
+                    "{} · {}",
                     ago(ctx, t),
                     ctx.t("You can look for it in the Microsoft Store yourself.")
                 ),
@@ -884,7 +899,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             )
         } else if restoring {
             (
-                ago(ctx, t),
+                ctx.t("Restoring…"),
                 anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
             )
         } else if state.offline == Some(index) {
@@ -968,7 +983,11 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         widgets::h2(p, count_text(ctx, n, "Remove {n} app?", "Remove {n} apps?")),
         widgets::muted(
             p,
-            ctx.t("These apps will be removed for everyone who uses this PC. Your own files are not touched."),
+            if n == 1 {
+                ctx.t("This app will be removed for everyone who uses this PC. Your own files are not touched.")
+            } else {
+                ctx.t("These apps will be removed for everyone who uses this PC. Your own files are not touched.")
+            },
         ),
         scroll_list(p, list, 220.0),
     ]
@@ -978,23 +997,31 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         .filter(|i| app_of(**i).store_id.is_none())
         .map(|i| ctx.t(app_of(*i).name))
         .collect();
-    // Where to restore: always name the tab.
-    col = col.push(widgets::inline_notice(
-        p,
-        Tone::Neutral,
-        if manual.is_empty() {
-            ctx.t("You can bring these back later from the Removed apps tab.")
-        } else {
-            ctx.t("You can bring most of these back later from the Removed apps tab.")
-        },
-    ));
+    // Where to restore: name the tab whenever something can come back.
+    if manual.len() < n {
+        col = col.push(widgets::inline_notice(
+            p,
+            Tone::Neutral,
+            if !manual.is_empty() {
+                ctx.t("You can bring most of these back later from the Removed apps tab.")
+            } else if n == 1 {
+                ctx.t("You can bring it back later from the Removed apps tab.")
+            } else {
+                ctx.t("You can bring these back later from the Removed apps tab.")
+            },
+        ));
+    }
     if !manual.is_empty() {
         col = col.push(widgets::inline_notice(
             p,
             Tone::Warn,
             format!(
                 "{} {}",
-                ctx.t("These can't be restored automatically:"),
+                if manual.len() == 1 {
+                    ctx.t("This can't be restored automatically:")
+                } else {
+                    ctx.t("These can't be restored automatically:")
+                },
                 manual.join(", ")
             ),
         ));
@@ -1017,11 +1044,13 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ),
             container(widgets::small(
                 p,
-                ctx.t(
-                    "Windows sometimes installs apps on its own. Turn this on to ask it to stop."
-                ),
+                ctx.t("Windows sometimes installs apps on its own. Tick this to ask it to stop."),
             ))
-            .padding([0.0, theme::S1]),
+            // Lined up with the checkbox label.
+            .padding(Padding {
+                left: theme::S1 + theme::CHECK + theme::S3,
+                ..Padding::ZERO
+            }),
         ]
         .spacing(theme::S1),
     );
