@@ -151,10 +151,12 @@ pub fn parse_full_name(full: &str) -> Result<Identity> {
 fn reserved_device(component: &str) -> bool {
     let stem = component.split('.').next().unwrap_or("").trim_end();
     let up = stem.to_ascii_uppercase();
-    matches!(up.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        || ((up.starts_with("COM") || up.starts_with("LPT"))
-            && up.len() == 4
-            && up.as_bytes()[3].is_ascii_digit())
+    matches!(
+        up.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ((up.starts_with("COM") || up.starts_with("LPT"))
+        && up.len() == 4
+        && up.as_bytes()[3].is_ascii_digit())
 }
 
 /// A '/'-separated relative path that can't escape its root on Windows.
@@ -428,7 +430,9 @@ impl Store {
             if let Some(rest) = name.strip_prefix(OLD) {
                 // An interrupted replace: if the family has no copy, the
                 // `.old-` folder is the only complete one, so put it back.
-                let family = rest.get(17..).filter(|_| rest.as_bytes().get(16) == Some(&b'-'));
+                let family = rest
+                    .get(17..)
+                    .filter(|_| rest.as_bytes().get(16) == Some(&b'-'));
                 if let Some(family) = family.filter(|f| valid_family_dir(f)) {
                     let target = self.family_dir(family);
                     if fs::symlink_metadata(&target).is_err()
@@ -606,7 +610,7 @@ fn read_only(rights: &str) -> bool {
         && rights
             .as_bytes()
             .chunks(2)
-            .all(|t| matches!(t, b"GR" | b"GX" | b"FR" | b"FX" | b"RC" | b"LC" | b"SW" | b"RP" | b"LO"))
+            .all(|t| matches!(t, b"GR" | b"GX" | b"FR" | b"FX" | b"RC" | b"SW" | b"LO"))
 }
 
 /// Security of a live Microsoft package folder (or file), re-targeted at
@@ -614,7 +618,11 @@ fn read_only(rights: &str) -> bool {
 pub fn template_sddl(template: &str, from_family: &str, to_family: &str) -> Result<String> {
     let (to_name, to_pub) = to_family.rsplit_once('_').context("Unexpected family")?;
     ensure!(
-        plain_token(to_name, 50) && to_pub.len() == 13 && to_pub.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()),
+        plain_token(to_name, 50)
+            && to_pub.len() == 13
+            && to_pub
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()),
         "Unexpected family"
     );
     ensure!(template.starts_with("O:SYG:SY"), "Unexpected owner");
@@ -646,9 +654,15 @@ pub fn template_sddl(template: &str, from_family: &str, to_family: &str) -> Resu
         let fields: Vec<&str> = ace.splitn(7, ';').collect();
         ensure!(fields.len() >= 6, "Unexpected ACE");
         let (kind, rights, sid) = (fields[0], fields[2], fields[5]);
-        ensure!(matches!(kind, "A" | "XA" | "D" | "XD"), "Unexpected ACE type");
+        ensure!(
+            matches!(kind, "A" | "XA" | "D" | "XD"),
+            "Unexpected ACE type"
+        );
         let trusted = matches!(sid, "SY") || sid == TRUSTED_INSTALLER;
-        ensure!(kind.ends_with('D') || trusted || read_only(rights), "Template grants write access");
+        ensure!(
+            kind.ends_with('D') || trusted || read_only(rights),
+            "Template grants write access"
+        );
         rest = &rest[end + 1..];
     }
     Ok(template.replace(&quoted, &format!("\"{to_family}\"")))
@@ -970,7 +984,9 @@ mod tests {
         assert!(keep.exists());
         let fam = store.family_dir("Microsoft.BingWeather_8wekyb3d8bbwe");
         fs::create_dir_all(&fam).unwrap();
-        assert!(store.commit(&fam, "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
+        assert!(store
+            .commit(&fam, "Microsoft.BingWeather_8wekyb3d8bbwe")
+            .is_err());
         assert!(fam.exists());
     }
 
@@ -1011,20 +1027,69 @@ mod tests {
     const DIR_SDDL: &str = "O:SYG:SYD:PAI(XA;;0x1200a9;;;BU;(WIN://SYSAPPID Contains \"Microsoft.WindowsAlarms_8wekyb3d8bbwe\"))(A;;0x1200a9;;;S-1-15-3-1288279408-4010470124-2163985056-447644096-1946037256-752919663-3751275627)(A;OICIIO;GXGR;;;BU)(A;OICIID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;OICIID;0x1200a9;;;S-1-15-3-1024-3635283841-2530182609-996808640-1887759898-3848208603-3313616867-983405619-2501854204)(A;OICIID;FA;;;SY)(A;OICIID;0x1200a9;;;BA)(A;OICIID;0x1200a9;;;LS)(A;OICIID;0x1200a9;;;NS)(A;OICIID;0x1200a9;;;RC)";
 
     #[test]
+    fn read_only_refuses_directory_service_bits_that_are_write_on_files() {
+        for ok in ["GR", "GRGX", "FRFX", "RC", "SW", "LO", "0x1200a9"] {
+            assert!(read_only(ok), "{ok}");
+        }
+        // LC (0x4) and RP (0x10) are FILE_APPEND_DATA and FILE_WRITE_EA on files.
+        for bad in ["LC", "RP", "GRLC", "FRRP", "0x14", "0x1200a9ff"] {
+            assert!(!read_only(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn template_sddl_swaps_family_and_refuses_write_grants() {
-        let out = template_sddl(DIR_SDDL, "Microsoft.WindowsAlarms_8wekyb3d8bbwe", "Microsoft.BingWeather_8wekyb3d8bbwe").unwrap();
+        let out = template_sddl(
+            DIR_SDDL,
+            "Microsoft.WindowsAlarms_8wekyb3d8bbwe",
+            "Microsoft.BingWeather_8wekyb3d8bbwe",
+        )
+        .unwrap();
         assert!(out.contains("\"Microsoft.BingWeather_8wekyb3d8bbwe\""));
         assert!(!out.contains("WindowsAlarms"));
         // Family must appear in the template.
-        assert!(template_sddl(DIR_SDDL, "Microsoft.Other_8wekyb3d8bbwe", "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
+        assert!(template_sddl(
+            DIR_SDDL,
+            "Microsoft.Other_8wekyb3d8bbwe",
+            "Microsoft.BingWeather_8wekyb3d8bbwe"
+        )
+        .is_err());
         // Owner must be SYSTEM.
-        assert!(template_sddl(&DIR_SDDL.replace("O:SY", "O:BU"), "Microsoft.WindowsAlarms_8wekyb3d8bbwe", "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
+        assert!(template_sddl(
+            &DIR_SDDL.replace("O:SY", "O:BU"),
+            "Microsoft.WindowsAlarms_8wekyb3d8bbwe",
+            "Microsoft.BingWeather_8wekyb3d8bbwe"
+        )
+        .is_err());
         // Any write grant to someone other than SYSTEM/TrustedInstaller is refused.
-        for evil in ["(A;;FA;;;BU)", "(A;;0x120116;;;WD)", "(A;OICI;GA;;;AU)", "(A;;WD;;;BA)", "(A;;FA;;;S-1-5-21-1-2-3-1001)"] {
-            let bad = DIR_SDDL.replacen("(A;OICIID;FA;;;SY)", &format!("(A;OICIID;FA;;;SY){evil}"), 1);
-            assert!(template_sddl(&bad, "Microsoft.WindowsAlarms_8wekyb3d8bbwe", "Microsoft.BingWeather_8wekyb3d8bbwe").is_err(), "{evil}");
+        for evil in [
+            "(A;;FA;;;BU)",
+            "(A;;0x120116;;;WD)",
+            "(A;OICI;GA;;;AU)",
+            "(A;;WD;;;BA)",
+            "(A;;FA;;;S-1-5-21-1-2-3-1001)",
+        ] {
+            let bad = DIR_SDDL.replacen(
+                "(A;OICIID;FA;;;SY)",
+                &format!("(A;OICIID;FA;;;SY){evil}"),
+                1,
+            );
+            assert!(
+                template_sddl(
+                    &bad,
+                    "Microsoft.WindowsAlarms_8wekyb3d8bbwe",
+                    "Microsoft.BingWeather_8wekyb3d8bbwe"
+                )
+                .is_err(),
+                "{evil}"
+            );
         }
         // Target family is validated (no quote injection).
-        assert!(template_sddl(DIR_SDDL, "Microsoft.WindowsAlarms_8wekyb3d8bbwe", "Evil\")(A;;FA;;;WD)_8wekyb3d8bbwe").is_err());
+        assert!(template_sddl(
+            DIR_SDDL,
+            "Microsoft.WindowsAlarms_8wekyb3d8bbwe",
+            "Evil\")(A;;FA;;;WD)_8wekyb3d8bbwe"
+        )
+        .is_err());
     }
 }

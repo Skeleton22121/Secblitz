@@ -4,7 +4,7 @@
 #![allow(dead_code)] // consumed by offline.rs (Task 6)
 use super::backup::{hex, valid_relative, FileEntry, MAX_BYTES, MAX_FILES};
 use super::vault::{Item, Sink, Source};
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use std::ffi::{c_void, OsString};
 use std::fs::File;
@@ -109,6 +109,18 @@ fn open_raw(
     sa: *const SECURITY_ATTRIBUTES,
     extra: u32,
 ) -> Result<File> {
+    open_io(path, access, share, disposition, sa, extra)
+        .map_err(|e| anyhow::anyhow!("{}: {}", path.display(), e))
+}
+
+fn open_io(
+    path: &Path,
+    access: u32,
+    share: u32,
+    disposition: u32,
+    sa: *const SECURITY_ATTRIBUTES,
+    extra: u32,
+) -> std::io::Result<File> {
     let h = unsafe {
         CreateFileW(
             wide(path).as_ptr(),
@@ -120,13 +132,28 @@ fn open_raw(
             null_mut(),
         )
     };
+    if h == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_handle(h) })
+}
+
+/// Mark an open handle (opened with DELETE access) for deletion on close.
+fn mark_delete(f: &File) -> Result<()> {
+    let d = FILE_DISPOSITION_INFO { DeleteFile: 1 };
     ensure!(
-        h != INVALID_HANDLE_VALUE,
-        "{}: {}",
-        path.display(),
+        unsafe {
+            SetFileInformationByHandle(
+                f.as_raw_handle(),
+                FileDispositionInfo,
+                &d as *const _ as *const c_void,
+                size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        } != 0,
+        "Couldn't remove a file: {}",
         std::io::Error::last_os_error()
     );
-    Ok(unsafe { File::from_raw_handle(h) })
+    Ok(())
 }
 
 fn info(f: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
@@ -316,10 +343,10 @@ pub fn copy_in(
             lpSecurityDescriptor: fsd.0,
             bInheritHandle: 0,
         };
-        let mkdir = |p: &Path| -> Result<()> {
+        let mkdir = |p: &Path, strict: bool| -> Result<()> {
             if unsafe { CreateDirectoryW(wide(p).as_ptr(), &dsa) } == 0 {
                 ensure!(
-                    unsafe { GetLastError() } == ERROR_ALREADY_EXISTS,
+                    !strict && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS,
                     "Couldn't create {}",
                     p.display()
                 );
@@ -336,14 +363,14 @@ pub fn copy_in(
             }
             Ok(())
         };
-        mkdir(dst)?;
+        mkdir(dst, true)?; // must be brand new
         for f in files {
             let target = rel_path(dst, &f.path)?;
             let mut parent = dst.to_path_buf();
             let parts: Vec<&str> = f.path.split('/').collect();
             for part in &parts[..parts.len() - 1] {
                 parent = parent.join(part);
-                mkdir(&parent)?;
+                mkdir(&parent, false)?;
             }
             let mut input = File::open(rel_path(src, &f.path)?)?;
             let mut out = open_raw(&target, GENERIC_WRITE, 0, CREATE_NEW, &fsa, 0)?;
@@ -386,13 +413,25 @@ pub fn remove_tree(path: &Path) -> Result<()> {
         for (name, _, _, _) in children(path)? {
             remove_tree(&path.join(name))?;
         }
-        std::fs::remove_dir(path)?;
-    } else if meta.is_dir() {
-        std::fs::remove_dir(path)?; // removes the junction itself
+        delete_entry(path)?;
     } else {
-        std::fs::remove_file(path)?;
+        delete_entry(path)?; // a link is removed itself, a file is a file
     }
     Ok(())
+}
+
+/// Delete one file, folder or link with backup intent (so the restore
+/// privilege applies) without following a link.
+fn delete_entry(path: &Path) -> Result<()> {
+    let f = open_raw(
+        path,
+        DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        OPEN_EXISTING,
+        null(),
+        0,
+    )?;
+    mark_delete(&f)
 }
 
 pub fn security_sddl(path: &Path) -> Result<String> {
@@ -589,6 +628,30 @@ impl DataSink {
         })
     }
 
+    /// Open the folder that will hold `path`, proving it is inside the app's
+    /// data folder. The handle denies delete/rename sharing, so the folder
+    /// cannot be replaced by a junction while the caller holds it.
+    fn pin_parent(&self, path: &Path) -> Result<File> {
+        let parent = path.parent().context("Unexpected name")?;
+        let d = open_raw(
+            parent,
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            OPEN_EXISTING,
+            null(),
+            0,
+        )?;
+        let i = info(&d)?;
+        ensure!(
+            is_dir(&i) && !is_link(&i),
+            "A link was found in the app's data folder"
+        );
+        if parent != self.root {
+            inside(&d, &self.root_final)?;
+        }
+        Ok(d)
+    }
+
     fn give_to_owner(&self, f: &File) -> Result<()> {
         let status = unsafe {
             SetSecurityInfo(
@@ -609,6 +672,9 @@ impl DataSink {
 impl Sink for DataSink {
     fn dir(&mut self, rel: &str) -> Result<()> {
         let path = rel_path(&self.root, rel)?;
+        // Hold the parent (no delete/rename sharing, so it cannot be swapped
+        // for a junction) and prove it is inside before creating anything.
+        let _parent = self.pin_parent(&path)?;
         if unsafe { CreateDirectoryW(wide(&path).as_ptr(), null()) } == 0 {
             ensure!(
                 unsafe { GetLastError() } == ERROR_ALREADY_EXISTS,
@@ -634,36 +700,32 @@ impl Sink for DataSink {
 
     fn file(&mut self, rel: &str, size: u64, data: &mut dyn Read) -> Result<()> {
         let path = rel_path(&self.root, rel)?;
+        let _parent = self.pin_parent(&path)?;
+        let access = GENERIC_WRITE | WRITE_OWNER | READ_CONTROL;
         // Replace an existing plain file (the app may have created defaults),
-        // never write through a link or a hard link.
-        let mut f = match open_raw(
-            &path,
-            GENERIC_WRITE | WRITE_OWNER | READ_CONTROL,
-            0,
-            CREATE_NEW,
-            null(),
-            0,
-        ) {
-            Ok(f) => f,
-            Err(_) => {
-                let f = open_raw(
-                    &path,
-                    GENERIC_WRITE | WRITE_OWNER | READ_CONTROL,
-                    0,
-                    OPEN_EXISTING,
-                    null(),
-                    0,
-                )?;
+        // never write through a link or a hard link. Everything is checked
+        // before anything is changed.
+        let mut f = match open_io(&path, access, 0, OPEN_EXISTING, null(), 0) {
+            Ok(f) => {
                 let i = info(&f)?;
                 ensure!(
                     !is_link(&i) && !is_dir(&i) && i.nNumberOfLinks == 1,
                     "A link was found in the app's data folder"
                 );
+                inside(&f, &self.root_final)?;
                 f.set_len(0)?;
                 f
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let f = open_raw(&path, access | DELETE, 0, CREATE_NEW, null(), 0)?;
+                if let Err(e) = inside(&f, &self.root_final) {
+                    let _ = mark_delete(&f);
+                    return Err(e);
+                }
+                f
+            }
+            Err(e) => return Err(anyhow::anyhow!("{}: {}", path.display(), e)),
         };
-        inside(&f, &self.root_final)?;
         let written = std::io::copy(data, &mut f)?;
         ensure!(written == size, "Damaged saved data");
         f.sync_all()?;
