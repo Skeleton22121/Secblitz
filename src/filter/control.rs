@@ -1,0 +1,426 @@
+//! Who answers for web protection: the decisions (portable, unit-tested) and the
+//! Windows glue that applies them (switch changes, reconcile, remove everything).
+//!
+//! The routing rule only exists while the filter is really answering, so a
+//! stopped or crashed filter never leaves the PC without working lookups.
+
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
+
+use super::config::{fresh, Config, Status};
+
+/// What the service control manager says about `SecblitzFilter`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServiceState {
+    NotInstalled,
+    Stopped,
+    Running,
+    Other,
+}
+
+const FALLBACK: [IpAddr; 2] = [
+    IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)),
+    IpAddr::V4(Ipv4Addr::new(149, 112, 112, 112)),
+];
+const MAX_NETWORK_SERVERS: usize = 4;
+
+/// Servers for the rule, in order: the filter, the network's own servers (some
+/// networks only answer through their own, and sign-in pages need them), then
+/// Quad9.
+pub fn rule_servers(network: &[IpAddr]) -> Vec<IpAddr> {
+    let mut out: Vec<IpAddr> = vec![
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(Ipv6Addr::LOCALHOST),
+    ];
+    let mut taken = 0;
+    for ip in network {
+        if taken == MAX_NETWORK_SERVERS {
+            break;
+        }
+        if ip.is_loopback() || out.contains(ip) {
+            continue;
+        }
+        out.push(*ip);
+        taken += 1;
+    }
+    for ip in FALLBACK {
+        if !out.contains(&ip) {
+            out.push(ip);
+        }
+    }
+    out
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Desired {
+    Rule(Vec<IpAddr>),
+    NoRule,
+}
+
+/// The rule exists only while a switch is on, the service is running and its
+/// status is fresh and says it is listening. A pause keeps the rule: the
+/// service then forwards everything.
+pub fn desired(
+    config: &Config,
+    service: ServiceState,
+    status: Option<&Status>,
+    network: &[IpAddr],
+    now: u64,
+) -> Desired {
+    let answering =
+        service == ServiceState::Running && status.is_some_and(|s| s.listening && fresh(s, now));
+    if config.any_on() && answering {
+        Desired::Rule(rule_servers(network))
+    } else {
+        Desired::NoRule
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Change {
+    Nothing,
+    Set(Vec<IpAddr>),
+    Remove,
+}
+
+/// Compares what should be there with what is, so Windows is only touched
+/// (and its lookup cache only flushed) when something differs.
+pub fn change(desired: &Desired, current: Option<&[IpAddr]>) -> Change {
+    match (desired, current) {
+        (Desired::NoRule, None) => Change::Nothing,
+        (Desired::NoRule, Some(_)) => Change::Remove,
+        (Desired::Rule(want), Some(have)) if want.as_slice() == have => Change::Nothing,
+        (Desired::Rule(want), _) => Change::Set(want.clone()),
+    }
+}
+
+/// The routing script (see `routing`); kept here so its guarantees are tested
+/// on every host.
+pub const NRPT_SCRIPT: &str = include_str!("scripts/nrpt.ps1");
+
+#[derive(serde::Deserialize)]
+struct Shown {
+    servers: Option<Vec<String>>,
+    #[serde(default)]
+    count: u32,
+}
+
+/// Reads the script's one-line answer. `None` means no rule of ours. More than
+/// one rule of ours, or a server that is not an address, reads as a rule that
+/// matches nothing, so the next change rewrites it cleanly.
+pub fn parse_shown(line: &str) -> anyhow::Result<Option<Vec<IpAddr>>> {
+    let shown: Shown = serde_json::from_str(line.trim())?;
+    let Some(servers) = shown.servers else {
+        return Ok(None);
+    };
+    let parsed: Option<Vec<IpAddr>> = servers.iter().map(|s| s.parse().ok()).collect();
+    match parsed {
+        Some(list) if shown.count <= 1 => Ok(Some(list)),
+        _ => Ok(Some(Vec::new())),
+    }
+}
+
+/// The config with only the pause changed.
+pub fn paused_config(mut config: Config, now: u64, duration: Duration) -> Config {
+    config.paused_until = Some(now.saturating_add(duration.as_secs()));
+    config
+}
+
+pub fn resumed_config(mut config: Config) -> Config {
+    config.paused_until = None;
+    config
+}
+
+#[cfg(windows)]
+mod glue {
+    use super::*;
+    use crate::filter::{adapters, config, routing, scm};
+    use anyhow::{ensure, Context, Result};
+    use std::time::Instant;
+
+    fn unix_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    }
+
+    fn require_admin() -> Result<()> {
+        ensure!(
+            crate::platform::is_elevated()?,
+            "Changing web protection needs administrator rights"
+        );
+        Ok(())
+    }
+
+    /// Adds, updates or removes the routing rule so it matches the situation.
+    pub fn reconcile() -> Result<()> {
+        require_admin()?;
+        let config = config::load_config(&config::config_path()?);
+        let service = scm::state()?;
+        let status = config::load_status(&config::status_path()?);
+        let network = adapters::upstream_servers();
+        let want = desired(&config, service, status.as_ref(), &network, unix_now());
+        let current = routing::current_rule()?;
+        match change(&want, current.as_deref()) {
+            Change::Nothing => Ok(()),
+            Change::Set(servers) => routing::set_rule(&servers),
+            Change::Remove => routing::remove_rule(),
+        }
+    }
+
+    fn wait_until_listening(limit: Duration) -> bool {
+        let Ok(path) = config::status_path() else {
+            return false;
+        };
+        let start = Instant::now();
+        loop {
+            let ok =
+                config::load_status(&path).is_some_and(|s| s.listening && fresh(&s, unix_now()));
+            if ok {
+                return true;
+            }
+            if start.elapsed() >= limit {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    /// Saves the switches and starts or stops the filter to match. Turning
+    /// off removes the rule first, so lookups never point at a stopped filter.
+    pub fn apply_switches(new: Config) -> Result<()> {
+        require_admin()?;
+        scm::ensure_dirs()?;
+        if new.any_on() && scm::state()? == ServiceState::NotInstalled {
+            scm::install()?;
+        }
+        config::save_config(&config::config_path()?, &new)?;
+        if new.any_on() {
+            scm::set_enabled(true)?;
+            // If it never starts listening (port taken), reconcile leaves
+            // the rule out and the page explains it from the status file.
+            wait_until_listening(Duration::from_secs(10));
+            reconcile()
+        } else {
+            routing::remove_rule()?;
+            scm::set_enabled(false)
+        }
+    }
+
+    fn rewrite(edit: impl FnOnce(Config) -> Config) -> Result<()> {
+        require_admin()?;
+        let path = config::config_path()?;
+        config::save_config(&path, &edit(config::load_config(&path)))
+    }
+
+    pub fn pause_for(duration: Duration) -> Result<()> {
+        rewrite(|c| paused_config(c, unix_now(), duration))
+    }
+
+    pub fn resume() -> Result<()> {
+        rewrite(resumed_config)
+    }
+
+    /// Rule first, then the service, then the files. The reconcile task
+    /// belongs to `maintenance.ps1` (installer), which deletes it after this.
+    pub fn remove_everything() -> Result<()> {
+        require_admin()?;
+        routing::remove_rule().context("Remove the web protection rule")?;
+        scm::delete().context("Remove the web protection service")?;
+        scm::remove_dir()
+    }
+
+    /// `secblitz filter install`: folders first, then the registration.
+    pub fn install_all() -> Result<()> {
+        require_admin()?;
+        scm::ensure_dirs()?;
+        scm::install()
+    }
+}
+
+#[cfg(windows)]
+pub use glue::{apply_switches, install_all, pause_for, reconcile, remove_everything, resume};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn status(listening: bool, written_at: u64) -> Status {
+        Status {
+            listening,
+            written_at,
+            ..Status::default()
+        }
+    }
+
+    fn on() -> Config {
+        Config {
+            ads: true,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn rule_servers_order_and_dedupe() {
+        let got = rule_servers(&[
+            ip("192.168.1.1"),
+            ip("127.0.0.1"),
+            ip("::1"),
+            ip("192.168.1.1"),
+            ip("fe80::1"),
+        ]);
+        let want: Vec<IpAddr> = [
+            "127.0.0.1",
+            "::1",
+            "192.168.1.1",
+            "fe80::1",
+            "9.9.9.9",
+            "149.112.112.112",
+        ]
+        .map(ip)
+        .to_vec();
+        assert_eq!(got, want);
+        // The network already hands out Quad9: it is not listed twice.
+        let got = rule_servers(&[ip("9.9.9.9")]);
+        assert_eq!(got.iter().filter(|i| **i == ip("9.9.9.9")).count(), 1);
+        assert_eq!(got.last(), Some(&ip("149.112.112.112")));
+    }
+
+    #[test]
+    fn rule_servers_caps_network_at_four() {
+        let network: Vec<IpAddr> = (1..=7).map(|n| ip(&format!("10.0.0.{n}"))).collect();
+        let got = rule_servers(&network);
+        assert_eq!(got.len(), 2 + 4 + 2);
+        assert_eq!(&got[2..6], &network[..4]);
+        assert_eq!(rule_servers(&[]).len(), 4);
+    }
+
+    #[test]
+    fn desired_rule_requires_fresh_listening_status() {
+        let now = 10_000;
+        let net = [ip("192.168.1.1")];
+        let rule = Desired::Rule(rule_servers(&net));
+        let run = ServiceState::Running;
+        assert_eq!(
+            desired(&on(), run, Some(&status(true, now - 5)), &net, now),
+            rule
+        );
+        // Stale, not listening (port taken), or no status at all.
+        for s in [
+            Some(status(true, now - 500)),
+            Some(status(false, now - 5)),
+            None,
+        ] {
+            assert_eq!(desired(&on(), run, s.as_ref(), &net, now), Desired::NoRule);
+        }
+    }
+
+    #[test]
+    fn desired_no_rule_when_all_off() {
+        let s = status(true, 100);
+        assert_eq!(
+            desired(
+                &Config::default(),
+                ServiceState::Running,
+                Some(&s),
+                &[],
+                100
+            ),
+            Desired::NoRule
+        );
+    }
+
+    #[test]
+    fn desired_keeps_rule_while_paused() {
+        let s = status(true, 100);
+        let paused = Config {
+            paused_until: Some(500),
+            ..on()
+        };
+        assert!(paused.paused(100));
+        assert!(matches!(
+            desired(&paused, ServiceState::Running, Some(&s), &[], 100),
+            Desired::Rule(_)
+        ));
+    }
+
+    #[test]
+    fn desired_no_rule_when_service_stopped() {
+        let s = status(true, 100);
+        for state in [
+            ServiceState::Stopped,
+            ServiceState::NotInstalled,
+            ServiceState::Other,
+        ] {
+            assert_eq!(desired(&on(), state, Some(&s), &[], 100), Desired::NoRule);
+        }
+    }
+
+    #[test]
+    fn change_touches_windows_only_when_different() {
+        let a = vec![ip("127.0.0.1"), ip("9.9.9.9")];
+        let b = vec![ip("9.9.9.9"), ip("127.0.0.1")];
+        let want = Desired::Rule(a.clone());
+        assert_eq!(change(&want, Some(&a)), Change::Nothing);
+        assert_eq!(change(&want, Some(&b)), Change::Set(a.clone()));
+        assert_eq!(change(&want, None), Change::Set(a.clone()));
+        assert_eq!(change(&Desired::NoRule, None), Change::Nothing);
+        assert_eq!(change(&Desired::NoRule, Some(&a)), Change::Remove);
+    }
+
+    #[test]
+    fn nrpt_script_never_touches_adapters_and_checks_both_marks() {
+        let script = NRPT_SCRIPT;
+        for forbidden in [
+            "Set-DnsClient",
+            "Set-DnsClientServerAddress",
+            "DohServerAddress",
+            "Remove-DnsClientNrptRule -Namespace",
+        ] {
+            assert!(!script.contains(forbidden), "script uses {forbidden}");
+        }
+        assert!(script.contains("$_.DisplayName -eq $displayName"));
+        assert!(script.contains("$_.Comment -eq $comment"));
+        assert!(script.contains("'Secblitz web protection'"));
+        assert!(script.contains("'Managed by Secblitz'"));
+        assert!(script.contains("TryParse"));
+        assert!(script.contains("Clear-DnsClientCache"));
+        // Removal only ever goes through the filtered list.
+        assert_eq!(script.matches("Remove-DnsClientNrptRule").count(), 1);
+        assert!(script.contains("foreach ($rule in (Get-Ours))"));
+    }
+
+    #[test]
+    fn shown_rule_is_read_from_the_script_line() {
+        assert_eq!(
+            parse_shown(r#"{"servers":["127.0.0.1","::1"],"count":1}"#).unwrap(),
+            Some(vec![ip("127.0.0.1"), ip("::1")])
+        );
+        assert_eq!(parse_shown(r#"{"servers":null,"count":0}"#).unwrap(), None);
+        // Two rules of ours, or an odd entry: never equal to what we want.
+        for line in [
+            r#"{"servers":["127.0.0.1"],"count":2}"#,
+            r#"{"servers":["nope"],"count":1}"#,
+        ] {
+            assert_eq!(parse_shown(line).unwrap(), Some(Vec::new()));
+        }
+        assert!(parse_shown("not json").is_err());
+    }
+
+    #[test]
+    fn pause_and_resume_change_only_the_pause() {
+        let base = Config {
+            ads: true,
+            dangerous: true,
+            ..Config::default()
+        };
+        let paused = paused_config(base.clone(), 1000, Duration::from_secs(3600));
+        assert_eq!(paused.paused_until, Some(4600));
+        assert!(paused.ads && paused.dangerous && !paused.tracking);
+        assert_eq!(resumed_config(paused), base);
+    }
+}
