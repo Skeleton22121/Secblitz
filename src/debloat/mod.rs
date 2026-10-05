@@ -9,6 +9,7 @@
 //! Safety: only packages that match a catalog entry and are not on the
 //! protected list are ever passed to Windows, and names are validated before
 //! any PowerShell is started.
+pub mod backup;
 pub mod catalog;
 pub mod journal;
 #[cfg(windows)]
