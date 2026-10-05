@@ -13,7 +13,7 @@ use crate::app::tools::{
 };
 use crate::broker;
 use crate::gui::theme::Tone;
-use crate::gui::widgets::anim::{self, Clock, Tween};
+use crate::gui::widgets::anim::{self, Clock};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use iced::{Subscription, Task};
 use secblitz::actions;
@@ -67,6 +67,8 @@ pub enum Detail {
     Repair,
     Updates,
     Tips,
+    /// The list of health tips is expanded.
+    TipsList,
     Bitwarden,
     Sheet,
 }
@@ -90,7 +92,7 @@ pub enum Msg {
     ClearUpdates,
     PickTips(TipProfile),
     Tips(Box<TipsReport>),
-    ChooseAnotherTips,
+    TipChoice(TipProfile),
     NewPassword,
     CopyPassword,
     TogglePassword,
@@ -197,6 +199,8 @@ pub struct State {
     repair: Repair,
     updates: Updates,
     tips: Tips,
+    /// Profile picked in the segmented control (checked on "Check").
+    tip_choice: TipProfile,
     password: Password,
     bitwarden: Run<Result<(), String>>,
     open_details: Vec<Detail>,
@@ -206,8 +210,6 @@ pub struct State {
     epoch: Instant,
     /// Finished-state draw-ins that are still moving.
     shots: Vec<(Slot, Clock)>,
-    /// Smooth progress bar of the running repair or update job.
-    bar: Option<Tween>,
 }
 
 impl std::fmt::Debug for State {
@@ -225,6 +227,7 @@ impl Default for State {
             repair: Repair::Idle,
             updates: Updates::Idle,
             tips: Tips::Pick,
+            tip_choice: TipProfile::Everyday,
             password: Password {
                 secret: Secret::generate().ok(),
                 shown: true,
@@ -235,7 +238,6 @@ impl Default for State {
             now: Instant::now(),
             epoch: Instant::now(),
             shots: Vec::new(),
-            bar: None,
         }
     }
 }
@@ -315,9 +317,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             match event {
                 RepairEvent::Preparing => {}
                 RepairEvent::Progress(p) => {
-                    let ratio = repair_ratio(&p);
                     *progress = Some(p);
-                    state.retarget_bar(ratio);
                 }
                 RepairEvent::Done {
                     result,
@@ -331,7 +331,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         note,
                         technical,
                     };
-                    state.bar = None;
                     state.finish(Slot::Repair);
                     ctx.busy = false;
                 }
@@ -390,7 +389,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 } => {
                     *stage = s;
                     *elapsed = e;
-                    state.retarget_bar(stage_ratio(s));
                 }
                 InstallEvent::Done {
                     result,
@@ -402,7 +400,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         note,
                         technical,
                     };
-                    state.bar = None;
                     state.finish(Slot::Updates);
                     ctx.busy = false;
                 }
@@ -431,6 +428,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             state.tips = Tips::Running(profile);
             state.close_detail(Detail::Tips);
+            state.close_detail(Detail::TipsList);
+            state.tip_choice = profile;
             Task::perform(blocking(move || logic::run_tips(profile)), |r| {
                 tools(Msg::Tips(Box::new(r)))
             })
@@ -438,14 +437,14 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Tips(report) => {
             if matches!(state.tips, Tips::Running(_)) {
                 state.tips = Tips::Done(report);
+                if !state.detail_open(Detail::TipsList) {
+                    state.open_details.push(Detail::TipsList);
+                }
             }
             Task::none()
         }
-        Msg::ChooseAnotherTips => {
-            if matches!(state.tips, Tips::Done(_)) {
-                state.tips = Tips::Pick;
-                state.close_detail(Detail::Tips);
-            }
+        Msg::TipChoice(profile) => {
+            state.tip_choice = profile;
             Task::none()
         }
         Msg::NewPassword => {
@@ -555,18 +554,6 @@ impl State {
     fn spin(&self) -> Duration {
         self.now.saturating_duration_since(self.epoch)
     }
-    fn start_bar(&mut self, at: f32) {
-        self.bar = Some(Tween::new(at, at, anim::SLOW));
-    }
-    fn retarget_bar(&mut self, to: f32) {
-        let now = Instant::now();
-        if let Some(bar) = &mut self.bar {
-            bar.retarget(now, to);
-        }
-    }
-    fn bar_value(&self, fallback: f32) -> f32 {
-        self.bar.map_or(fallback, |b| b.value(self.now))
-    }
     /// True while any spinner or draw-in is on screen.
     fn needs_frames(&self) -> bool {
         !self.shots.is_empty()
@@ -626,7 +613,6 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                 cancel: cancel.clone(),
                 progress: None,
             };
-            state.start_bar(0.03);
             state.close_detail(Detail::Repair);
             Task::run(
                 blocking_stream(move |emit| logic::run_repair(kind, cancel, emit)),
@@ -650,7 +636,6 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                 elapsed: 0,
                 count,
             };
-            state.start_bar(stage_ratio(InstallStage::Preparing));
             state.close_detail(Detail::Updates);
             Task::run(
                 blocking_stream(move |emit| logic::run_install(reviewed, cancel, emit)),
