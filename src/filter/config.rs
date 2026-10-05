@@ -120,12 +120,48 @@ pub fn fresh(status: &Status, now: u64) -> bool {
     status.written_at <= now && now - status.written_at <= FRESH_SECONDS
 }
 
-/// `%ProgramData%\Secblitz\Filter`.
+/// `<ProgramData>\Secblitz\Filter`. On Windows the folder comes from the
+/// known-folder API, never from the inherited environment; the `ProgramData`
+/// variable is only the fallback for the portable (test) build.
 pub fn dir() -> Result<PathBuf> {
-    let base = std::env::var_os("ProgramData")
-        .or_else(|| cfg!(windows).then(|| "C:\\ProgramData".into()))
-        .context("ProgramData is not available")?;
-    Ok(PathBuf::from(base).join("Secblitz").join("Filter"))
+    Ok(program_data()?.join("Secblitz").join("Filter"))
+}
+
+#[cfg(windows)]
+fn program_data() -> Result<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
+
+    let mut value = null_mut();
+    // SAFETY: valid GUID and output pointer; the allocation is freed below
+    // even when the call fails.
+    let hr = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramData, 0, null_mut(), &mut value) };
+    let path = if hr >= 0 && !value.is_null() {
+        // SAFETY: a successful call returns a NUL-terminated UTF-16 string.
+        let slice = unsafe {
+            let mut n = 0;
+            while *value.add(n) != 0 {
+                n += 1;
+            }
+            std::slice::from_raw_parts(value, n)
+        };
+        Some(PathBuf::from(std::ffi::OsString::from_wide(slice)))
+    } else {
+        None
+    };
+    // SAFETY: null or the allocation returned by SHGetKnownFolderPath.
+    unsafe { CoTaskMemFree(value.cast()) };
+    path.filter(|p| p.is_absolute())
+        .context("ProgramData is not available")
+}
+
+#[cfg(not(windows))]
+fn program_data() -> Result<PathBuf> {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .context("ProgramData is not available")
 }
 
 pub fn config_path() -> Result<PathBuf> {
