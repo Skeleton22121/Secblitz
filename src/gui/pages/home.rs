@@ -7,9 +7,9 @@ use crate::advice::{self, Group, NextStep};
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Tone};
-use crate::gui::widgets::{self, anim, progress, ring, scan, ButtonKind};
+use crate::gui::widgets::{self, anim, ring, scan, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
-use iced::widget::{column, container, row};
+use iced::widget::{column, row};
 use iced::{Alignment, Element, Length, Subscription, Task};
 use secblitz::engine::Report;
 use secblitz::model::Probe;
@@ -162,6 +162,12 @@ pub fn subscription(state: &State, ctx: &Ctx) -> Subscription<Message> {
     }
 }
 
+/// Whether the page is the first check's screen, which fills the window
+/// instead of scrolling.
+pub fn fills_window(ctx: &Ctx) -> bool {
+    ctx.engine_error.is_none() && ctx.report.is_none() && ctx.checking.is_some()
+}
+
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     if let Some(error) = &ctx.engine_error {
@@ -217,21 +223,15 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
         .map(|c| c.elapsed_at(state.now))
         .unwrap_or_default();
 
-    let body = column![
-        scan::check_hero(p, scan::HeroPhase::Checking, elapsed, ratio),
-        column![
-            widgets::h1(p, ctx.t("Checking your PC")),
-            widgets::muted(p, ctx.t("This takes about a minute. Nothing is changed.")),
-        ]
-        .spacing(theme::S1)
-        .align_x(Alignment::Center),
-        container(progress::bar_eased(p, ratio, Tone::Neutral)).max_width(theme::MAX_READABLE),
-        container(scan::status_ticker(p, &state.lines, state.now)).max_width(theme::MAX_READABLE),
-    ]
-    .spacing(theme::S6)
-    .align_x(Alignment::Center)
-    .width(Length::Fill);
-    widgets::region(p, container(body).center_x(Length::Fill)).into()
+    scan::checking_screen(
+        p,
+        ctx.t("Checking your PC"),
+        ctx.t("This takes about a minute. Nothing is changed."),
+        ratio,
+        &state.lines,
+        state.now,
+        elapsed,
+    )
 }
 
 // ----------------------------------------------------------------- errors

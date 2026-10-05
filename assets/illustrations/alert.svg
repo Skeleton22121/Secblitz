@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" fill="none">
-  <!-- Attention mark (static end state; the animated pop-in is drawn on a canvas). -->
-  <path d="M80 60V86" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-  <circle cx="80" cy="102" r="3.8" fill="currentColor"/>
-</svg>

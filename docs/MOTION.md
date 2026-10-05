@@ -60,7 +60,6 @@ Rule of thumb: nothing the user triggers directly takes longer than `NORMAL`.
 | Helper | Where | Motion |
 | --- | --- | --- |
 | `spinner` | Any wait with unknown length (checking, applying, updating) | Ring turns every 2.2 s while the arc grows and shrinks every 1.5 s, head racing ahead and tail catching up on `POINT_TO_POINT` (the WinUI ProgressRing feel) |
-| `shield_scan` | Home "Checking your PC" | Thin scan line plus a faint 3-unit band sweeps top to bottom and back every 2.4 s on `EASE_IN_OUT`, clipped inside the shield |
 | `check_draw` | A fix or check finished successfully | Circle strokes in (first half), check draws (from 40%), 7% overshoot settle, 400 ms |
 | `cross_draw` | Something could not be done | Same timing, cross drawn in two strokes |
 | `warn_draw` | Needs attention | Triangle outlines, then the mark pops with `EMPHASIZED` |
@@ -225,20 +224,23 @@ geometry, which transforms identically everywhere.
 
 ### PC-check hero (`scan::check_hero`)
 
-160 px, layered. Assets in `assets/illustrations/` (`shield`, `glyph`,
-`check`, `alert`, `orbit`, all `currentColor`, viewBox 160). Layers bottom to
-top: canvas (rising fill, orbit dots, radar sweep) -> orbit SVG (idle only) ->
-shield outline -> glyph -> canvas (check / exclamation draw-in).
+A "scanning nearby" radar, redrawn natively from the free LottieFiles
+animation of that name (credit and license in `assets/ANIMATION-LICENSE.txt`).
+It keeps the original's 400-unit composition and 30 fps timing, scaled to the
+edge it is given (`HERO` = 160 px in compact regions, up to `HERO_MAX` =
+320 px on the first check's screen). Everything is drawn in the theme's text
+colour, so it follows light and dark mode.
 
-| Phase | What moves |
+| Part | What moves |
 | --- | --- |
-| Idle | Orbit and glyph breathe on a 4 s cosine; nothing else. |
-| Checking | Orbit dots turn (3.2 s), radar wedge sweeps (2.6 s, 14 fading slices), shield fills bottom to top with `progress` (exponential smoothing, rate 5/s, so count jumps glide). Orbit and sweep fade in over 400 ms. |
-| Good | Orbit dots converge and fade (350 ms), outline and fill cross-fade to green (300 ms), the check draws in (450 ms after a 120 ms delay) with a 6 % scale overshoot settle. |
-| Attention | Same with amber; the exclamation bar draws and the dot pops. |
+| Rings | A ring is born every 2 s (60 frames) and lives 5.3 s: its radius grows from 0 to 202 units while its outline (55 % at birth) and fill (16 %) fade to nothing, both on the original's (0.333, 0) / (0.667, 1) ease. Two or three rings overlap at any time. |
+| Dots | Nine small dots on a 6 s cycle, each fading in over 0.4 s, holding 0.4 s and fading out over 0.37 s at its own moment, like things being found nearby. |
+| Centre | A fixed dot. |
 
-`scan::animating(phase, elapsed)` tells the page whether to keep the frame
-subscription (Idle and Checking: yes; done phases: until 1.4 s).
+Reduced motion shows one still frame with two rings and two dots.
+`scan::checking_screen` lays the first check out across the whole page: the
+radar sized by `responsive` to the height left after the title, bar and
+ticker, all centred.
 
 ### Status ticker (`scan::status_ticker`)
 

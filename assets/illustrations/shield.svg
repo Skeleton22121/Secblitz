@@ -1,4 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" fill="none">
-  <!-- Secblitz PC-check illustration: shield outline. Tinted at runtime via currentColor. -->
-  <path d="M80 20C92 30 106 35 124 36V74C124 104 108 126 80 140C52 126 36 104 36 74V36C54 35 68 30 80 20Z" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/>
-</svg>

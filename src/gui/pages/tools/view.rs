@@ -134,18 +134,16 @@ fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
     )
 }
 
-/// A working row whose length is unknown.
-fn busy_row<'a>(p: Palette, icon: Icon, title: String, sub: String) -> El<'a> {
-    running(
+/// A working row whose length is unknown: a spinner where its button was,
+/// so the row keeps its height and nothing below it moves.
+fn busy_row<'a>(state: &State, p: Palette, icon: Icon, title: String, sub: String) -> El<'a> {
+    widgets::row_item(
         p,
-        Running {
-            icon,
-            title,
-            sub,
-            menu: vec![],
-            bar: progress::indeterminate(p, Tone::Brand),
-            notes: vec![],
-        },
+        Some(icon),
+        title,
+        Some(sub),
+        anim::spinner(MARK, p.text_muted, state.spin_elapsed()),
+        None,
     )
 }
 
@@ -291,6 +289,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             None,
         ),
         Run::Working => busy_row(
+            state,
             p,
             Icon::Bug,
             ctx.t("Scan for viruses"),
@@ -343,6 +342,7 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             None,
         ),
         Run::Working => busy_row(
+            state,
             p,
             Icon::Download,
             ctx.t("Update virus protection"),
@@ -540,6 +540,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             None,
         ),
         Updates::Looking => busy_row(
+            state,
             p,
             Icon::Download,
             ctx.t("Windows updates"),
@@ -991,6 +992,16 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             anim::check_draw(MARK, p.tone(Tone::Good), 1.0),
             None,
         ),
+        // Show the "can't install" state upfront when the account check says so,
+        // using the same copy and mark as the post-attempt refused state.
+        Run::Idle if state.bitwarden_not_here => widgets::row_item(
+            p,
+            Some(Icon::Lock),
+            ctx.t("Bitwarden can't be installed from this account"),
+            Some(ctx.t("You can get it from bitwarden.com instead.")),
+            anim::warn_draw(MARK, p.tone(Tone::Warn), 1.0),
+            None,
+        ),
         Run::Idle => widgets::row_item(
             p,
             Some(Icon::Lock),
@@ -1008,10 +1019,11 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             None,
         ),
         Run::Working => busy_row(
+            state,
             p,
             Icon::Lock,
             ctx.t("Password manager"),
-            ctx.t("Installing Bitwarden. This can take a minute…"),
+            ctx.t("Installing Bitwarden. This can take a few minutes."),
         ),
         Run::Done(Ok(())) => finished(
             state,
