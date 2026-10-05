@@ -316,4 +316,246 @@ try {
     Reject { HReadWifi } 'DTD'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
 
+# ==================================================================
+# System area: OS / credentials / update / privacy controls
+# ==================================================================
+$noGate = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
+$exclJson = '{"id":"defender.exclusions_risky","source":"DefenderExclusions","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
+$svcJson = '{"id":"services.legacy_remote","source":"LegacyServices","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[3,4],"absentSafe":false,"fix":4,"max":13}],' + $noGate + '}'
+$pauseKeys = @('PauseUpdatesExpiryTime', 'PauseFeatureUpdatesEndTime', 'PauseQualityUpdatesEndTime', 'PauseFeatureUpdatesStartTime', 'PauseQualityUpdatesStartTime') | ForEach-Object {
+    '{"name":"' + $_ + '","path":"HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":2000000000}'
+}
+$pauseJson = '{"id":"update.paused","source":"UpdatePause","dynamic":false,"reboot":false,"keys":[' + ($pauseKeys -join ',') + '],' + $noGate + '}'
+$ssJson = '{"id":"smartscreen.apps","source":"SmartScreen","dynamic":false,"reboot":false,"keys":[{"name":"SmartScreenEnabled","path":"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer","rule":"set","safe":[1,2,3],"absentSafe":true,"fix":1,"max":3},{"name":"EnableSmartScreen","path":"HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System","rule":"set","safe":[1],"absentSafe":true,"fix":null,"max":1}],' + $noGate + '}'
+function ValueKey($map) {
+    $k = [pscustomobject]@{ Map = $map }
+    $k | Add-Member ScriptMethod GetValueNames { return @($this.Map.Keys) }
+    $k | Add-Member ScriptMethod GetValueKind {
+        param($n)
+        if ($this.Map[$n] -is [string]) { return [Microsoft.Win32.RegistryValueKind]::String }
+        else { return [Microsoft.Win32.RegistryValueKind]::DWord }
+    }
+    $k | Add-Member ScriptMethod GetValue { param($n) return $this.Map[$n] }
+    return $k
+}
+function CallLog() { return (($script:calls | ForEach-Object { $_ -join ':' }) -join ',') }
+
+# ---- exclusions: only the risky list, never anything else
+foreach ($risky in @('C:\', 'c:', 'C:\Windows', 'C:\Windows\', 'C:\Windows\Temp', 'C:\Users', 'C:\Users\Bob', 'C:\Users\Bob\Downloads', 'C:\Users\*\Downloads', '%USERPROFILE%\Downloads', '%TEMP%', 'D:\*', 'C:\Users\Bob\AppData\Local\Temp', 'C:\Program Files')) {
+    Assert (HExclusionRisky 'path' $risky) "risky path: $risky"
+}
+foreach ($fine in @('C:\Games\Steam', 'D:\Projects\app', 'C:\Program Files\Foo', 'C:\Users\Bob\Documents\Work', 'C:\Users\Bob\Downloads\keep')) {
+    Assert (!(HExclusionRisky 'path' $fine)) "ordinary path left alone: $fine"
+}
+foreach ($risky in @('exe', '.DLL', 'ps1', 'bat', 'js', 'vbs', 'scr')) { Assert (HExclusionRisky 'ext' $risky) "risky extension: $risky" }
+foreach ($fine in @('log', 'txt', 'iso', 'pdf')) { Assert (!(HExclusionRisky 'ext' $fine)) "ordinary extension left alone: $fine" }
+foreach ($risky in @('powershell.exe', 'C:\Windows\System32\cmd.exe', 'mshta', 'wscript.exe', 'pwsh.exe')) { Assert (HExclusionRisky 'proc' $risky) "risky process: $risky" }
+foreach ($fine in @('steam.exe', 'C:\Games\game.exe')) { Assert (!(HExclusionRisky 'proc' $fine)) "ordinary process left alone: $fine" }
+Assert (!(HExclusionRisky 'path' '') -and !(HExclusionRisky 'other' 'exe')) 'empty and unknown kinds are never risky'
+MakeSpec $exclJson
+foreach ($ok in @('path:C:\Users\Bob\Downloads', 'ext:exe', 'proc:cmd')) { Assert (HNameOk $ok) "exclusion name $ok" }
+foreach ($bad in @('path:D:\Games', 'ext:log', 'file:C:\x', 'ext:', 'PATH:C:\Windows', ' path:C:\Windows', "ext:ex`te", 'path:C:\"x', '')) { Assert (!(HNameOk $bad)) "exclusion name accepted: $bad" }
+
+# ---- exclusions: reader keeps only risky entries; removed ones read as 0
+function Load($name) {}
+$script:hWanted = @{}
+$script:mp = [pscustomobject]@{ ExclusionPath = @('C:\Users\Bob\Downloads', 'D:\Games'); ExclusionExtension = @('exe', 'log'); ExclusionProcess = $null }
+function Get-MpPreference { return $script:mp }
+$r = HReadExclusions
+Assert ($r.Count -eq 2 -and $r['path:C:\Users\Bob\Downloads'] -eq 1 -and $r['ext:exe'] -eq 1) 'only risky exclusions are listed'
+$script:hWanted = @{ 'ext:dll' = 1; 'ext:exe' = 0 }
+$r = HReadExclusions
+Assert ($r['ext:dll'] -eq 0 -and $r['ext:exe'] -eq 1) 'a removed exclusion reads as 0'
+$script:mp = [pscustomobject]@{ ExclusionPath = 'N/A: Must be an administrator to view exclusions'; ExclusionExtension = $null; ExclusionProcess = $null }
+Reject { HReadExclusions } 'not readable'
+$script:hWanted = @{}
+# Setters touch only risky entries and use the typed parameters.
+$script:exPaths = @('C:\Users\Bob\Downloads', 'D:\Games')
+function Add-MpPreference { param($ExclusionPath, $ExclusionExtension, $ExclusionProcess); if ($ExclusionPath) { $script:exPaths = @($script:exPaths) + @($ExclusionPath) } }
+function Remove-MpPreference { param($ExclusionPath, $ExclusionExtension, $ExclusionProcess); if ($ExclusionPath) { $script:exPaths = @($script:exPaths | Where-Object { $_ -ne $ExclusionPath }) } }
+HSetExclusion 'path:C:\Users\Bob\Downloads' 0
+Assert (@($script:exPaths).Count -eq 1 -and $script:exPaths[0] -ceq 'D:\Games') 'risky exclusion removed, the other one untouched'
+HSetExclusion 'path:C:\Users\Bob\Downloads' 1
+Assert (@($script:exPaths) -contains 'C:\Users\Bob\Downloads') 'undo adds the exclusion back'
+Reject { HSetExclusion 'path:D:\Games' 0 } 'Unknown hardening item'
+Reject { HSetExclusion 'path:C:\Windows' $null } 'Invalid exclusion state'
+# Full write: remove then undo, through the real reader (hint keeps removed names visible).
+${function:HRead} = $realHRead
+function HSet([string]$name, $v) { HSetExclusion $name $v }
+$script:preflightFails = $false; $script:blocked = $false
+$script:mp = $null
+function Get-MpPreference { return [pscustomobject]@{ ExclusionPath = $script:exPaths; ExclusionExtension = $null; ExclusionProcess = $null } }
+$script:exPaths = @('C:\Users\Bob\Downloads', 'D:\Games')
+HWrite (Input '{"items":{"path:C:\\Users\\Bob\\Downloads":0}}')
+Assert (@($script:exPaths).Count -eq 1 -and $script:exPaths[0] -ceq 'D:\Games') 'exclusion fix verified through the reader'
+HWrite (Input '{"items":{"path:C:\\Users\\Bob\\Downloads":1}}')
+Assert (@($script:exPaths) -contains 'C:\Users\Bob\Downloads' -and @($script:exPaths).Count -eq 2) 'exclusion undo verified through the reader'
+Reject { HWrite (Input '{"items":{"path:D:\\Games":0}}') } 'Unknown hardening item'
+
+# ---- legacy services
+MakeSpec $svcJson
+foreach ($ok in @('RemoteRegistry', 'WinRM', 'sshd', 'TlntSvr', 'FTPSVC', 'W3SVC', 'SNMP')) { Assert (HNameOk $ok) "service $ok" }
+foreach ($bad in @('Spooler', 'winrm', 'WinRM ', "WinRM'; calc", '')) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }
+Reject { HServiceKey 'Spooler' } 'Unknown hardening item'
+$script:calls = @(); $script:svcStatus = 'Running'
+function Get-Service { param($Name, $ErrorAction); $o = [pscustomobject]@{ Status = $script:svcStatus }; $o | Add-Member ScriptMethod WaitForStatus { param($s, $t) }; $o | Add-Member ScriptMethod Refresh { }; return $o }
+function Stop-Service { param($Name, $ErrorAction); $script:calls += ,@('stop', $Name); $script:svcStatus = 'Stopped' }
+function Start-Service { param($Name, $ErrorAction); $script:calls += ,@('start', $Name); $script:svcStatus = 'Running' }
+function Set-Service { param($Name, $StartupType, $ErrorAction); $script:calls += ,@('type', $Name, $StartupType) }
+function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, $Force, $ErrorAction); $script:calls += ,@('reg', $Name, $Value) }
+HSetService 'WinRM' 4
+Assert ((CallLog) -ceq 'stop:WinRM,type:WinRM:Disabled') "service stop and disable: $(CallLog)"
+$script:calls = @(); $script:svcStatus = 'Stopped'
+HSetService 'WinRM' 10
+Assert ((CallLog) -ceq 'type:WinRM:Automatic,reg:DelayedAutostart:0,start:WinRM') "service restore automatic running: $(CallLog)"
+$script:calls = @(); $script:svcStatus = 'Stopped'
+HSetService 'sshd' 13
+Assert ((CallLog) -ceq 'type:sshd:Automatic,reg:DelayedAutostart:1,start:sshd') "service restore delayed running: $(CallLog)"
+$script:calls = @(); $script:svcStatus = 'Stopped'
+HSetService 'SNMP' 3
+Assert ((CallLog) -ceq 'type:SNMP:Manual') "service restore manual stopped: $(CallLog)"
+Reject { HSetService 'Spooler' 4 } 'Unknown hardening item'
+Reject { HSetService 'WinRM' 1 } 'Invalid service start type'
+
+# ---- exploit protection states
+Assert ((HMitigationValue 'ON') -eq 1 -and (HMitigationValue 'off') -eq 0 -and (HMitigationValue 'NOTSET') -eq 2) 'mitigation words'
+Reject { HMitigationValue 'maybe' } 'not readable'
+function Get-ProcessMitigation { param([switch]$System); return [pscustomobject]@{ DEP = [pscustomobject]@{ Enable = 'ON' }; SEHOP = [pscustomobject]@{ Enable = 'NOTSET' }; ASLR = [pscustomobject]@{ BottomUp = 'OFF'; HighEntropy = 'ON' }; CFG = [pscustomobject]@{ Enable = 'ON' } } }
+$r = HReadMitigations
+Assert ($r['DEP'] -eq 1 -and $r['SEHOP'] -eq 2 -and $r['BottomUp'] -eq 0 -and $r['HighEntropy'] -eq 1 -and $r['CFG'] -eq 1) 'mitigation slice'
+$script:calls = @()
+function Set-ProcessMitigation { param([switch]$System, $Enable, $Disable, $ErrorAction); if ($Enable) { $script:calls += ,@('on', $Enable) } else { $script:calls += ,@('off', $Disable) } }
+HSetMitigation 'BottomUp' 1; HSetMitigation 'CFG' 0
+Assert ((CallLog) -ceq 'on:BottomUp,off:CFG') "mitigation setters: $(CallLog)"
+Reject { HSetMitigation 'ForceRelocateImages' 1 } 'Unknown hardening item'
+Reject { HSetMitigation 'DEP' 2 } 'Invalid exploit protection state'
+
+# ---- Windows optional features (a missing feature counts as removed)
+Assert ((HV2Value 'Enabled') -eq 1 -and (HV2Value 'EnablePending') -eq 1 -and (HV2Value 'Disabled') -eq 0 -and (HV2Value 'DisabledWithPayloadRemoved') -eq 0 -and (HV2Value 'Missing') -eq 0) 'feature state words'
+Reject { HV2Value 'Weird' } 'not readable'
+$script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'Enabled' })
+function Get-WindowsOptionalFeature { param([switch]$Online, $FeatureName, $ErrorAction); if ($FeatureName) { $hit = @($script:features | Where-Object { $_.FeatureName -eq $FeatureName }); if ($hit.Count -eq 0) { throw 'Feature name is unknown' }; return $hit }; return $script:features }
+Assert ((HFeatureState 'MicrosoftWindowsPowerShellV2Root') -ceq 'Enabled') 'feature state'
+Assert ((HFeatureState 'Recall') -ceq 'Missing') 'unknown feature in a healthy list is missing'
+Assert ((HReadPowerShellV2)['Enabled'] -eq 1) 'root enabled'
+$script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } })
+Assert ((HReadPowerShellV2)['Enabled'] -eq 0) 'missing feature is protected'
+$script:features = @()
+Reject { HReadPowerShellV2 } 'not readable'
+$script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'Disabled' })
+Assert ((HReadPowerShellV2)['Enabled'] -eq 0) 'disabled root'
+$script:calls = @()
+function Disable-WindowsOptionalFeature { param([switch]$Online, $FeatureName, [switch]$NoRestart, $ErrorAction); $script:calls += ,@('disable', $FeatureName) }
+function Enable-WindowsOptionalFeature { param([switch]$Online, $FeatureName, [switch]$All, [switch]$NoRestart, $ErrorAction); $script:calls += ,@('enable', $FeatureName) }
+HSetPowerShellV2 0
+Assert ((CallLog) -ceq '') 'nothing to disable when already disabled'
+HSetPowerShellV2 1
+Assert ((CallLog) -ceq 'enable:MicrosoftWindowsPowerShellV2Root,enable:MicrosoftWindowsPowerShellV2') "feature undo: $(CallLog)"
+
+# ---- sign-in on wake (power WMI provider)
+$planId = '381b4222-f694-41f0-9685-ff5bb260df2e'
+$script:power = @{ ac = 0; dc = 0; hasDc = $true }
+function Get-CimInstance {
+    param($ClassName, $Namespace)
+    switch ($ClassName) {
+        'Win32_PowerPlan' { return @([pscustomobject]@{ IsActive = $false; InstanceID = 'Microsoft:PowerPlan\{aaaaaaaa-0000-0000-0000-000000000000}' }, [pscustomobject]@{ IsActive = $true; InstanceID = "Microsoft:PowerPlan\{$planId}" }) }
+        'Win32_PowerSettingDataIndex' {
+            $list = @([pscustomobject]@{ InstanceID = "Microsoft:PowerSettingDataIndex\{$planId}\AC\{11111111-1111-1111-1111-111111111111}"; SettingIndexValue = [uint32]7 })
+            $list += [pscustomobject]@{ InstanceID = "Microsoft:PowerSettingDataIndex\{$planId}\AC\{0e796bdb-100d-47d6-a2d5-f7d2daa51f51}"; SettingIndexValue = [uint32]$script:power.ac }
+            if ($script:power.hasDc) { $list += [pscustomobject]@{ InstanceID = "Microsoft:PowerSettingDataIndex\{$planId}\DC\{0E796BDB-100D-47D6-A2D5-F7D2DAA51F51}"; SettingIndexValue = [uint32]$script:power.dc } }
+            return $list
+        }
+        default { throw "Unexpected probe $ClassName" }
+    }
+}
+$r = HReadLockOnWake
+Assert ($r['Ac'] -eq 0 -and $r['Dc'] -eq 0) 'wake lock slice'
+$script:power = @{ ac = 1; dc = 0; hasDc = $true }
+$r = HReadLockOnWake
+Assert ($r['Ac'] -eq 1 -and $r['Dc'] -eq 0) 'wake lock slice ac on'
+$script:power = @{ ac = 1; dc = 0; hasDc = $false }
+Assert ((HReadLockOnWake)['Dc'] -eq 1) 'a missing battery setting mirrors the plugged-in one'
+$script:power = @{ ac = 5; dc = 0; hasDc = $true }
+Reject { HReadLockOnWake } 'not readable'
+$script:calls = @()
+function Set-CimInstance { param($InputObject, $ErrorAction); $script:calls += ,@('set', [string]$InputObject.SettingIndexValue) }
+function Invoke-CimMethod { param($InputObject, $MethodName, $ErrorAction); $script:calls += ,@('invoke', $MethodName) }
+$script:power = @{ ac = 0; dc = 0; hasDc = $true }
+HSetLockOnWake 'Dc' 1
+Assert ((CallLog) -ceq 'set:1,invoke:Activate') "wake lock write: $(CallLog)"
+Reject { HSetLockOnWake 'Other' 1 } 'Unknown hardening item'
+Reject { HSetLockOnWake 'Ac' 2 } 'Invalid sign-in-on-wake value'
+
+# ---- paused updates (minutes since 1970; expired pauses are not "paused")
+MakeSpec $pauseJson
+$script:fakeFs = $true
+$script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings')
+$ts = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+$future = [DateTimeOffset]::UtcNow.AddDays(10).UtcDateTime.ToString($ts, [Globalization.CultureInfo]::InvariantCulture)
+$past = [DateTimeOffset]::UtcNow.AddDays(-10).UtcDateTime.ToString($ts, [Globalization.CultureInfo]::InvariantCulture)
+$nowSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = $future; PauseFeatureUpdatesEndTime = $future; PauseFeatureUpdatesStartTime = $past }
+$r = HReadPause
+Assert (($r['PauseUpdatesExpiryTime'] * 60) -gt $nowSeconds -and $r['PauseQualityUpdatesEndTime'] -eq 0 -and $r['PauseFeatureUpdatesStartTime'] -gt 0) 'active pause lists every saved time'
+Assert (HAnyUnsafe $r) 'an active pause is unsafe'
+$script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = $past; PauseFeatureUpdatesStartTime = $past }
+$r = HReadPause
+Assert (!(HAnyUnsafe $r) -and $r['PauseFeatureUpdatesStartTime'] -eq 0) 'an expired pause is not paused'
+$script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = 'not a date' }
+Reject { HReadPause } 'is not a date'
+$script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = 5 }
+Reject { HReadPause } 'is not text'
+$script:fakePaths = @()
+Assert (!(HAnyUnsafe (HReadPause))) 'no settings key means no pause'
+# Writers: remove, and put a saved time back to the minute.
+$script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings')
+$script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = $future }
+$script:calls = @()
+function Remove-ItemProperty { param($LiteralPath, $Name, $ErrorAction); $script:calls += ,@('remove', $Name) }
+$pauseDef = HDef 'PauseUpdatesExpiryTime'
+HSetPause $pauseDef 0
+Assert ((CallLog) -ceq 'remove:PauseUpdatesExpiryTime') "pause removed: $(CallLog)"
+$script:calls = @()
+$minutes = [int64][Math]::Floor(([DateTimeOffset]::UtcNow.AddDays(10).ToUnixTimeSeconds()) / 60)
+$script:hWanted = @{ PauseUpdatesExpiryTime = $minutes }
+HSetPause $pauseDef $minutes
+Assert ($script:calls.Count -eq 1 -and $script:calls[0][0] -ceq 'reg' -and $script:calls[0][2] -cmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:00Z$') "pause restored in Windows' own format: $(CallLog)"
+$script:calls = @()
+$script:hWanted = @{ PauseUpdatesExpiryTime = 100 }
+HSetPause $pauseDef 100
+Assert ($script:calls.Count -eq 0) 'a pause that already ended is not written back'
+Assert (HVerified 'PauseUpdatesExpiryTime' 0 100) 'an ended pause may read back as nothing'
+$script:hWanted = @{ PauseUpdatesExpiryTime = $minutes }
+Assert (!(HVerified 'PauseUpdatesExpiryTime' 0 $minutes)) 'a pause still in force must read back'
+$script:hWanted = @{}
+$script:fakeFs = $false
+
+# ---- SmartScreen (string setting plus the policy value)
+MakeSpec $ssJson
+$script:fakeFs = $true
+$script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer', 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System')
+$script:fakeKey = ValueKey @{ SmartScreenEnabled = 'Off'; EnableSmartScreen = 0 }
+$r = HReadSmartScreen
+Assert ($r['SmartScreenEnabled'] -eq 0 -and $r['EnableSmartScreen'] -eq 0 -and (HAnyUnsafe $r)) 'smartscreen off by setting and by policy'
+$script:fakeKey = ValueKey @{ SmartScreenEnabled = 'warn' }
+$r = HReadSmartScreen
+Assert ($r['SmartScreenEnabled'] -eq 1 -and $null -eq $r['EnableSmartScreen'] -and !(HAnyUnsafe $r)) 'warn is protected and an absent policy is protected'
+$script:fakeKey = ValueKey @{ RequireAdminOnly = 1 }
+$r = HReadSmartScreen
+Assert ($null -eq $r['SmartScreenEnabled'] -and !(HAnyUnsafe $r)) 'absent setting is the Windows default'
+$script:fakeKey = ValueKey @{ SmartScreenEnabled = 'Strange' }
+Reject { HReadSmartScreen } 'not recognised'
+$script:fakeKey = ValueKey @{ SmartScreenEnabled = 1 }
+Reject { HReadSmartScreen } 'not text'
+$script:fakeFs = $false
+$script:calls = @()
+function Test-Path { param($LiteralPath, $ErrorAction); return $true }
+HSetSmartScreen (HDef 'SmartScreenEnabled') 1
+HSetSmartScreen (HDef 'SmartScreenEnabled') 0
+Assert ((CallLog) -ceq 'reg:SmartScreenEnabled:Warn,reg:SmartScreenEnabled:Off') "smartscreen words: $(CallLog)"
+Reject { HSetSmartScreen (HDef 'SmartScreenEnabled') 7 } 'Invalid SmartScreen setting'
+$script:calls = @()
+HSetSmartScreen (HDef 'EnableSmartScreen') $null
+Assert ((CallLog) -ceq 'remove:EnableSmartScreen') "policy value removed: $(CallLog)"
+
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

@@ -60,6 +60,21 @@ pub enum Source {
     FirewallExposure,
     /// Dynamic: saved Wi-Fi profiles with a weak or no security type.
     WifiProfiles,
+    // --- OS / credentials / update / privacy controls ---
+    /// System-wide exploit protection (DEP, SEHOP, ASLR, CFG): 0 off, 1 on, 2 default.
+    ExploitMitigations,
+    /// Windows PowerShell 2.0 optional feature: 1 installed, 0 removed or absent.
+    PowerShellV2,
+    /// Dynamic: leftover remote-access services (start type + running bit).
+    LegacyServices,
+    /// "Require sign-in when the PC wakes" on the active power plan (AC and DC).
+    LockOnWake,
+    /// Windows Update pause markers (minutes since 1970, 0 = nothing to resume).
+    UpdatePause,
+    /// SmartScreen for apps and files (string setting plus the policy value).
+    SmartScreen,
+    /// Dynamic: risky Microsoft Defender exclusions (1 present, 0 removed).
+    DefenderExclusions,
 }
 
 /// Management and capability evidence the backend must find clean.
@@ -129,6 +144,22 @@ const WU: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate";
 const WU_AU: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU";
 const SYSPOL: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\System";
 const EXPLORER: &str = r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+
+const LSA_MSV1: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0";
+const CI_CONFIG: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config";
+const PRINTERS_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers";
+const STORE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore";
+const WU_UX: &str = r"HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings";
+const EXPLORER_MACHINE: &str = r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer";
+const WINDOWS_AI_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
+const DATA_COLLECTION_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection";
+const DELIVERY_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization";
+const POWER_CONSOLELOCK_POLICY: &str =
+    r"HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\0e796bdb-100d-47d6-a2d5-f7d2daa51f51";
+/// Exploit protection states: 0 off, 1 on, 2 not set (Windows default).
+const MITIGATION_STATES: &[u32] = &[0, 1, 2];
+/// Pause markers are minutes since 1970; the cap keeps them inside a PowerShell int.
+const PAUSE_MAX: u32 = 2_000_000_000;
 
 const ASR_ACTIONS: &[u32] = &[0, 1, 2, 6];
 const fn asr(guid: &'static str, fix: u32) -> Key {
@@ -491,6 +522,255 @@ static SPECS: &[Spec] = &[
             ..NO_GATE
         },
     },
+    // ======================================================================
+    // OS / credentials / update / privacy controls (system area).
+    // Keep this block self-contained: other areas append their own blocks.
+    // ======================================================================
+    Spec {
+        id: "ntlm.extras",
+        title: "No stored old password hashes, no anonymous sign-in fallback",
+        description: "Keep Windows from storing the old LM password hash (NoLMHash=1) and from letting the system account fall back to an anonymous sign-in (allownullsessionfallback=0). Absent values already mean safe on current Windows. UseMachineId is deliberately not set because it can break network drives. Restart required.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            set("NoLMHash", LSA, &[1], true, Some(1), 1),
+            set("allownullsessionfallback", LSA_MSV1, &[0], true, Some(0), 1),
+        ],
+        gate: Gate {
+            areas: &["LocalPoliciesSecurityOptions"],
+            pattern: "^NetworkSecurity_(DoNotStoreLANManager|AllowLocalSystemNULL)",
+            secedit: true,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "driver.vulnerable_blocklist",
+        title: "Block known-dangerous drivers",
+        description: "Turn Windows' list of known-dangerous drivers back on (VulnerableDriverBlocklistEnable=1). A missing value already means on. Old hardware tools may stop loading a driver. Restart required.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[set("VulnerableDriverBlocklistEnable", CI_CONFIG, &[1], true, Some(1), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "system.exploit_mitigations",
+        title: "Windows built-in memory protections",
+        description: "Turn back on only the system-wide exploit protections (DEP, SEHOP, bottom-up ASLR, high-entropy ASLR, Control Flow Guard) that were explicitly switched off. Protections that are on or left at the Windows default are never touched; forced image relocation is never changed. Restart required.",
+        source: Source::ExploitMitigations,
+        reboot: true,
+        ask: false,
+        keys: &[
+            Key { allowed: MITIGATION_STATES, ..set("DEP", "", &[1, 2], false, Some(1), 2) },
+            Key { allowed: MITIGATION_STATES, ..set("SEHOP", "", &[1, 2], false, Some(1), 2) },
+            Key { allowed: MITIGATION_STATES, ..set("BottomUp", "", &[1, 2], false, Some(1), 2) },
+            Key { allowed: MITIGATION_STATES, ..set("HighEntropy", "", &[1, 2], false, Some(1), 2) },
+            Key { allowed: MITIGATION_STATES, ..set("CFG", "", &[1, 2], false, Some(1), 2) },
+        ],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "ps.v2_engine",
+        title: "Remove the old PowerShell 2.0 engine",
+        description: "Turn off the Windows PowerShell 2.0 optional feature, which lacks modern malware scanning and logging. A feature that is missing already counts as removed. Removal can take a minute or more; undo turns the feature back on.",
+        source: Source::PowerShellV2,
+        reboot: false,
+        ask: true,
+        keys: &[set("Enabled", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "printer.spooler_remote",
+        title: "Printing service reachable from the network",
+        description: "Stop the Print Spooler accepting connections from other computers (RegisterSpoolerRemoteRpcEndPoint=2) when no printer on this PC is shared. The Spooler restarts once; local printing is unaffected.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[1, 2],
+            ..set("RegisterSpoolerRemoteRpcEndPoint", PRINTERS_POLICY, &[2], false, Some(2), 2)
+        }],
+        gate: Gate {
+            areas: &["Printers", "ADMX_Printing"],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "services.legacy_remote",
+        title: "Leftover remote-access services",
+        description: "Stop and disable Remote Registry, WinRM, OpenSSH server, Telnet, FTP, IIS web and SNMP services that are running or start automatically. Services that are not installed are ignored; undo restores each start type and running state.",
+        source: Source::LegacyServices,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            name: "*",
+            path: "",
+            rule: Rule::Set {
+                safe: &[3, 4],
+                absent_safe: false,
+                fix: Some(4),
+            },
+            max: 13,
+            allowed: &[2, 3, 4, 5, 10, 11, 12, 13],
+        }],
+        gate: Gate {
+            areas: &["RemoteManagement", "ADMX_WinRM"],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "session.lock_on_wake",
+        title: "Ask for your password when the PC wakes",
+        description: "Require sign-in when the PC wakes from sleep, on the active power plan (plugged in and on battery). Not offered when the signed-in account has no password.",
+        source: Source::LockOnWake,
+        reboot: false,
+        ask: true,
+        keys: &[
+            set("Ac", "", &[1], false, Some(1), 1),
+            set("Dc", "", &[1], false, Some(1), 1),
+        ],
+        gate: Gate {
+            areas: &["Power"],
+            pattern: "^RequirePasswordWhenComputerWakes",
+            policy_values: &[
+                (POWER_CONSOLELOCK_POLICY, "ACSettingIndex"),
+                (POWER_CONSOLELOCK_POLICY, "DCSettingIndex"),
+            ],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "update.store_autoupdate_policy",
+        title: "Store apps blocked from updating",
+        description: "Remove a locally set Microsoft Store policy that stops apps updating by themselves (AutoDownload=2). Managed devices are left alone; undo restores the value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("AutoDownload", STORE_POLICY, &[0, 1, 3, 4], true, None, 4)],
+        gate: Gate {
+            areas: &["ApplicationManagement"],
+            pattern: "^AllowAppStoreAutoUpdate",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "update.paused",
+        title: "Windows updates are paused",
+        description: "Resume Windows Update by removing the pause markers (PauseUpdatesExpiryTime and the feature and quality pause start and end times) while a pause is still in force. Undo writes the saved times back, to the minute.",
+        source: Source::UpdatePause,
+        reboot: false,
+        ask: true,
+        keys: &[
+            set("PauseUpdatesExpiryTime", WU_UX, &[0], false, Some(0), PAUSE_MAX),
+            set("PauseFeatureUpdatesEndTime", WU_UX, &[0], false, Some(0), PAUSE_MAX),
+            set("PauseQualityUpdatesEndTime", WU_UX, &[0], false, Some(0), PAUSE_MAX),
+            set("PauseFeatureUpdatesStartTime", WU_UX, &[0], false, Some(0), PAUSE_MAX),
+            set("PauseQualityUpdatesStartTime", WU_UX, &[0], false, Some(0), PAUSE_MAX),
+        ],
+        gate: Gate {
+            areas: &["Update", "ADMX_WindowsUpdate"],
+            policy_values: &[
+                (WU, "WUServer"),
+                (WU, "WUStatusServer"),
+                (WU, "SetPolicyDrivenUpdateSourceForFeatureUpdates"),
+                (WU, "SetPolicyDrivenUpdateSourceForQualityUpdates"),
+                (WU_AU, "UseWUServer"),
+            ],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "smartscreen.apps",
+        title: "Warn before running unknown downloads",
+        description: "Set the SmartScreen app and file check to Warn when it is Off, and remove a locally set EnableSmartScreen=0 policy value. Managed devices and policy-controlled values are left alone; undo restores both.",
+        source: Source::SmartScreen,
+        reboot: false,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1, 2, 3],
+                ..set("SmartScreenEnabled", EXPLORER_MACHINE, &[1, 2, 3], true, Some(1), 3)
+            },
+            set("EnableSmartScreen", SYSPOL, &[1], true, None, 1),
+        ],
+        gate: Gate {
+            areas: &["SmartScreen"],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.recall",
+        title: "Recall screenshots",
+        description: "Stop Windows saving snapshots of your screen for Recall (DisableAIDataAnalysis=1) on PCs that have the Recall feature. Existing snapshots are removed by Windows. Not offered where Recall does not exist; undo removes the setting.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("DisableAIDataAnalysis", WINDOWS_AI_POLICY, &[1], false, Some(1), 1)],
+        gate: Gate {
+            areas: &["WindowsAI"],
+            own_policy_key: WINDOWS_AI_POLICY,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.diagnostic_data_level",
+        title: "Optional diagnostic data",
+        description: "Limit diagnostic data sent to Microsoft to the required level (AllowTelemetry=1). It is never set to 0 and the diagnostics service is never switched off. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2, 3],
+            ..set("AllowTelemetry", DATA_COLLECTION_POLICY, &[0, 1], false, Some(1), 3)
+        }],
+        gate: Gate {
+            areas: &["System"],
+            pattern: "^AllowTelemetry",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.delivery_optimization",
+        title: "Update sharing with other PCs",
+        description: "Stop this PC sharing Windows and app downloads with other computers (DODownloadMode=0). Updates still download from Microsoft. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2, 3, 99, 100],
+            ..set("DODownloadMode", DELIVERY_POLICY, &[0, 99, 100], false, Some(0), 100)
+        }],
+        gate: Gate {
+            areas: &["DeliveryOptimization"],
+            pattern: "^DODownloadMode",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.clipboard_sync",
+        title: "Clipboard shared between your devices",
+        description: "Stop the clipboard being synced to your other devices (AllowCrossDeviceClipboard=0). Not offered on Windows Home. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("AllowCrossDeviceClipboard", SYSPOL, &[0], false, Some(0), 1)],
+        gate: Gate {
+            areas: &["Experience"],
+            pattern: "^AllowCrossDeviceClipboard",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "defender.exclusions_risky",
+        title: "Risky antivirus exclusions",
+        description: "Remove only the Defender exclusions that hide whole drives, Windows, user folders, program types such as exe or dll, or script engines. Every removed entry is recorded and undo adds it back. Other exclusions are never touched.",
+        source: Source::DefenderExclusions,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
 ];
 
 pub fn all() -> &'static [Spec] {
@@ -546,15 +826,39 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                 && !name.chars().any(|c| c.is_control() || c == '"')
                 && name.trim() == name
         }
+        Source::LegacyServices => LEGACY_SERVICES.contains(&name),
+        Source::DefenderExclusions => {
+            let rest = ["path:", "ext:", "proc:"]
+                .iter()
+                .find_map(|p| name.strip_prefix(p));
+            rest.is_some_and(|r| !r.is_empty())
+                && name.chars().count() <= 300
+                && !name.chars().any(|c| c.is_control() || c == '"')
+                && name.trim() == name
+        }
         _ => false,
     }
 }
+
+/// The only services the legacy-remote-access control may stop and disable.
+pub const LEGACY_SERVICES: &[&str] = &[
+    "RemoteRegistry",
+    "WinRM",
+    "sshd",
+    "TlntSvr",
+    "FTPSVC",
+    "W3SVC",
+    "SNMP",
+];
 
 impl Spec {
     pub fn dynamic(&self) -> bool {
         matches!(
             self.source,
-            Source::FirewallExposure | Source::WifiProfiles
+            Source::FirewallExposure
+                | Source::WifiProfiles
+                | Source::LegacyServices
+                | Source::DefenderExclusions
         )
     }
 
@@ -640,10 +944,9 @@ impl Spec {
     /// Any key that is not safe, i.e. there is something to repair.
     pub fn any_unsafe(&self, value: &Value) -> bool {
         self.parse(value).is_ok_and(|items| {
-            items.iter().any(|(n, v)| {
-                self.key(n)
-                    .is_some_and(|k| !is_safe(k.rule, *v))
-            })
+            items
+                .iter()
+                .any(|(n, v)| self.key(n).is_some_and(|k| !is_safe(k.rule, *v)))
         })
     }
 
@@ -652,10 +955,7 @@ impl Spec {
         let mut items = Map::new();
         for (name, v) in self.parse(before)? {
             let key = self.key(&name).expect("parsed key exists");
-            items.insert(
-                name,
-                fix_of(key.rule, v).map_or(Value::Null, Value::from),
-            );
+            items.insert(name, fix_of(key.rule, v).map_or(Value::Null, Value::from));
         }
         Ok(json!({ "items": items }))
     }
@@ -674,6 +974,16 @@ impl Spec {
         ) else {
             return observed.clone();
         };
+        if self.source == Source::DefenderExclusions {
+            // A removed exclusion is simply no longer listed: that is "0".
+            // Nothing is filtered out (the engine passes either side as the
+            // template), so a new risky entry makes undo stop as a conflict.
+            let mut items = o.clone();
+            for k in t.keys() {
+                items.entry(k.clone()).or_insert_with(|| json!(0));
+            }
+            return json!({ "items": items });
+        }
         let items: Map<String, Value> = o
             .iter()
             .filter(|(k, _)| t.contains_key(*k))
@@ -780,7 +1090,15 @@ mod tests {
         for s in all().iter().filter(|s| !s.dynamic()) {
             // Every key unsafe in turn, with the others at a safe value.
             for (i, k) in s.keys.iter().enumerate() {
-                let Rule::Set { safe, absent_safe, fix, .. } = k.rule else { continue };
+                let Rule::Set {
+                    safe,
+                    absent_safe,
+                    fix,
+                    ..
+                } = k.rule
+                else {
+                    continue;
+                };
                 let safe_vals: Vec<Option<u32>> = s
                     .keys
                     .iter()
@@ -789,8 +1107,10 @@ mod tests {
                         Rule::Exposure => Some(0),
                     })
                     .collect();
-                let mut unsafe_candidates: Vec<Option<u32>> = (0..=k.max)
-                    .filter(|n| (k.allowed.is_empty() || k.allowed.contains(n)) && !safe.contains(n))
+                let mut unsafe_candidates: Vec<Option<u32>> = (0..=k.max.min(300))
+                    .filter(|n| {
+                        (k.allowed.is_empty() || k.allowed.contains(n)) && !safe.contains(n)
+                    })
                     .map(Some)
                     .collect();
                 if !absent_safe {
@@ -854,7 +1174,12 @@ mod tests {
             items(pnp, &[Some(1), None, Some(1)])
         );
         // Absent is unsafe where Windows' default is unprotected.
-        for id in ["net.llmnr", "lsa.run_as_ppl", "wsh.disabled", "defender.asr.standard"] {
+        for id in [
+            "net.llmnr",
+            "lsa.run_as_ppl",
+            "wsh.disabled",
+            "defender.asr.standard",
+        ] {
             let s = spec(id).unwrap();
             let vals = vec![None; s.keys.len()];
             assert!(s.any_unsafe(&items(s, &vals)), "{id}");
@@ -886,7 +1211,10 @@ mod tests {
         ] {
             assert!(ppl.validate(&bad).is_err(), "accepted {bad}");
         }
-        for ok in [json!({"items": {"RunAsPPL": null}}), json!({"items": {"RunAsPPL": 0}})] {
+        for ok in [
+            json!({"items": {"RunAsPPL": null}}),
+            json!({"items": {"RunAsPPL": 0}}),
+        ] {
             ppl.validate(&ok).unwrap();
         }
         let asr = spec("defender.asr.standard").unwrap();
@@ -896,8 +1224,11 @@ mod tests {
             "e6db77e5-3df2-4cf1-b95a-636979351e5b": 1}});
         assert!(asr.validate(&bad_action).is_err());
         let lock = spec("accounts.lockout_policy").unwrap();
-        assert!(lock.validate(&json!({"items": {"LockoutThreshold": 1000}})).is_err());
-        lock.validate(&json!({"items": {"LockoutThreshold": 0}})).unwrap();
+        assert!(lock
+            .validate(&json!({"items": {"LockoutThreshold": 1000}}))
+            .is_err());
+        lock.validate(&json!({"items": {"LockoutThreshold": 0}}))
+            .unwrap();
     }
 
     #[test]
@@ -923,7 +1254,8 @@ mod tests {
             json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
         );
         // Undo of recorded rules ignores rules that appeared later.
-        let now = json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7, "FPS-NEW": 15}});
+        let now =
+            json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7, "FPS-NEW": 15}});
         assert_eq!(
             fw.view(&now, &before),
             json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
@@ -931,7 +1263,8 @@ mod tests {
         assert_eq!(fw.catalog_target(), json!("derived-items-v1"));
 
         let wifi = spec("wifi.risky_profiles").unwrap();
-        wifi.validate(&json!({"items": {"Cafe Guest": 1, "John's WiFi": 0}})).unwrap();
+        wifi.validate(&json!({"items": {"Cafe Guest": 1, "John's WiFi": 0}}))
+            .unwrap();
         for bad in [
             json!({"items": {"": 1}}),
             json!({"items": {"a\"b": 1}}),
@@ -942,7 +1275,8 @@ mod tests {
             assert!(wifi.validate(&bad).is_err(), "accepted {bad}");
         }
         assert_eq!(
-            wifi.derive_target(&json!({"items": {"Open": 1, "Done": 0}})).unwrap(),
+            wifi.derive_target(&json!({"items": {"Open": 1, "Done": 0}}))
+                .unwrap(),
             json!({"items": {"Open": 0, "Done": 0}})
         );
         // Fixed controls are never narrowed.
@@ -956,7 +1290,9 @@ mod tests {
     /// replays it so both implementations of the rules provably agree.
     #[test]
     fn export_rule_parity_fixture_for_powershell() {
-        let Ok(path) = std::env::var("SECBLITZ_PARITY_OUT") else { return };
+        let Ok(path) = std::env::var("SECBLITZ_PARITY_OUT") else {
+            return;
+        };
         let mut out = Vec::new();
         for s in all() {
             let mut cases = Vec::new();
@@ -984,6 +1320,105 @@ mod tests {
             }));
         }
         std::fs::write(path, serde_json::to_string(&out).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn system_dynamic_controls_accept_only_their_own_names() {
+        let svc = spec("services.legacy_remote").unwrap();
+        svc.validate(&json!({"items": {"RemoteRegistry": 10, "sshd": 4, "WinRM": 13}}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"Spooler": 4}}),
+            json!({"items": {"winrm": 4}}),
+            json!({"items": {"WinRM": 1}}),
+            json!({"items": {"WinRM": 14}}),
+            json!({"items": {"WinRM'; calc": 4}}),
+        ] {
+            assert!(svc.validate(&bad).is_err(), "accepted {bad}");
+        }
+        // Running or automatic is unsafe; the fix is "disabled and stopped".
+        let before = json!({"items": {"WinRM": 10, "sshd": 3, "SNMP": 12, "FTPSVC": 5}});
+        assert_eq!(
+            svc.derive_target(&before).unwrap(),
+            json!({"items": {"WinRM": 4, "sshd": 3, "SNMP": 4, "FTPSVC": 4}})
+        );
+
+        let ex = spec("defender.exclusions_risky").unwrap();
+        ex.validate(&json!({"items": {
+            "path:C:\\Users\\Bob\\Downloads": 1, "ext:exe": 0, "proc:powershell.exe": 1,
+            "path:D:\\Gäme's": 1,
+        }}))
+        .unwrap();
+        for bad in [
+            json!({"items": {"": 1}}),
+            json!({"items": {"path:": 1}}),
+            json!({"items": {"file:C:\\x": 1}}),
+            json!({"items": {"PATH:C:\\x": 1}}),
+            json!({"items": {"path:C:\\\"x": 1}}),
+            json!({"items": {"ext:exe\n": 1}}),
+            json!({"items": {" path:C:\\x": 1}}),
+            json!({"items": {"ext:exe": 2}}),
+        ] {
+            assert!(ex.validate(&bad).is_err(), "accepted {bad}");
+        }
+        // A removed exclusion disappears from the listing; the view reads it as 0.
+        let template = json!({"items": {"ext:exe": 1, "path:C:\\": 1}});
+        let now = json!({"items": {"ext:dll": 1}});
+        assert_eq!(
+            ex.view(&now, &template),
+            json!({"items": {"ext:dll": 1, "ext:exe": 0, "path:C:\\": 0}})
+        );
+        // Other dynamic controls keep ignoring recorded names that vanished.
+        let fw = spec("net.public_sharing_exposure").unwrap();
+        assert_eq!(
+            fw.view(&json!({"items": {}}), &json!({"items": {"FPS-A": 15}})),
+            json!({"items": {}})
+        );
+    }
+
+    #[test]
+    fn system_controls_follow_the_research_exclusions() {
+        // Never ForceRelocateImages, never telemetry 0, never RunAsPPL 1-style locks.
+        let mit = spec("system.exploit_mitigations").unwrap();
+        let names: Vec<_> = mit.keys.iter().map(|k| k.name).collect();
+        assert_eq!(names, ["DEP", "SEHOP", "BottomUp", "HighEntropy", "CFG"]);
+        let diag = spec("privacy.diagnostic_data_level").unwrap();
+        let Rule::Set { fix, .. } = diag.keys[0].rule else {
+            unreachable!()
+        };
+        assert_eq!(fix, Some(1));
+        // UseMachineId is deliberately not part of ntlm.extras.
+        assert!(spec("ntlm.extras")
+            .unwrap()
+            .keys
+            .iter()
+            .all(|k| k.name != "UseMachineId"));
+        // Every choice with an uncertain value is an ASK, only mitigations drift-repair automatically.
+        for id in [
+            "ntlm.extras",
+            "driver.vulnerable_blocklist",
+            "ps.v2_engine",
+            "printer.spooler_remote",
+            "services.legacy_remote",
+            "session.lock_on_wake",
+            "update.store_autoupdate_policy",
+            "update.paused",
+            "smartscreen.apps",
+            "privacy.recall",
+            "privacy.diagnostic_data_level",
+            "privacy.delivery_optimization",
+            "privacy.clipboard_sync",
+            "defender.exclusions_risky",
+        ] {
+            assert!(is_ask(id), "{id} must be a choice");
+        }
+        assert!(!is_ask("system.exploit_mitigations"));
+        // Pause markers cannot overflow a PowerShell int.
+        assert!(spec("update.paused")
+            .unwrap()
+            .keys
+            .iter()
+            .all(|k| k.max <= i32::MAX as u32));
     }
 
     #[test]

@@ -21,6 +21,8 @@ function HDef([string]$name) {
 function HNameOk([string]$name) {
     if (!$spec.dynamic) { foreach ($k in @($spec.keys)) { if ($k.name -ceq $name) { return $true } }; return $false }
     if ($spec.source -ceq 'FirewallExposure') { return ($name -cmatch '^(FPS|NETDIS)-[A-Za-z0-9_.-]{1,92}$') }
+    if ($spec.source -ceq 'LegacyServices') { return ((HServiceNames) -ccontains $name) }
+    if ($spec.source -ceq 'DefenderExclusions') { return (HExclusionNameOk $name) }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -197,6 +199,13 @@ function HRead() {
         'BuiltinAdmin' { return (HReadBuiltinAdmin) }
         'FirewallExposure' { return (HReadFirewall) }
         'WifiProfiles' { return (HReadWifi) }
+        'ExploitMitigations' { return (HReadMitigations) }
+        'PowerShellV2' { return (HReadPowerShellV2) }
+        'LegacyServices' { return (HReadServices) }
+        'LockOnWake' { return (HReadLockOnWake) }
+        'UpdatePause' { return (HReadPause) }
+        'SmartScreen' { return (HReadSmartScreen) }
+        'DefenderExclusions' { return (HReadExclusions) }
     }
     throw 'Unknown hardening source'
 }
@@ -353,6 +362,25 @@ function HPreflight() {
             } catch { throw 'Not offered: no other administrator account could be confirmed' }
             if (!$other) { throw 'Not offered: no other administrator account is enabled' }
         }
+        'printer.spooler_remote' {
+            Load 'PrintManagement'
+            if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.Shared -eq $true }).Count -gt 0) { throw 'Not offered: a printer on this PC is shared with other computers' }
+        }
+        'privacy.recall' {
+            if ((HFeatureState 'Recall') -ceq 'Missing') { throw 'Not offered: Recall is not available on this PC' }
+        }
+        'privacy.clipboard_sync' {
+            $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
+            if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
+        }
+        'session.lock_on_wake' {
+            Load 'CimCmdlets'; Load 'Microsoft.PowerShell.LocalAccounts'
+            $who = [string](Get-CimInstance Win32_ComputerSystem).UserName
+            $parts = $who.Split([char]92)
+            if ($parts.Count -ne 2 -or $parts[1] -eq '') { throw 'Not offered: Secblitz cannot tell who is signed in' }
+            $account = Get-LocalUser -Name $parts[1] -ErrorAction Stop
+            if ($account.PasswordRequired -ne $true -or $null -eq $account.PasswordLastSet) { throw 'Not offered: your account has no password' }
+        }
     }
 }
 
@@ -448,14 +476,364 @@ function HSetWifi($name, $v) {
 function HSet([string]$name, $v) {
     $def = HDef $name
     switch -CaseSensitive ($spec.source) {
-        'Registry' { HSetRegistry $def $v }
+        'Registry' { HSetRegistry $def $v; HAfterRegistry }
         'DefenderPref' { HSetDefenderPref $def $v }
         'DefenderAsr' { HSetAsr $def $v }
         'Lockout' { HSetLockout $def $v }
         'BuiltinAdmin' { HSetBuiltinAdmin $def $v }
         'FirewallExposure' { HSetFirewall $name $v }
         'WifiProfiles' { HSetWifi $name $v }
+        'ExploitMitigations' { HSetMitigation $name $v }
+        'PowerShellV2' { HSetPowerShellV2 $v }
+        'LegacyServices' { HSetService $name $v }
+        'LockOnWake' { HSetLockOnWake $name $v }
+        'UpdatePause' { HSetPause $def $v }
+        'SmartScreen' { HSetSmartScreen $def $v }
+        'DefenderExclusions' { HSetExclusion $name $v }
         default { throw 'Unknown hardening source' }
+    }
+}
+
+# ====================================================================
+# System area: OS / credentials / update / privacy controls.
+# Self-contained block; every reader returns {key: int} and every writer
+# changes exactly one key. Nothing here starts a child process.
+# ====================================================================
+function HVerified([string]$name, $have, $want) {
+    if (HEq $have $want) { return $true }
+    # An update pause that already ended cannot be put back: nothing is in force.
+    if ($spec.source -ceq 'UpdatePause' -and $null -ne $want -and $null -ne $have -and [int64]$have -eq 0 -and !(HPauseWantedActive)) { return $true }
+    return $false
+}
+function HWantedNames() {
+    $v = Get-Variable -Name hWanted -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $v -or $null -eq $v.Value) { return @() }
+    return @($v.Value.Keys)
+}
+function HAfterRegistry() {
+    if ($spec.id -ceq 'printer.spooler_remote') {
+        # The setting is read when the Spooler starts: restart it once, only if it runs.
+        $svc = Get-Service -Name 'Spooler' -ErrorAction Stop
+        if ([string]$svc.Status -ceq 'Running') { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
+    }
+}
+
+# ---- system.exploit_mitigations
+function HMitigationValue($v) {
+    switch -CaseSensitive (([string]$v).ToUpperInvariant()) {
+        'ON' { return 1 }
+        'OFF' { return 0 }
+        'NOTSET' { return 2 }
+    }
+    throw 'Exploit protection state is not readable'
+}
+function HReadMitigations() {
+    Load 'ProcessMitigations'
+    $m = Get-ProcessMitigation -System
+    return @{
+        DEP = (HMitigationValue $m.DEP.Enable)
+        SEHOP = (HMitigationValue $m.SEHOP.Enable)
+        BottomUp = (HMitigationValue $m.ASLR.BottomUp)
+        HighEntropy = (HMitigationValue $m.ASLR.HighEntropy)
+        CFG = (HMitigationValue $m.CFG.Enable)
+    }
+}
+function HSetMitigation([string]$name, $v) {
+    if (@('DEP', 'SEHOP', 'BottomUp', 'HighEntropy', 'CFG') -cnotcontains $name) { throw 'Unknown hardening item' }
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid exploit protection state' }
+    Load 'ProcessMitigations'
+    if ([int]$v -eq 1) { Set-ProcessMitigation -System -Enable $name -ErrorAction Stop }
+    else { Set-ProcessMitigation -System -Disable $name -ErrorAction Stop }
+}
+
+# ---- ps.v2_engine
+function HFeatureState([string]$name) {
+    Load 'Dism'
+    $hit = $null
+    try { $hit = @(Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction Stop) } catch { $hit = $null }
+    if ($null -ne $hit -and $hit.Count -eq 1) { return [string]$hit[0].State }
+    # Unknown name (or an empty answer): only believe "not present" when the full list is healthy.
+    $all = @(Get-WindowsOptionalFeature -Online -ErrorAction Stop)
+    if ($all.Count -lt 5) { throw 'The Windows feature list is not readable' }
+    $match = @($all | Where-Object { [string]$_.FeatureName -ieq $name })
+    if ($match.Count -eq 0) { return 'Missing' }
+    if ($match.Count -eq 1) { return [string]$match[0].State }
+    throw 'The Windows feature list is ambiguous'
+}
+function HV2Value([string]$state) {
+    switch -CaseSensitive ($state) {
+        'Enabled' { return 1 }
+        'EnablePending' { return 1 }
+        'Disabled' { return 0 }
+        'DisablePending' { return 0 }
+        'DisabledWithPayloadRemoved' { return 0 }
+        'Missing' { return 0 }
+    }
+    throw 'The Windows feature state is not readable'
+}
+function HReadPowerShellV2() {
+    $root = HV2Value (HFeatureState 'MicrosoftWindowsPowerShellV2Root')
+    $child = HV2Value (HFeatureState 'MicrosoftWindowsPowerShellV2')
+    return @{ Enabled = [int]([bool]($root -or $child)) }
+}
+function HSetPowerShellV2($v) {
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid feature state' }
+    Load 'Dism'
+    $names = @('MicrosoftWindowsPowerShellV2Root', 'MicrosoftWindowsPowerShellV2')
+    foreach ($name in $names) {
+        if ([int]$v -eq 0) {
+            if ((HV2Value (HFeatureState $name)) -eq 1) { $null = Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop }
+        } else {
+            $null = Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart -ErrorAction Stop
+        }
+    }
+}
+
+# ---- services.legacy_remote (value = start type 2/3/4, 5 = automatic delayed, +8 when running)
+function HServiceNames() { return @('RemoteRegistry', 'WinRM', 'sshd', 'TlntSvr', 'FTPSVC', 'W3SVC', 'SNMP') }
+function HServiceKey([string]$name) {
+    if ((HServiceNames) -cnotcontains $name) { throw 'Unknown hardening item' }
+    return ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $name)
+}
+function HReadServices() {
+    $out = @{}
+    foreach ($name in @(HServiceNames)) {
+        $path = HServiceKey $name
+        if (!(Test-Path -LiteralPath $path)) { continue }
+        $key = Get-Item -LiteralPath $path
+        $names = @($key.GetValueNames())
+        if ($names -notcontains 'ImagePath' -or $names -notcontains 'Start') { continue }
+        $start = $key.GetValue('Start')
+        if ($start -isnot [int]) { throw 'A service start type is not readable' }
+        if ($start -eq 2) {
+            if ($names -contains 'DelayedAutostart' -and $key.GetValue('DelayedAutostart') -is [int] -and $key.GetValue('DelayedAutostart') -eq 1) { $start = 5 }
+        } elseif ($start -ne 3 -and $start -ne 4) { throw 'A service start type is unexpected' }
+        $svc = Get-Service -Name $name -ErrorAction Stop
+        $status = [string]$svc.Status
+        if ($status -ceq 'Running') { $start += 8 }
+        elseif ($status -cne 'Stopped') { throw 'A service is changing state; try again in a moment' }
+        $out[$name] = [int]$start
+    }
+    return $out
+}
+function HSetService([string]$name, $v) {
+    $path = HServiceKey $name
+    if ($null -eq $v) { throw 'Invalid service state' }
+    $start = [int]$v -band 7
+    $run = (([int]$v -band 8) -ne 0)
+    $type = switch ($start) { 2 { 'Automatic' } 3 { 'Manual' } 4 { 'Disabled' } 5 { 'Automatic' } default { throw 'Invalid service start type' } }
+    $svc = Get-Service -Name $name -ErrorAction Stop
+    if (!$run -and [string]$svc.Status -cne 'Stopped') {
+        Stop-Service -Name $name -ErrorAction Stop
+        $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+    }
+    Set-Service -Name $name -StartupType $type -ErrorAction Stop
+    if ($start -eq 2 -or $start -eq 5) {
+        $delayed = 0
+        if ($start -eq 5) { $delayed = 1 }
+        New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value $delayed -Force -ErrorAction Stop | Out-Null
+    }
+    $svc.Refresh()
+    if ($run -and [string]$svc.Status -cne 'Running') { Start-Service -Name $name -ErrorAction Stop }
+}
+
+# ---- session.lock_on_wake (powercfg CONSOLELOCK through the power WMI provider)
+function HConsoleLockInstance([string]$mode) {
+    Load 'CimCmdlets'
+    $plans = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerPlan | Where-Object { $_.IsActive -eq $true })
+    if ($plans.Count -ne 1) { throw 'The active power plan is not readable' }
+    $m = [regex]::Match([string]$plans[0].InstanceID, '\{([0-9a-fA-F-]{36})\}$')
+    if (!$m.Success) { throw 'The active power plan is not readable' }
+    $id = 'Microsoft:PowerSettingDataIndex\{' + $m.Groups[1].Value + '}\' + $mode + '\{0e796bdb-100d-47d6-a2d5-f7d2daa51f51}'
+    $found = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSettingDataIndex | Where-Object { [string]$_.InstanceID -ieq $id })
+    if ($found.Count -gt 1) { throw 'The sign-in-on-wake setting is ambiguous' }
+    $setting = $null
+    if ($found.Count -eq 1) { $setting = $found[0] }
+    return @{ plan = $plans[0]; setting = $setting }
+}
+function HReadLockOnWake() {
+    $ac = HConsoleLockInstance 'AC'
+    if ($null -eq $ac.setting) { throw 'The sign-in-on-wake setting is not readable' }
+    $dc = HConsoleLockInstance 'DC'
+    $acValue = [int]$ac.setting.SettingIndexValue
+    # Desktop PCs may have no battery setting: it then mirrors the plugged-in one.
+    $dcValue = $acValue
+    if ($null -ne $dc.setting) { $dcValue = [int]$dc.setting.SettingIndexValue }
+    foreach ($n in @($acValue, $dcValue)) { if ($n -ne 0 -and $n -ne 1) { throw 'The sign-in-on-wake setting is not readable' } }
+    return @{ Ac = $acValue; Dc = $dcValue }
+}
+function HSetLockOnWake([string]$name, $v) {
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid sign-in-on-wake value' }
+    if ($name -ceq 'Ac') { $mode = 'AC' } elseif ($name -ceq 'Dc') { $mode = 'DC' } else { throw 'Unknown hardening item' }
+    $i = HConsoleLockInstance $mode
+    if ($null -ne $i.setting) {
+        $i.setting.SettingIndexValue = [uint32]$v
+        Set-CimInstance -InputObject $i.setting -ErrorAction Stop
+    } elseif ($mode -ceq 'AC') { throw 'The sign-in-on-wake setting is not available' }
+    # Re-apply the plan so the new value is in force straight away.
+    Invoke-CimMethod -InputObject $i.plan -MethodName Activate -ErrorAction Stop | Out-Null
+}
+
+# ---- update.paused (values are minutes since 1970; 0 = nothing to resume)
+function HPauseNames() { return @('PauseUpdatesExpiryTime', 'PauseFeatureUpdatesEndTime', 'PauseQualityUpdatesEndTime', 'PauseFeatureUpdatesStartTime', 'PauseQualityUpdatesStartTime') }
+function HPauseEndNames() { return @('PauseUpdatesExpiryTime', 'PauseFeatureUpdatesEndTime', 'PauseQualityUpdatesEndTime') }
+function HPauseMinutes($key, [string]$name) {
+    if ($key.GetValueNames() -notcontains $name) { return $null }
+    if ($key.GetValueKind($name) -ne [Microsoft.Win32.RegistryValueKind]::String) { throw "$name is not text" }
+    $when = [DateTimeOffset]::MinValue
+    if (![DateTimeOffset]::TryParse([string]$key.GetValue($name), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$when)) { throw "$name is not a date" }
+    $minutes = [int64][Math]::Floor($when.ToUnixTimeSeconds() / 60)
+    if ($minutes -lt 1 -or $minutes -gt 2000000000) { throw "$name is out of range" }
+    return $minutes
+}
+function HReadPause() {
+    $out = @{}
+    foreach ($def in @($spec.keys)) { $out[$def.name] = 0 }
+    $path = [string]@($spec.keys)[0].path
+    if (!(Test-Path -LiteralPath $path)) { return $out }
+    $key = Get-Item -LiteralPath $path
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $active = $false
+    foreach ($name in @(HPauseEndNames)) {
+        $m = HPauseMinutes $key $name
+        if ($null -ne $m -and ($m * 60) -gt $now) { $active = $true }
+    }
+    if (!$active) { return $out }
+    foreach ($name in @(HPauseNames)) {
+        $m = HPauseMinutes $key $name
+        if ($null -ne $m) { $out[$name] = [int]$m }
+    }
+    return $out
+}
+function HPauseWantedActive() {
+    $names = @(HWantedNames)
+    if ($names.Count -eq 0) { return $true }
+    $wanted = (Get-Variable -Name hWanted -Scope Script).Value
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    foreach ($name in @(HPauseEndNames)) {
+        if ($wanted.ContainsKey($name) -and $null -ne $wanted[$name] -and ([int64]$wanted[$name] * 60) -gt $now) { return $true }
+    }
+    return $false
+}
+function HSetPause($def, $v) {
+    if ($null -eq $v) { throw 'Invalid pause value' }
+    $key = $null
+    if (Test-Path -LiteralPath $def.path) { $key = Get-Item -LiteralPath $def.path }
+    if ([int]$v -eq 0) {
+        if ($null -ne $key -and $key.GetValueNames() -contains $def.name) { Remove-ItemProperty -LiteralPath $def.path -Name $def.name -ErrorAction Stop }
+        return
+    }
+    # A pause that has already ended has nothing left to put back.
+    if (!(HPauseWantedActive)) { return }
+    $seconds = [int64]$v * 60
+    $text = [DateTimeOffset]::FromUnixTimeSeconds($seconds).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
+    if ($null -eq $key) { $null = New-Item -Path $def.path -Force -ErrorAction Stop }
+    New-ItemProperty -LiteralPath $def.path -Name $def.name -PropertyType String -Value $text -Force -ErrorAction Stop | Out-Null
+}
+
+# ---- smartscreen.apps (0 Off, 1 Warn, 2 RequireAdmin, 3 Prompt; absent = null)
+function HSmartScreenWords() { return @('Off', 'Warn', 'RequireAdmin', 'Prompt') }
+function HReadSmartScreen() {
+    $out = @{}
+    foreach ($def in @($spec.keys)) {
+        if ($def.name -cne 'SmartScreenEnabled') { $out[$def.name] = HReadRegistry $def; continue }
+        $out[$def.name] = $null
+        if (!(Test-Path -LiteralPath $def.path)) { continue }
+        $key = Get-Item -LiteralPath $def.path
+        if ($key.GetValueNames() -notcontains $def.name) { continue }
+        if ($key.GetValueKind($def.name) -ne [Microsoft.Win32.RegistryValueKind]::String) { throw 'The SmartScreen setting is not text' }
+        $text = [string]$key.GetValue($def.name)
+        $words = HSmartScreenWords
+        $index = -1
+        for ($n = 0; $n -lt $words.Count; $n++) { if ($words[$n] -ieq $text) { $index = $n } }
+        if ($index -lt 0) { throw 'The SmartScreen setting is not recognised' }
+        $out[$def.name] = $index
+    }
+    return $out
+}
+function HSetSmartScreen($def, $v) {
+    if ($def.name -cne 'SmartScreenEnabled') { HSetRegistry $def $v; return }
+    $words = HSmartScreenWords
+    if ($null -eq $v -or [int]$v -lt 0 -or [int]$v -ge $words.Count) { throw 'Invalid SmartScreen setting' }
+    if (!(Test-Path -LiteralPath $def.path)) { $null = New-Item -Path $def.path -Force -ErrorAction Stop }
+    New-ItemProperty -LiteralPath $def.path -Name $def.name -PropertyType String -Value $words[[int]$v] -Force -ErrorAction Stop | Out-Null
+}
+
+# ---- defender.exclusions_risky (names are "path:...", "ext:..." or "proc:...")
+function HRiskyPathPattern() {
+    $drive = '([a-z]:|%systemdrive%)'
+    $parts = @(
+        '(\*|[a-z]:|[a-z]:\\\*|%systemdrive%|%homedrive%)',
+        ($drive + '\\(windows|users|programdata|temp|tmp|program files|program files \(x86\))'),
+        ($drive + '\\windows\\(system32|syswow64|temp)'),
+        ($drive + '\\users\\([^\\]+|public)'),
+        ($drive + '\\users\\[^\\]+\\(downloads|desktop|documents|appdata|appdata\\local|appdata\\roaming|appdata\\local\\temp)'),
+        '%(windir|systemroot)%(\\(system32|syswow64|temp))?',
+        '%(temp|tmp|userprofile|appdata|localappdata|programdata|public|allusersprofile)%',
+        '%(userprofile|homepath)%\\(downloads|desktop|documents|appdata|appdata\\local|appdata\\roaming|appdata\\local\\temp)'
+    )
+    return ('^(' + ($parts -join '|') + ')$')
+}
+function HExclusionRisky([string]$kind, [string]$value) {
+    $v = $value.Trim().ToLowerInvariant()
+    if ($v.Length -eq 0) { return $false }
+    switch -CaseSensitive ($kind) {
+        'ext' { return (@('exe', 'dll', 'ps1', 'bat', 'js', 'vbs', 'scr') -ccontains $v.TrimStart([char]46)) }
+        'proc' {
+            $leaf = $v.Substring($v.LastIndexOf([char]92) + 1)
+            if ($leaf.EndsWith('.exe')) { $leaf = $leaf.Substring(0, $leaf.Length - 4) }
+            return (@('powershell', 'pwsh', 'cmd', 'wscript', 'cscript', 'mshta') -ccontains $leaf)
+        }
+        'path' {
+            $p = $v
+            if ($p.EndsWith('\*') -or $p.EndsWith('/*')) { $p = $p.Substring(0, $p.Length - 2) }
+            $p = $p.TrimEnd([char[]]@([char]92, [char]47))
+            if ($p.Length -eq 0) { return $true }
+            return ($p -cmatch (HRiskyPathPattern))
+        }
+    }
+    return $false
+}
+function HExclusionParse([string]$name) {
+    if ($name.Length -lt 4 -or $name.Length -gt 300 -or $name -cmatch '[\x00-\x1f\x7f"]' -or $name.Trim() -cne $name) { return $null }
+    $m = [regex]::Match($name, '^(path|ext|proc):(.+)$')
+    if (!$m.Success) { return $null }
+    return @{ kind = $m.Groups[1].Value; value = $m.Groups[2].Value }
+}
+function HExclusionNameOk([string]$name) {
+    $p = HExclusionParse $name
+    if ($null -eq $p) { return $false }
+    return (HExclusionRisky $p.kind $p.value)
+}
+function HReadExclusions() {
+    Load 'Defender'
+    $p = Get-MpPreference
+    $out = @{}
+    foreach ($pair in @(@('path', 'ExclusionPath'), @('ext', 'ExclusionExtension'), @('proc', 'ExclusionProcess'))) {
+        foreach ($entry in @($p.($pair[1]))) {
+            if ($null -eq $entry) { continue }
+            if ($entry -isnot [string] -or $entry.StartsWith('N/A:')) { throw 'Defender exclusions are not readable' }
+            if (!(HExclusionRisky $pair[0] $entry)) { continue }
+            $name = $pair[0] + ':' + $entry
+            if (!(HExclusionNameOk $name)) { throw 'A risky exclusion cannot be listed safely' }
+            $out[$name] = 1
+        }
+    }
+    # A removed exclusion is simply gone from the list: that is the safe state "0".
+    foreach ($name in @(HWantedNames)) { if (!$out.ContainsKey($name)) { $out[$name] = 0 } }
+    if ($out.Count -gt 256) { throw 'Too many risky exclusions to handle at once' }
+    return $out
+}
+function HSetExclusion([string]$name, $v) {
+    $p = HExclusionParse $name
+    if ($null -eq $p -or !(HExclusionRisky $p.kind $p.value)) { throw 'Unknown hardening item' }
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid exclusion state' }
+    Load 'Defender'
+    $add = ([int]$v -eq 1)
+    switch -CaseSensitive ($p.kind) {
+        'path' { if ($add) { Add-MpPreference -ExclusionPath $p.value } else { Remove-MpPreference -ExclusionPath $p.value } }
+        'ext' { if ($add) { Add-MpPreference -ExclusionExtension $p.value } else { Remove-MpPreference -ExclusionExtension $p.value } }
+        'proc' { if ($add) { Add-MpPreference -ExclusionProcess $p.value } else { Remove-MpPreference -ExclusionProcess $p.value } }
     }
 }
 
@@ -479,6 +857,7 @@ function HParseInput($inputValue) {
 
 function HWrite($inputValue) {
     $wanted = HParseInput $inputValue
+    $script:hWanted = $wanted
     HGate
     $current = HRead
     $steps = @()
@@ -501,7 +880,7 @@ function HWrite($inputValue) {
         for ($attempt = 0; $attempt -lt 10; $attempt++) {
             $now = HRead
             $ok = $true
-            foreach ($name in $wanted.Keys) { if (!$now.ContainsKey($name) -or !(HEq $now[$name] $wanted[$name])) { $ok = $false } }
+            foreach ($name in $wanted.Keys) { if (!$now.ContainsKey($name) -or !(HVerified $name $now[$name] $wanted[$name])) { $ok = $false } }
             if ($ok) { $verified = $true; break }
             if ($attempt -lt 9) { Start-Sleep -Milliseconds 500 }
         }
