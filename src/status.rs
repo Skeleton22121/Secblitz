@@ -71,7 +71,7 @@ pub enum Item {
 /// a preference that differs from the target is not protected; firewall
 /// controls additionally need local authority and matching effective evidence.
 pub fn classify(id: &str, target: &serde_json::Value, o: &Observation) -> Item {
-    if id.starts_with("firewall.") {
+    if id.starts_with("firewall.") && !crate::hardening::is_hardening(id) {
         if o.authority != Some(Authority::Local) || !o.eligible {
             return Item::Attention;
         }

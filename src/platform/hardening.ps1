@@ -21,6 +21,7 @@ function HDef([string]$name) {
 function HNameOk([string]$name) {
     if (!$spec.dynamic) { foreach ($k in @($spec.keys)) { if ($k.name -ceq $name) { return $true } }; return $false }
     if ($spec.source -ceq 'FirewallExposure') { return ($name -cmatch '^(FPS|NETDIS)-[A-Za-z0-9_.-]{1,92}$') }
+    if ($spec.source -ceq 'NetbiosAdapters') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -29,7 +30,7 @@ function HIsSafe($def, $v) {
         return !((([int]$v -band 8) -ne 0) -and (([int]$v -band 4) -ne 0))
     }
     if ($null -eq $v) { return [bool]$def.absentSafe }
-    return (@($def.safe) -contains [int]$v)
+    return (@($def.safe) -contains [int64]$v)
 }
 function HFixOf($def, $v) {
     if (HIsSafe $def $v) { return $v }
@@ -46,15 +47,36 @@ function HAnyUnsafe($slice) {
 }
 
 # ---------------------------------------------------------------- readers
+function HValueName($def) {
+    # The registry value name (a control may hold one value under several keys).
+    if ($null -ne $def.PSObject.Properties['valueName'] -and [string]$def.valueName) { return [string]$def.valueName }
+    return [string]$def.name
+}
 function HReadRegistry($def) {
     if (!(Test-Path -LiteralPath $def.path -ErrorAction Stop)) { return $null }
     $key = Get-Item -LiteralPath $def.path -ErrorAction Stop
-    if ($key.GetValueNames() -notcontains $def.name) { return $null }
-    if ($key.GetValueKind($def.name) -ne [Microsoft.Win32.RegistryValueKind]::DWord) { throw "$($def.name) is not a DWORD" }
-    return [int]$key.GetValue($def.name)
+    $vn = HValueName $def
+    if ($key.GetValueNames() -notcontains $vn) { return $null }
+    if ($key.GetValueKind($vn) -ne [Microsoft.Win32.RegistryValueKind]::DWord) { throw "$vn is not a DWORD" }
+    $n = [int64]$key.GetValue($vn)
+    # DWORDs are unsigned: 0xFFFFFFFF reads back as -1.
+    if ($n -lt 0) { $n += 4294967296 }
+    return $n
 }
 $hMaps = @('Disabled','Basic','Advanced')
 $hPua = @('Disabled','Enabled','AuditMode')
+$hNp = @('Disabled','Enabled','AuditMode')
+$hCbl = @{ Default = 0; Moderate = 1; High = 2; HighPlus = 4; ZeroTolerance = 6 }
+function HCloudLevel($v) {
+    if ($null -eq $v) { throw 'Defender preference is not readable' }
+    if ($v -is [string]) {
+        if (!$hCbl.ContainsKey($v)) { throw 'Defender preference is not readable' }
+        return [int]$hCbl[$v]
+    }
+    $n = [int]$v
+    if (@(0,1,2,4,6) -notcontains $n) { throw 'Defender preference is not readable' }
+    return $n
+}
 function HEnumNumber($v, [string[]]$names) {
     if ($null -eq $v) { throw 'Defender preference is not readable' }
     if ($v -is [string]) {
@@ -72,6 +94,15 @@ function HReadDefenderPref() {
         $raw = $p.($def.name)
         if ($def.name -ceq 'MAPSReporting') { $out[$def.name] = HEnumNumber $raw $hMaps }
         elseif ($def.name -ceq 'PUAProtection') { $out[$def.name] = HEnumNumber $raw $hPua }
+        elseif ($def.name -ceq 'EnableNetworkProtection') {
+            # Editions without the feature may not report it: treat as off, never as protected.
+            if ($null -eq $raw) { $out[$def.name] = 0 } else { $out[$def.name] = HEnumNumber $raw $hNp }
+        }
+        elseif ($def.name -ceq 'CloudBlockLevel') { $out[$def.name] = HCloudLevel $raw }
+        elseif ($def.name -ceq 'CloudExtendedTimeout') {
+            if ($null -eq $raw) { throw 'Defender preference is not readable' }
+            $out[$def.name] = [int]$raw
+        }
         else {
             # Disable* preferences: absent means Defender's default (feature on).
             if ($null -eq $raw) { $out[$def.name] = 0 }
@@ -188,6 +219,39 @@ function HReadWifi() {
     }
     return $out
 }
+function HReadNetbios() {
+    Load 'CimCmdlets'
+    $out = @{}
+    $dupes = @{}
+    foreach ($c in @(Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = True')) {
+        $id = [string]$c.SettingID
+        if (!(HNameOk $id) -or $null -eq $c.TcpipNetbiosOptions) { continue }
+        $n = [int]$c.TcpipNetbiosOptions
+        if (@(0,1,2) -notcontains $n) { continue }
+        # Two configurations with one id are ambiguous: leave them alone.
+        if ($out.ContainsKey($id) -or $dupes.ContainsKey($id)) { $dupes[$id] = $true; $out.Remove($id); continue }
+        $out[$id] = $n
+    }
+    return $out
+}
+$hOutboundRule = 'Secblitz-Block-Outbound-SMB-Internet'
+$hOutboundName = 'Secblitz: block outbound file sharing to the internet'
+function HReadOutbound() {
+    Load 'NetSecurity'
+    try { $rules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Name $hOutboundRule -ErrorAction Stop) }
+    catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }; return @{ RulePresent = 0 } }
+    if ($rules.Count -eq 0) { return @{ RulePresent = 0 } }
+    if ($rules.Count -ne 1) { throw 'The Secblitz firewall rule exists more than once' }
+    $r = $rules[0]
+    $ports = @($r | Get-NetFirewallPortFilter | ForEach-Object { $_.RemotePort } | ForEach-Object { [string]$_ })
+    $proto = @($r | Get-NetFirewallPortFilter | ForEach-Object { [string]$_.Protocol })
+    $addr = @($r | Get-NetFirewallAddressFilter | ForEach-Object { $_.RemoteAddress } | ForEach-Object { [string]$_ })
+    $same = [string]$r.Direction -ceq 'Outbound' -and [string]$r.Action -ceq 'Block' -and [string]$r.Enabled -ceq 'True' -and
+        $proto.Count -eq 1 -and $proto[0] -ceq 'TCP' -and $ports.Count -eq 2 -and $ports -contains '445' -and $ports -contains '139' -and
+        $addr.Count -eq 1 -and $addr[0] -ieq 'Internet'
+    if (!$same) { throw 'A firewall rule with the Secblitz name exists but is different; it was left alone' }
+    return @{ RulePresent = 1 }
+}
 function HRead() {
     switch -CaseSensitive ($spec.source) {
         'Registry' { $out = @{}; foreach ($def in @($spec.keys)) { $out[$def.name] = HReadRegistry $def }; return $out }
@@ -197,6 +261,8 @@ function HRead() {
         'BuiltinAdmin' { return (HReadBuiltinAdmin) }
         'FirewallExposure' { return (HReadFirewall) }
         'WifiProfiles' { return (HReadWifi) }
+        'NetbiosAdapters' { return (HReadNetbios) }
+        'FirewallOutbound' { return (HReadOutbound) }
     }
     throw 'Unknown hardening source'
 }
@@ -294,7 +360,7 @@ function HGate() {
     HGateCommon
     HGatePolicy
     HRsop
-    if ($spec.source -ceq 'FirewallExposure') { HGateFirewall }
+    if ($spec.source -ceq 'FirewallExposure' -or $spec.source -ceq 'FirewallOutbound') { HGateFirewall }
     if ($spec.source -ceq 'WifiProfiles') { HGateWifi }
 }
 
@@ -331,15 +397,22 @@ function HPreflight() {
                 }
             }
         }
-        { $_ -in @('defender.asr.standard','defender.asr.web_script_email') } {
+        { $_ -in @('defender.asr.standard','defender.asr.web_script_email','defender.asr.office','defender.asr.ransomware_usb','defender.network_protection','defender.cloud_block_level') } {
             Load 'Defender'
-            if ((Get-MpComputerStatus).RealTimeProtectionEnabled -ne $true) { throw 'Not offered: Defender real-time protection is off' }
+            $status = Get-MpComputerStatus
+            if ($status.RealTimeProtectionEnabled -ne $true) { throw 'Not offered: Defender real-time protection is off' }
             if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\CCM') { throw 'Not offered: this PC uses Configuration Manager' }
-            if ($spec.id -ceq 'defender.asr.web_script_email') {
+            if (@('defender.asr.web_script_email','defender.asr.ransomware_usb','defender.network_protection','defender.cloud_block_level') -ccontains $spec.id) {
                 $maps = HEnumNumber (Get-MpPreference).MAPSReporting $hMaps
                 if ($maps -eq 0) { throw 'Not offered: Defender cloud protection is off' }
             }
+            if ($spec.id -ceq 'defender.asr.office' -and !(HOfficeInstalled)) { throw 'Not offered: Microsoft Office was not found' }
+            if ($spec.id -ceq 'defender.network_protection') {
+                if (!(HEditionHasNetworkProtection)) { throw 'Not offered: this edition of Windows does not include it' }
+                if ($status.BehaviorMonitorEnabled -ne $true) { throw 'Not offered: Defender behavior monitoring is off' }
+            }
         }
+        'net.netbios' { HNetbiosPreflight }
         'accounts.builtin_administrator' {
             Load 'Microsoft.PowerShell.LocalAccounts'
             $other = $false
@@ -353,6 +426,69 @@ function HPreflight() {
             } catch { throw 'Not offered: no other administrator account could be confirmed' }
             if (!$other) { throw 'Not offered: no other administrator account is enabled' }
         }
+    }
+}
+
+function HOfficeInstalled() {
+    if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration') { return $true }
+    foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if (!$root) { continue }
+        foreach ($sub in @('Microsoft Office\root\Office16\WINWORD.EXE','Microsoft Office\Office16\WINWORD.EXE','Microsoft Office\Office15\WINWORD.EXE')) {
+            if (Test-Path -LiteralPath ([IO.Path]::Combine($root, $sub))) { return $true }
+        }
+    }
+    return $false
+}
+function HEditionHasNetworkProtection() {
+    # Pro, Enterprise and Education family SKUs only. Anything unknown (Home
+    # included) is treated as not supported.
+    Load 'CimCmdlets'
+    $os = Get-CimInstance Win32_OperatingSystem
+    $sku = [int]$os.OperatingSystemSKU
+    return (@(4,27,48,49,70,84,121,122,125,126,161,162,164,165,175) -contains $sku)
+}
+function HRemoteHost([string]$path) {
+    if ($path -cmatch '^\\\\([^\\/]+)[\\/]') { return $Matches[1] }
+    return ''
+}
+function HBareName([string]$hostName) {
+    # A name with no dot that is not an address can only be found through NetBIOS.
+    if (!$hostName) { return $false }
+    $ip = $null
+    if ([Net.IPAddress]::TryParse($hostName, [ref]$ip)) { return $false }
+    return !$hostName.Contains('.')
+}
+function HRemoteHosts() {
+    $paths = @()
+    Load 'SmbShare'
+    try { $paths += @(Get-SmbMapping -ErrorAction Stop | ForEach-Object { [string]$_.RemotePath }) }
+    catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }
+    try { $paths += @(Get-SmbConnection -ErrorAction Stop | ForEach-Object { '\\' + [string]$_.ServerName + '\x' }) }
+    catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }
+    # Persistent mapped drives live in each signed-in user's hive.
+    foreach ($hive in @(Get-ChildItem -LiteralPath 'Registry::HKEY_USERS')) {
+        if ($hive.PSChildName -cnotmatch '^S-1-5-21-[0-9-]+$') { continue }
+        $net = "Registry::HKEY_USERS\$($hive.PSChildName)\Network"
+        if (!(Test-Path -LiteralPath $net)) { continue }
+        foreach ($drive in @(Get-ChildItem -LiteralPath $net)) {
+            $p = (Get-ItemProperty -LiteralPath $drive.PSPath).RemotePath
+            if ($p) { $paths += [string]$p }
+        }
+    }
+    return @($paths | ForEach-Object { HRemoteHost $_ } | Where-Object { $_ })
+}
+function HNetbiosPreflight() {
+    Load 'SmbShare'
+    $server = Get-SmbServerConfiguration
+    if ($server.EnableSMB1Protocol -isnot [bool]) { throw 'Not offered: the old file-sharing version could not be checked' }
+    if ($server.EnableSMB1Protocol) { throw 'Not offered: the old file-sharing version (SMB1) is still on' }
+    $mr = 'HKLM:\SYSTEM\CurrentControlSet\Services\mrxsmb10'
+    if (Test-Path -LiteralPath $mr) {
+        $k = Get-Item -LiteralPath $mr
+        if ($k.GetValueNames() -notcontains 'Start' -or [int]$k.GetValue('Start') -ne 4) { throw 'Not offered: the old file-sharing version (SMB1) is still on' }
+    }
+    foreach ($h in @(HRemoteHosts)) {
+        if (HBareName $h) { throw 'Not offered: a shared folder or drive may rely on the old name service' }
     }
 }
 
@@ -372,15 +508,25 @@ function HObserve() {
 
 # ----------------------------------------------------------------- writers
 function HSetRegistry($def, $v) {
-    if ($null -eq $v) { Remove-ItemProperty -LiteralPath $def.path -Name $def.name -ErrorAction Stop; return }
+    $vn = HValueName $def
+    if ($null -eq $v) { Remove-ItemProperty -LiteralPath $def.path -Name $vn -ErrorAction Stop; return }
     if (!(Test-Path -LiteralPath $def.path)) { $null = New-Item -Path $def.path -Force -ErrorAction Stop }
-    New-ItemProperty -LiteralPath $def.path -Name $def.name -PropertyType DWord -Value ([int]$v) -Force -ErrorAction Stop | Out-Null
+    # DWORDs are unsigned; the cmdlet wants the same 32 bits as a signed int.
+    $bits = [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32][int64]$v), 0)
+    New-ItemProperty -LiteralPath $def.path -Name $vn -PropertyType DWord -Value $bits -Force -ErrorAction Stop | Out-Null
 }
 function HSetDefenderPref($def, $v) {
     Load 'Defender'
     $p = @{}
     if ($def.name -ceq 'MAPSReporting') { $p[$def.name] = $hMaps[[int]$v] }
     elseif ($def.name -ceq 'PUAProtection') { $p[$def.name] = $hPua[[int]$v] }
+    elseif ($def.name -ceq 'EnableNetworkProtection') { $p[$def.name] = $hNp[[int]$v] }
+    elseif ($def.name -ceq 'CloudBlockLevel') {
+        $level = @($hCbl.Keys | Where-Object { $hCbl[$_] -eq [int]$v })
+        if ($level.Count -ne 1) { throw 'Invalid cloud block level' }
+        $p[$def.name] = [string]$level[0]
+    }
+    elseif ($def.name -ceq 'CloudExtendedTimeout') { $p[$def.name] = [uint32]$v }
     else { $p[$def.name] = [bool]([int]$v) }
     Set-MpPreference @p
 }
@@ -407,6 +553,23 @@ function HSetFirewall($name, $v) {
     }
     $enabled = if (([int]$v -band 8) -ne 0) { 'True' } else { 'False' }
     Set-NetFirewallRule -PolicyStore PersistentStore -Name $name -Profile $profiles -Enabled $enabled -ErrorAction Stop
+}
+function HSetNetbios($name, $v) {
+    if (!(HNameOk $name) -or @(0,1,2) -notcontains [int]$v) { throw 'Invalid NetBIOS setting' }
+    Load 'CimCmdlets'
+    $found = @(Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -Filter "SettingID = '$name'")
+    if ($found.Count -ne 1) { throw 'Network adapter not found exactly once' }
+    $r = Invoke-CimMethod -InputObject $found[0] -MethodName SetTcpipNetbios -Arguments @{ TcpipNetbiosOptions = [uint32]$v }
+    # 0 = done, 1 = done but a restart is needed.
+    if ($null -eq $r -or @(0,1) -notcontains [int]$r.ReturnValue) { throw "NetBIOS setting was refused (code $($r.ReturnValue))" }
+}
+function HSetOutbound($v) {
+    Load 'NetSecurity'
+    if ([int]$v -eq 1) {
+        New-NetFirewallRule -PolicyStore PersistentStore -Name $hOutboundRule -DisplayName $hOutboundName -Description 'Added by Secblitz. Stops this PC sending file-sharing traffic to the internet.' -Direction Outbound -Action Block -Protocol TCP -RemotePort 445,139 -RemoteAddress Internet -Profile Any -Enabled True -ErrorAction Stop | Out-Null
+    } else {
+        Remove-NetFirewallRule -PolicyStore PersistentStore -Name $hOutboundRule -ErrorAction Stop
+    }
 }
 function HWlanApi() {
     if ($null -ne ('Secblitz.WlanApi' -as [type])) { return }
@@ -455,6 +618,8 @@ function HSet([string]$name, $v) {
         'BuiltinAdmin' { HSetBuiltinAdmin $def $v }
         'FirewallExposure' { HSetFirewall $name $v }
         'WifiProfiles' { HSetWifi $name $v }
+        'NetbiosAdapters' { HSetNetbios $name $v }
+        'FirewallOutbound' { HSetOutbound $v }
         default { throw 'Unknown hardening source' }
     }
 }
@@ -468,8 +633,8 @@ function HParseInput($inputValue) {
         $v = $p.Value
         if ($null -ne $v) {
             if ($v -isnot [int] -and $v -isnot [long]) { throw 'Invalid hardening value' }
-            if ($v -lt 0 -or $v -gt [int](HDef $p.Name).max) { throw 'Hardening value out of range' }
-            $v = [int]$v
+            if ($v -lt 0 -or $v -gt [int64](HDef $p.Name).max) { throw 'Hardening value out of range' }
+            $v = [int64]$v
         }
         $wanted[$p.Name] = $v
     }
@@ -505,7 +670,10 @@ function HWrite($inputValue) {
             if ($ok) { $verified = $true; break }
             if ($attempt -lt 9) { Start-Sleep -Milliseconds 500 }
         }
-        if (!$verified) { throw 'Readback did not match; mutation outcome requires review' }
+        if (!$verified) {
+            if ($spec.id.StartsWith('defender.')) { throw 'Readback did not match; Windows Security may be blocking this change (tamper protection); mutation outcome requires review' }
+            throw 'Readback did not match; mutation outcome requires review'
+        }
     } catch {
         $failure = $_
         # Best effort: put back what this call changed so undo still matches.

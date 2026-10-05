@@ -33,6 +33,7 @@ if ($errors.Count) { throw ($errors | Out-String) }
 $names = @($combinedAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) | ForEach-Object { $_.Name.ToLowerInvariant() })
 if (@($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { throw 'Duplicate function definition across backend.ps1 and hardening.ps1' }
 $realHRead = ${function:HRead}
+$realHPreflight = ${function:HPreflight}
 function Assert($ok, [string]$message) { if (!$ok) { throw $message }; $script:checks++ }
 function Reject([scriptblock]$operation, [string]$message) {
     $caught = $null
@@ -160,6 +161,52 @@ HWrite (Input '{"items":{"Cafe":0}}')
 Assert ($script:state['Cafe'] -eq 0 -and $script:state['Home'] -eq 0 -and $script:sets.Count -eq 1) 'wifi repair'
 HWrite (Input '{"items":{"Cafe":1}}')
 Assert ($script:state['Cafe'] -eq 1) 'wifi undo'
+
+# ---- network and Defender extension controls: specs
+$gateTail = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
+$gateExempt = $gateTail.Replace('"tamperExempt":false', '"tamperExempt":true')
+$tlsJson = '{"id":"tls.legacy_protocols","source":"Registry","dynamic":false,"reboot":true,"keys":[{"name":"ssl3.client.enabled","path":"HKLM:\\T","valueName":"Enabled","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":4294967295},{"name":"ssl3.client.default_off","path":"HKLM:\\T","valueName":"DisabledByDefault","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $gateTail + '}'
+$stackJson = '{"id":"net.stack_hardening","source":"Registry","dynamic":false,"reboot":true,"keys":[{"name":"DisableIPSourceRouting","path":"HKLM:\\T4","valueName":"DisableIPSourceRouting","rule":"set","safe":[2],"absentSafe":false,"fix":2,"max":2},{"name":"DisableIPSourceRouting6","path":"HKLM:\\T6","valueName":"DisableIPSourceRouting","rule":"set","safe":[2],"absentSafe":false,"fix":2,"max":2}],' + $gateTail + '}'
+$nbJson = '{"id":"net.netbios","source":"NetbiosAdapters","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","valueName":"*","rule":"set","safe":[2],"absentSafe":false,"fix":2,"max":2}],' + $gateTail + '}'
+$obJson = '{"id":"firewall.outbound_smb_internet","source":"FirewallOutbound","dynamic":false,"reboot":false,"keys":[{"name":"RulePresent","path":"","valueName":"RulePresent","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $gateTail + '}'
+$npJson = '{"id":"defender.network_protection","source":"DefenderPref","dynamic":false,"reboot":false,"keys":[{"name":"EnableNetworkProtection","path":"","valueName":"EnableNetworkProtection","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":2}],' + $gateExempt + '}'
+$cblJson = '{"id":"defender.cloud_block_level","source":"DefenderPref","dynamic":false,"reboot":false,"keys":[{"name":"CloudBlockLevel","path":"","valueName":"CloudBlockLevel","rule":"set","safe":[2,4,6],"absentSafe":false,"fix":2,"max":6},{"name":"CloudExtendedTimeout","path":"","valueName":"CloudExtendedTimeout","rule":"set","safe":[20,25,50],"absentSafe":false,"fix":20,"max":50}],' + $gateExempt + '}'
+$officeJson = '{"id":"defender.asr.office","source":"DefenderAsr","dynamic":false,"reboot":false,"keys":[{"name":"75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84","path":"","valueName":"75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":6}],' + $gateExempt + '}'
+
+# DWORD 0xFFFFFFFF ("enabled" in many guides) is a legal original and is restored exactly.
+MakeSpec $tlsJson
+Assert (!(HIsSafe (HDef 'ssl3.client.enabled') 4294967295) -and !(HIsSafe (HDef 'ssl3.client.enabled') $null) -and (HIsSafe (HDef 'ssl3.client.enabled') 0)) 'tls enabled safety'
+Assert ((HFixOf (HDef 'ssl3.client.enabled') 4294967295) -eq 0 -and (HFixOf (HDef 'ssl3.client.default_off') $null) -eq 1) 'tls fixes'
+Assert ((Parse '{"items":{"ssl3.client.enabled":4294967295,"ssl3.client.default_off":1}}')['ssl3.client.enabled'] -eq 4294967295) 'parse 0xFFFFFFFF'
+Reject { $null = Parse '{"items":{"ssl3.client.enabled":4294967296,"ssl3.client.default_off":1}}' } 'out of range'
+Reset $tlsJson @{ 'ssl3.client.enabled' = 4294967295; 'ssl3.client.default_off' = $null }
+HWrite (Input '{"items":{"ssl3.client.enabled":0,"ssl3.client.default_off":1}}')
+Assert ($script:sets.Count -eq 2 -and $script:state['ssl3.client.enabled'] -eq 0 -and $script:state['ssl3.client.default_off'] -eq 1 -and $script:preflights -eq 1) 'tls repair'
+HWrite (Input '{"items":{"ssl3.client.enabled":4294967295,"ssl3.client.default_off":null}}')
+Assert ($script:state['ssl3.client.enabled'] -eq 4294967295 -and $null -eq $script:state['ssl3.client.default_off'] -and $script:preflights -eq 1) 'tls undo restores the exact original'
+Reset $tlsJson @{ 'ssl3.client.enabled' = 1; 'ssl3.client.default_off' = 1 }
+Reject { HWrite (Input '{"items":{"ssl3.client.enabled":4294967295,"ssl3.client.default_off":1}}') } 'changed before the write'
+Assert ($script:sets.Count -eq 0) 'tls drift'
+
+# NetBIOS is restored adapter by adapter; adapters that appear later are left alone.
+Reset $nbJson @{ '{11111111-1111-1111-1111-111111111111}' = 0; '{22222222-2222-2222-2222-222222222222}' = 1; '{33333333-3333-3333-3333-333333333333}' = 2 }
+HWrite (Input '{"items":{"{11111111-1111-1111-1111-111111111111}":2,"{22222222-2222-2222-2222-222222222222}":2,"{33333333-3333-3333-3333-333333333333}":2}}')
+Assert ($script:sets.Count -eq 2 -and $script:preflights -eq 1) 'netbios repair only moves unsafe adapters'
+HWrite (Input '{"items":{"{11111111-1111-1111-1111-111111111111}":0,"{22222222-2222-2222-2222-222222222222}":1,"{33333333-3333-3333-3333-333333333333}":2}}')
+Assert ($script:state['{11111111-1111-1111-1111-111111111111}'] -eq 0 -and $script:state['{22222222-2222-2222-2222-222222222222}'] -eq 1 -and $script:state['{33333333-3333-3333-3333-333333333333}'] -eq 2) 'netbios undo per adapter'
+Reject { HWrite (Input '{"items":{"{99999999-9999-9999-9999-999999999999}":2}}') } 'no longer exists'
+Reject { HWrite (Input '{"items":{"Ethernet":2}}') } 'Unknown hardening item'
+
+# The firewall rule is present (1) or absent (0); undo removes it.
+Reset $obJson @{ RulePresent = 0 }
+HWrite (Input '{"items":{"RulePresent":1}}')
+Assert ($script:state['RulePresent'] -eq 1 -and $script:preflights -eq 1) 'outbound rule added'
+HWrite (Input '{"items":{"RulePresent":0}}')
+Assert ($script:state['RulePresent'] -eq 0) 'outbound rule removed on undo'
+
+# Defender failures mention tamper protection.
+Reset $npJson @{ EnableNetworkProtection = 0 }; $script:ignoreWrites = $true
+Reject { HWrite (Input '{"items":{"EnableNetworkProtection":1}}') } 'tamper protection'
 
 # ---- observation: preflight only when something is unsafe; gate text is the reason
 Reset $pplJson @{ RunAsPPL = $null }
@@ -315,5 +362,218 @@ try {
     [IO.File]::WriteAllText((Join-Path (Join-Path $root $iface) 'xxe.xml'), '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><WLANProfile><name>&e;</name></WLANProfile>')
     Reject { HReadWifi } 'DTD'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
+
+
+# ---- network and Defender extension controls: readers, setters, preflights
+${function:HPreflight} = $realHPreflight
+function FakeDwordKey([hashtable]$values) {
+    $k = [pscustomobject]@{ Values = $values; SubKeyCount = 0 }
+    $k | Add-Member ScriptMethod GetValueNames { return @($this.Values.Keys) }
+    $k | Add-Member ScriptMethod GetValueKind { param($n) return [Microsoft.Win32.RegistryValueKind]::DWord }
+    $k | Add-Member ScriptMethod GetValue { param($n) return $this.Values[$n] }
+    return $k
+}
+# Registry: unsigned DWORDs, and one value name under several keys.
+MakeSpec $tlsJson
+$script:fakeFs = $true; $script:fakePaths = @('HKLM:\T'); $script:fakeKey = FakeDwordKey @{ Enabled = [int]-1 }
+Assert ((HReadRegistry (HDef 'ssl3.client.enabled')) -eq 4294967295) '0xFFFFFFFF reads back unsigned'
+Assert ($null -eq (HReadRegistry (HDef 'ssl3.client.default_off'))) 'absent value reads as null'
+$script:fakeKey = FakeDwordKey @{ Enabled = 0; DisabledByDefault = 1 }
+Assert ((HReadRegistry (HDef 'ssl3.client.enabled')) -eq 0 -and (HReadRegistry (HDef 'ssl3.client.default_off')) -eq 1) 'tls read'
+$script:calls = @()
+function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, $Force, $ErrorAction); $script:calls += ,@($Name, $Value) }
+function Remove-ItemProperty { param($LiteralPath, $Name, $ErrorAction); $script:calls += ,@($Name, 'removed') }
+HSetRegistry (HDef 'ssl3.client.enabled') 4294967295
+HSetRegistry (HDef 'ssl3.client.enabled') 0
+HSetRegistry (HDef 'ssl3.client.default_off') $null
+Assert (($script:calls | ForEach-Object { "$($_[0])=$($_[1])" }) -join ',' -ceq 'Enabled=-1,Enabled=0,DisabledByDefault=removed') 'registry setter keeps the unsigned bits and value name'
+MakeSpec $stackJson
+Assert ((HValueName (HDef 'DisableIPSourceRouting6')) -ceq 'DisableIPSourceRouting' -and (HDef 'DisableIPSourceRouting6').path -ceq 'HKLM:\T6') 'same value name under another key'
+$script:fakePaths = @(); $script:fakeFs = $false
+
+# NetBIOS adapters.
+MakeSpec $nbJson
+foreach ($ok in @('{11111111-1111-1111-1111-111111111111}', '{abcdefAB-1111-2222-3333-444444444444}')) { Assert (HNameOk $ok) "adapter $ok" }
+foreach ($bad in @('', 'Ethernet', '{1111}', '11111111-1111-1111-1111-111111111111', "{11111111-1111-1111-1111-111111111111}'; calc", '{1111111g-1111-1111-1111-111111111111}')) { Assert (!(HNameOk $bad)) "adapter name accepted: $bad" }
+function Get-CimInstance {
+    param($ClassName, $Namespace, $Filter)
+    switch ($ClassName) {
+        'Win32_NetworkAdapterConfiguration' {
+            if ($Filter -match "SettingID = '(.+)'") { $id = $Matches[1]; return @($script:nics | Where-Object { $_.SettingID -ceq $id }) }
+            return $script:nics
+        }
+        'Win32_OperatingSystem' { return [pscustomobject]@{ OperatingSystemSKU = $script:sku } }
+        default { throw "Unexpected probe $ClassName" }
+    }
+}
+$script:nics = @(
+    [pscustomobject]@{ SettingID = '{11111111-1111-1111-1111-111111111111}'; TcpipNetbiosOptions = [uint32]0 }
+    [pscustomobject]@{ SettingID = '{22222222-2222-2222-2222-222222222222}'; TcpipNetbiosOptions = [uint32]2 }
+    [pscustomobject]@{ SettingID = '{33333333-3333-3333-3333-333333333333}'; TcpipNetbiosOptions = $null }
+    [pscustomobject]@{ SettingID = 'not-a-guid'; TcpipNetbiosOptions = [uint32]1 }
+    [pscustomobject]@{ SettingID = '{44444444-4444-4444-4444-444444444444}'; TcpipNetbiosOptions = [uint32]1 }
+    [pscustomobject]@{ SettingID = '{44444444-4444-4444-4444-444444444444}'; TcpipNetbiosOptions = [uint32]2 }
+)
+$r = HReadNetbios
+Assert ($r.Count -eq 2 -and $r['{11111111-1111-1111-1111-111111111111}'] -eq 0 -and $r['{22222222-2222-2222-2222-222222222222}'] -eq 2) 'netbios slice skips unreadable, invalid and duplicate adapters'
+$script:calls = @(); $script:rv = 0
+function Invoke-CimMethod { param($InputObject, $MethodName, $Arguments); $script:calls += ,@($InputObject.SettingID, $MethodName, $Arguments.TcpipNetbiosOptions); return [pscustomobject]@{ ReturnValue = $script:rv } }
+HSetNetbios '{11111111-1111-1111-1111-111111111111}' 2
+HSetNetbios '{22222222-2222-2222-2222-222222222222}' 0
+Assert (($script:calls | ForEach-Object { $_ -join '/' }) -join ',' -ceq '{11111111-1111-1111-1111-111111111111}/SetTcpipNetbios/2,{22222222-2222-2222-2222-222222222222}/SetTcpipNetbios/0') 'netbios setter arguments'
+$script:rv = 1; HSetNetbios '{11111111-1111-1111-1111-111111111111}' 2
+$script:rv = 84
+Reject { HSetNetbios '{11111111-1111-1111-1111-111111111111}' 2 } 'refused'
+Reject { HSetNetbios '{44444444-4444-4444-4444-444444444444}' 2 } 'exactly once'
+Reject { HSetNetbios '{11111111-1111-1111-1111-111111111111}' 3 } 'Invalid NetBIOS'
+Reject { HSetNetbios "x'; calc" 2 } 'Invalid NetBIOS'
+
+# NetBIOS gate: SMB1 off and no bare-name shares.
+Assert ((HRemoteHost '\\NAS\media') -ceq 'NAS' -and (HRemoteHost '\\nas.local\x') -ceq 'nas.local' -and (HRemoteHost 'C:\x') -ceq '') 'remote host parsing'
+Assert ((HBareName 'NAS') -and !(HBareName 'nas.local') -and !(HBareName '192.168.1.5') -and !(HBareName 'fe80::1') -and !(HBareName '')) 'bare name detection'
+$script:smb = [pscustomobject]@{ EnableSMB1Protocol = $false }
+$script:maps = @(); $script:conns = @(); $script:hives = @(); $script:drivePath = ''
+function Get-SmbServerConfiguration { return $script:smb }
+function Get-SmbMapping { param($ErrorAction); return $script:maps }
+function Get-SmbConnection { param($ErrorAction); return $script:conns }
+function Get-ChildItem { param($LiteralPath); if ($LiteralPath -ceq 'Registry::HKEY_USERS') { return $script:hives }; return @([pscustomobject]@{ PSPath = 'drive' }) }
+function Get-ItemProperty { param($LiteralPath); return [pscustomobject]@{ RemotePath = $script:drivePath } }
+$script:fakeFs = $true; $script:fakePaths = @(); $script:fakeKey = $null
+MakeSpec $nbJson
+HNetbiosPreflight
+Assert $true 'clean machine passes the NetBIOS gate'
+$script:smb = [pscustomobject]@{ EnableSMB1Protocol = $true }
+Reject { HNetbiosPreflight } 'SMB1'
+$script:smb = [pscustomobject]@{ EnableSMB1Protocol = $null }
+Reject { HNetbiosPreflight } 'could not be checked'
+$script:smb = [pscustomobject]@{ EnableSMB1Protocol = $false }
+$script:fakePaths = @('HKLM:\SYSTEM\CurrentControlSet\Services\mrxsmb10'); $script:fakeKey = FakeDwordKey @{ Start = 3 }
+Reject { HNetbiosPreflight } 'SMB1'
+$script:fakeKey = FakeDwordKey @{ Start = 4 }
+HNetbiosPreflight
+$script:fakePaths = @(); $script:fakeKey = $null
+$script:maps = @([pscustomobject]@{ RemotePath = '\\NAS\media' })
+Reject { HNetbiosPreflight } 'old name service'
+$script:maps = @([pscustomobject]@{ RemotePath = '\\nas.local\media' }, [pscustomobject]@{ RemotePath = '\\192.168.1.9\share' })
+HNetbiosPreflight
+$script:maps = @(); $script:conns = @([pscustomobject]@{ ServerName = 'FILESRV' })
+Reject { HNetbiosPreflight } 'old name service'
+$script:conns = @()
+$script:hives = @([pscustomobject]@{ PSChildName = 'S-1-5-21-1-2-3-1001' }, [pscustomobject]@{ PSChildName = 'S-1-5-21-1-2-3-1001_Classes' })
+$script:fakePaths = @('Registry::HKEY_USERS\S-1-5-21-1-2-3-1001\Network'); $script:drivePath = '\\OLDBOX\data'
+Reject { HNetbiosPreflight } 'old name service'
+$script:drivePath = '\\box.example.com\data'
+HNetbiosPreflight
+$script:fakePaths = @(); $script:fakeFs = $false
+
+# Outbound SMB firewall rule.
+MakeSpec $obJson
+Assert ((HReadOutbound)['RulePresent'] -eq 0) 'rule absent reads as 0 (ObjectNotFound is not an error)'
+$script:rule = [pscustomobject]@{ Name = 'Secblitz-Block-Outbound-SMB-Internet'; Direction = 'Outbound'; Action = 'Block'; Enabled = 'True' }
+$script:portFilter = [pscustomobject]@{ Protocol = 'TCP'; RemotePort = @('445', '139') }
+$script:addrFilter = [pscustomobject]@{ RemoteAddress = 'Internet' }
+function Get-NetFirewallRule { param($PolicyStore, $Name, $ErrorAction); if ($Name -cne 'Secblitz-Block-Outbound-SMB-Internet') { throw 'wrong name' }; return $script:rules }
+function Get-NetFirewallPortFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject); process { $script:portFilter } }
+function Get-NetFirewallAddressFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject); process { $script:addrFilter } }
+$script:rules = @($script:rule)
+Assert ((HReadOutbound)['RulePresent'] -eq 1) 'exact rule reads as 1'
+$script:rules = @($script:rule, $script:rule)
+Reject { HReadOutbound } 'more than once'
+foreach ($variant in @(
+    { $script:rule = [pscustomobject]@{ Name = 'x'; Direction = 'Outbound'; Action = 'Allow'; Enabled = 'True' } },
+    { $script:rule = [pscustomobject]@{ Name = 'x'; Direction = 'Outbound'; Action = 'Block'; Enabled = 'False' } },
+    { $script:portFilter = [pscustomobject]@{ Protocol = 'TCP'; RemotePort = @('445') } },
+    { $script:portFilter = [pscustomobject]@{ Protocol = 'UDP'; RemotePort = @('445', '139') } },
+    { $script:addrFilter = [pscustomobject]@{ RemoteAddress = 'Any' } }
+)) {
+    $script:rule = [pscustomobject]@{ Name = 'x'; Direction = 'Outbound'; Action = 'Block'; Enabled = 'True' }
+    $script:portFilter = [pscustomobject]@{ Protocol = 'TCP'; RemotePort = @('445', '139') }
+    $script:addrFilter = [pscustomobject]@{ RemoteAddress = 'Internet' }
+    & $variant
+    $script:rules = @($script:rule)
+    Reject { HReadOutbound } 'exists but is different'
+}
+$script:calls = @()
+function New-NetFirewallRule { param($PolicyStore, $Name, $DisplayName, $Description, $Direction, $Action, $Protocol, $RemotePort, $RemoteAddress, $Profile, $Enabled, $ErrorAction); $script:calls += ,@('new', $PolicyStore, $Name, $DisplayName, $Direction, $Action, $Protocol, ($RemotePort -join '+'), $RemoteAddress, $Profile, $Enabled) }
+function Remove-NetFirewallRule { param($PolicyStore, $Name, $ErrorAction); $script:calls += ,@('remove', $PolicyStore, $Name) }
+HSetOutbound 1; HSetOutbound 0
+Assert (($script:calls | ForEach-Object { $_ -join '/' }) -join ',' -ceq 'new/PersistentStore/Secblitz-Block-Outbound-SMB-Internet/Secblitz: block outbound file sharing to the internet/Outbound/Block/TCP/445+139/Internet/Any/True,remove/PersistentStore/Secblitz-Block-Outbound-SMB-Internet') 'outbound rule setter arguments'
+
+# Defender preference readers and setters for the new keys.
+MakeSpec $npJson
+$script:mp = [pscustomobject]@{ EnableNetworkProtection = $null }
+Assert ((HRead)['EnableNetworkProtection'] -eq 0) 'unreported network protection counts as off'
+$script:mp = [pscustomobject]@{ EnableNetworkProtection = 'Enabled' }
+Assert ((HRead)['EnableNetworkProtection'] -eq 1) 'network protection name'
+$script:mp = [pscustomobject]@{ EnableNetworkProtection = [byte]2 }
+Assert ((HRead)['EnableNetworkProtection'] -eq 2 -and (HAnyUnsafe (HRead))) 'audit mode is not protection'
+$script:mp = [pscustomobject]@{ EnableNetworkProtection = 'Bogus' }
+Reject { HRead } 'not readable'
+MakeSpec $cblJson
+$script:mp = [pscustomobject]@{ CloudBlockLevel = 'High'; CloudExtendedTimeout = [uint32]20 }
+$r = HRead
+Assert ($r['CloudBlockLevel'] -eq 2 -and $r['CloudExtendedTimeout'] -eq 20 -and !(HAnyUnsafe $r)) 'cloud block level names'
+$script:mp = [pscustomobject]@{ CloudBlockLevel = [byte]6; CloudExtendedTimeout = [uint32]25 }
+$r = HRead
+Assert ($r['CloudBlockLevel'] -eq 6 -and !(HAnyUnsafe $r)) 'zero tolerance is preserved, never written'
+Assert ((HFixOf (HDef 'CloudBlockLevel') 0) -eq 2 -and (HFixOf (HDef 'CloudBlockLevel') 1) -eq 2 -and (HFixOf (HDef 'CloudExtendedTimeout') 0) -eq 20) 'cloud block fixes are High and 20 seconds'
+$script:mp = [pscustomobject]@{ CloudBlockLevel = 'Default'; CloudExtendedTimeout = [uint32]0 }
+$r = HRead
+Assert ($r['CloudBlockLevel'] -eq 0 -and $r['CloudExtendedTimeout'] -eq 0 -and (HAnyUnsafe $r)) 'defaults are not protected'
+$script:mp = [pscustomobject]@{ CloudBlockLevel = [byte]3; CloudExtendedTimeout = [uint32]0 }
+Reject { HRead } 'not readable'
+$script:mp = [pscustomobject]@{ CloudBlockLevel = 'High'; CloudExtendedTimeout = $null }
+Reject { HRead } 'not readable'
+$script:calls = @()
+function Set-MpPreference { param($EnableNetworkProtection, $CloudBlockLevel, $CloudExtendedTimeout); $script:calls += ,@($EnableNetworkProtection, $CloudBlockLevel, $CloudExtendedTimeout) }
+HSetDefenderPref (HDef 'CloudBlockLevel') 2; HSetDefenderPref (HDef 'CloudBlockLevel') 0; HSetDefenderPref (HDef 'CloudBlockLevel') 4; HSetDefenderPref (HDef 'CloudExtendedTimeout') 20
+Reject { HSetDefenderPref (HDef 'CloudBlockLevel') 3 } 'Invalid cloud block level'
+MakeSpec $npJson
+HSetDefenderPref (HDef 'EnableNetworkProtection') 1; HSetDefenderPref (HDef 'EnableNetworkProtection') 0; HSetDefenderPref (HDef 'EnableNetworkProtection') 2
+Assert (($script:calls | ForEach-Object { "$($_[0])|$($_[1])|$($_[2])" }) -join ',' -ceq '|High|,|Default|,|HighPlus|,||20,Enabled||,Disabled||,AuditMode||') 'new Defender setter arguments'
+
+# Preflights: each condition has its own calm reason; undo is never preflighted.
+$script:fakeFs = $true; $script:fakePaths = @(); $script:fakeKey = $null
+$script:status = [pscustomobject]@{ RealTimeProtectionEnabled = $true; BehaviorMonitorEnabled = $true }
+function Get-MpComputerStatus { return $script:status }
+$script:mp = [pscustomobject]@{ MAPSReporting = 'Advanced' }
+$script:sku = 48
+MakeSpec $npJson
+HPreflight
+$script:sku = 101
+Reject { HPreflight } 'does not include it'
+$script:sku = 0
+Reject { HPreflight } 'does not include it'
+$script:sku = 48
+$script:status = [pscustomobject]@{ RealTimeProtectionEnabled = $true; BehaviorMonitorEnabled = $false }
+Reject { HPreflight } 'behavior monitoring'
+$script:status = [pscustomobject]@{ RealTimeProtectionEnabled = $false; BehaviorMonitorEnabled = $true }
+Reject { HPreflight } 'real-time protection is off'
+$script:status = [pscustomobject]@{ RealTimeProtectionEnabled = $true; BehaviorMonitorEnabled = $true }
+$script:mp = [pscustomobject]@{ MAPSReporting = 'Disabled' }
+Reject { HPreflight } 'cloud protection is off'
+$script:mp = [pscustomobject]@{ MAPSReporting = 'Advanced' }
+$script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\CCM')
+Reject { HPreflight } 'Configuration Manager'
+$script:fakePaths = @()
+MakeSpec $cblJson
+HPreflight
+$script:mp = [pscustomobject]@{ MAPSReporting = 'Disabled' }
+Reject { HPreflight } 'cloud protection is off'
+$script:mp = [pscustomobject]@{ MAPSReporting = 'Advanced' }
+# Office rules are only offered when Office is installed.
+MakeSpec $officeJson
+Assert (!(HOfficeInstalled)) 'no Office on a clean machine'
+Reject { HPreflight } 'Office was not found'
+$script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration')
+Assert (HOfficeInstalled) 'Click-to-Run Office detected'
+HPreflight
+if ($env:ProgramFiles) {
+    $script:fakePaths = @([IO.Path]::Combine($env:ProgramFiles, 'Microsoft Office\root\Office16\WINWORD.EXE'))
+    Assert (HOfficeInstalled) 'Office found by program file'
+}
+$script:fakePaths = @(); $script:fakeFs = $false
+$script:sku = 48; Assert (HEditionHasNetworkProtection) 'Pro supports network protection'
+foreach ($homeSku in @(98, 99, 100, 101, 0, 999)) { $script:sku = $homeSku; Assert (!(HEditionHasNetworkProtection)) "sku $homeSku must not be offered" }
 
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"
