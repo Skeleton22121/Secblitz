@@ -312,3 +312,15 @@ fn journal_round_trip_and_restore_marking() {
     assert!(journal::load_from(&path).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn offline_scripts_are_plain_ascii_and_emit_json() {
+    for (name, text) in [
+        ("describe", include_str!("scripts/describe.ps1")),
+        ("register", include_str!("scripts/register.ps1")),
+    ] {
+        assert!(text.is_ascii(), "{name}.ps1 must be ASCII");
+        assert!(!text.contains('\r'), "{name}.ps1 must use LF endings");
+        assert!(text.contains("ConvertTo-Json"), "{name}.ps1 prints JSON");
+    }
+}
