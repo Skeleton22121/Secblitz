@@ -69,6 +69,13 @@ fn command(lang: Lang) -> Command {
                 .subcommand(Command::new("install-staged").hide(true)),
         )
         .subcommand(
+            // Started by the service manager only; never shown in help.
+            Command::new("filter")
+                .hide(true)
+                .subcommand_required(true)
+                .subcommand(Command::new("run").hide(true)),
+        )
+        .subcommand(
             sub("service", "Manage the optional service")
                 .subcommand_required(true)
                 .subcommand(sub("install", "Install the service"))
@@ -209,6 +216,17 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
     // elevate, so they come before every UAC path.
     if let Some(command) = uninstall_command(matches) {
         return execute_uninstall(command, matches.get_flag("json"), lang);
+    }
+    // The web protection service: started by the service manager, never
+    // elevated or interactive.
+    if let Some(filter) = matches.subcommand_matches("filter") {
+        return match filter.subcommand_name() {
+            Some("run") => {
+                secblitz::filter::service::run()?;
+                Ok(0)
+            }
+            _ => unreachable!(),
+        };
     }
     let json = matches.get_flag("json");
     if json && !json_allowed(matches) {

@@ -1,6 +1,6 @@
 //! Block-list sources, strict parsing and the three-switch classification.
 
-use super::matcher::{Category, Filter, HashSet64};
+use super::matcher::{hash, Category, Filter, HashSet64};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -149,25 +149,26 @@ pub fn valid_hostname(host: &str) -> bool {
     labels >= 2
 }
 
+/// One line of a DNS block list: `(is_exception, host)` for `||host^`,
+/// `||host^$important` and the `@@` forms of both. Everything else is `None`.
+fn parse_line(line: &str) -> Option<(bool, &str)> {
+    let line = line.trim();
+    let (allow, rest) = match line.strip_prefix("@@") {
+        Some(r) => (true, r),
+        None => (false, line),
+    };
+    let (host, after) = rest.strip_prefix("||")?.split_once('^')?;
+    if !(after.is_empty() || after == "$important") || !valid_hostname(host) {
+        return None;
+    }
+    Some((allow, host))
+}
+
 /// Only `||host^`, `||host^$important` and the `@@` forms of both.
 /// Everything else is ignored.
 pub fn parse_blocklist(text: &str) -> Parsed {
     let mut out = Parsed::default();
-    for line in text.lines() {
-        let line = line.trim();
-        let (allow, rest) = match line.strip_prefix("@@") {
-            Some(r) => (true, r),
-            None => (false, line),
-        };
-        let Some(rest) = rest.strip_prefix("||") else {
-            continue;
-        };
-        let Some((host, after)) = rest.split_once('^') else {
-            continue;
-        };
-        if !(after.is_empty() || after == "$important") || !valid_hostname(host) {
-            continue;
-        }
+    for (allow, host) in text.lines().filter_map(parse_line) {
         let host = host.to_ascii_lowercase();
         if allow {
             out.allow.push(host);
@@ -176,6 +177,28 @@ pub fn parse_blocklist(text: &str) -> Parsed {
         }
     }
     out
+}
+
+/// The same lines as `parse_blocklist`, but only the hashes are kept (block,
+/// allow), sorted and without duplicates. The threat feed has millions of
+/// names; this never holds them as strings.
+pub fn parse_blocklist_hashes(text: &str) -> (Vec<u64>, Vec<u64>) {
+    let mut block = Vec::new();
+    let mut allow = Vec::new();
+    for (is_allow, host) in text.lines().filter_map(parse_line) {
+        let h = hash(host);
+        if is_allow {
+            allow.push(h);
+        } else {
+            block.push(h);
+        }
+    }
+    for v in [&mut block, &mut allow] {
+        v.sort_unstable();
+        v.dedup();
+        v.shrink_to_fit();
+    }
+    (block, allow)
 }
 
 /// Hosts from `||host^`, `||host/` and `||host$` lines of a browser filter
@@ -265,6 +288,22 @@ pub fn counts(filter: &Filter) -> [usize; 3] {
 mod tests {
     use super::*;
     use crate::filter::matcher::{hash, Kind, Switches};
+
+    #[test]
+    fn hashes_match_parsed_names() {
+        let text = "||Ads.Example^\n||b.example^$important\n@@||ok.example^\nexample.com##.x\n||ex*.com^\n||ads.example^\n";
+        let (block, allow) = parse_blocklist_hashes(text);
+        let parsed = parse_blocklist(text);
+        let expect = |names: &[String]| {
+            let mut v: Vec<u64> = names.iter().map(|n| hash(n)).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        assert_eq!(block, expect(&parsed.block));
+        assert_eq!(allow, expect(&parsed.allow));
+        assert_eq!(block.len(), 2);
+    }
 
     #[test]
     fn parse_accepts_plain_and_important() {
