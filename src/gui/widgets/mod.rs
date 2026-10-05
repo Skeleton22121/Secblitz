@@ -2,7 +2,10 @@
 //!
 //! Every page builds its UI from these so the product looks consistent.
 //! Signatures are a contract; styling may be refined.
+pub mod parts;
 pub mod ring;
+
+pub use parts::*;
 
 use super::icons::Icon;
 use super::theme::{self, Palette, Tone};
@@ -34,6 +37,15 @@ pub fn icon<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message> {
         .into()
 }
 
+/// The filled Secblitz shield, tinted `color`.
+pub fn brand_mark<'a>(size: f32, color: Color) -> Element<'a, Message> {
+    svg(svg::Handle::from_memory(super::icons::BRAND_SVG))
+        .width(size)
+        .height(size)
+        .style(move |_, _| svg::Style { color: Some(color) })
+        .into()
+}
+
 /// Round tinted badge with an icon inside (list leading element).
 pub fn icon_badge<'a>(p: Palette, i: Icon, tone: Tone) -> Element<'a, Message> {
     let fg = p.tone(tone);
@@ -56,7 +68,11 @@ pub fn card<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> contain
         .style(move |_| container::Style {
             background: Some(Background::Color(p.surface)),
             border: Border { radius: theme::RADIUS.into(), width: 1.0, color: p.border },
-            shadow: Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.12), offset: Vector::new(0.0, 2.0), blur_radius: 8.0 },
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, if p.mode == theme::Mode::Dark { 0.30 } else { 0.05 }),
+                offset: Vector::new(0.0, 1.0),
+                blur_radius: 3.0,
+            },
             text_color: Some(p.text),
             snap: true,
         })
