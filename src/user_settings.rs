@@ -30,10 +30,24 @@ pub enum Setting {
     TailoredExperiences,
     /// `office.internet_macros`
     OfficeMacros,
+    /// `debloat.suggested_apps`: Windows' own "suggestions" in the Start menu
+    /// and Settings. Not listed on the personal page (the Apps page owns it).
+    SuggestedApps,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 5] = [
+    pub const ALL: [Setting; 6] = [
+        Setting::StoreAppsWebCheck,
+        Setting::ShowExtensions,
+        Setting::NearbySharing,
+        Setting::TailoredExperiences,
+        Setting::OfficeMacros,
+        Setting::SuggestedApps,
+    ];
+
+    /// The settings the personal page lists: everything except
+    /// `SuggestedApps`, which has its own place on the Apps page.
+    pub const PERSONAL: [Setting; 5] = [
         Setting::StoreAppsWebCheck,
         Setting::ShowExtensions,
         Setting::NearbySharing,
@@ -48,6 +62,7 @@ impl Setting {
             Setting::NearbySharing => "net.nearby_sharing",
             Setting::TailoredExperiences => "privacy.tailored_experiences",
             Setting::OfficeMacros => "office.internet_macros",
+            Setting::SuggestedApps => "debloat.suggested_apps",
         }
     }
 
@@ -146,6 +161,16 @@ const OFFICE_APPS: [(&str, &str); 3] = [
     ("excel", "Excel"),
     ("powerpoint", "PowerPoint"),
 ];
+const CONTENT_DELIVERY: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
+const SUGGESTION_VALUES: [&str; 7] = [
+    "SilentInstalledAppsEnabled",
+    "PreInstalledAppsEnabled",
+    "OemPreInstalledAppsEnabled",
+    "SubscribedContent-338388Enabled",
+    "SubscribedContent-338389Enabled",
+    "SubscribedContent-353694Enabled",
+    "SubscribedContent-353696Enabled",
+];
 const PV_VALUES: [&str; 3] = [
     "DisableInternetFilesInPV",
     "DisableAttachmentsInPV",
@@ -209,6 +234,11 @@ fn targets(setting: Setting) -> Vec<Target> {
             }
             out
         }
+        // A missing value lets Windows suggest, so absent is not safe.
+        Setting::SuggestedApps => SUGGESTION_VALUES
+            .iter()
+            .map(|name| target(CONTENT_DELIVERY, name, 0, false))
+            .collect(),
     }
 }
 
@@ -515,6 +545,26 @@ pub fn undo(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome
     Outcome::Done
 }
 
+/// Settings Secblitz changed and can still put back, in [`Setting::ALL`] order.
+#[allow(dead_code)] // used by the uninstall flow
+pub fn undoable(journal: &Path) -> Vec<Setting> {
+    let stored = load_journal(journal);
+    Setting::ALL
+        .into_iter()
+        .filter(|s| stored.settings.contains_key(s.id()))
+        .collect()
+}
+
+/// Put back every journalled setting (the values are independent, so the
+/// order does not matter). A failure on one does not stop the others.
+#[allow(dead_code)] // used by the uninstall flow
+pub fn undo_all(reg: &mut dyn Registry, journal: &Path) -> Vec<(Setting, Outcome)> {
+    undoable(journal)
+        .into_iter()
+        .map(|setting| (setting, undo(reg, journal, setting)))
+        .collect()
+}
+
 /// One broker request, end to end.
 pub fn handle(
     reg: &mut dyn Registry,
@@ -819,7 +869,7 @@ mod tests {
             assert_eq!(s.to_byte() as usize, i);
             assert_eq!(Setting::from_byte(i as u8), Some(*s));
         }
-        assert_eq!(Setting::from_byte(5), None);
+        assert_eq!(Setting::from_byte(6), None);
         assert_eq!(Setting::from_byte(255), None);
         for op in [Op::Query, Op::Apply, Op::Undo] {
             assert_eq!(Op::from_byte(op.to_byte()), Some(op));
@@ -833,7 +883,8 @@ mod tests {
                 "files.show_extensions",
                 "net.nearby_sharing",
                 "privacy.tailored_experiences",
-                "office.internet_macros"
+                "office.internet_macros",
+                "debloat.suggested_apps"
             ]
         );
     }
@@ -1144,6 +1195,107 @@ mod tests {
         );
         assert!(load_journal(&path).settings.is_empty());
         assert!(reg.cu.is_empty());
+    }
+
+    fn put_suggestion(reg: &mut Fake, index: usize, v: Option<u32>) {
+        reg.put(Setting::SuggestedApps, index, v);
+    }
+
+    /// Three values absent, four set to 1 (Windows' default "suggest" state).
+    fn suggesting_reg() -> Fake {
+        let mut reg = Fake::default();
+        for i in 0..7 {
+            put_suggestion(&mut reg, i, if i < 3 { None } else { Some(1) });
+        }
+        reg
+    }
+
+    #[test]
+    fn suggested_apps_apply_records_absent_and_values() {
+        let (_d, path) = journal();
+        let mut reg = suggesting_reg();
+        assert_eq!(status(&reg, Setting::SuggestedApps), Status::Unsafe);
+        assert_eq!(
+            apply(&mut reg, &path, Setting::SuggestedApps),
+            Outcome::Done
+        );
+        for i in 0..7 {
+            assert_eq!(reg.read(Setting::SuggestedApps, i), Value::Dword(0));
+        }
+        let stored = load_journal(&path);
+        let priors = &stored.settings["debloat.suggested_apps"];
+        assert_eq!(priors.len(), 7);
+        for (i, p) in priors.iter().enumerate() {
+            assert_eq!(p.i, i);
+            assert_eq!(p.prior, if i < 3 { None } else { Some(1) });
+        }
+        assert_eq!(
+            report(&reg, &path, Setting::SuggestedApps),
+            Report::SafeByUs
+        );
+    }
+
+    #[test]
+    fn suggested_apps_undo_restores_absent() {
+        let (_d, path) = journal();
+        let mut reg = suggesting_reg();
+        apply(&mut reg, &path, Setting::SuggestedApps);
+        assert_eq!(undo(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        for i in 0..7 {
+            let expected = if i < 3 {
+                Value::Absent
+            } else {
+                Value::Dword(1)
+            };
+            assert_eq!(reg.read(Setting::SuggestedApps, i), expected);
+        }
+        assert!(undoable(&path).is_empty());
+    }
+
+    #[test]
+    fn suggested_apps_already_blocked_is_done_without_journal() {
+        let (_d, path) = journal();
+        let mut reg = Fake::default();
+        for i in 0..7 {
+            put_suggestion(&mut reg, i, Some(0));
+        }
+        assert_eq!(
+            apply(&mut reg, &path, Setting::SuggestedApps),
+            Outcome::Done
+        );
+        assert!(undoable(&path).is_empty());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn undo_all_undoes_every_journaled_setting() {
+        let (_d, path) = journal();
+        let mut reg = suggesting_reg();
+        reg.put(Setting::ShowExtensions, 0, Some(1));
+        apply(&mut reg, &path, Setting::ShowExtensions);
+        apply(&mut reg, &path, Setting::SuggestedApps);
+        assert_eq!(
+            undoable(&path),
+            [Setting::ShowExtensions, Setting::SuggestedApps]
+        );
+        let results = undo_all(&mut reg, &path);
+        assert_eq!(
+            results,
+            [
+                (Setting::ShowExtensions, Outcome::Done),
+                (Setting::SuggestedApps, Outcome::Done)
+            ]
+        );
+        assert!(undoable(&path).is_empty());
+        assert_eq!(reg.read(Setting::ShowExtensions, 0), Value::Dword(1));
+    }
+
+    #[test]
+    fn personal_excludes_suggested_apps() {
+        assert_eq!(Setting::PERSONAL.len(), 5);
+        assert!(!Setting::PERSONAL.contains(&Setting::SuggestedApps));
+        assert_eq!(Setting::ALL[..5], Setting::PERSONAL);
+        assert_eq!(Setting::SuggestedApps.to_byte(), 5);
     }
 
     #[test]
