@@ -26,7 +26,7 @@ use iced::futures::{Future, Stream};
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
-use pages::{debloat, fixes, fixflow, history, home, settings, tools};
+use pages::{debloat, fixes, fixflow, history, home, settings, tools, web};
 use secblitz::engine::Report;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,16 +47,18 @@ pub enum Page {
     Home,
     Fixes,
     Debloat,
+    Web,
     Tools,
     History,
     Settings,
 }
 
 impl Page {
-    pub const ALL: [Page; 6] = [
+    pub const ALL: [Page; 7] = [
         Page::Home,
         Page::Fixes,
         Page::Debloat,
+        Page::Web,
         Page::Tools,
         Page::History,
         Page::Settings,
@@ -66,6 +68,7 @@ impl Page {
             "home" => Page::Home,
             "fixes" => Page::Fixes,
             "debloat" => Page::Debloat,
+            "web" => Page::Web,
             "tools" => Page::Tools,
             "history" => Page::History,
             "settings" => Page::Settings,
@@ -78,6 +81,7 @@ impl Page {
             Page::Home => "Home",
             Page::Fixes => "Protection",
             Page::Debloat => "Clean up apps",
+            Page::Web => "Web protection",
             Page::Tools => "Tools",
             Page::History => "History",
             Page::Settings => "Settings",
@@ -88,6 +92,7 @@ impl Page {
             Page::Home => Icon::Home,
             Page::Fixes => Icon::Shield,
             Page::Debloat => Icon::Sparkles,
+            Page::Web => Icon::Globe,
             Page::Tools => Icon::Toolbox,
             Page::History => Icon::History,
             Page::Settings => Icon::Settings,
@@ -183,6 +188,7 @@ pub enum Message {
     Fixes(fixes::Msg),
     Fix(fixflow::Msg),
     Debloat(debloat::Msg),
+    Web(web::Msg),
     Tools(tools::Msg),
     History(history::Msg),
     Settings(settings::Msg),
@@ -195,6 +201,7 @@ pub struct App {
     pub fixes: fixes::State,
     pub fix: fixflow::State,
     pub debloat: debloat::State,
+    pub web: web::State,
     pub tools: tools::State,
     pub history: history::State,
     pub settings: settings::State,
@@ -328,6 +335,7 @@ impl App {
             fixes: Default::default(),
             fix: Default::default(),
             debloat: Default::default(),
+            web: Default::default(),
             tools: Default::default(),
             history: Default::default(),
             settings: Default::default(),
@@ -343,10 +351,12 @@ impl App {
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
         // Opening straight on a page (hidden `--self-test`) must load it too.
         let enter = app.enter_page(app.page);
+        // Home's optional card needs to know whether web protection is off.
+        let web_state = web::on_enter(&mut app.web, &mut app.ctx);
         // Put back app data that was waiting for an account, silently.
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
-        (app, Task::batch([opened, first_check, enter, pending]))
+        (app, Task::batch([opened, first_check, enter, web_state, pending]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -463,6 +473,7 @@ impl App {
                 }
                 debloat::update(&mut self.debloat, m, &mut self.ctx)
             }
+            Message::Web(m) => web::update(&mut self.web, m, &mut self.ctx),
             Message::Tools(m) => tools::update(&mut self.tools, m, &mut self.ctx),
             Message::History(m) => {
                 if matches!(m, history::Msg::Loaded(..)) {
@@ -614,6 +625,7 @@ impl App {
             Page::History => self.revisit(WARM_HISTORY),
             Page::Debloat => self.revisit(WARM_DEBLOAT),
             Page::Settings => self.revisit(WARM_SETTINGS),
+            Page::Web => web::on_enter(&mut self.web, &mut self.ctx),
             Page::Tools => tools::on_enter(&mut self.tools, &mut self.ctx),
             _ => Task::none(),
         }
@@ -733,6 +745,7 @@ impl App {
             Page::Home => home::view(&self.home, &self.ctx),
             Page::Fixes => fixes::view(&self.fixes, &self.ctx),
             Page::Debloat => debloat::view(&self.debloat, &self.ctx),
+            Page::Web => web::view(&self.web, &self.ctx),
             Page::Tools => tools::view(&self.tools, &self.ctx),
             Page::History => history::view(&self.history, &self.ctx),
             Page::Settings => settings::view(&self.settings, &self.ctx),
@@ -992,6 +1005,7 @@ impl App {
             self.on_page(Page::Fixes, fixes::subscription(&self.ctx)),
             fixflow::subscription(&self.fix),
             self.on_page(Page::Debloat, debloat::subscription(&self.debloat)),
+            self.on_page(Page::Web, web::subscription()),
             self.on_page(Page::Tools, tools::subscription(&self.tools, &self.ctx)),
             self.on_page(Page::Settings, settings::subscription(&self.settings)),
         ])

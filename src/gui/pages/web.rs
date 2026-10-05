@@ -1,0 +1,829 @@
+//! "Web protection": three switches that block ads, trackers and dangerous
+//! websites, a plain status line, a one-hour pause and today's counts.
+//!
+//! Everything that touches the PC (reading the files, asking Windows about the
+//! filter, changing the switches) runs on a worker thread. While the page is
+//! on screen it reads the current state every two seconds. A copy of Secblitz
+//! that is not installed cannot run the filter, so its switches are disabled.
+use crate::app::{history, settings as app_settings};
+use crate::explain;
+use crate::gui::icons::Icon;
+use crate::gui::pages::home;
+use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::widgets::{self, progress, ButtonKind};
+use crate::gui::{blocking, Ctx, Message};
+use crate::i18n::Lang;
+use iced::widget::{column, container, space};
+use iced::{Element, Length, Padding, Subscription, Task};
+use secblitz::filter::config::{self, Config, ErrorCode, State as ListState, Status};
+use secblitz::filter::control::ServiceState;
+use std::time::Duration;
+
+type El<'a> = Element<'a, Message>;
+
+const SECONDS_PER_DAY: u64 = 86_400;
+const PAUSE: Duration = Duration::from_secs(3600);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Switch {
+    Ads,
+    Tracking,
+    Dangerous,
+}
+
+impl Switch {
+    const ALL: [Switch; 3] = [Switch::Ads, Switch::Tracking, Switch::Dangerous];
+
+    fn id(self) -> &'static str {
+        match self {
+            Switch::Ads => "web.ads",
+            Switch::Tracking => "web.tracking",
+            Switch::Dangerous => "web.dangerous",
+        }
+    }
+
+    fn get(self, c: &Config) -> bool {
+        match self {
+            Switch::Ads => c.ads,
+            Switch::Tracking => c.tracking,
+            Switch::Dangerous => c.dangerous,
+        }
+    }
+
+    fn set(self, c: &mut Config, on: bool) {
+        match self {
+            Switch::Ads => c.ads = on,
+            Switch::Tracking => c.tracking = on,
+            Switch::Dangerous => c.dangerous = on,
+        }
+    }
+}
+
+/// Everything the page shows, read in one go.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snapshot {
+    pub config: Config,
+    pub status: Option<Status>,
+    pub service: ServiceState,
+    /// Only the installed copy of Secblitz can run web protection.
+    pub installed: bool,
+    pub now: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Busy {
+    Switch(Switch),
+    Pause,
+    Resume,
+}
+
+#[derive(Debug, Default)]
+pub struct State {
+    snapshot: Option<Snapshot>,
+    busy: Option<Busy>,
+    /// A read is on its way.
+    polling: bool,
+    /// Bumped by every change; a read or an answer from an older one is dropped.
+    generation: u32,
+    open: Vec<Switch>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Msg {
+    /// Two seconds passed while the page is on screen.
+    Tick,
+    Polled(u32, Box<Snapshot>),
+    /// A switch was flipped (true = turn it on).
+    Toggle(Switch, bool),
+    Pause,
+    Resume,
+    Done(u32, Result<(), String>),
+    ToggleDetail(Switch),
+}
+
+/// What the status line says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Line {
+    Off,
+    On,
+    /// Everything is off until this Unix time.
+    Paused(u64),
+    GettingReady,
+    NotWorking,
+}
+
+/// The status line from the saved switches, what the filter last reported and
+/// what Windows says about the filter. A filter that is not running, or has not
+/// reported for two minutes, means nothing is being blocked.
+pub fn status_line(
+    config: &Config,
+    status: Option<&Status>,
+    service: ServiceState,
+    now: u64,
+) -> Line {
+    if !config.any_on() {
+        return Line::Off;
+    }
+    if let Some(until) = config.paused_until.filter(|t| *t > now) {
+        return Line::Paused(until);
+    }
+    if service != ServiceState::Running {
+        return Line::NotWorking;
+    }
+    let Some(status) = status.filter(|s| config::fresh(s, now)) else {
+        return Line::NotWorking;
+    };
+    if status.last_error == Some(ErrorCode::PortInUse) {
+        return Line::NotWorking;
+    }
+    if !status.listening {
+        return Line::GettingReady;
+    }
+    match status.state {
+        ListState::Ready => Line::On,
+        ListState::Starting | ListState::NoLists => Line::GettingReady,
+    }
+}
+
+/// Switches and buttons work only on an installed copy, and one change at a time.
+pub fn controls_enabled(snapshot: Option<&Snapshot>, busy: bool) -> bool {
+    snapshot.is_some_and(|s| s.installed) && !busy
+}
+
+/// Home suggests web protection while it is installable and everything is off.
+pub fn suggests(snapshot: &Snapshot) -> bool {
+    snapshot.installed && !snapshot.config.any_on()
+}
+
+/// Today's blocked counts, when the filter has reported recently.
+fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 3]> {
+    let status = snapshot.status.as_ref()?;
+    if !snapshot.config.any_on() || !config::fresh(status, snapshot.now) {
+        return None;
+    }
+    Some(if status.day == snapshot.now / SECONDS_PER_DAY {
+        status.blocked
+    } else {
+        [0; 3]
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Reading and changing (always on a worker thread)
+// ---------------------------------------------------------------------------
+
+fn service_state() -> ServiceState {
+    #[cfg(windows)]
+    {
+        secblitz::filter::scm::state().unwrap_or(ServiceState::Other)
+    }
+    #[cfg(not(windows))]
+    {
+        ServiceState::NotInstalled
+    }
+}
+
+fn read_snapshot() -> Snapshot {
+    let config = config::config_path()
+        .map(|p| config::load_config(&p))
+        .unwrap_or_default();
+    let status = config::status_path()
+        .ok()
+        .and_then(|p| config::load_status(&p));
+    Snapshot {
+        config,
+        status,
+        service: service_state(),
+        installed: app_settings::installed_exe().is_some(),
+        now: history::now(),
+    }
+}
+
+fn apply(config: Config) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        secblitz::filter::control::apply_switches(config).map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = config;
+        Err("unavailable".into())
+    }
+}
+
+fn pause() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        secblitz::filter::control::pause_for(PAUSE).map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = PAUSE;
+        Err("unavailable".into())
+    }
+}
+
+fn resume() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        secblitz::filter::control::resume().map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(windows))]
+    {
+        Err("unavailable".into())
+    }
+}
+
+fn read_task(generation: u32) -> Task<Message> {
+    Task::perform(blocking(read_snapshot), move |snapshot| {
+        Message::Web(Msg::Polled(generation, Box::new(snapshot)))
+    })
+}
+
+fn poll(state: &mut State) -> Task<Message> {
+    if state.polling || state.busy.is_some() {
+        return Task::none();
+    }
+    state.polling = true;
+    read_task(state.generation)
+}
+
+fn start(
+    state: &mut State,
+    busy: Busy,
+    work: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Task<Message> {
+    state.busy = Some(busy);
+    state.generation = state.generation.wrapping_add(1);
+    let generation = state.generation;
+    Task::perform(blocking(work), move |result| {
+        Message::Web(Msg::Done(generation, result))
+    })
+}
+
+/// Read the current state when the page opens (and once at start, for Home).
+pub fn on_enter(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
+    poll(state)
+}
+
+/// Two-second reads, only while this page is on screen.
+pub fn subscription() -> Subscription<Message> {
+    Subscription::run(|| {
+        let (tx, rx) = iced::futures::channel::mpsc::unbounded();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(2));
+            // The receiver is dropped when the page is left: stop then.
+            if tx.unbounded_send(()).is_err() {
+                break;
+            }
+        });
+        rx
+    })
+    .map(|()| Message::Web(Msg::Tick))
+}
+
+pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
+    match msg {
+        Msg::Tick => poll(state),
+        Msg::Polled(generation, snapshot) => {
+            state.polling = false;
+            if generation != state.generation {
+                return Task::none();
+            }
+            let suggest = suggests(&snapshot);
+            state.snapshot = Some(*snapshot);
+            Task::done(Message::Home(home::Msg::WebSuggest(suggest)))
+        }
+        Msg::Toggle(switch, on) => {
+            let Some(snapshot) = state.snapshot.as_ref() else {
+                return Task::none();
+            };
+            if !controls_enabled(Some(snapshot), state.busy.is_some()) {
+                return Task::none();
+            }
+            let mut config = snapshot.config.clone();
+            switch.set(&mut config, on);
+            // Changing a switch ends a pause: the person just made a choice.
+            config.paused_until = None;
+            start(state, Busy::Switch(switch), move || apply(config))
+        }
+        Msg::Pause => {
+            if !controls_enabled(state.snapshot.as_ref(), state.busy.is_some()) {
+                return Task::none();
+            }
+            start(state, Busy::Pause, pause)
+        }
+        Msg::Resume => {
+            if !controls_enabled(state.snapshot.as_ref(), state.busy.is_some()) {
+                return Task::none();
+            }
+            start(state, Busy::Resume, resume)
+        }
+        Msg::Done(generation, result) => {
+            if generation != state.generation {
+                return Task::none();
+            }
+            state.busy = None;
+            // Anything still on its way predates this change.
+            state.generation = state.generation.wrapping_add(1);
+            state.polling = false;
+            let reread = poll(state);
+            match result {
+                Ok(()) => reread,
+                Err(_) => Task::batch([
+                    Task::done(Message::Toast(
+                        ctx.t("We couldn't change web protection. Please try again."),
+                        Tone::Warn,
+                    )),
+                    reread,
+                ]),
+            }
+        }
+        Msg::ToggleDetail(switch) => {
+            if let Some(at) = state.open.iter().position(|s| *s == switch) {
+                state.open.remove(at);
+            } else {
+                state.open.push(switch);
+            }
+            Task::none()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Text
+// ---------------------------------------------------------------------------
+
+/// Time of day for "Paused until": 12-hour with AM/PM in English, 24-hour
+/// elsewhere. `secs` counts from local midnight.
+fn format_clock(lang: Lang, secs: u64) -> String {
+    let hour = (secs % SECONDS_PER_DAY) / 3600;
+    let minute = (secs % 3600) / 60;
+    if lang == Lang::En {
+        let suffix = if hour < 12 { "AM" } else { "PM" };
+        let h12 = match hour % 12 {
+            0 => 12,
+            h => h,
+        };
+        format!("{h12}:{minute:02} {suffix}")
+    } else {
+        format!("{hour}:{minute:02}")
+    }
+}
+
+/// 1204 -> "1,204" (the separator follows the language).
+fn group_digits(lang: Lang, n: u64) -> String {
+    let sep = match lang {
+        Lang::En => ",",
+        Lang::Fr => "\u{202f}",
+        Lang::Es | Lang::De | Lang::Pt | Lang::It => ".",
+    };
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push_str(sep);
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn counted(ctx: &Ctx, one: &str, many: &str, n: u64) -> String {
+    ctx.t(if n == 1 { one } else { many })
+        .replace("{n}", &group_digits(ctx.lang, n))
+}
+
+fn blocked_text(ctx: &Ctx, [ads, trackers, dangerous]: [u64; 3]) -> String {
+    ctx.t("Blocked today: {ads}, {trackers}, {dangerous}")
+        .replace("{ads}", &counted(ctx, "{n} ad", "{n} ads", ads))
+        .replace(
+            "{trackers}",
+            &counted(ctx, "{n} tracker", "{n} trackers", trackers),
+        )
+        .replace(
+            "{dangerous}",
+            &counted(
+                ctx,
+                "{n} dangerous website",
+                "{n} dangerous websites",
+                dangerous,
+            ),
+        )
+}
+
+fn line_text(ctx: &Ctx, line: Line) -> String {
+    match line {
+        Line::Off => ctx.t("Off"),
+        Line::On => ctx.t("On"),
+        Line::Paused(until) => ctx.t("Paused until {time}").replace(
+            "{time}",
+            &format_clock(ctx.lang, history::local_seconds(until)),
+        ),
+        Line::GettingReady => ctx.t("Getting block lists ready"),
+        Line::NotWorking => {
+            ctx.t("Not working right now. Your internet still works, but nothing is being blocked.")
+        }
+    }
+}
+
+fn line_look(line: Line) -> (Icon, Tone) {
+    match line {
+        Line::On => (Icon::CheckCircle, Tone::Good),
+        Line::Off => (Icon::Shield, Tone::Neutral),
+        Line::Paused(_) => (Icon::Info, Tone::Neutral),
+        Line::GettingReady => (Icon::Refresh, Tone::Neutral),
+        Line::NotWorking => (Icon::AlertTriangle, Tone::Warn),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// View
+// ---------------------------------------------------------------------------
+
+fn wrap(msg: Msg) -> Message {
+    Message::Web(msg)
+}
+
+fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
+    match switch {
+        Switch::Ads => (
+            Icon::Apps,
+            ctx.t("Block ads"),
+            ctx.t("Stops ads from loading in your browser and in apps."),
+        ),
+        Switch::Tracking => (
+            Icon::Eye,
+            ctx.t("Block tracking and telemetry"),
+            ctx.t("Stops websites, apps and Windows from sending data about what you do."),
+        ),
+        Switch::Dangerous => (
+            Icon::ShieldAlert,
+            ctx.t("Block dangerous websites"),
+            ctx.t("Stops your PC from opening known scam and virus websites."),
+        ),
+    }
+}
+
+/// Extra lines under a row, lined up with its text.
+fn under<'a>(items: Vec<El<'a>>) -> El<'a> {
+    container(column(items).spacing(theme::S2).width(Length::Fill))
+        .padding(Padding {
+            top: 0.0,
+            right: theme::S4,
+            bottom: theme::S2,
+            left: theme::S4 + theme::ICON_ROW + theme::S4,
+        })
+        .width(Length::Fill)
+        .into()
+}
+
+fn detail_line<'a>(p: Palette, label: String, text: String) -> El<'a> {
+    column![widgets::small(p, label), widgets::body(p, text)]
+        .spacing(2)
+        .into()
+}
+
+fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Snapshot) -> El<'a> {
+    let p = ctx.palette;
+    let (icon, title, sentence) = switch_text(ctx, switch);
+    let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
+    let working = state.busy == Some(Busy::Switch(switch));
+    let on = switch.get(&snapshot.config);
+    let control = widgets::switch(
+        p,
+        on,
+        enabled.then_some(move |now_on: bool| wrap(Msg::Toggle(switch, now_on))),
+    );
+    let sub = if working {
+        ctx.t("Changing…")
+    } else {
+        sentence
+    };
+    let head = widgets::row_item(p, Some(icon), title, Some(sub), control, None);
+    let mut rows = vec![head];
+    if working {
+        rows.push(under(vec![progress::indeterminate(p, Tone::Brand)]));
+    }
+    if let Some(e) = explain::for_check(switch.id()) {
+        rows.push(under(vec![widgets::expander(
+            p,
+            ctx.t("More details"),
+            state.open.contains(&switch),
+            wrap(Msg::ToggleDetail(switch)),
+            column![
+                detail_line(p, ctx.t("What it is"), ctx.t(e.what)),
+                detail_line(p, ctx.t("If it's off"), ctx.t(e.risk)),
+                detail_line(p, ctx.t("If you turn it on"), ctx.t(e.change)),
+            ]
+            .spacing(theme::S2),
+        )]));
+    }
+    column(rows).width(Length::Fill).into()
+}
+
+fn status_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
+    let p = ctx.palette;
+    let line = status_line(
+        &snapshot.config,
+        snapshot.status.as_ref(),
+        snapshot.service,
+        snapshot.now,
+    );
+    let (icon, tone) = line_look(line);
+    let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
+    let working = matches!(state.busy, Some(Busy::Pause | Busy::Resume));
+    let button: El<'a> = if !snapshot.config.any_on() {
+        space::horizontal().width(0).into()
+    } else if matches!(line, Line::Paused(_)) {
+        widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Resume now"),
+            None,
+            enabled.then_some(wrap(Msg::Resume)),
+        )
+    } else {
+        widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Pause for 1 hour"),
+            None,
+            enabled.then_some(wrap(Msg::Pause)),
+        )
+    };
+    let head = widgets::row_item_tinted(
+        p,
+        Some(icon),
+        Some(tone),
+        line_text(ctx, line),
+        None,
+        button,
+        None,
+    );
+    let mut rows: Vec<El<'a>> = vec![if working {
+        column![head, under(vec![progress::indeterminate(p, Tone::Brand)])]
+            .width(Length::Fill)
+            .into()
+    } else {
+        head
+    }];
+    if let Some(counts) = blocked_today(snapshot) {
+        rows.push(widgets::row_item(
+            p,
+            Some(Icon::ShieldCheck),
+            blocked_text(ctx, counts),
+            None,
+            space::horizontal().width(0),
+            None,
+        ));
+    }
+    rows
+}
+
+pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    let p = ctx.palette;
+    let mut page = column![widgets::page_header(
+        p,
+        ctx.t("Web protection"),
+        Some(ctx.t("Stops ads, trackers and dangerous websites before they load.")),
+    )]
+    .spacing(theme::S8);
+    let Some(snapshot) = state.snapshot.as_ref() else {
+        return page.push(widgets::muted(p, ctx.t("Checking…"))).into();
+    };
+    if !snapshot.installed {
+        page = page.push(widgets::inline_notice(
+            p,
+            Tone::Neutral,
+            ctx.t("Web protection needs Secblitz to be installed."),
+        ));
+    }
+    let switches: Vec<El<'a>> = Switch::ALL
+        .iter()
+        .map(|s| switch_row(state, ctx, *s, snapshot))
+        .collect();
+    page = page.push(widgets::group(
+        p,
+        ctx.t("What to block"),
+        None,
+        None,
+        switches,
+    ));
+    if snapshot.installed {
+        page = page.push(widgets::group(
+            p,
+            ctx.t("Status"),
+            None,
+            None,
+            status_rows(state, ctx, snapshot),
+        ));
+    }
+    page.push(widgets::small(
+        p,
+        ctx.t(
+            "Some ads, like the ones inside YouTube videos, come from the same place as the video and can't be blocked this way.",
+        ),
+    ))
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::Page;
+
+    const NOW: u64 = 1_000_000;
+
+    fn config(ads: bool) -> Config {
+        Config {
+            ads,
+            ..Config::default()
+        }
+    }
+
+    fn healthy() -> Status {
+        Status {
+            listening: true,
+            state: ListState::Ready,
+            written_at: NOW - 5,
+            day: NOW / SECONDS_PER_DAY,
+            blocked: [1204, 388, 0],
+            ..Status::default()
+        }
+    }
+
+    fn snapshot(config: Config, status: Option<Status>, installed: bool) -> Snapshot {
+        Snapshot {
+            config,
+            status,
+            service: ServiceState::Running,
+            installed,
+            now: NOW,
+        }
+    }
+
+    #[test]
+    fn page_order_has_web_after_debloat() {
+        let at = |page| Page::ALL.iter().position(|p| *p == page).unwrap();
+        assert_eq!(at(Page::Web), at(Page::Debloat) + 1);
+        assert_eq!(Page::parse("web"), Some(Page::Web));
+        assert_eq!(Page::Web.label(), "Web protection");
+    }
+
+    #[test]
+    fn status_line_for_each_state() {
+        let on = config(true);
+        let ok = healthy();
+        let running = ServiceState::Running;
+        assert_eq!(status_line(&config(false), None, running, NOW), Line::Off);
+        assert_eq!(status_line(&on, Some(&ok), running, NOW), Line::On);
+        let waiting = Status {
+            state: ListState::NoLists,
+            ..healthy()
+        };
+        assert_eq!(
+            status_line(&on, Some(&waiting), running, NOW),
+            Line::GettingReady
+        );
+        let starting = Status {
+            listening: false,
+            state: ListState::Starting,
+            ..healthy()
+        };
+        assert_eq!(
+            status_line(&on, Some(&starting), running, NOW),
+            Line::GettingReady
+        );
+        // Service down, missing or odd: nothing is being blocked.
+        for service in [
+            ServiceState::Stopped,
+            ServiceState::NotInstalled,
+            ServiceState::Other,
+        ] {
+            assert_eq!(status_line(&on, Some(&ok), service, NOW), Line::NotWorking);
+        }
+        let port = Status {
+            listening: false,
+            last_error: Some(ErrorCode::PortInUse),
+            ..healthy()
+        };
+        assert_eq!(
+            status_line(&on, Some(&port), running, NOW),
+            Line::NotWorking
+        );
+        // A download problem alone does not stop blocking.
+        let late = Status {
+            last_error: Some(ErrorCode::DownloadFailed),
+            ..healthy()
+        };
+        assert_eq!(status_line(&on, Some(&late), running, NOW), Line::On);
+    }
+
+    #[test]
+    fn paused_shows_until_time() {
+        let paused = Config {
+            paused_until: Some(NOW + 600),
+            ..config(true)
+        };
+        assert_eq!(
+            status_line(&paused, Some(&healthy()), ServiceState::Running, NOW),
+            Line::Paused(NOW + 600)
+        );
+        // A pause in the past is over.
+        let over = Config {
+            paused_until: Some(NOW - 1),
+            ..config(true)
+        };
+        assert_eq!(
+            status_line(&over, Some(&healthy()), ServiceState::Running, NOW),
+            Line::On
+        );
+        // Nothing on: nothing to pause.
+        let idle = Config {
+            paused_until: Some(NOW + 600),
+            ..config(false)
+        };
+        assert_eq!(
+            status_line(&idle, None, ServiceState::Running, NOW),
+            Line::Off
+        );
+        assert_eq!(format_clock(Lang::En, 15 * 3600 + 15 * 60), "3:15 PM");
+        assert_eq!(format_clock(Lang::En, 5), "12:00 AM");
+        assert_eq!(format_clock(Lang::En, 12 * 3600 + 5 * 60), "12:05 PM");
+        assert_eq!(format_clock(Lang::De, 9 * 3600 + 7 * 60), "9:07");
+    }
+
+    #[test]
+    fn stale_status_shows_not_working() {
+        let old = Status {
+            written_at: NOW - 121,
+            ..healthy()
+        };
+        assert_eq!(
+            status_line(&config(true), Some(&old), ServiceState::Running, NOW),
+            Line::NotWorking
+        );
+        assert_eq!(
+            status_line(&config(true), None, ServiceState::Running, NOW),
+            Line::NotWorking
+        );
+        // No counts from a service that stopped reporting.
+        assert!(blocked_today(&snapshot(config(true), Some(old), true)).is_none());
+    }
+
+    #[test]
+    fn portable_disables_switches() {
+        let portable = snapshot(config(false), Some(healthy()), false);
+        assert!(!controls_enabled(Some(&portable), false));
+        let installed = snapshot(config(false), None, true);
+        assert!(controls_enabled(Some(&installed), false));
+        // Not while a change is running, nor before the first read.
+        assert!(!controls_enabled(Some(&installed), true));
+        assert!(!controls_enabled(None, false));
+        assert!(!suggests(&portable));
+        assert!(suggests(&installed));
+        assert!(!suggests(&snapshot(config(true), None, true)));
+    }
+
+    #[test]
+    fn counts_come_from_today_only() {
+        let s = snapshot(config(true), Some(healthy()), true);
+        assert_eq!(blocked_today(&s), Some([1204, 388, 0]));
+        let yesterday = Status {
+            day: NOW / SECONDS_PER_DAY - 1,
+            ..healthy()
+        };
+        assert_eq!(
+            blocked_today(&snapshot(config(true), Some(yesterday), true)),
+            Some([0; 3])
+        );
+        assert!(blocked_today(&snapshot(config(false), Some(healthy()), true)).is_none());
+    }
+
+    #[test]
+    fn numbers_are_grouped() {
+        assert_eq!(group_digits(Lang::En, 0), "0");
+        assert_eq!(group_digits(Lang::En, 999), "999");
+        assert_eq!(group_digits(Lang::En, 1204), "1,204");
+        assert_eq!(group_digits(Lang::De, 1_234_567), "1.234.567");
+    }
+
+    #[test]
+    fn changing_a_switch_keeps_the_others() {
+        let mut c = Config {
+            tracking: true,
+            paused_until: Some(5),
+            ..config(false)
+        };
+        Switch::Ads.set(&mut c, true);
+        assert!(Switch::Ads.get(&c) && Switch::Tracking.get(&c) && !Switch::Dangerous.get(&c));
+    }
+
+    #[test]
+    fn every_switch_has_an_explainer() {
+        for s in Switch::ALL {
+            assert!(explain::for_check(s.id()).is_some());
+        }
+    }
+}

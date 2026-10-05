@@ -7,3 +7,4 @@ pub mod personal;
 pub mod remove;
 pub mod settings;
 pub mod tools;
+pub mod web;
