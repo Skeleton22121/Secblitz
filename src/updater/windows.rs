@@ -1201,8 +1201,10 @@ pub(super) fn status() -> Result<UpdateStatus> {
     }
     let (root, _root_pins) = update_root()?;
     let Some(_lock) = lock(&root, "update.lock")? else {
+        // A check or install is running right now. `checked_at: 0` tells
+        // callers this is "in progress", not a recorded result.
         return Ok(UpdateStatus {
-            checked_at: now()?,
+            checked_at: 0,
             result: UpdateOutcome::DeferredBusy,
         });
     };
@@ -1234,12 +1236,15 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
             "Updates must originate from the installed executable"
         );
         let held = trusted_installed(&path)?;
+        // Busy before anything was checked: keep the last real result on
+        // record (a recorded DeferredBusy means an update is downloaded and
+        // waiting, see install-staged).
         let Some(_engine) = lock(engine_lock_root(&root)?, "engine.lock")? else {
-            return record(&root, UpdateOutcome::DeferredBusy);
+            return Ok(UpdateOutcome::DeferredBusy);
         };
         interlock::ensure_others_idle(interlock::Activity::Updater, &_engine)?;
         if busy(&path, &root)? {
-            return record(&root, UpdateOutcome::DeferredBusy);
+            return Ok(UpdateOutcome::DeferredBusy);
         }
         if let Some(outcome) = recover_installation(&root, &path)? {
             return Ok(outcome);
