@@ -397,3 +397,26 @@ fn still_removed_lists_each_app_once_and_skips_restored_ones() {
     );
     assert!(journal::still_removed(&[], catalog().len()).is_empty());
 }
+
+#[test]
+fn restore_all_sorts_outcomes() {
+    use super::offline::Restored::*;
+    assert_eq!(classify(Some(Ok(Back)), false), Bucket::Restored);
+    assert_eq!(
+        classify(Some(Ok(BackWithoutSomeData)), true),
+        Bucket::Restored
+    );
+    assert_eq!(classify(Some(Ok(AlreadyThere)), false), Bucket::Restored);
+    assert_eq!(classify(Some(Ok(Damaged)), true), Bucket::NeedsStore);
+    assert_eq!(classify(Some(Ok(NoCopy)), false), Bucket::Failed);
+    assert_eq!(
+        classify(Some(Err(anyhow::anyhow!("x"))), true),
+        Bucket::NeedsStore
+    );
+    assert_eq!(
+        classify(Some(Err(anyhow::anyhow!("x"))), false),
+        Bucket::Failed
+    );
+    assert_eq!(classify(None, true), Bucket::NeedsStore);
+    assert_eq!(classify(None, false), Bucket::Failed);
+}
