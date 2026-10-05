@@ -10,7 +10,7 @@ pub const FILE: &str = "debloat.jsonl";
 pub const MAX_BATCHES: usize = 200;
 
 fn default_path() -> Result<PathBuf> {
-    Ok(crate::platform::state_dir()?.join(FILE))
+    Ok(crate::platform::app_dir()?.join(FILE))
 }
 
 /// All batches, oldest first. Missing file, unreadable state directory and

@@ -138,6 +138,24 @@ pub fn elevate(args: &[String]) -> Result<()> {
     }
 }
 
+/// GUI-owned data (score log, app prefs, app clean-up journal, dev status file)
+/// lives in the `App` namespace inside the protected state directory. The engine
+/// treats it as opaque, like `operations` and `Patching`; journal entries must
+/// never be written next to the WAL files themselves.
+pub fn app_dir() -> Result<PathBuf> {
+    let dir = state_dir()?.join("App");
+    match std::fs::symlink_metadata(&dir) {
+        Ok(m) => anyhow::ensure!(
+            m.is_dir() && !m.file_type().is_symlink(),
+            "The app data folder is not a plain directory"
+        ),
+        // Created inside the protected state directory, so it inherits its ACL.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&dir)?,
+        Err(e) => return Err(e.into()),
+    }
+    Ok(dir)
+}
+
 pub fn state_dir() -> Result<PathBuf> {
     #[cfg(windows)]
     {

@@ -520,7 +520,7 @@ mod recovery {
 
     #[test]
     fn operations_namespace_coexists_and_rejects_wrong_types() {
-        for name in ["operations", "Patching"] {
+        for name in ["operations", "Patching", "App"] {
             let (dir, _state, mut e) = fixture(DEFENDER, json!(true));
             let namespace = dir.path().join(name);
             fs::create_dir(&namespace).unwrap();
