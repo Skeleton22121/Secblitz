@@ -132,10 +132,6 @@ mod imp {
                 GetNamedPipeClientProcessId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
                 PIPE_TYPE_BYTE, PIPE_WAIT,
             },
-            Registry::{
-                RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-                KEY_SET_VALUE, REG_DWORD,
-            },
             RemoteDesktop::ProcessIdToSessionId,
             SystemInformation::GetSystemDirectoryW,
             Threading::{
@@ -546,10 +542,8 @@ mod imp {
                     }
                 }
             }
-            Request::BlockSuggestedApps => match block_suggested_apps() {
-                Ok(()) => Reply::Done,
-                Err(_) => Reply::Failed,
-            },
+            // Journaled like every personal setting, so it can be undone.
+            Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
             Request::UserSetting(setting, op) => user_setting(setting, op),
             Request::AppUpdatesScan => match scan_apps() {
@@ -640,46 +634,6 @@ mod imp {
                 }
             }
         }
-    }
-
-    const CONTENT_DELIVERY: &str =
-        r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
-    const SUGGESTION_VALUES: [&str; 7] = [
-        "SilentInstalledAppsEnabled",
-        "PreInstalledAppsEnabled",
-        "OemPreInstalledAppsEnabled",
-        "SubscribedContent-338388Enabled",
-        "SubscribedContent-338389Enabled",
-        "SubscribedContent-353694Enabled",
-        "SubscribedContent-353696Enabled",
-    ];
-
-    fn block_suggested_apps() -> Result<()> {
-        unsafe {
-            let mut key: HKEY = null_mut();
-            let path = wide(CONTENT_DELIVERY);
-            let status = RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                path.as_ptr(),
-                0,
-                std::ptr::null(),
-                0,
-                KEY_SET_VALUE,
-                std::ptr::null(),
-                &mut key,
-                null_mut(),
-            );
-            ensure!(status == 0, "Cannot open the preferences key ({status})");
-            let zero = 0u32.to_le_bytes();
-            let mut failed = false;
-            for name in SUGGESTION_VALUES {
-                let name = wide(name);
-                failed |= RegSetValueExW(key, name.as_ptr(), 0, REG_DWORD, zero.as_ptr(), 4) != 0;
-            }
-            RegCloseKey(key);
-            ensure!(!failed, "Some preferences could not be saved");
-        }
-        Ok(())
     }
 
     /// Store product ids are short alphanumeric strings (e.g. 9NBLGGH4NNS1).

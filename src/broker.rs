@@ -524,6 +524,12 @@ mod tests {
             None
         );
         assert_eq!(Request::decode_with([13, 0, 3], 100), None);
+        // Wire byte 5 is the suggested-apps setting; the next one is unknown.
+        assert_eq!(
+            Request::decode_with([13, 5, 2], 100),
+            Some(Request::UserSetting(Setting::SuggestedApps, Op::Undo))
+        );
+        assert_eq!(Request::decode_with([13, 6, 0], 100), None);
         assert_eq!(Request::decode_with([13, 255, 255], 100), None);
         assert!(Request::decode_with([13, 0, 0], 0).is_some());
         // Scan takes no argument.
