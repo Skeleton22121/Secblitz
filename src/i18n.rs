@@ -109,7 +109,7 @@ impl Lang {
     pub fn control(self, id: &str) -> String {
         // Share the report's plain-language labels with selection and progress.
         // Unknown IDs remain verbatim rather than looking like a known control.
-        let source = crate::ui::advice::control_label(id);
+        let source = crate::advice::control_label(id);
         if source == "Protection check" {
             return id.to_owned();
         }
@@ -2326,7 +2326,7 @@ mod tests {
                 assert_ne!(lang.control(&control.id), control.id);
                 assert_eq!(
                     lang.control(&control.id),
-                    lang.t(crate::ui::advice::control_label(&control.id))
+                    lang.t(crate::advice::control_label(&control.id))
                 );
             }
             for name in [
@@ -2436,13 +2436,9 @@ mod tests {
         let mut missing = Vec::new();
         for (name, source) in [
             ("main", include_str!("main.rs")),
-            ("maintenance_cli", include_str!("maintenance_cli.rs")),
-            ("guided", include_str!("guided.rs")),
-            ("menu", include_str!("menu.rs")),
             ("advice", include_str!("advice.rs")),
             ("actions", include_str!("actions.rs")),
             ("actions/windows", include_str!("actions/windows.rs")),
-            ("ui", include_str!("ui.rs")),
             ("tools", include_str!("tools.rs")),
             ("engine", include_str!("engine.rs")),
             ("model", include_str!("model.rs")),
@@ -2614,94 +2610,6 @@ mod tests {
     }
 
     #[test]
-    fn guided_fixed_copy_uses_whole_keys_and_localized_keyboard_hints() {
-        for key in literals(include_str!("guided.rs"))
-            .into_iter()
-            .chain(literals(include_str!("menu.rs")))
-        {
-            if (key.contains(' ') || matches!(key.as_str(), "Back" | "Exit"))
-                && !key.contains('{')
-                && !key.contains('\\')
-                && key.chars().any(|c| c.is_ascii_alphabetic())
-            {
-                assert!(
-                    all_keys().any(|entry| entry == key),
-                    "Missing exact guided/menu key: {key}"
-                );
-            }
-        }
-        for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
-            let choose = lang.t(crate::menu::SELECT_HINT);
-            let select = lang.t(crate::menu::MULTI_HINT);
-            let (enter, space, escape) = match lang {
-                Lang::En => ("Enter", "Space", "Esc"),
-                Lang::Es => ("Intro", "Espacio", "Esc"),
-                Lang::Fr => ("Entrée", "Espace", "Échap"),
-                Lang::De => ("Eingabe", "Leertaste", "Esc"),
-                Lang::Pt => ("Enter", "Espaço", "Esc"),
-                Lang::It => ("Invio", "Spazio", "Esc"),
-            };
-            for hint in [&choose, &select] {
-                assert!(hint.contains("↑/↓"));
-                assert!(hint.contains(enter));
-                assert!(hint.contains(escape));
-            }
-            assert!(select.contains(space));
-            assert_ne!(lang.t("Yes, continue"), lang.t("No, go back"));
-            if lang != Lang::En {
-                for key in [
-                    crate::menu::SELECT_HINT,
-                    crate::menu::MULTI_HINT,
-                    "Yes, continue",
-                    "No, go back",
-                    "Choose an action",
-                    "Choose what to fix",
-                    "Select the fixes you want.",
-                    "Invalid menu default",
-                    "Invalid menu selection",
-                    "Terminal is too short to display a menu",
-                    "Operation failed",
-                ] {
-                    assert_ne!(lang.t(key), key, "{}: {key}", lang.code());
-                }
-            }
-            for key in DETAIL_EXACT_ONLY {
-                assert_eq!(lang.detail(key), lang.t(key));
-            }
-            assert_eq!(
-                lang.detail("native all none complete opened returned running"),
-                "native all none complete opened returned running"
-            );
-            let evidence = "permissions.service.bits ms-settings:windowsupdate C:\\all\\complete.exe 0x80070005";
-            assert_eq!(lang.detail(evidence), evidence);
-        }
-    }
-
-    #[test]
-    fn keyboard_sources_do_not_prompt_for_typed_menu_numbers() {
-        for (name, source) in [
-            ("guided", include_str!("guided.rs")),
-            ("menu", include_str!("menu.rs")),
-        ] {
-            for key in literals(source) {
-                let numbered_label =
-                    key.starts_with('[') && key.as_bytes().get(1).is_some_and(u8::is_ascii_digit);
-                assert!(!numbered_label, "Numbered prompt in {name}: {key}");
-                for obsolete in [
-                    "Enter numbers separated by commas",
-                    "displayed menu numbers",
-                    "displayed numbers, all, or none",
-                ] {
-                    assert!(
-                        !key.contains(obsolete),
-                        "Typed-number prompt in {name}: {key}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn automatic_flow_and_readiness_copy_is_complete_and_preserves_placeholders() {
         let mut text_block = false;
         for key in include_str!("../docs/review-auto-flow.md").lines() {
@@ -2856,7 +2764,7 @@ mod tests {
             "permissions.service.wuauserv",
         ];
         for id in control_ids {
-            let impact = crate::ui::advice::control_impact(id);
+            let impact = crate::advice::control_impact(id);
             assert!(!impact.is_empty(), "control_impact({id}) is empty");
             assert!(
                 TEXT.iter().any(|row| row[0] == impact),
@@ -2877,7 +2785,7 @@ mod tests {
             "Automatic logon",
         ];
         for title in finding_titles {
-            let impact = crate::ui::advice::finding_impact(title);
+            let impact = crate::advice::finding_impact(title);
             assert!(!impact.is_empty(), "finding_impact({title}) is empty");
             assert!(
                 TEXT.iter().any(|row| row[0] == impact),
