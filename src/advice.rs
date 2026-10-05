@@ -305,7 +305,8 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
                     | "Preserving absent or already-safe machine preference"
             ) =>
         {
-            a.next = "We kept your current setting. It may already protect you, so nothing was changed.";
+            a.next =
+                "We kept your current setting. It may already protect you, so nothing was changed.";
         }
         "skipped"
             if matches!(
@@ -362,7 +363,8 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
             "attention" | "compliant" | "ok" | "unchanged" | "applied"
         ) {
             a.status = "Couldn't check";
-            a.next = "We couldn't confirm your firewall setting. Check again before making changes.";
+            a.next =
+                "We couldn't confirm your firewall setting. Check again before making changes.";
             a.step = NextStep::CheckAgain;
             a.group = Group::Choice;
         }
@@ -385,7 +387,8 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
             a.group = Group::Protected;
         } else if !protected {
             a.status = "Needs your choice";
-            a.next = "We couldn't confirm your firewall setting. Check again before making changes.";
+            a.next =
+                "We couldn't confirm your firewall setting. Check again before making changes.";
             a.step = NextStep::CheckAgain;
             a.group = Group::Choice;
         }

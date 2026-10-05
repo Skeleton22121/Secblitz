@@ -25,7 +25,8 @@ use std::sync::Arc;
 const ICON_SMALL: f32 = 16.0;
 /// Left inset that lines expanded text up with a row's title:
 /// checkbox box + its padding, gap, row padding, badge, gap.
-const INDENT: f32 = theme::CHECK + theme::S1 * 2.0 + theme::S2 + theme::S4 + theme::CONTROL + theme::S3;
+const INDENT: f32 =
+    theme::CHECK + theme::S1 * 2.0 + theme::S2 + theme::S4 + theme::CONTROL + theme::S3;
 /// Same inset for rows that have no checkbox.
 const INDENT_PLAIN: f32 = theme::S4 + theme::CONTROL + theme::S3;
 
@@ -529,7 +530,13 @@ fn attention_row<'a>(
     }
     column![
         head,
-        expanded(p, INDENT, Some(a.why.clone()), ctx.t("More details"), a.tech.clone())
+        expanded(
+            p,
+            INDENT,
+            Some(a.why.clone()),
+            ctx.t("More details"),
+            a.tech.clone()
+        )
     ]
     .spacing(theme::S1)
     .into()
@@ -568,9 +575,12 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     if !open {
         return head;
     }
-    column![head, expanded(p, INDENT_PLAIN, None, ctx.t("More details"), o.tech.clone())]
-        .spacing(theme::S1)
-        .into()
+    column![
+        head,
+        expanded(p, INDENT_PLAIN, None, ctx.t("More details"), o.tech.clone())
+    ]
+    .spacing(theme::S1)
+    .into()
 }
 
 fn protected_row<'a>(p: Palette, r: &Prot, label: &str) -> Element<'a, Message> {
@@ -617,7 +627,9 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 p,
                 Icon::ShieldAlert,
                 ctx.t("We couldn't start the protection check"),
-                ctx.t("Close Secblitz and open it again. If this keeps happening, restart your PC."),
+                ctx.t(
+                    "Close Secblitz and open it again. If this keeps happening, restart your PC.",
+                ),
                 Some(details),
             ),
         )));
@@ -640,21 +652,23 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 Some(Icon::Refresh),
                 (ctx.checking.is_none() && !ctx.busy).then_some(Message::CheckNow),
             );
-            return page(body.push(widgets::card(
-                p,
-                widgets::empty_state(
+            return page(
+                body.push(widgets::card(
                     p,
-                    Icon::ShieldAlert,
-                    ctx.t("We couldn't finish checking"),
-                    ctx.t("Nothing was changed. Please check again in a moment."),
-                    Some(
-                        column![again, details]
-                            .spacing(theme::S3)
-                            .align_x(Alignment::Center)
-                            .into(),
+                    widgets::empty_state(
+                        p,
+                        Icon::ShieldAlert,
+                        ctx.t("We couldn't finish checking"),
+                        ctx.t("Nothing was changed. Please check again in a moment."),
+                        Some(
+                            column![again, details]
+                                .spacing(theme::S3)
+                                .align_x(Alignment::Center)
+                                .into(),
+                        ),
                     ),
-                ),
-            )));
+                )),
+            );
         }
         let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
         let total = ctx.catalog.available.len().max(done).max(1);
@@ -665,15 +679,17 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         } else {
             ctx.t("This takes about a minute. Nothing is changed.")
         };
-        return page(body.push(widgets::card(
-            p,
-            column![
-                widgets::h2(p, ctx.t("Checking your PC")),
-                widgets::muted(p, progress),
-                widgets::bar(p, done as f32 / total as f32, Tone::Neutral),
-            ]
-            .spacing(theme::S3),
-        )));
+        return page(
+            body.push(widgets::card(
+                p,
+                column![
+                    widgets::h2(p, ctx.t("Checking your PC")),
+                    widgets::muted(p, progress),
+                    widgets::bar(p, done as f32 / total as f32, Tone::Neutral),
+                ]
+                .spacing(theme::S3),
+            )),
+        );
     };
 
     ensure(state, ctx, report);
@@ -770,25 +786,26 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
-        body = body.push(widgets::card(
-            p,
-            column![
-                section_header(
-                    p,
-                    ctx.t("Needs your attention"),
-                    rows.attention.len(),
-                    Tone::Warn,
-                    Some(ctx.t(
-                        "We've ticked what we recommend. Nothing changes until you review it."
-                    )),
-                ),
-                space::vertical().height(theme::S1),
-                list,
-                space::vertical().height(theme::S1),
-                footer,
-            ]
-            .spacing(theme::S3),
-        ));
+        body =
+            body.push(widgets::card(
+                p,
+                column![
+                    section_header(
+                        p,
+                        ctx.t("Needs your attention"),
+                        rows.attention.len(),
+                        Tone::Warn,
+                        Some(ctx.t(
+                            "We've ticked what we recommend. Nothing changes until you review it."
+                        )),
+                    ),
+                    space::vertical().height(theme::S1),
+                    list,
+                    space::vertical().height(theme::S1),
+                    footer,
+                ]
+                .spacing(theme::S3),
+            ));
     }
 
     // Everything else that isn't protected.
@@ -823,13 +840,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         body = body.push(widgets::card(
             p,
             column![
-                section_header(
-                    p,
-                    ctx.t(title),
-                    items.len(),
-                    tone,
-                    Some(ctx.t(subtitle))
-                ),
+                section_header(p, ctx.t(title), items.len(), tone, Some(ctx.t(subtitle))),
                 space::vertical().height(theme::S1),
                 list,
             ]

@@ -4,8 +4,8 @@
 //! and theme tokens. `view` does no work beyond building widgets; everything
 //! it shows was prepared in `update`.
 use super::{
-    repair_ratio, stage_ratio, tools, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State,
-    Tips, Updates,
+    repair_ratio, stage_ratio, tools, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State, Tips,
+    Updates,
 };
 use crate::app::tools::{
     self as logic, InstallResult, RepairKind, RepairResult, TipProfile, TipState,
@@ -571,12 +571,7 @@ fn updates_card<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         } => {
             let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
             let mut items = vec![
-                job_header(
-                    state,
-                    p,
-                    count_installing(ctx, *count),
-                    stage_ratio(*stage),
-                ),
+                job_header(state, p, count_installing(ctx, *count), stage_ratio(*stage)),
                 widgets::muted(p, ctx.t(stage.label())),
                 widgets::small(
                     p,
@@ -777,12 +772,9 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip) -> El<'a> {
     container(
         row![
             widgets::icon_badge(p, icon, tone),
-            column![
-                widgets::body(p, ctx.t(tip.title)),
-                widgets::small(p, words)
-            ]
-            .spacing(theme::S1)
-            .width(Length::Fill)
+            column![widgets::body(p, ctx.t(tip.title)), widgets::small(p, words)]
+                .spacing(theme::S1)
+                .width(Length::Fill)
         ]
         .spacing(theme::S3)
         .align_y(Alignment::Center),

@@ -226,16 +226,6 @@ pub const R_LARGE: f32 = 12.0;
 /// Fully rounded (pills, badges).
 pub const R_PILL: f32 = 999.0;
 
-// Old names, kept so existing pages compile while they migrate.
-/// Use `S4`.
-pub const GAP: f32 = S4;
-/// Use `S6` (cards) or `S5`.
-pub const PAD: f32 = S5;
-/// Use `R_LARGE` (cards, sheets) or `R` (controls).
-pub const RADIUS: f32 = R_LARGE;
-/// Use `R` (controls) or `R_SMALL`.
-pub const RADIUS_SMALL: f32 = R;
-
 pub const FAMILY: &str = "IBM Plex Sans";
 
 pub const REGULAR: Font = Font {

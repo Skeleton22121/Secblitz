@@ -636,6 +636,10 @@ impl App {
             iced::window::close_requests().map(Message::CloseRequested),
             toast,
             home::subscription(&self.home, &self.ctx),
+            fixflow::subscription(&self.fix),
+            debloat::subscription(&self.debloat),
+            tools::subscription(&self.tools, &self.ctx),
+            settings::subscription(&self.settings),
         ])
     }
 }
@@ -655,11 +659,6 @@ fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant>
         }
     });
     rx
-}
-
-/// ~30 frames per second tick for animations (subscribe only while animating).
-pub fn ticks_30() -> Subscription<std::time::Instant> {
-    Subscription::run(|| ticker(std::time::Duration::from_millis(33)))
 }
 
 /// Slow tick used for time-outs such as toast dismissal.

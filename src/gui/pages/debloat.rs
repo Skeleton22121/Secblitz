@@ -139,7 +139,6 @@ pub enum Msg {
     Run(Run),
     UserBlocked(bool),
     /// Animation frame (only subscribed while something moves).
-    #[allow(dead_code)] // constructed by `subscription`, which the shell wires
     Frame(Instant),
     ToggleDetails,
     CloseResult,
@@ -179,7 +178,6 @@ fn start_scan(state: &mut State) {
 }
 
 /// Frame subscription: on only while an animation is actually running.
-#[allow(dead_code)] // shell: add `debloat::subscription(&self.debloat)` to App::subscription
 pub fn subscription(state: &State) -> Subscription<Message> {
     if is_animating(state) {
         iced::window::frames().map(|t| wrap(Msg::Frame(t)))
@@ -188,7 +186,6 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     }
 }
 
-#[allow(dead_code)]
 fn is_animating(state: &State) -> bool {
     if !anim::animating() {
         return false;
@@ -206,7 +203,6 @@ fn is_animating(state: &State) -> bool {
 }
 
 impl Finished {
-    #[allow(dead_code)]
     fn at_done(&self, now: Instant) -> bool {
         anim::Clock::at(self.at).done(anim::SLOW, now)
     }
@@ -524,7 +520,6 @@ fn record_history(ctx: &Ctx, removed: usize) {
         );
     }
 }
-
 
 // ---- view ------------------------------------------------------------------
 
@@ -950,7 +945,9 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ),
             container(widgets::small(
                 p,
-                ctx.t("Windows sometimes installs apps on its own. Turn this on to ask it to stop."),
+                ctx.t(
+                    "Windows sometimes installs apps on its own. Turn this on to ask it to stop."
+                ),
             ))
             .padding([0.0, theme::S1]),
         ]
