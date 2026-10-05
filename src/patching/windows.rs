@@ -648,15 +648,7 @@ fn supervise(
 /// The start of the subprocess's error output as one printable line, for the
 /// technical details (never parsed).
 fn stderr_excerpt(err: &[u8]) -> String {
-    let text = String::from_utf8_lossy(err);
-    let line: String = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(300)
-        .collect();
+    let line = crate::text::excerpt(&String::from_utf8_lossy(err), 300);
     if line.is_empty() {
         "no error output".to_owned()
     } else {

@@ -84,6 +84,9 @@ pub enum Instance {
 pub struct Guard {
     #[cfg(windows)]
     _handle: imp::Owned,
+    /// Declared after the mutex so it closes last.
+    #[cfg(windows)]
+    _namespace: Option<imp::Namespace>,
 }
 
 pub fn single_instance() -> anyhow::Result<Instance> {
@@ -114,9 +117,10 @@ mod imp {
         Security::{
             Authorization::{
                 ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-                SDDL_REVISION_1,
+                ConvertStringSidToSidW, SDDL_REVISION_1,
             },
-            GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+            GetTokenInformation, TokenElevationType, TokenElevationTypeFull, TokenUser, PSID,
+            SECURITY_ATTRIBUTES, TOKEN_ELEVATION_TYPE, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
@@ -132,10 +136,14 @@ mod imp {
                 RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
                 KEY_SET_VALUE, REG_DWORD,
             },
+            RemoteDesktop::ProcessIdToSessionId,
             SystemInformation::GetSystemDirectoryW,
             Threading::{
-                CreateEventW, CreateMutexW, GetCurrentProcess, GetExitCodeProcess, GetProcessId,
-                OpenProcessToken, ResetEvent, WaitForMultipleObjects, WaitForSingleObject,
+                AddIntegrityLabelToBoundaryDescriptor, AddSIDToBoundaryDescriptor,
+                ClosePrivateNamespace, CreateBoundaryDescriptorW, CreateEventW, CreateMutexW,
+                CreatePrivateNamespaceW, DeleteBoundaryDescriptor, GetCurrentProcess,
+                GetExitCodeProcess, GetProcessId, OpenPrivateNamespaceW, OpenProcessToken,
+                ResetEvent, WaitForMultipleObjects, WaitForSingleObject,
             },
             IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
         },
@@ -195,7 +203,10 @@ mod imp {
         // a standard user chooses.
         let mut dir = vec![0u16; 32768];
         let n = unsafe { GetSystemDirectoryW(dir.as_mut_ptr(), dir.len() as u32) } as usize;
-        ensure!(n > 0 && n < dir.len(), "Cannot resolve the System32 directory");
+        ensure!(
+            n > 0 && n < dir.len(),
+            "Cannot resolve the System32 directory"
+        );
         dir.truncate(n);
         dir.push(0);
         let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
@@ -253,6 +264,34 @@ mod imp {
             let s = String::from_utf16_lossy(std::slice::from_raw_parts(raw, len));
             LocalFree(raw.cast());
             Ok(s)
+        }
+    }
+
+    /// True for the elevated half of a split (UAC) admin token: someone chose
+    /// "Run as administrator". The broker must then not run, because its
+    /// user-context actions (winget, HKCU, protocol handlers) would carry the
+    /// admin token while the same user's unelevated programs can steer them.
+    /// Built-in Administrator and UAC-off accounts have no split token.
+    fn split_token_elevated() -> Result<bool> {
+        unsafe {
+            let mut token: HANDLE = null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let token = Owned(token);
+            let mut kind: TOKEN_ELEVATION_TYPE = 0;
+            let mut len = 0u32;
+            if GetTokenInformation(
+                token.0,
+                TokenElevationType,
+                (&mut kind as *mut TOKEN_ELEVATION_TYPE).cast(),
+                std::mem::size_of::<TOKEN_ELEVATION_TYPE>() as u32,
+                &mut len,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            Ok(kind == TokenElevationTypeFull)
         }
     }
 
@@ -444,6 +483,14 @@ mod imp {
     }
 
     pub fn run(lang: Lang) -> Result<i32> {
+        // Fail closed if the token can't be read: that is not a normal start.
+        if split_token_elevated()? {
+            super::message_box(
+                "Secblitz",
+                &lang.t("Please open Secblitz the usual way, not with “Run as administrator”. It asks for permission by itself when it needs it."),
+            );
+            return Ok(1);
+        }
         let id = broker::new_id();
         let pipe = create_pipe(&id)?;
         let args: Vec<String> = ["gui", "--broker", &id, "--lang", lang.code()]
@@ -482,6 +529,11 @@ mod imp {
                 Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,
                 Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
                 Err(_) => Reply::Failed,
+            },
+            Request::BitwardenStatus => match secblitz::tools::bitwarden_installed() {
+                Ok(true) => Reply::Done,
+                Ok(false) => Reply::NotApplicable,
+                Err(_) => Reply::Unknown,
             },
             Request::BlockSuggestedApps => match block_suggested_apps() {
                 Ok(()) => Reply::Done,
@@ -637,23 +689,29 @@ mod imp {
             return Reply::Unavailable;
         }
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let exit = Command::new("winget")
-            .args([
-                "install",
-                "--id",
-                store_id,
-                "--source",
-                "msstore",
-                "--accept-package-agreements",
-                "--accept-source-agreements",
-                "--silent",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+        let exit = secblitz::tools::winget_path()
             .ok()
+            .and_then(|winget| {
+                Command::new(winget)
+                    .args([
+                        "install",
+                        "--id",
+                        store_id,
+                        "--source",
+                        "msstore",
+                        "--accept-package-agreements",
+                        "--accept-source-agreements",
+                        "--exact",
+                        "--silent",
+                        "--disable-interactivity",
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .ok()
+            })
             .and_then(|mut child| {
                 // Give the install a generous but finite time.
                 let deadline = std::time::Instant::now() + Duration::from_secs(14 * 60);
@@ -703,15 +761,108 @@ mod imp {
 
     // ----- single instance -----
 
+    /// A private object namespace that only elevated administrators can
+    /// create or open, so an ordinary program can't squat the window guard
+    /// and make Secblitz close as if it were already open.
+    pub struct Namespace(HANDLE);
+    impl Drop for Namespace {
+        fn drop(&mut self) {
+            unsafe {
+                ClosePrivateNamespace(self.0, 0);
+            }
+        }
+    }
+
+    struct Boundary(HANDLE);
+    impl Drop for Boundary {
+        fn drop(&mut self) {
+            unsafe { DeleteBoundaryDescriptor(self.0) }
+        }
+    }
+
+    struct Sid(PSID);
+    impl Drop for Sid {
+        fn drop(&mut self) {
+            unsafe {
+                LocalFree(self.0);
+            }
+        }
+    }
+
+    fn sid(text: &str) -> Result<Sid> {
+        let mut raw: PSID = null_mut();
+        if unsafe { ConvertStringSidToSidW(wide(text).as_ptr(), &mut raw) } == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(Sid(raw))
+    }
+
+    fn private_namespace() -> Result<Namespace> {
+        let raw = unsafe { CreateBoundaryDescriptorW(wide("Secblitz").as_ptr(), 0) };
+        ensure!(!raw.is_null(), "boundary descriptor unavailable");
+        let mut boundary = Boundary(raw);
+        // Administrators, at high integrity: a UAC-elevated or built-in admin.
+        let admins = sid("S-1-5-32-544")?;
+        let high = sid("S-1-16-12288")?;
+        unsafe {
+            ensure!(
+                AddSIDToBoundaryDescriptor(&mut boundary.0, admins.0) != 0
+                    && AddIntegrityLabelToBoundaryDescriptor(&mut boundary.0, high.0) != 0,
+                "boundary descriptor rejected"
+            );
+        }
+        let sddl = wide("D:P(A;;GA;;;BA)(A;;GA;;;SY)");
+        let mut descriptor: *mut c_void = null_mut();
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                null_mut(),
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let prefix = wide("Secblitz");
+        let mut handle =
+            unsafe { CreatePrivateNamespaceW(&attributes, boundary.0, prefix.as_ptr()) };
+        if handle.is_null() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            handle = unsafe { OpenPrivateNamespaceW(boundary.0, prefix.as_ptr()) };
+        }
+        let error = std::io::Error::last_os_error();
+        unsafe { LocalFree(descriptor) };
+        if handle.is_null() {
+            return Err(error.into());
+        }
+        Ok(Namespace(handle))
+    }
+
     pub fn single_instance() -> Result<Instance> {
-        let name = wide("Local\\SecblitzGui");
+        // One window per signed-in session, as with a Local\ name.
+        let mut session = 0u32;
+        unsafe { ProcessIdToSessionId(std::process::id(), &mut session) };
+        let namespace = private_namespace().ok();
+        let name = match namespace {
+            Some(_) => wide(&format!("Secblitz\\Gui-{session}")),
+            // Should never happen; keep a guard rather than none.
+            None => wide("Local\\SecblitzGui"),
+        };
         let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
         if handle.is_null() {
             return Err(std::io::Error::last_os_error().into());
         }
         let handle = Owned(handle);
         if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
-            return Ok(Instance::First(Guard { _handle: handle }));
+            return Ok(Instance::First(Guard {
+                _handle: handle,
+                _namespace: namespace,
+            }));
         }
         for _ in 0..20 {
             if focus_existing() {
@@ -719,7 +870,8 @@ mod imp {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        // Someone holds the name but shows no window: still do not start twice.
+        // Another Secblitz holds it but shows no window yet (still starting):
+        // still do not start twice.
         Ok(Instance::Existing)
     }
 

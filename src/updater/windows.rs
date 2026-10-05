@@ -906,8 +906,12 @@ fn installation_health(path: &Path, root: &Path, version: &str) -> Result<Update
                 "Unexpected monitor configuration"
             );
             let status = service.query_status()?;
+            // 1077 (ERROR_SERVICE_NEVER_STARTED): installed by Setup, starts
+            // with the next restart. That is a normal stopped state.
             ensure!(
-                status.exit_code == ServiceExitCode::Win32(0),
+                status.exit_code == ServiceExitCode::Win32(0)
+                    || (status.current_state == ServiceState::Stopped
+                        && status.exit_code == ServiceExitCode::Win32(1077)),
                 "Monitor reports a failure"
             );
             match status.current_state {
@@ -947,6 +951,10 @@ fn installation_health(path: &Path, root: &Path, version: &str) -> Result<Update
             .collect::<Vec<_>>(),
     );
     let mut command = child_command(&powershell, root)?;
+    // Only inbox modules, even before the script pins this itself.
+    if let Some(home) = powershell.parent() {
+        command.env("PSModulePath", home.join("Modules"));
+    }
     command.args([
         "-NoLogo",
         "-NoProfile",

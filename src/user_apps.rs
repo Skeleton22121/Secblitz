@@ -176,6 +176,8 @@ pub fn remembered(index: usize) -> Option<AppState> {
 pub fn list_args() -> Vec<String> {
     [
         "upgrade",
+        "--source",
+        "winget",
         "--accept-source-agreements",
         "--disable-interactivity",
     ]
@@ -193,6 +195,8 @@ pub fn upgrade_args(index: usize) -> Option<Vec<String>> {
             "--id",
             app.id,
             "--exact",
+            "--source",
+            "winget",
             "--silent",
             "--accept-package-agreements",
             "--accept-source-agreements",
@@ -224,7 +228,13 @@ mod run {
     /// capped output and a hard deadline.
     pub fn run_winget(args: &[String], limit: Duration) -> WingetRun {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let spawned = Command::new("winget")
+        let Ok(winget) = secblitz::tools::winget_path() else {
+            return WingetRun {
+                code: None,
+                output: String::new(),
+            };
+        };
+        let spawned = Command::new(winget)
             .args(args)
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())
