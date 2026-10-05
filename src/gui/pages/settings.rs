@@ -25,6 +25,8 @@ enum Remote<T> {
 pub enum UpdateView {
     UpToDate,
     Ready,
+    /// A check is running right now.
+    Checking,
     Unknown,
     /// This copy has no update source (for example a portable build).
     Off,
@@ -34,6 +36,8 @@ pub fn update_view(status: &secblitz::updater::UpdateStatus) -> UpdateView {
     use secblitz::updater::UpdateOutcome as O;
     match &status.result {
         O::UpToDate | O::Installed { .. } | O::DeferredRollout { .. } => UpdateView::UpToDate,
+        // `checked_at == 0`: the updater holds its lock (checking now).
+        O::DeferredBusy if status.checked_at == 0 => UpdateView::Checking,
         O::WorkerStarted { .. } | O::DeferredBusy => UpdateView::Ready,
         O::Failed { .. } => UpdateView::Unknown,
         O::NotConfigured if status.checked_at == 0 => UpdateView::Off,
@@ -490,7 +494,9 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
     // Updates: one compact row, details in the menu.
     let (status, line): (Element<'a, Message>, String) = match &state.update {
-        Remote::Loading => (busy(p, state, t("Checking…")), t("Looking for updates.")),
+        Remote::Loading | Remote::Ready(UpdateView::Checking) => {
+            (busy(p, state, t("Checking…")), t("Looking for updates."))
+        }
         Remote::Failed | Remote::Ready(UpdateView::Unknown) => (
             widgets::pill(p, t("Couldn't check"), Tone::Warn),
             t("We couldn't check for updates. We'll try again later."),
@@ -511,7 +517,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let mut trailing = row![status].spacing(theme::S2).align_y(Alignment::Center);
     if !matches!(
         state.update,
-        Remote::Loading | Remote::Ready(UpdateView::Off)
+        Remote::Loading | Remote::Ready(UpdateView::Off | UpdateView::Checking)
     ) {
         trailing = trailing.push(reload_menu(p, t("Check now")));
     }
@@ -614,6 +620,11 @@ mod tests {
             UpdateView::Ready
         );
         assert_eq!(update_view(&status(O::DeferredBusy, 5)), UpdateView::Ready);
+        // The updater's lock is held: a check is running, nothing is ready.
+        assert_eq!(
+            update_view(&status(O::DeferredBusy, 0)),
+            UpdateView::Checking
+        );
         assert_eq!(
             update_view(&status(O::Failed { reason: "x".into() }, 5)),
             UpdateView::Unknown
