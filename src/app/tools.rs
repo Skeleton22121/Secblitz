@@ -1123,6 +1123,7 @@ pub struct Tip {
     pub state: TipState,
     pub advice: &'static str,
     /// Windows page that helps with a `Look` tip, shown as a button.
+    #[allow(dead_code)] // the Tools page button lands with the tips rework
     pub open: Option<secblitz::actions::Action>,
 }
 
