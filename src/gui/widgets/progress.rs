@@ -5,8 +5,8 @@
 //!   clock, so it also works with a frame subscription it already runs).
 //! * [`bar_eased`]: give it the latest value and it eases there by itself,
 //!   asking for redraws only while it moves.
-//! * [`indeterminate`]: a soft highlight gliding along the track; asks for
-//!   redraws itself for as long as it is on screen.
+//! * [`indeterminate`]: a segment gliding along the track; asks for redraws
+//!   itself for as long as it is on screen.
 //! * [`steps`]: a row of short segments for multi-step flows.
 //!
 //! The track is a hairline of the text colour, so it reads on `bg`,
@@ -251,12 +251,18 @@ impl canvas::Program<Message> for Shimmer {
             f.fill(&capsule((w * 0.33).round(), (w * 0.67).round(), h), color);
             return vec![f.into_geometry()];
         }
-        // Like Windows: no track while the length is unknown, just one
-        // segment gliding across and leaving cleanly at the edges.
+        // The same hairline track as every other bar, so a running row reads
+        // as progress even when the segment is between passes; the segment
+        // glides across and leaves cleanly at the edges.
         let (left, len) = shimmer_span(s.secs, w);
-        let (x0, x1) = (left.max(0.0), (left + len).min(w));
+        let (x0, x1) = (left.max(0.0).round(), (left + len).min(w).round());
+        let track_color = track_color(&self.p);
         if x1 - x0 > 0.5 {
+            track(&mut f, 0.0, x0, track_color);
+            track(&mut f, x1, w, track_color);
             f.fill(&capsule(x0, x1, h), color);
+        } else {
+            track(&mut f, 0.0, w, track_color);
         }
         vec![f.into_geometry()]
     }

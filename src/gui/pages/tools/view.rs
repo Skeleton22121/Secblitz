@@ -897,19 +897,15 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
 fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let Some(secret) = &state.password.secret else {
-        return widgets::region(
+        return widgets::row_item_tinted(
             p,
-            widgets::row_item_tinted(
-                p,
-                Some(Icon::Key),
-                Some(Tone::Warn),
-                ctx.t("We couldn't make a password"),
-                Some(ctx.t("Please try again.")),
-                secondary(p, ctx.t("Try again"), Some(Msg::NewPassword)),
-                None,
-            ),
-        )
-        .into();
+            Some(Icon::Key),
+            Some(Tone::Warn),
+            ctx.t("We couldn't make a password"),
+            Some(ctx.t("Please try again.")),
+            secondary(p, ctx.t("Try again"), Some(Msg::NewPassword)),
+            None,
+        );
     };
     let shown = if state.password.shown {
         secret.reveal().to_owned()
@@ -966,28 +962,20 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     } else {
         ctx.t("Secblitz never saves your passwords.")
     };
-    widgets::region(
+    // A plain row like the rest of the page, the password under its title.
+    widgets::row_item_below(
         p,
-        column![
-            row![
-                widgets::icon(Icon::Key, theme::ICON_ROW, p.text_muted),
-                column![
-                    widgets::body(p, ctx.t("Password generator")),
-                    widgets::small(p, caption)
-                ]
-                .spacing(theme::S1)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::S4)
-            .align_y(Alignment::Center),
-            row![field, eye, copy, again]
-                .spacing(theme::S1)
-                .align_y(Alignment::Center),
-        ]
-        .spacing(theme::S3)
-        .width(Length::Fill),
+        Some(Icon::Key),
+        None,
+        ctx.t("Password generator"),
+        Some(caption),
+        space::horizontal().width(0),
+        vec![row![field, eye, copy, again]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into()],
+        None,
     )
-    .into()
 }
 
 fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {

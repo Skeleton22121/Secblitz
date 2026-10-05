@@ -635,7 +635,7 @@ fn review_view<'a>(
         .push(footer(vec![
             widgets::action(
                 p,
-                ButtonKind::Ghost,
+                ButtonKind::Secondary,
                 ctx.t("Cancel"),
                 None,
                 Some(Message::Fix(Msg::Cancel)),
