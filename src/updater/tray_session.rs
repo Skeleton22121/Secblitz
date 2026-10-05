@@ -261,7 +261,12 @@ fn user_token(session: u32) -> Option<Handle> {
 fn launch_in_session(exe: &Path, session: u32) -> Result<()> {
     let token = user_token(session).context("No user token")?;
     let mut env: *mut c_void = null_mut();
-    let have_env = unsafe { CreateEnvironmentBlock(&mut env, token.0, 0) } != 0;
+    // Without the user's own environment the tray would inherit SYSTEM's; the
+    // Run key starts it at the next logon instead.
+    ensure!(
+        unsafe { CreateEnvironmentBlock(&mut env, token.0, 0) } != 0,
+        "Cannot build the user environment"
+    );
     let application = wide(exe);
     let mut command = wide(format!("\"{}\" tray", exe.display()));
     let directory = wide(exe.parent().context("Installed executable has no folder")?);
@@ -278,22 +283,16 @@ fn launch_in_session(exe: &Path, session: u32) -> Result<()> {
             null(),
             null(),
             0,
-            if have_env {
-                CREATE_UNICODE_ENVIRONMENT
-            } else {
-                0
-            },
-            if have_env { env } else { null_mut() },
+            CREATE_UNICODE_ENVIRONMENT,
+            env,
             directory.as_ptr(),
             &startup,
             &mut info,
         )
     };
     let code = unsafe { GetLastError() };
-    if have_env {
-        unsafe {
-            DestroyEnvironmentBlock(env);
-        }
+    unsafe {
+        DestroyEnvironmentBlock(env);
     }
     ensure!(ok != 0, "Cannot start the tray ({code})");
     unsafe {
@@ -323,7 +322,11 @@ impl TrayRestore {
         }
     }
     pub(super) fn quiesce(&mut self) -> Result<()> {
-        self.event = Some(Quiesce::signal()?);
+        // Nothing to ask when no tray runs. A squatted event name only means the
+        // trays cannot be asked; the caller then defers the update.
+        if !self.sessions.is_empty() {
+            self.event = Quiesce::signal().ok();
+        }
         Ok(())
     }
 }

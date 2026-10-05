@@ -347,8 +347,20 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     let p = ctx.palette;
     let score = Score::of(report);
     let items = attention_items(report);
-    let ids = crate::app::flow::recommended(report, &ctx.catalog.available);
-    let (tone, title, subtitle) = match score.verdict() {
+    // After a failed check the report is stale: never claim protection from it
+    // and offer no fix that cannot open.
+    let stale = ctx.check_error.is_some();
+    let ids = if stale {
+        Vec::new()
+    } else {
+        crate::app::flow::recommended(report, &ctx.catalog.available)
+    };
+    let verdict = if stale {
+        Verdict::Unknown
+    } else {
+        score.verdict()
+    };
+    let (tone, title, subtitle) = match verdict {
         Verdict::Protected => (
             Tone::Good,
             ctx.t("You're protected"),

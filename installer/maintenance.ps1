@@ -85,7 +85,11 @@ public static class SecblitzPaths {
         if ($UninstallerDataPath -and $Path -ieq $UninstallerDataPath -and $item.PSIsContainer) { throw 'Uninstaller data is not a regular file.' }
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse point refused: $Path" }
         $acl = Get-Acl -LiteralPath $Path
-        if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) {
+        $statusDirOwner = Join-Path $root 'Status'
+        $inStatus = ($Path -ieq $statusDirOwner -or $Path.StartsWith($statusDirOwner + '\', [StringComparison]::OrdinalIgnoreCase))
+        $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        # Files the monitor (LocalService) creates in the Status directory are owned by S-1-5-19.
+        if ($ownerSid -notin $trusted -and -not ($inStatus -and $ownerSid -eq 'S-1-5-19')) {
             throw "Untrusted owner: $Path"
         }
         foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
