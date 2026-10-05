@@ -82,7 +82,7 @@ enum AppCell {
 
 #[derive(Debug)]
 pub struct State {
-    cells: [Cell; Setting::ALL.len()],
+    cells: [Cell; Setting::PERSONAL.len()],
     apps: Apps,
     app_cells: [AppCell; APPS.len()],
     open: Vec<Detail>,
@@ -91,7 +91,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            cells: [Cell::Idle; Setting::ALL.len()],
+            cells: [Cell::Idle; Setting::PERSONAL.len()],
             apps: Apps::Idle,
             app_cells: [AppCell::Hidden; APPS.len()],
             open: Vec::new(),
@@ -133,7 +133,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Load => {
             let mut tasks = Vec::new();
-            for setting in Setting::ALL {
+            for setting in Setting::PERSONAL {
                 if !matches!(state.cells[cell(setting)], Cell::Working | Cell::Loading) {
                     state.cells[cell(setting)] = Cell::Loading;
                     tasks.push(query(ctx, setting));
@@ -337,6 +337,11 @@ fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
             Icon::Lock,
             ctx.t("Block macros in Office files from the internet"),
         ),
+        // Not listed on this page; kept so the match stays exhaustive.
+        Setting::SuggestedApps => (
+            Icon::Package,
+            ctx.t("Stop Windows from adding suggested apps again"),
+        ),
     }
 }
 
@@ -368,7 +373,7 @@ fn account_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             None,
         ));
     } else {
-        for setting in Setting::ALL {
+        for setting in Setting::PERSONAL {
             if let Some(r) = setting_row(state, ctx, setting) {
                 rows.push(r);
             }
@@ -588,8 +593,8 @@ mod tests {
     #[test]
     fn every_setting_has_a_cell_and_a_label_and_an_explainer() {
         let state = State::default();
-        assert_eq!(state.cells.len(), Setting::ALL.len());
-        for (i, setting) in Setting::ALL.iter().enumerate() {
+        assert_eq!(state.cells.len(), Setting::PERSONAL.len());
+        for (i, setting) in Setting::PERSONAL.iter().enumerate() {
             assert_eq!(cell(*setting), i);
             assert!(explain::for_check(setting.id()).is_some());
         }
