@@ -39,6 +39,8 @@ pub struct State {
     protected_open: bool,
     /// "Protected" list shows every row instead of the first few.
     protected_all: bool,
+    /// Web protection is installable and still off: show the optional card.
+    web_suggest: bool,
     /// `checked_at` of the check whose result is already on screen.
     seen_check: Option<u64>,
     /// Protected count currently shown beside the ring.
@@ -56,6 +58,7 @@ impl Default for State {
             processed: 0,
             protected_open: false,
             protected_all: false,
+            web_suggest: false,
             seen_check: None,
             shown: 0,
             count: None,
@@ -73,6 +76,8 @@ pub enum Msg {
     ToggleProtected,
     /// Show every protected row / only the first few.
     ToggleProtectedAll,
+    /// Web protection page report: is the suggestion card due?
+    WebSuggest(bool),
 }
 
 /// Free space below which the user is warned (decimal GB, as Windows shows it).
@@ -90,6 +95,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::ToggleDetails => state.details_open = !state.details_open,
         Msg::ToggleProtected => state.protected_open = !state.protected_open,
         Msg::ToggleProtectedAll => state.protected_all = !state.protected_all,
+        Msg::WebSuggest(on) => state.web_suggest = on,
     }
     Task::none()
 }
@@ -599,11 +605,33 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     if !items.is_empty() {
         page = page.push(attention_group(ctx, &items));
     }
+    // An optional suggestion: never part of the score or the headline.
+    if state.web_suggest {
+        page = page.push(web_card(ctx));
+    }
     let (count, labels) = protected_labels(report);
     if count > 0 {
         page = page.push(protected_group(state, ctx, count, &labels));
     }
     page.into()
+}
+
+fn web_card<'a>(ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    widgets::group(
+        p,
+        ctx.t("Suggestion"),
+        None,
+        None,
+        vec![widgets::row_item(
+            p,
+            Some(Icon::Globe),
+            ctx.t("Block ads, trackers and dangerous websites"),
+            Some(ctx.t("Optional. Stops many ads and scam websites before they load.")),
+            widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
+            Some(Message::Navigate(Page::Web)),
+        )],
+    )
 }
 
 fn attention_group<'a>(ctx: &'a Ctx, items: &[ToCheck]) -> Element<'a, Message> {
@@ -750,6 +778,28 @@ mod tests {
         };
         assert_eq!(score::to_check(&report).len(), 1);
         assert_eq!(protected_labels(&report).0, 1);
+    }
+
+    fn update_flag(state: &mut State) {
+        state.web_suggest = true;
+    }
+
+    #[test]
+    fn home_card_not_scored() {
+        let report = Report {
+            results: vec![
+                outcome("uac.enabled", "compliant"),
+                outcome("uac.consent", "attention"),
+            ],
+            ..Report::default()
+        };
+        let before = Score::of(&report);
+        let mut state = State::default();
+        assert!(!state.web_suggest);
+        update_flag(&mut state);
+        assert!(state.web_suggest);
+        assert_eq!(Score::of(&report), before);
+        assert_eq!(score::to_check(&report).len(), 1);
     }
 
     #[test]

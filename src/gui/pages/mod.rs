@@ -6,3 +6,4 @@ pub mod home;
 pub mod personal;
 pub mod settings;
 pub mod tools;
+pub mod web;

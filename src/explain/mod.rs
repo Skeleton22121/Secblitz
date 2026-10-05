@@ -9,6 +9,7 @@ mod detect;
 mod network;
 mod system;
 mod user;
+mod web;
 
 /// The three short lines shown when a person opens a check's details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub fn for_check(id: &str) -> Option<Explainer> {
         .or_else(|| network::get(id))
         .or_else(|| system::get(id))
         .or_else(|| user::get(id))
+        .or_else(|| web::get(id))
         .or_else(|| detect::get(id))
 }
 
