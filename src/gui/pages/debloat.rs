@@ -1,8 +1,4 @@
-//! Clean up apps page. OWNER: debloat agent.
-//!
-//! Flow: scan -> pick apps -> review sheet (Cancel is the safe choice) ->
-//! working sheet with per-app progress -> result. A second tab lists removed
-//! apps with a Restore button.
+//! Clean up apps page.
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
@@ -51,7 +47,6 @@ enum Sheet {
     Review,
     Working(Vec<(u16, Step)>),
     Done(Box<Finished>),
-    /// Asking before a saved copy is deleted.
     Delete(u16),
 }
 
@@ -59,16 +54,12 @@ enum Sheet {
 struct Finished {
     batch: Option<Batch>,
     error: Option<String>,
-    /// Machine-wide setting written (None = not asked for).
     policy_ok: Option<bool>,
-    /// Per-user setting written through the launcher (None = not yet known).
     user_ok: Option<bool>,
     asked_to_block: bool,
     /// Apps left installed because no copy could be saved first.
     kept: Vec<(u16, Kept)>,
-    /// Each app's last step in the run, for the Start menu drawing.
     steps: Vec<(u16, Step)>,
-    /// When the result appeared (the drawing's result starts here).
     at: Instant,
 }
 
@@ -89,7 +80,6 @@ impl Default for Finished {
 
 #[derive(Debug)]
 pub struct State {
-    /// Generation of the newest scan; results from older ones are ignored.
     scan_gen: u32,
     tab: Tab,
     scan: Scan,
@@ -99,40 +89,24 @@ pub struct State {
     block_again: bool,
     sheet: Sheet,
     details: bool,
-    /// Groups whose list is unfolded (Recommended starts open).
     open: Vec<Group>,
-    /// Groups showing every row instead of the first few.
     expanded: Vec<Group>,
     journal: Vec<Batch>,
     restoring: Option<u16>,
-    /// The restore in progress uses the saved copy (not the Store).
     restoring_copy: bool,
-    /// Each app's own icon, when one was found (see `debloat::icons`).
     icons: BTreeMap<u16, Handle>,
-    /// Catalog indices that have a saved copy.
     copies: BTreeSet<u16>,
-    /// Total size of all saved copies.
     saved_bytes: u64,
     /// App whose restore failed because the PC is offline (shows Retry).
     offline: Option<u16>,
-    /// Machine-wide setting result, arrives just before the batch result.
     policy: Option<bool>,
-    /// Precomputed in update(): installed catalog indices, per group.
     groups: Vec<(Group, Vec<u16>)>,
-    /// Precomputed in update(): removed and not yet restored (index, unix time).
     removed: Vec<(u16, u64)>,
-    /// The machine-wide "no suggested apps" block was made by Secblitz.
     suggested_machine: bool,
-    /// ... and the personal half (the signed-in person's own setting).
     suggested_user: bool,
-    /// Answers still to come while "Allow suggested apps again" runs, and
-    /// whether every one so far worked.
     allowing: Option<(u8, bool)>,
-    /// Start of the current wait animation, and the last frame time.
     spin: anim::Clock,
     now: Instant,
-    /// When the current removal started, and the installed apps it leaves
-    /// alone (they fill the Start menu drawing around the ones going).
     run_at: Instant,
     menu_fillers: Vec<u16>,
 }
@@ -172,7 +146,6 @@ impl Default for State {
     }
 }
 
-/// Events from the removal thread.
 #[derive(Debug, Clone)]
 pub enum Run {
     Step(Progress),
@@ -196,18 +169,15 @@ pub enum Msg {
     Confirm,
     Run(Run),
     UserBlocked(bool),
-    /// Animation frame (only subscribed while something moves).
     Frame(Instant),
     ToggleDetails,
     CloseResult,
     Restore(u16),
-    /// Restore from the Microsoft Store even when a saved copy exists.
     RestoreStore(u16),
     Restored(u16, Result<crate::broker::Reply, String>),
     RestoredOffline(u16, Result<Restored, String>),
     AskDelete(u16),
     Delete(u16),
-    /// Is the machine-wide suggested-apps block Secblitz's own?
     SuggestedMachine(bool),
     SuggestedUser(Result<crate::broker::Reply, String>),
     AllowSuggested,
@@ -221,8 +191,6 @@ fn wrap(msg: Msg) -> Message {
     Message::Debloat(msg)
 }
 
-/// Start an inventory tagged with a fresh generation; an older scan that
-/// lands later is dropped.
 fn inventory_task(state: &mut State) -> Task<Message> {
     state.scan_gen = state.scan_gen.wrapping_add(1);
     let generation = state.scan_gen;
@@ -232,7 +200,6 @@ fn inventory_task(state: &mut State) -> Task<Message> {
     )
 }
 
-/// Look up each app's own icon (blocking work on a thread).
 fn icons_task(installed: Vec<Installed>) -> Task<Message> {
     Task::perform(
         blocking(move || {
@@ -245,8 +212,6 @@ fn icons_task(installed: Vec<Installed>) -> Task<Message> {
     )
 }
 
-/// The app's own icon at `size`, or the generic package glyph when none is
-/// known. Same footprint either way, so rows keep their height.
 fn app_glyph<'a>(p: Palette, state: &State, index: u16, size: f32) -> Element<'a, Message> {
     match state.icons.get(&index) {
         Some(handle) => iced::widget::image(handle.clone())
@@ -257,7 +222,6 @@ fn app_glyph<'a>(p: Palette, state: &State, index: u16, size: f32) -> Element<'a
     }
 }
 
-/// Which apps have a saved copy, and how much room the copies use.
 fn copies_task() -> Task<Message> {
     Task::perform(
         blocking(|| {
@@ -273,8 +237,6 @@ fn copies_task() -> Task<Message> {
     )
 }
 
-/// Did Secblitz block suggested apps? Asks the record (machine part) and the
-/// signed-in person's own setting (through the launcher).
 fn suggested_task(ctx: &Ctx) -> Task<Message> {
     Task::batch([
         Task::perform(
@@ -295,7 +257,6 @@ fn suggested_task(ctx: &Ctx) -> Task<Message> {
     ])
 }
 
-/// Put the machine-wide block back the way it was (blocking).
 fn allow_machine() -> bool {
     #[cfg(windows)]
     {
@@ -310,7 +271,6 @@ fn allow_machine() -> bool {
     }
 }
 
-/// Inventory plus the removal journal and the saved copies.
 fn scan_task(state: &mut State) -> Task<Message> {
     Task::batch([
         inventory_task(state),
@@ -335,7 +295,6 @@ fn start_scan(state: &mut State) {
     state.spin = anim::Clock::at(state.now);
 }
 
-/// Frame subscription: on only while an animation is actually running.
 pub fn subscription(state: &State) -> Subscription<Message> {
     if is_animating(state) {
         iced::window::frames().map(|t| wrap(Msg::Frame(t)))
@@ -351,9 +310,6 @@ fn is_animating(state: &State) -> bool {
     if matches!(state.scan, Scan::Loading) || state.restoring.is_some() {
         return true;
     }
-    // The Start menu drawing asks for its own frames; the page only needs
-    // them for the small marks drawing in beside each finished app and for
-    // the spinner while Windows is asked about suggested apps.
     match &state.sheet {
         Sheet::Working(items) => items.iter().any(|(_, step)| match step {
             Step::Done(_, at) => !anim::Clock::at(*at).done(anim::SLOW, state.now),
@@ -368,7 +324,6 @@ fn refresh_removed(state: &mut State) {
     state.removed = debloat::journal::still_removed(&state.journal, debloat::catalog().len());
 }
 
-/// Close the review sheet or the result with Escape. Working cannot be dismissed.
 pub fn escape(state: &mut State) {
     if matches!(
         state.sheet,
@@ -378,12 +333,10 @@ pub fn escape(state: &mut State) {
     }
 }
 
-// Translation sources (rows live in i18n-pending/a6.tsv until merged).
 const BLOCKED_NOTE: &str = "Windows was asked not to add suggested apps.";
 const ALLOW_AGAIN: &str = "Allow suggested apps again";
 const ALLOWED_AGAIN: &str = "Windows can add suggested apps again.";
 
-/// Secblitz blocked suggested apps (machine part, personal part, or both).
 fn suggested_blocked(state: &State) -> bool {
     state.suggested_machine || state.suggested_user
 }
@@ -435,8 +388,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             icons
         }
         Msg::Icons(found) => {
-            // Keep what we had: a later look-up that misses one never takes
-            // an icon away.
             state.icons.extend(found);
             Task::none()
         }
@@ -678,7 +629,6 @@ fn couldnt_bring_back(ctx: &Ctx, name: &str) -> Task<Message> {
     )
 }
 
-/// Bring an app back through the Microsoft Store.
 fn store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
     if app_of(index).store_id.is_none() {
         return Task::none();
@@ -693,8 +643,6 @@ fn store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> 
     })
 }
 
-/// The app is installed again: mark it, record it, refresh the lists, tell
-/// the person.
 fn restored_ok(
     state: &mut State,
     ctx: &mut Ctx,
@@ -729,10 +677,7 @@ fn restored_ok(
             }),
             |j| wrap(Msg::JournalLoaded(j)),
         ),
-        // The app is installed again: list it under "Apps to remove" without
-        // a loading state (the journal is reloaded above, after it is marked).
         inventory_task(state),
-        // The app is back: mark it and drop its saved copy, then refresh the list.
         Task::perform(blocking(move || debloat::finish_restore(index)), |_| ())
             .then(|_| copies_task()),
         toast(text, tone),
@@ -767,7 +712,6 @@ fn on_restored_offline(
             restored_ok(state, ctx, index, text, Tone::Neutral)
         }
         Ok(Restored::Damaged) => {
-            // With a Store listing the app still comes back: say how.
             let text = ctx
                 .t(if can_use_store {
                     "The saved copy of {name} is damaged, so Secblitz is getting it from the Microsoft Store instead."
@@ -935,7 +879,6 @@ fn record_history(ctx: &Ctx, removed: usize) {
     }
 }
 
-// ---- view ------------------------------------------------------------------
 
 fn count_text(ctx: &Ctx, n: usize, one: &str, many: &str) -> String {
     let key = if n == 1 { one } else { many };
@@ -969,7 +912,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Tab::Apps => apps_tab(state, ctx),
         Tab::Removed => removed_tab(state, ctx),
     };
-    // Header to content is S6 on every page; tabs sit closer to their list.
     let mut page = column![header, column![tabs, body].spacing(theme::S4)]
         .spacing(theme::S6)
         .width(Length::Fill);
@@ -991,8 +933,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     page.into()
 }
 
-/// The open review / working / result sheet, drawn by the shell above the
-/// whole window (outside the page's scrollable).
 pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     match &state.sheet {
         Sheet::None => None,
@@ -1057,8 +997,6 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     }
 }
 
-/// The action bar the shell pins below the scrolling list, so Remove stays in
-/// reach however long the list is. Only shown while the app list is on screen.
 pub fn footer<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     let listing = state.tab == Tab::Apps
         && !state.groups.is_empty()
@@ -1066,7 +1004,6 @@ pub fn footer<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>
     listing.then(|| action_bar(state, ctx))
 }
 
-/// Selected count plus the one primary action.
 fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
     let n = state.selected.len();
@@ -1130,7 +1067,6 @@ fn group_text(group: Group) -> (&'static str, &'static str, Icon) {
     }
 }
 
-/// Rows shown before "Show more" in one group.
 const GROUP_ROWS: usize = 8;
 
 fn group_card<'a>(
@@ -1159,7 +1095,6 @@ fn group_card<'a>(
     let open = state.open.contains(&group);
     let expanded = state.expanded.contains(&group);
     let mut body = column![].spacing(theme::S1);
-    // Lined up with the app names below it.
     body = body.push(
         container(widgets::small(p, ctx.t(subtitle))).padding(Padding {
             top: theme::S1,
@@ -1229,7 +1164,6 @@ fn group_card<'a>(
     .into()
 }
 
-// ---- removed apps tab ---------------------------------------------------
 
 fn ago(ctx: &Ctx, t: u64) -> String {
     let days = debloat::now().saturating_sub(t) / 86_400;
@@ -1313,7 +1247,6 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             None,
         ));
     }
-    // The saved-copies total sits under the heading, aligned with it.
     let summary = (state.saved_bytes > 0).then(|| {
         ctx.t("Saved copies use about {size}.")
             .replace("{size}", &crate::app::tools::size_phrase(state.saved_bytes))
@@ -1321,12 +1254,8 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     widgets::group(p, ctx.t("Removed apps"), summary, None, rows)
 }
 
-/// What a Removed apps row offers. Messages are real so the view can use
-/// them directly; tests compare their debug text.
 struct RowActions {
-    /// The main button (Restore).
     primary: Option<Msg>,
-    /// Extra choices for the overflow menu: label, message, danger.
     menu: Vec<(Icon, &'static str, Msg, bool)>,
 }
 
@@ -1415,12 +1344,7 @@ fn delete_sheet<'a>(index: u16, ctx: &'a Ctx) -> Element<'a, Message> {
     .into()
 }
 
-// ---- sheets --------------------------------------------------------------
 
-/// Tallest the working sheet's app list and the result's middle part grow
-/// before they scroll. With the Start menu drawing above them this keeps
-/// the whole sheet (and its Done button) on screen in the smallest window,
-/// 880 by 600.
 const WORKING_LIST_MAX: f32 = 200.0;
 const RESULT_BODY_MAX: f32 = 200.0;
 
@@ -1474,7 +1398,6 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         scroll_list(p, list, 220.0),
     ]
     .spacing(theme::S3);
-    // Removal only happens once a copy is saved, so every app can come back.
     col = col.push(widgets::inline_notice(
         p,
         Tone::Neutral,
@@ -1491,7 +1414,6 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("Game Bar recording and Xbox games may stop working"),
         ));
     }
-    // Off by default; one plain sentence says what it does.
     col = col.push(
         column![
             widgets::checkbox(
@@ -1504,7 +1426,6 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 p,
                 ctx.t("Windows sometimes installs apps on its own. Tick this to ask it to stop."),
             ))
-            // Lined up with the checkbox label.
             .padding(Padding {
                 left: theme::S1 + theme::CHECK + theme::S3,
                 ..Padding::ZERO
@@ -1548,8 +1469,6 @@ fn working_sheet<'a>(
         .count();
     let mut list = column![].spacing(theme::S3);
     for (index, step) in items {
-        // The app's own icon sits next to the name, and the Start menu above
-        // shows the app being worked on, so no glyph until it is done.
         let blank = || -> Element<'a, Message> {
             space::horizontal().width(theme::CHECK).into()
         };
@@ -1622,7 +1541,6 @@ fn working_sheet<'a>(
     .into()
 }
 
-/// What the Start menu drawing shows for one app's step.
 fn fate_of(step: &Step) -> Fate {
     match step {
         Step::Waiting => Fate::Waiting,
@@ -1635,11 +1553,6 @@ fn fate_of(step: &Step) -> Fate {
     }
 }
 
-/// An app's fate in the result. One the run never reported on takes its
-/// fate from the batch, at the moment the result appeared; when the whole
-/// run failed it was not removed. An app the batch does not mention at all
-/// was no longer installed (the removal skips those without a word), so
-/// there was nothing to remove.
 fn final_fate(index: u16, step: &Step, done: &Finished) -> Fate {
     if matches!(step, Step::Done(..)) {
         return fate_of(step);
@@ -1661,8 +1574,6 @@ fn final_fate(index: u16, step: &Step, done: &Finished) -> Fate {
     }
 }
 
-/// The apps that stay, around the ones being removed: a few parts of
-/// Windows every PC has, then the person's own apps they kept.
 fn menu_fillers(state: &State, lang: Lang) -> Vec<Filler> {
     [
         (Glyph::Gear, lang.t("Settings")),
@@ -1680,7 +1591,6 @@ fn menu_fillers(state: &State, lang: Lang) -> Vec<Filler> {
     .collect()
 }
 
-/// The drawing's hover texts, translated.
 fn menu_labels(lang: Lang, result: String) -> Labels {
     Labels {
         waiting: lang.t("Waiting to remove {name}"),
@@ -1695,8 +1605,6 @@ fn menu_labels(lang: Lang, result: String) -> Labels {
     }
 }
 
-/// The Start menu drawing at the top of the working and result sheets.
-/// Same size in both, so the sheet does not jump when the result arrives.
 fn removal_menu<'a>(
     state: &State,
     ctx: &Ctx,
@@ -1716,7 +1624,6 @@ fn removal_menu<'a>(
     ))
 }
 
-/// What [`removal_menu`] draws.
 fn menu_model(
     state: &State,
     palette: theme::Palette,
@@ -1744,7 +1651,6 @@ fn menu_model(
     }
 }
 
-/// Plain reason an app was left installed.
 fn kept_text(kept: &Kept) -> &'static str {
     match kept {
         Kept::NoSpace => "Kept: not enough free space to save a copy. Free up some space and try again.",
@@ -1773,7 +1679,6 @@ fn result_block<'a>(
     ]
     .spacing(theme::S2)
     .align_y(Alignment::Center);
-    // Without any known icon keep the compact "a, b, c" line.
     if !list.iter().any(|(i, _)| state.icons.contains_key(i)) {
         let line = list.into_iter().map(|(_, n)| n).collect::<Vec<_>>();
         return column![head, widgets::muted(p, line.join(", "))]
@@ -1793,8 +1698,6 @@ fn result_block<'a>(
 
 fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
-    // The drawing and title stay put; what follows scrolls when it is long,
-    // so the Done button is always on screen.
     let mut head = column![].spacing(theme::S3);
     let mut body: Vec<Element<'a, Message>> = Vec::new();
     let fates = done
@@ -1892,7 +1795,6 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Restart your PC and try again. Nothing else was changed."),
                 ));
             }
-            // Plain-words reasons only; the raw text stays in the journal.
             for f in &batch.failed {
                 let line = format!(
                     "{}: {}",
@@ -1965,7 +1867,6 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
         sheet = sheet.push(
             container(
                 scrollable(
-                    // Room on the right for the scrollbar when it shows.
                     container(column(body).spacing(theme::S3))
                         .padding(Padding::ZERO.right(theme::S3))
                         .width(Length::Fill),
@@ -1991,7 +1892,6 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
         .into()
 }
 
-/// "More details" expander with the raw lines (closed by default).
 fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a, Message> {
     let p = pal(ctx);
     let mut block = column![].spacing(theme::S1);
@@ -2012,7 +1912,6 @@ fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a
     )
 }
 
-/// Whether a finished scan is the newest one started.
 pub fn is_current_scan(state: &State, generation: u32) -> bool {
     state.scan_gen == generation
 }
@@ -2022,8 +1921,6 @@ pub fn is_busy(state: &State) -> bool {
     !matches!(state.sheet, Sheet::None)
 }
 
-/// Warm the page in the background. A list already on screen is refreshed
-/// silently; only a page without data shows its loading state.
 #[allow(clippy::items_after_test_module)]
 pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if is_busy(state) {
@@ -2058,8 +1955,6 @@ mod tests {
             fate_of(&Step::Done(ItemResult::Kept(Kept::NoSpace), t)),
             Fate::Kept(t)
         );
-        // In the result, reported steps keep their own moment; an app the
-        // run never reported on takes its fate from the batch.
         let done = Finished {
             batch: Some(Batch {
                 removed: vec![Removed {
@@ -2085,18 +1980,12 @@ mod tests {
         assert_eq!(final_fate(1, &Step::Working, &done), Fate::Removed(t2));
         assert_eq!(final_fate(2, &Step::Waiting, &done), Fate::Refused(t2));
         assert_eq!(final_fate(3, &Step::Waiting, &done), Fate::Stays(t2));
-        // An app the batch never mentions was no longer installed: not
-        // "Windows protects it", just gone.
         assert_eq!(final_fate(4, &Step::Waiting, &done), Fate::Absent(t2));
-        // The whole run failed: nothing it did not report was removed.
         let failed = Finished {
             at: t2,
             ..Finished::default()
         };
         assert_eq!(final_fate(1, &Step::Working, &failed), Fate::Refused(t2));
-        // The drawing for this result: the removed app and the one that was
-        // not installed both leave once they have gone, and the tiles after
-        // them close the gap; the one that could not be removed stays.
         let steps = [
             (1, Step::Done(ItemResult::Removed, t)),
             (2, Step::Working),
@@ -2113,8 +2002,6 @@ mod tests {
             t2,
             "x".into(),
         );
-        // Grid: Settings, removed, Explorer, Security, Store, refused,
-        // not installed, Notepad.
         let sc = m.scene(t2 + Duration::from_millis(300));
         assert_eq!(m.label(start_menu::Part::Tile(6), &sc), app_of(4).name);
         assert_eq!(

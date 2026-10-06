@@ -1,86 +1,4 @@
 //! Hairline drawings: calm line illustrations that answer the pointer.
-//!
-//! The visual and motion reference is the approved HTML prototype (its `HX`
-//! engine, `PARTS` and one build/update function per drawing). This module is
-//! the shared toolkit; each drawing is one `canvas::Program` built on it.
-//!
-//! # Rules every drawing keeps
-//!
-//! * Lines and shapes in the greys ([`Ink::line`], [`Ink::faint`],
-//!   [`Ink::rule`], [`Ink::ink`]); plates (shapes that hide what is behind)
-//!   filled with [`Ink::plate`], the background the drawing sits on.
-//! * At most four colours, each with one [`Meaning`]: accent for work in
-//!   progress, good for done or protected, warn for needs attention (and ads
-//!   and trackers), bad for failed (and scam sites). A coloured part strokes
-//!   in its colour and fills with [`Ink::tint`] (13 percent into the plate).
-//! * Line widths are screen pixels, 1 to 2.5 ([`W_FAINT`]..=[`W_THICK`]),
-//!   whatever the drawing's size. Map geometry by hand through a [`Stage`];
-//!   never `Frame::scale` (the CPU renderer would scale the widths too).
-//!   `Frame::translate` and `Frame::rotate` are fine.
-//! * Under about 150 strokes and fills per frame: the CPU renderer runs on
-//!   real customer PCs.
-//! * Reduced motion ([`anim::reduced`]): loops show one chosen still frame
-//!   ([`Live::ambient`]), transitions jump to their end ([`Live::age`] is
-//!   [`SETTLED_AGE`]), springs jump ([`Spring::tick`]), no tilt and no
-//!   pulses. Hover names and clicks still work.
-//! * Frames only while something moves: [`Live::redraw`] asks for the next
-//!   frame while the drawing is busy and returns `None` once it has
-//!   settled. The drawing drives itself from the window's redraw events (as
-//!   `appear.rs` does), so the page needs no frame subscription for it and a
-//!   page that stops showing the drawing stops its frames.
-//! * Light and dark: everything comes from the [`Palette`], nothing is a
-//!   literal colour.
-//!
-//! # How a drawing is built
-//!
-//! The page passes plain inputs and keeps no animation state of its own:
-//!
-//! * the [`Palette`] and the [`Plate`] it sits on,
-//! * a small state enum (for example `Idle, Working, Done, Attention`),
-//! * the `Instant` that state began (`changed`),
-//! * the page's `now` (its last frame time, or `changed` when it has no
-//!   frame subscription),
-//! * translated hover names, made with `ctx.t(...)` on the page.
-//!
-//! ```ignore
-//! Magnifier {
-//!     p,
-//!     plate: Plate::Surface,
-//!     status: Status::Checking,
-//!     progress: Some(state.progress),
-//!     changed: state.changed,
-//!     now: state.now,
-//!     labels: Labels::new(|s| ctx.t(s)),
-//! }
-//! .view(magnifier::COMPACT)
-//! ```
-//!
-//! The program's `State` holds a [`Live`] (pointer, tilt, hovered part,
-//! click pulses, its own frame clock) plus the drawing's own [`Spring`]s.
-//! Springs are stepped in `update` on frame events, so `draw` is a pure
-//! function of the inputs and the state:
-//!
-//! 1. `update`: call [`Live::fresh`] with `changed` to reset per-state
-//!    things once, build the [`Stage`] from `bounds`, build the [`Hotspots`]
-//!    from the state (one function, used again in `draw`), call
-//!    [`Live::update`], step springs by `step.dt`, react to
-//!    `step.gesture` / [`Step::click`], and return
-//!    `live.redraw(&step, busy)` where `busy` says a loop runs, a
-//!    transition is unfinished ([`Live::age`] below its end) or a spring
-//!    moves (and is `false` under reduced motion).
-//! 2. `draw`: one `Frame`, `age = live.age(changed, now)`,
-//!    `t = live.ambient(now, STILL)`, every phase from [`phase`] with the
-//!    app's curves (`DECELERATE`, `STANDARD`, `EMPHASIZED`,
-//!    `EASE_IN_OUT`), each parallax layer drawn through
-//!    `live.layer(&stage, Layer::Back | Mid | Front)`, then
-//!    `live.pulses.draw(..)` and `live.draw_tooltip(..)` last.
-//! 3. `mouse_interaction`: `live.interaction(bounds, cursor, draggable)`.
-//!
-//! Icons come from [`Glyph`] ([`Stage::icon`]); any other SVG path data
-//! parses with [`PathData::parse`]; [`PathData::partial`] draws a line in.
-//! The prototype's shared objects are in [`parts`]: [`laptop`],
-//! [`monitor`], [`badge`] and [`shield_mark`].
-//! The test at the bottom of this file is a complete tiny drawing.
 pub mod glyph;
 pub mod live;
 pub mod magnifier;
@@ -132,9 +50,7 @@ mod example {
     const UNITS: Size = Size::new(120.0, 96.0);
     const CENTRE: Point = pt(60.0, 48.0);
     const R: f32 = 18.0;
-    /// Ambient second shown under reduced motion.
     const STILL: f32 = 0.6;
-    /// When the done transition has finished.
     const DONE_END: f32 = 1.05;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,7 +193,6 @@ mod example {
         Event::Window(window::Event::RedrawRequested(at))
     }
 
-    /// One 16 ms frame through the program.
     fn tick(
         st: &mut State,
         prog: &Beacon,
@@ -309,7 +224,6 @@ mod example {
         let off = mouse::Cursor::Available(Point::new(500.0, 500.0));
         let mut clock = t0;
 
-        // Idle and untouched: one frame, then nothing more is asked for.
         assert!(!wants_frame(tick(&mut st, &prog, off, &mut clock)));
 
         // Pointer over the badge (unit 60,48 is pixel 120,96): named, and a
@@ -327,7 +241,6 @@ mod example {
             mouse::Interaction::Pointer
         );
 
-        // Click the badge: it pops (a spring moves), no pulse.
         let down = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let up = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         canvas::Program::update(&prog, &mut st, &down, BOUNDS, over);
@@ -336,7 +249,6 @@ mod example {
         )));
         assert!(st.pop.moving() && !st.live.pulses.alive());
 
-        // Frames keep coming while it settles, then stop.
         let mut frames = 0;
         while wants_frame(tick(&mut st, &prog, over, &mut clock)) {
             frames += 1;
@@ -345,7 +257,6 @@ mod example {
         assert!(frames > 5);
         assert!(!st.pop.moving() && !st.live.moving());
 
-        // Click on empty space: a pulse, which also ends by itself.
         let empty = mouse::Cursor::Available(Point::new(10.0, 10.0));
         canvas::Program::update(
             &prog,
@@ -367,7 +278,6 @@ mod example {
         }
         assert!(!st.live.pulses.alive());
 
-        // Working loops: every frame asks for the next.
         let working = Beacon {
             status: Status::Working,
             changed: clock,
@@ -378,7 +288,6 @@ mod example {
             assert!(wants_frame(tick(&mut st, &working, empty, &mut clock)));
         }
 
-        // Done: frames until the tick has drawn in, then quiet.
         let done = Beacon {
             status: Status::Done,
             changed: clock,
@@ -409,7 +318,6 @@ mod example {
         };
         let mut st = State::default();
         let over = mouse::Cursor::Available(Point::new(120.0, 96.0));
-        // A looping state still asks for nothing.
         assert!(!wants_frame(canvas::Program::update(
             &prog,
             &mut st,
@@ -419,7 +327,6 @@ mod example {
         )));
         assert_eq!(st.live.ambient(t0, STILL), STILL);
         assert_eq!(st.live.age(t0, t0), SETTLED_AGE);
-        // Hover still names the part (one redraw for the change)...
         let moved = Event::Mouse(mouse::Event::CursorMoved {
             position: Point::new(120.0, 96.0),
         });
@@ -427,7 +334,6 @@ mod example {
             &prog, &mut st, &moved, BOUNDS, over
         )));
         assert_eq!(st.live.hover, Some(Part::Badge));
-        // ...with no tilt, and the next frame is the last.
         assert_eq!(st.live.tilt.layers(), [iced::Vector::ZERO; 3]);
         assert!(!wants_frame(canvas::Program::update(
             &prog,
@@ -436,7 +342,6 @@ mod example {
             BOUNDS,
             over
         )));
-        // A click still lands (the spring jumps, no pulse).
         let down = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let up = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         canvas::Program::update(&prog, &mut st, &down, BOUNDS, over);

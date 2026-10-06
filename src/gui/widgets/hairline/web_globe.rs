@@ -1,35 +1,4 @@
-//! Web protection: a turning globe sends traffic down to your PC (the
-//! prototype's `WEB.globe`).
-//!
-//! Dots travel along three curved lanes from the globe to a monitor. When
-//! web protection is on, a dome stands over the PC: ads, trackers and scam
-//! websites stop at it, get a cross stamped on them and fall away, while
-//! ordinary web pages go through. When it is off, paused or not working the
-//! dome is gone, dashed or flickering, and the ads land on the screen.
-//!
-//! Colours keep their meaning: the turning globe is the accent (work in
-//! progress), the dome and its tick are good when protection is on, ads and
-//! trackers are warn, scam sites bad, web pages grey. A paused dome is grey
-//! and dashed, a dome that is getting its lists ready is the accent and
-//! dashed, a broken one is warn and flickers.
-//!
-//! The person can drag the globe to spin it (the push eases back), hover any
-//! part or dot to see its name, and click a flying ad, tracker or scam site
-//! to block it by hand while protection is on.
-//!
-//! # Frames
-//!
-//! The traffic is illustrative, so it does not run forever: it flows for
-//! [`AWAKE_FOR`] seconds after the page shows the drawing, after the state
-//! changes and after the pointer moves over it, then the last dots finish
-//! their trip, the globe coasts to a stop and frames stop. Real blocks keep
-//! it honest: when the page's blocked counts go up while protection is on,
-//! that many ads, trackers or scam sites (a few at most) fly in and get
-//! stopped; while the rest of the drawing rests, one now and then.
-//!
-//! Under reduced motion it is one still picture per state (one ad stopped at
-//! the dome, or one sitting on the screen); hover names, clicks and dragging
-//! the globe still work, without any motion of their own.
+//! Web protection: a turning globe sends traffic down to your PC.
 use super::motion::{lerp, phase, Spring};
 use super::parts::monitor;
 use super::pointer::{Area, Gesture, Hotspots, Layer, Spot};
@@ -45,92 +14,56 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::LazyLock;
 use std::time::Instant;
 
-/// Size on the page, logical pixels.
 pub const SIZE: Size = Size::new(250.0, 200.0);
-/// The drawing's own box: the part of the prototype's 320 by 256 box the
-/// picture fills (x 40 to 314, y 36 to 244), with 8 units around it for the
-/// 5-unit tilt, so it sits centred in [`SIZE`] (about 0.86 px per unit).
 const UNITS: Size = Size::new(290.0, 224.0);
-/// Where [`UNITS`] starts in the prototype's box.
 const VIEW_X: f32 = 32.0;
 const VIEW_Y: f32 = 28.0;
 
-/// A point given in the prototype's coordinates, in this drawing's units.
 const fn proto(x: f32, y: f32) -> Point {
     pt(x - VIEW_X, y - VIEW_Y)
 }
 
-/// The globe.
 const GC: Point = proto(86.0, 82.0);
 const GR: f32 = 46.0;
-/// The monitor: centre, top, panel size.
 const MON_CX: f32 = 236.0 - VIEW_X;
 const MON_TOP: f32 = 150.0 - VIEW_Y;
 const MON_W: f32 = 104.0;
 const MON_H: f32 = 66.0;
-/// Middle of the screen, where every lane ends.
 const SCR: Point = pt(MON_CX, MON_TOP + MON_H / 2.0);
-/// The dome: the top half of an ellipse standing on the desk.
 const DC: Point = proto(236.0, 238.0);
 const DRX: f32 = 78.0;
 const DRY: f32 = 116.0;
-/// The small shield on top of the dome.
 const CREST: Point = pt(DC.x, DC.y - DRY - 0.2);
 const CREST_SIZE: f32 = 21.6;
-/// Three quadratic lanes: start (at the globe), control, end (the screen).
 const LANES: [[Point; 3]; 3] = [
     [proto(120.0, 100.0), proto(180.0, 70.0), SCR],
     [proto(118.0, 70.0), proto(200.0, 30.0), SCR],
     [proto(108.0, 120.0), proto(150.0, 170.0), SCR],
 ];
 
-/// Lane travelled per second (fraction of the lane).
 const SPEED: f32 = 0.42;
-/// The globe's resting spin, radians per second.
 const SPIN: f32 = 0.5;
-/// Spin added per unit dragged sideways (the prototype's 0.06).
 const DRAG_SPIN: f32 = 0.06;
-/// Fastest spin a drag can give.
 const MAX_SPIN: f32 = 8.0;
-/// Below this the coasting globe stops.
 const SPIN_REST: f32 = 0.01;
-/// Spin added by a click on the globe.
 const CLICK_SPIN: f32 = 2.0;
-/// Ambient second the still picture shows (the prototype's `still`).
 const STILL: f32 = 0.4;
-/// Seconds of flowing traffic after a wake.
 pub const AWAKE_FOR: f32 = 12.0;
-/// At most this many dots at once.
 const MAX_ITEMS: usize = 8;
-/// Real blocks shown per kind for one poll, and waiting in all, while the
-/// traffic flows.
 const REAL_PER_KIND: u64 = 2;
 const MAX_QUEUE: usize = 5;
-/// While resting, at most one real block per this many seconds (the newest),
-/// so steady browsing does not keep the page drawing.
 const REST_REAL_GAP: f32 = 10.0;
-/// When the state change's dome transition is over.
 const TRANSITION_END: f32 = 0.9;
-/// Seconds after a block when the cross is fully stamped; the fall starts
-/// at [`FALL_AT`].
 const STAMP: f32 = 0.25;
 const FALL_AT: f32 = 0.35;
-/// How long a dome flash lasts.
 const FLASH_LIFE: f32 = 0.6;
 
-/// What the drawing shows; the page maps its status line to this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Guard {
-    /// Blocking: the dome stands and stops ads, trackers and scam sites.
     On,
-    /// Turned on, block lists not ready yet: a dashed accent dome, nothing
-    /// stopped yet.
     Starting,
-    /// Paused for an hour: a dashed grey dome, traffic slowed.
     Paused,
-    /// Every switch off: no dome.
     Off,
-    /// Should block but is not working: a flickering warn dome.
     Broken,
 }
 
@@ -138,7 +71,6 @@ impl Guard {
     pub fn blocks(self) -> bool {
         self == Guard::On
     }
-    /// Paused traffic drifts at under half speed.
     fn speed(self) -> f32 {
         if self == Guard::Paused {
             0.45
@@ -148,7 +80,6 @@ impl Guard {
     }
 }
 
-/// The hover names and the ad's mark, translated by the page.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Labels {
     pub ad: String,
@@ -157,18 +88,13 @@ pub struct Labels {
     pub page: String,
     pub pc: String,
     pub internet: String,
-    /// The dome when protection is on.
     pub on: String,
-    /// The dome while the block lists get ready.
     pub starting: String,
-    /// The dome when paused or not working.
     pub not_blocking: String,
-    /// The short word printed on a flying ad.
     pub ad_mark: String,
 }
 
 impl Labels {
-    /// Every name through `t` (the page passes `|k| ctx.t(k)`).
     pub fn new(t: impl Fn(&str) -> String) -> Labels {
         Labels {
             ad: t("Ad"),
@@ -185,7 +111,6 @@ impl Labels {
     }
 }
 
-/// What travels down a lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Page,
@@ -195,14 +120,11 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// The blocked counts' order: ads, trackers, dangerous websites.
     const COUNTED: [Kind; 3] = [Kind::Ad, Kind::Tracker, Kind::Scam];
 
     fn blockable(self) -> bool {
         self != Kind::Page
     }
-    /// Size against the prototype's shapes (a little larger than its 0.8
-    /// and 0.7, so the ad's mark stays readable at 250 px).
     fn scale(self) -> f32 {
         if self == Kind::Page {
             0.75
@@ -214,13 +136,9 @@ impl Kind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    /// Travelling down its lane.
     Go,
-    /// Stopped by the dome (or by hand): stamped, then falls.
     Blocked,
-    /// Arrived at the PC: fades into the screen.
     In,
-    /// Not protected: an ad that reached the PC sits on the screen a moment.
     Landed,
 }
 
@@ -229,20 +147,14 @@ struct Item {
     id: u32,
     kind: Kind,
     lane: usize,
-    /// How far down its lane, 0..=1.
     u: f32,
     phase: Phase,
     at: Point,
-    /// Seconds this item has lived (scene time).
     life: f32,
-    /// `life` when the current phase began.
     since: f32,
-    /// Falling speed once blocked.
     vy: f32,
     op: f32,
-    /// 0..=1, how hovered it is (it grows and slows under the pointer).
     grow: f32,
-    /// Which place on the screen a landed ad takes.
     slot: u8,
 }
 
@@ -264,7 +176,6 @@ impl Item {
         }
     }
 
-    /// How much of the cross is stamped on it, 0..=1.
     fn stamp(&self) -> f32 {
         if self.phase == Phase::Blocked {
             ((self.life - self.since) / STAMP).clamp(0.0, 1.0)
@@ -282,17 +193,13 @@ impl Item {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Outcome {
     Nothing,
-    /// Stopped at the dome here.
     Blocked(Point),
-    /// Reached the screen unprotected: give it a place.
     Landed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Flash {
-    /// Scene clock when it began.
     at: f32,
-    /// Where on the dome (ellipse angle).
     angle: f32,
 }
 
@@ -301,7 +208,6 @@ const NO_FLASH: Flash = Flash {
     angle: 0.0,
 };
 
-/// The parts a person can point at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
     Globe,
@@ -310,7 +216,6 @@ pub enum Part {
     Item(u32),
 }
 
-/// The canvas state: pointer and clock, plus the traffic.
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
     live: Live<Part>,
@@ -320,29 +225,18 @@ pub struct State {
     next_id: u32,
     next_spawn: f32,
     rng: u32,
-    /// Globe turn, radians, and its speed.
     spin: f32,
     vspin: f32,
-    /// Scene seconds the lanes have flowed (slowed while paused, stopped
-    /// while resting).
     flow: f32,
-    /// Scene seconds, for flashes and the broken flicker.
     clock: f32,
-    /// Seconds since the last wake.
     quiet: f32,
-    /// 1 while awake, eases to 0 at rest (fades the flicker and the march).
     level: Spring,
     flashes: [Flash; 4],
-    /// The page's blocked counts last seen.
     counts: Option<[u64; 3]>,
-    /// Real blocks waiting to fly in.
     queue: Vec<Kind>,
-    /// When the last real block was let in while resting.
     rest_real: Option<Instant>,
     landed: u8,
-    /// A drag that began on the globe is spinning it.
     spinning: bool,
-    /// The items are the reduced-motion still picture.
     still: bool,
 }
 
@@ -383,9 +277,6 @@ fn seed() -> u32 {
         | 1
 }
 
-// ---------------------------------------------------------------------------
-// Geometry
-// ---------------------------------------------------------------------------
 
 fn quad(l: &[Point; 3], u: f32) -> Point {
     let v = 1.0 - u;
@@ -399,18 +290,15 @@ fn lane_point(lane: usize, u: f32) -> Point {
     quad(&LANES[lane % LANES.len()], u.clamp(0.0, 1.0))
 }
 
-/// Inside the dome (the half ellipse over the desk).
 fn in_dome(p: Point) -> bool {
     let (ex, ey) = ((p.x - DC.x) / DRX, (p.y - DC.y) / DRY);
     ex * ex + ey * ey < 1.0 && p.y <= DC.y
 }
 
-/// The ellipse angle of the dome point nearest the direction of `p`.
 fn dome_angle(p: Point) -> f32 {
     ((p.y - DC.y) / DRY).atan2((p.x - DC.x) / DRX)
 }
 
-/// Where `lane` first enters the dome, as a lane fraction.
 fn dome_entry(lane: usize) -> f32 {
     (0..=400)
         .map(|i| i as f32 / 400.0)
@@ -418,13 +306,11 @@ fn dome_entry(lane: usize) -> f32 {
         .unwrap_or(1.0)
 }
 
-/// Where a landed ad sits on the screen.
 fn landed_spot(slot: u8) -> Point {
     let s = f32::from(slot % 3);
     pt(SCR.x + (s - 1.0) * 22.0, SCR.y + (f32::from(slot % 2) * 8.0 - 4.0))
 }
 
-/// Points along the dome's arc between two ellipse angles.
 fn dome_arc(rx: f32, ry: f32, a0: f32, a1: f32, n: usize) -> Vec<Point> {
     (0..=n)
         .map(|i| {
@@ -485,25 +371,17 @@ fn dashed(s: &Stage, pts: &[Point], dash: f32, gap: f32, shift: f32) -> Path {
     })
 }
 
-/// A seeded wobble so a broken dome flickers without timers (prototype).
 fn flicker(t: f32) -> f32 {
     0.5 + 0.5 * (t * 23.0).sin() * (t * 7.3 + 1.0).sin() * (t * 3.1).sin()
 }
 
 static STAMP_PATH: LazyLock<PathData> = LazyLock::new(|| PathData::of("M-7 -7l14 14M7 -7l-14 14"));
-/// Pause bars inside the crest's 24-unit shield box.
 static PAUSE_PATH: LazyLock<PathData> = LazyLock::new(|| PathData::of("M10 9.2v5.4M14 9.2v5.4"));
 
-// ---------------------------------------------------------------------------
-// The scene
-// ---------------------------------------------------------------------------
 
-/// The still picture for reduced motion: a web page on its way, and an ad
-/// stopped at the dome (on) or sitting on the screen (not blocking).
 fn still_items(guard: Guard) -> Vec<Item> {
     let page = Item::new(0, Kind::Page, 1, 0.35);
     if guard.blocks() {
-        // Lane 0 meets the dome clear of the crest and the screen.
         let mut ad = Item::new(1, Kind::Ad, 0, dome_entry(0));
         ad.phase = Phase::Blocked;
         ad.since = -0.3;
@@ -517,7 +395,6 @@ fn still_items(guard: Guard) -> Vec<Item> {
     }
 }
 
-/// One item's step through `sdt` scene seconds.
 fn step_item(it: &mut Item, sdt: f32, blocks: bool) -> Outcome {
     it.life += sdt;
     match it.phase {
@@ -589,8 +466,6 @@ impl State {
         self.next_id = self.next_id.wrapping_add(1);
     }
 
-    /// Where a front-layer point is drawn right now: ripples are drawn
-    /// untilted, so one that starts at the crest or a dot takes its tilt.
     fn front(&self, p: Point) -> Point {
         p + self.live.tilt.offset(Layer::Front)
     }
@@ -622,8 +497,6 @@ impl State {
             .any(|f| self.clock - f.at < FLASH_LIFE)
     }
 
-    /// A new state (or a new canvas): remember the old one for the
-    /// transition, wake up, and set the scene.
     fn enter(&mut self, guard: Guard, reduced: bool) {
         let first = self.guard.is_none();
         self.prev = self.guard;
@@ -637,7 +510,6 @@ impl State {
             self.still = true;
             self.spin = STILL * SPIN;
         } else if first {
-            // The prototype starts with three on their way.
             for u in [0.15, 0.45, 0.7] {
                 let kind = self.random_kind();
                 self.spawn(kind, u);
@@ -647,9 +519,6 @@ impl State {
         }
     }
 
-    /// Note the page's blocked counts; real blocks while protection is on
-    /// queue that many (a few at most) to fly in and be stopped. While the
-    /// drawing rests only one gets in now and then (see [`REST_REAL_GAP`]).
     fn take_counts(&mut self, counts: Option<[u64; 3]>, guard: Guard, reduced: bool) {
         self.take_counts_at(counts, guard, reduced, Instant::now());
     }
@@ -661,8 +530,6 @@ impl State {
         };
         if let Some(old) = self.counts {
             if guard.blocks() && !reduced && !self.awake() {
-                // Resting: keep only the newest (the most serious kind that
-                // went up), and only when the last one was a while ago.
                 let newest = (0..Kind::COUNTED.len()).rev().find(|i| new[*i] > old[*i]);
                 let due = self
                     .rest_real
@@ -685,7 +552,6 @@ impl State {
         self.counts = Some(new);
     }
 
-    /// One frame of `dt` seconds.
     fn advance(&mut self, dt: f32, guard: Guard, hover: Option<Part>) {
         let sdt = dt * guard.speed();
         self.clock += dt;
@@ -702,8 +568,6 @@ impl State {
         self.flow += sdt * self.level.value.clamp(0.0, 1.0);
 
         if !awake && self.queue.len() > 1 {
-            // Gone quiet with real blocks still waiting: only the newest
-            // flies.
             self.queue.drain(..self.queue.len() - 1);
         }
         if awake || !self.queue.is_empty() {
@@ -737,7 +601,6 @@ impl State {
             .retain(|it| it.op > 0.0 && it.at.y < UNITS.height + 40.0);
     }
 
-    /// The reduced-motion answer to a hover: grow at once.
     fn snap_grow(&mut self, hover: Option<Part>) {
         for it in &mut self.items {
             it.grow = if hover == Some(Part::Item(it.id)) { 1.0 } else { 0.0 };
@@ -748,7 +611,6 @@ impl State {
         self.items.iter().find(|it| it.id == id)
     }
 
-    /// A click on `id` while protection is on blocks it by hand.
     fn block_by_hand(&mut self, id: u32, reduced: bool) -> bool {
         let Some(it) = self.items.iter_mut().find(|it| it.id == id) else {
             return false;
@@ -757,7 +619,6 @@ impl State {
             return false;
         }
         it.phase = Phase::Blocked;
-        // Reduced motion: the cross is there at once and it stays put.
         it.since = if reduced { it.life - 0.3 } else { it.life };
         let at = it.at;
         self.flash(at);
@@ -766,9 +627,6 @@ impl State {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The program
-// ---------------------------------------------------------------------------
 
 struct WebGlobe {
     p: Palette,
@@ -780,9 +638,6 @@ struct WebGlobe {
     labels: Labels,
 }
 
-/// The drawing, [`SIZE`] on the page. `changed` is when `guard` began,
-/// `now` the page's last frame time (or `changed`), `blocked` today's real
-/// counts (ads, trackers, dangerous websites) when the page has them.
 #[allow(clippy::too_many_arguments)]
 pub fn web_globe<'a, M: 'a>(
     p: Palette,
@@ -807,8 +662,6 @@ pub fn web_globe<'a, M: 'a>(
     .into()
 }
 
-/// The parts that can be pointed at, from the state (used by both update
-/// and draw).
 fn spots(guard: Guard, st: &State) -> Hotspots<Part> {
     let mut h = Hotspots::new()
         .circle(Part::Globe, GC, GR, Layer::Mid)
@@ -885,7 +738,6 @@ impl WebGlobe {
         }
     }
 
-    /// Whether a click on the hovered part does something of its own.
     fn clickable(&self, st: &State) -> bool {
         match st.live.hover {
             Some(Part::Item(id)) => {
@@ -941,7 +793,6 @@ impl<M> canvas::Program<M> for WebGlobe {
             }
             Some(Gesture::Drag { delta, .. }) if st.spinning => {
                 if reduced {
-                    // Direct: the globe's face follows the pointer.
                     st.spin = (st.spin + delta.x / GR).rem_euclid(TAU);
                 } else {
                     st.vspin = (st.vspin + delta.x * DRAG_SPIN).clamp(-MAX_SPIN, MAX_SPIN);
@@ -979,8 +830,6 @@ impl<M> canvas::Program<M> for WebGlobe {
 
         let domes = dome_states(self.guard, st.prev, age);
 
-        // The dome's tint comes first: the lanes run over it to the screen
-        // and the PC stays plain on top.
         for d in &domes {
             if d.guard == Guard::On && d.fill > 0.0 {
                 let mut pts = dome_arc(DRX - 6.0, DRY - 6.0, PI, TAU, 40);
@@ -992,7 +841,6 @@ impl<M> canvas::Program<M> for WebGlobe {
             }
         }
 
-        // Lanes: dashes that flow towards the PC.
         for l in &LANES {
             let pts: Vec<Point> = (0..=24).map(|i| quad(l, i as f32 / 24.0)).collect();
             f.stroke(&dashed(&back, &pts, 2.0, 5.0, st.flow * 10.0), ink.lo());
@@ -1019,7 +867,6 @@ impl<M> canvas::Program<M> for WebGlobe {
             draw_item(&mut f, &front, &ink, it, &self.labels.ad_mark);
         }
 
-        // Pulses take the dome's colour (grey with no dome).
         let pulse = dome_look(self.guard, &ink).map_or(ink.line, |l| l.0);
         st.live.pulses.draw(&mut f, &stage, pulse);
         st.live.draw_tooltip(&mut f, &self.p, &stage, &spots(self.guard, st), |id| {
@@ -1050,11 +897,7 @@ impl<M> canvas::Program<M> for WebGlobe {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Drawing
-// ---------------------------------------------------------------------------
 
-/// What sits on the crest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CrestMark {
     Tick,
@@ -1062,24 +905,15 @@ enum CrestMark {
     Excl,
 }
 
-/// One dome to draw this frame: during a change the old one fades out
-/// while the new one comes in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct DomeDraw {
     guard: Guard,
-    /// Fade weight, 0..=1.
     weight: f32,
-    /// How much of the outline has drawn in.
     outline: f32,
-    /// The tint inside (on only).
     fill: f32,
-    /// The crest's mark drawn in.
     mark: f32,
 }
 
-/// The domes for `guard`, `age` seconds after it replaced `prev`. Turning
-/// on draws the dome in from the left and the tick after it; anything else
-/// cross-fades over 0.4 s.
 fn dome_states(guard: Guard, prev: Option<Guard>, age: f32) -> Vec<DomeDraw> {
     let p = phase(age, 0.0, 0.4, STANDARD);
     let mut out = Vec::with_capacity(2);
@@ -1114,7 +948,6 @@ fn dome_states(guard: Guard, prev: Option<Guard>, age: f32) -> Vec<DomeDraw> {
     out
 }
 
-/// The dome's colour, dashes and mark for a state; `None` when off.
 fn dome_look(guard: Guard, ink: &Ink) -> Option<(Color, bool, CrestMark)> {
     match guard {
         Guard::On => Some((ink.good, false, CrestMark::Tick)),
@@ -1131,7 +964,6 @@ fn draw_dome(f: &mut Frame, s: &Stage, ink: &Ink, d: &DomeDraw, st: &State) {
     };
     let mut alpha = d.weight;
     if d.guard == Guard::Broken {
-        // Flickers while awake, rests at a steady dim when quiet.
         let calm = if anim::reduced() { 0.0 } else { st.level.value.clamp(0.0, 1.0) };
         alpha *= lerp(0.7, 0.2 + 0.8 * flicker(st.clock), calm);
     }
@@ -1141,27 +973,22 @@ fn draw_dome(f: &mut Frame, s: &Stage, ink: &Ink, d: &DomeDraw, st: &State) {
     let c = color.scale_alpha(alpha);
     let pts = dome_arc(DRX, DRY, PI, TAU, 48);
     if dashes {
-        // Getting ready marches along; paused stands still.
         let shift = if d.guard == Guard::Starting { st.flow * 8.0 } else { 0.0 };
         f.stroke(&dashed(s, &pts, 4.0, 6.0, shift), stroke(c, W_ACCENT));
     } else if d.outline > 0.001 {
         f.stroke(&s.shape(&polyline_data(&pts).partial(d.outline)), stroke(c, W_ACCENT));
     }
 
-    // The crest: a small shield on top, with what the dome is doing.
     let crest_a = alpha * if d.guard == Guard::On { (d.outline * 2.5).min(1.0) } else { 1.0 };
     if crest_a <= 0.004 {
         return;
     }
     let shield = Glyph::Shield.data().placed(CREST, CREST_SIZE);
     let path = s.shape(&shield);
-    // The grey paused shield is filled with the plate; coloured ones get a
-    // tint.
     let fill = if d.guard == Guard::Paused { ink.plate } else { tint(color, ink.plate) };
     f.fill(&path, fill.scale_alpha(crest_a));
     f.stroke(&path, stroke(color.scale_alpha(crest_a), W_LINE));
     if d.guard == Guard::Starting {
-        // Not ready yet: no mark until it is.
         return;
     }
     let (data, amount) = match mark {
@@ -1177,8 +1004,6 @@ fn draw_dome(f: &mut Frame, s: &Stage, ink: &Ink, d: &DomeDraw, st: &State) {
     }
 }
 
-/// The globe: a disc, three latitudes and six great circles whose facing
-/// halves turn with `spin` (one path for all the grid lines).
 fn draw_globe(f: &mut Frame, s: &Stage, ink: &Ink, spin: f32) {
     let c = ink.accent;
     let disc = s.circle(GC, GR);
@@ -1215,7 +1040,6 @@ fn kind_color(kind: Kind, ink: &Ink) -> Color {
     }
 }
 
-/// One travelling thing (the prototype's `thing()`), centred on its point.
 fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) {
     if it.op <= 0.004 {
         return;
@@ -1225,7 +1049,6 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
     let a = it.op;
     let c = kind_color(it.kind, ink);
     let line = stroke(c.scale_alpha(a), W_PART);
-    // A grey web page is filled with the plate; coloured kinds get a tint.
     let fill = if it.kind == Kind::Page { ink.plate } else { tint(c, ink.plate) }.scale_alpha(a);
     let body = match it.kind {
         Kind::Ad => l.rounded_rect(-13.0, -9.0, 26.0, 18.0, 3.5),
@@ -1261,9 +1084,6 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1306,7 +1126,6 @@ mod tests {
         canvas::Program::<()>::update(p, st, e, BOUNDS, cursor)
     }
 
-    /// Unit point to the cursor over it.
     fn at(u: Point) -> mouse::Cursor {
         let s = Stage::fit(UNITS, SIZE);
         mouse::Cursor::Available(s.point(u))
@@ -1330,7 +1149,6 @@ mod tests {
             assert!(u > 0.2 && u < 1.0, "{u}");
             assert!(in_dome(lane_point(lane, u)) && !in_dome(lane_point(lane, u - 0.01)));
         }
-        // The globe and the dome never overlap.
         const { assert!(GC.x + GR < DC.x - DRX) };
     }
 
@@ -1350,7 +1168,6 @@ mod tests {
         assert!(ad.op < 1.0 && ad.stamp() == 1.0, "stamped and falling");
         assert_eq!(page.phase, Phase::In, "a web page goes through");
 
-        // Not protected: the ad reaches the screen and sits there.
         let mut ad = Item::new(3, Kind::Ad, 0, 0.0);
         let mut landed = false;
         for _ in 0..200 {
@@ -1384,7 +1201,6 @@ mod tests {
         assert_eq!(dome_look(Guard::Paused, &ink).unwrap(), (LIGHT.text_muted, true, CrestMark::Pause));
         assert!(dome_look(Guard::Off, &ink).is_none());
 
-        // Turning on draws the dome in, then the tick.
         let start = dome_states(Guard::On, Some(Guard::Off), 0.0);
         assert_eq!(start.len(), 1);
         assert_eq!((start[0].outline, start[0].mark), (0.0, 0.0));
@@ -1392,15 +1208,12 @@ mod tests {
         assert!(mid[0].outline > 0.5 && mid[0].mark == 0.0);
         let end = dome_states(Guard::On, Some(Guard::Off), TRANSITION_END);
         assert_eq!((end[0].outline, end[0].fill, end[0].mark, end[0].weight), (1.0, 1.0, 1.0, 1.0));
-        // Pausing fades the green dome out while the grey one comes in.
         let fade = dome_states(Guard::Paused, Some(Guard::On), 0.2);
         assert_eq!(fade.len(), 2);
         assert_eq!(fade[0].guard, Guard::On);
         assert!((fade[0].weight + fade[1].weight - 1.0).abs() < 1e-4);
         assert_eq!(dome_states(Guard::Paused, Some(Guard::On), 1.0).len(), 1);
-        // Turning off leaves nothing once faded.
         assert!(dome_states(Guard::Off, Some(Guard::On), 1.0).is_empty());
-        // Settled (reduced motion's age) is the end state.
         let settled = dome_states(Guard::On, None, super::super::SETTLED_AGE);
         assert_eq!(settled[0].outline, 1.0);
     }
@@ -1420,7 +1233,6 @@ mod tests {
         let ad = st.items.iter().find(|i| i.kind == Kind::Ad).unwrap();
         assert_eq!(h.hit(ad.at, &tilt), Some(Part::Item(ad.id)));
         assert_eq!(h.hit(proto(10.0, 250.0), &tilt), None);
-        // No dome to name when protection is off.
         let off = spots(Guard::Off, &State::default());
         assert_ne!(off.hit(CREST, &tilt), Some(Part::Dome));
 
@@ -1463,11 +1275,9 @@ mod tests {
         assert!(st.queue.is_empty(), "the first counts are only noted");
         st.take_counts(Some([11, 9, 1]), Guard::On, false);
         assert_eq!(st.queue, vec![Kind::Ad, Kind::Tracker, Kind::Tracker, Kind::Scam]);
-        // A new day starts from zero: nothing to show.
         st.queue.clear();
         st.take_counts(Some([0, 0, 0]), Guard::On, false);
         assert!(st.queue.is_empty());
-        // Paused: counts noted, nothing flies.
         st.take_counts(Some([3, 0, 0]), Guard::Paused, false);
         assert!(st.queue.is_empty());
     }
@@ -1480,19 +1290,15 @@ mod tests {
             ..State::default()
         };
         st.take_counts_at(Some([10, 5, 0]), Guard::On, false, t0);
-        // Ads and trackers went up: only the newest kind, once.
         st.take_counts_at(Some([14, 9, 0]), Guard::On, false, t0);
         assert_eq!(st.queue, vec![Kind::Tracker]);
-        // Steady browsing two seconds later: nothing more for now.
         let t1 = t0 + std::time::Duration::from_secs(2);
         st.take_counts_at(Some([20, 15, 1]), Guard::On, false, t1);
         assert_eq!(st.queue, vec![Kind::Tracker]);
-        // After the gap the newest replaces anything still waiting.
         let t2 = t0 + std::time::Duration::from_secs_f32(REST_REAL_GAP + 0.5);
         st.take_counts_at(Some([21, 15, 2]), Guard::On, false, t2);
         assert_eq!(st.queue, vec![Kind::Scam]);
 
-        // Going quiet with a full queue leaves only the newest.
         let mut st = State::default();
         st.take_counts(Some([0, 0, 0]), Guard::On, false);
         st.take_counts(Some([2, 2, 1]), Guard::On, false);
@@ -1514,7 +1320,6 @@ mod tests {
         run(&p, &mut st, &frame(t0), off);
         assert!(st.guard == Some(Guard::On) && st.items.len() == 3);
 
-        // Drag the globe to the right: faster spin.
         let down = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let up = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         st.items.clear();
@@ -1536,7 +1341,6 @@ mod tests {
         run(&p, &mut st, &up, at(to));
         assert!(!st.spinning);
 
-        // A drag that starts off the globe does not spin it.
         let empty = proto(300.0, 40.0);
         run(&p, &mut st, &moved(empty), at(empty));
         run(&p, &mut st, &down, at(empty));
@@ -1546,7 +1350,6 @@ mod tests {
         assert_eq!(st.vspin, before);
         run(&p, &mut st, &up, at(to));
 
-        // Click a flying ad: blocked by hand, with a dome flash.
         st.items = vec![Item::new(40, Kind::Ad, 0, 0.2)];
         let ad = st.items[0].at;
         run(&p, &mut st, &moved(ad), at(ad));
@@ -1560,7 +1363,6 @@ mod tests {
         assert_eq!(st.items[0].phase, Phase::Blocked);
         assert!(st.flashing());
 
-        // A web page cannot be blocked, and nothing is blocked when off.
         st.items = vec![Item::new(41, Kind::Page, 0, 0.2)];
         let page = st.items[0].at;
         run(&p, &mut st, &moved(page), at(page));
@@ -1600,18 +1402,15 @@ mod tests {
         assert!(secs > AWAKE_FOR, "{secs}");
         assert!(st.items.is_empty() && st.vspin == 0.0);
         let rested_spin = st.spin;
-        // Still at rest: a stray frame asks for nothing and moves nothing.
         clock += Duration::from_millis(16);
         assert!(!wants_frame(run(&p, &mut st, &frame(clock), off)));
         assert_eq!(st.spin, rested_spin);
 
-        // The pointer comes over it: traffic flows again.
         run(&p, &mut st, &moved(proto(160.0, 40.0)), at(proto(160.0, 40.0)));
         assert!(st.awake());
         clock += Duration::from_millis(16);
         assert!(wants_frame(run(&p, &mut st, &frame(clock), off)));
 
-        // Real blocks fly in even while resting, without waking the rest.
         let counted = |n: u64| WebGlobe {
             blocked: Some([n, 0, 0]),
             ..prog(Guard::On, t0)
@@ -1650,8 +1449,6 @@ mod tests {
         assert_eq!(st.spin, spin, "no turning");
         assert_eq!(st.live.tilt.layers(), [Vector::ZERO; 3]);
 
-        // Hover names a dot (one redraw), a click on a flying tracker stamps
-        // it at once and it stays put.
         let tracker = st.items.iter().find(|i| i.kind == Kind::Tracker).unwrap();
         let (id, spot) = (tracker.id, tracker.at);
         assert!(wants_frame(run(&p, &mut st, &moved(spot), at(spot))));
@@ -1665,7 +1462,6 @@ mod tests {
         assert!(!st.flashing() && !st.live.pulses.alive());
         assert!(!wants_frame(run(&p, &mut st, &frame(t0 + Duration::from_millis(32)), at(spot))));
 
-        // Dragging the globe turns it directly, with no coasting.
         run(&p, &mut st, &moved(GC), at(GC));
         run(&p, &mut st, &down, at(GC));
         let to = pt(GC.x + GR * 0.5, GC.y);
@@ -1674,7 +1470,6 @@ mod tests {
         run(&p, &mut st, &up, at(to));
         assert!(!wants_frame(run(&p, &mut st, &frame(t0 + Duration::from_millis(48)), at(to))));
 
-        // A new state is a new still picture.
         let paused = prog(Guard::Paused, t0 + Duration::from_secs(1));
         run(&paused, &mut st, &frame(t0 + Duration::from_secs(1)), off);
         assert_eq!(st.items, still_items(Guard::Paused));

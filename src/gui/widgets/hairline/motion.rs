@@ -4,14 +4,8 @@ use crate::gui::widgets::anim::{self, Curve, DECELERATE};
 use iced::widget::canvas::Frame;
 use iced::{Color, Point};
 
-/// Longest step one frame may take, in seconds. A slow CPU-rendered frame
-/// still moves at the right speed up to this; beyond it motion slows rather
-/// than jumps.
 pub const MAX_DT: f32 = 0.1;
 
-/// A damped spring (the prototype's `spring` and `stepS`). Set `target`,
-/// call [`Spring::step`] every frame with the frame's `dt` in seconds, read
-/// `value`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spring {
     pub stiffness: f32,
@@ -28,15 +22,10 @@ impl Default for Spring {
 }
 
 impl Spring {
-    /// At rest at `value`, with the prototype's default stiffness 140 and
-    /// damping 18.
     pub const fn new(value: f32) -> Spring {
         Spring::with(value, 140.0, 18.0)
     }
 
-    /// At rest at `value` with its own stiffness and damping. The drawings
-    /// use stiffness 90 to 200 and damping 13 to 20: lower damping
-    /// overshoots more, higher stiffness arrives sooner.
     pub const fn with(value: f32, stiffness: f32, damping: f32) -> Spring {
         Spring {
             stiffness,
@@ -47,9 +36,6 @@ impl Spring {
         }
     }
 
-    /// Advance `dt` seconds in sub-steps of at most 8 ms, so it stays stable
-    /// whatever the frame rate. Snaps to the target once it is within 0.001
-    /// and nearly still. Returns whether it is still moving.
     pub fn step(&mut self, dt: f32) -> bool {
         let dt = dt.clamp(0.0, MAX_DT);
         if dt > 0.0 {
@@ -67,13 +53,11 @@ impl Spring {
         self.moving()
     }
 
-    /// Jump to the target and stop (reduced motion, or a first show).
     pub fn settle(&mut self) {
         self.value = self.target;
         self.velocity = 0.0;
     }
 
-    /// Set the target and, under reduced motion, jump to it.
     pub fn aim(&mut self, target: f32) {
         self.target = target;
         if anim::reduced() {
@@ -81,8 +65,6 @@ impl Spring {
         }
     }
 
-    /// Step, or under reduced motion jump to the target. Returns whether
-    /// it is still moving.
     pub fn tick(&mut self, dt: f32) -> bool {
         if anim::reduced() {
             self.settle();
@@ -96,7 +78,6 @@ impl Spring {
         self.value != self.target || self.velocity != 0.0
     }
 
-    /// Give it a push (for example a pop when clicked).
     pub fn kick(&mut self, velocity: f32) {
         if !anim::reduced() {
             self.velocity += velocity;
@@ -104,9 +85,6 @@ impl Spring {
     }
 }
 
-/// Progress of a phase that runs from `a` to `b` seconds of `age`, eased by
-/// `curve`: 0 before `a`, 1 after `b` (the prototype's `ph`). Use it for
-/// every step of a transition, timed from the moment the state changed.
 pub fn phase(age: f32, a: f32, b: f32, curve: Curve) -> f32 {
     if b <= a {
         return if age >= b { 1.0 } else { 0.0 };
@@ -114,16 +92,12 @@ pub fn phase(age: f32, a: f32, b: f32, curve: Curve) -> f32 {
     curve.at((age - a) / (b - a))
 }
 
-/// Linear blend, `t` unclamped.
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// How long a click pulse lives, in seconds.
 pub const PULSE_LIFE: f32 = 0.8;
-/// Radius a small pulse reaches, in units.
 pub const PULSE_SMALL: f32 = 46.0;
-/// Radius a big pulse (a celebration on done) reaches, in units.
 pub const PULSE_BIG: f32 = 140.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,22 +107,18 @@ struct Pulse {
     big: bool,
 }
 
-/// Rings that grow from a point and fade: the answer to a click on an empty
-/// part of a drawing, and the burst when something finishes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pulses {
     list: Vec<Pulse>,
 }
 
 impl Pulses {
-    /// Start a ring at `at` (units). Nothing under reduced motion.
     pub fn push(&mut self, at: Point, big: bool) {
         if !anim::reduced() && self.list.len() < 8 {
             self.list.push(Pulse { at, age: 0.0, big });
         }
     }
 
-    /// Age every ring by `dt`; returns whether any is still alive.
     pub fn step(&mut self, dt: f32) -> bool {
         let dt = dt.clamp(0.0, MAX_DT);
         for p in &mut self.list {
@@ -162,7 +132,6 @@ impl Pulses {
         !self.list.is_empty()
     }
 
-    /// Stroke every live ring in `color` (the accent).
     pub fn draw(&self, frame: &mut Frame, stage: &Stage, color: Color) {
         for p in &self.list {
             let e = DECELERATE.at(p.age / PULSE_LIFE);
@@ -194,7 +163,6 @@ mod tests {
         assert_eq!(s.value, 1.0);
         assert_eq!(s.velocity, 0.0);
         assert!(!s.moving());
-        // A long frame is clamped and sub-stepped: no explosion.
         let mut t = Spring::with(0.0, 200.0, 13.0);
         t.target = 10.0;
         t.step(5.0);

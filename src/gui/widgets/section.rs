@@ -1,8 +1,4 @@
 //! Borderless layout primitives: region, group, row_item, collapsible.
-//!
-//! No 1 px outlines and no boxes around rows. Separation comes from tonal
-//! steps (`bg` < `surface` < `surface_alt`, a few percent apart) and from
-//! whitespace. See docs/DESIGN-SYSTEM.md, "Layout".
 use super::anim;
 use super::cursor::arrow;
 use super::{icon, ButtonKind};
@@ -22,13 +18,7 @@ use iced::{
 };
 use std::time::Instant;
 
-// ---------------------------------------------------------------------------
-// region
-// ---------------------------------------------------------------------------
 
-/// A borderless tonal block: `surface` tone, `R_LARGE` corners, `S6` padding.
-/// Use for at most one or two hero / primary regions per page; everything
-/// else is a [`group`] on the bare page background.
 pub fn region<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
@@ -48,9 +38,6 @@ pub fn region<'a>(
         })
 }
 
-// ---------------------------------------------------------------------------
-// hoverable: soft tonal hover for rows that are not buttons
-// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 struct HoverState {
@@ -159,9 +146,6 @@ impl Widget<Message, Theme, Renderer> for Hoverable<'_> {
     ) {
         let state = tree.state.downcast_mut::<HoverState>();
         let over = cursor.is_over(layout.bounds());
-        // Hit-test on every event, frames included: a wheel scroll moves the
-        // row under a still pointer, and only the next frame sees the new
-        // offset. A frame draws right after this, so it needs no extra one.
         if state.hovered != over {
             state.hovered = over;
             if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
@@ -222,10 +206,6 @@ impl Widget<Message, Theme, Renderer> for Hoverable<'_> {
     }
 }
 
-/// Soft tonal hover behind `content` (no border, no shadow). For rows that
-/// are not buttons but hold controls, e.g. a label with a switch. One step
-/// quieter than `hover`, which is the secondary button's own fill, so a
-/// button on a hovered row keeps its shape.
 pub fn hoverable<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     Element::new(Hoverable {
         content: content.into(),
@@ -234,14 +214,7 @@ pub fn hoverable<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> El
     })
 }
 
-// ---------------------------------------------------------------------------
-// row_item
-// ---------------------------------------------------------------------------
 
-/// One line of a [`group`]: plain 20 px icon (no badge), title, optional
-/// subtitle, a trailing slot and, with `on_press`, a whole-row click target.
-/// At least `ROW_ITEM` (56 px) tall. `icon_tone` tints the glyph; `None`
-/// uses the muted text tone.
 pub fn row_item<'a>(
     p: Palette,
     glyph: Option<Icon>,
@@ -253,7 +226,6 @@ pub fn row_item<'a>(
     row_item_tinted(p, glyph, None, title, subtitle, trailing, on_press)
 }
 
-/// [`row_item`] with a status tint on the icon.
 pub fn row_item_tinted<'a>(
     p: Palette,
     glyph: Option<Icon>,
@@ -275,8 +247,6 @@ pub fn row_item_tinted<'a>(
     )
 }
 
-/// [`row_item_tinted`] with extra lines (a progress bar, a picker, notes)
-/// inside the row, lined up with its title and sharing its hover tone.
 #[allow(clippy::too_many_arguments)]
 pub fn row_item_below<'a>(
     p: Palette,
@@ -293,9 +263,6 @@ pub fn row_item_below<'a>(
     row_item_lead(p, lead, title, subtitle, trailing, below, on_press)
 }
 
-/// A row whose leading picture is any element of `ICON_ROW` size (an app's
-/// own icon, say) instead of a tinted glyph. Same height and alignment as
-/// [`row_item`].
 #[allow(clippy::too_many_arguments)]
 pub fn row_item_lead<'a>(
     p: Palette,
@@ -306,7 +273,6 @@ pub fn row_item_lead<'a>(
     below: Vec<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    // Line up with the title: the icon (if any) and the gap after it.
     let indent = if lead_icon.is_some() {
         theme::ICON_ROW
     } else {
@@ -328,9 +294,6 @@ pub fn row_item_lead<'a>(
                 .color(p.text_muted),
         );
     }
-    // The invisible spacer gives the row its minimum height. It shares a
-    // slot with the icon so it adds no gap: the title then sits exactly one
-    // gap after the icon, where every inset below a row expects it.
     let mut lead = row![].align_y(Alignment::Center);
     if let Some(g) = lead_icon {
         lead = lead.push(g);
@@ -386,14 +349,7 @@ pub fn row_item_lead<'a>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// group
-// ---------------------------------------------------------------------------
 
-/// A titled group of rows with NO box: a heading (title, optional muted
-/// subtitle, optional trailing control such as an [`overflow_menu`]) over
-/// rows separated by `S1` gaps. Sits directly on the page background or
-/// inside a [`region`].
 pub fn group<'a>(
     p: Palette,
     title: impl Into<String>,
@@ -429,9 +385,6 @@ pub fn group<'a>(
     .into()
 }
 
-// ---------------------------------------------------------------------------
-// chevron (rotating disclosure arrow)
-// ---------------------------------------------------------------------------
 
 struct ChevronState {
     shown_open: bool,
@@ -439,9 +392,6 @@ struct ChevronState {
     start: Option<Instant>,
 }
 
-/// Disclosure chevron that eases from right to down (and back) when `open`
-/// changes.
-/// Asks for redraws only while turning.
 struct Chevron {
     size: f32,
     color: Color,
@@ -491,9 +441,6 @@ impl Widget<Message, Theme, Renderer> for Chevron {
         let st = tree.state.downcast_ref::<ChevronState>();
         let a = chevron_angle(st, Instant::now()).clamp(0.0, 1.0);
         let bounds = layout.bounds();
-        // Cross-fade right -> down rather than rotating: the software
-        // renderer (no GPU) scales an SVG by the rotation matrix instead of
-        // turning it, so a quarter turn drew nothing at all.
         for (glyph, opacity) in [(Icon::ChevronRight, 1.0 - a), (Icon::ChevronDown, a)] {
             if opacity > 0.0 {
                 renderer.draw_svg(
@@ -544,14 +491,7 @@ fn chevron<'a>(size: f32, color: Color, open: bool) -> Element<'a, Message> {
     Element::new(Chevron { size, color, open })
 }
 
-// ---------------------------------------------------------------------------
-// collapsible
-// ---------------------------------------------------------------------------
 
-/// Header row (rotating chevron, title, muted `summary` such as "24 items")
-/// that shows `body` when `open`. The page owns `open` and flips it on
-/// `on_toggle`. Use for any list longer than about six rows: collapsed by
-/// default, with the summary doing the talking.
 pub fn collapsible<'a>(
     p: Palette,
     title: impl Into<String>,
@@ -560,9 +500,6 @@ pub fn collapsible<'a>(
     on_toggle: Message,
     body: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    // The chevron takes a row icon's slot (and carries the height spacer, so
-    // it adds no gap): it lines up with the icons of the rows inside, and the
-    // title with their titles.
     let mut head = row![
         row![
             container(chevron(16.0, p.text_muted, open)).center_x(theme::ICON_ROW),
@@ -622,12 +559,7 @@ pub fn collapsible<'a>(
     c.into()
 }
 
-// ---------------------------------------------------------------------------
-// show more
-// ---------------------------------------------------------------------------
 
-/// The slice of `items` to render: all of them when `expanded`, otherwise the
-/// first `limit`. Pair with [`show_more_button`] when `items.len() > limit`.
 pub fn limited<T>(items: &[T], limit: usize, expanded: bool) -> &[T] {
     if expanded || items.len() <= limit {
         items
@@ -636,7 +568,6 @@ pub fn limited<T>(items: &[T], limit: usize, expanded: bool) -> &[T] {
     }
 }
 
-/// Quiet text button under a truncated list ("Show 12 more" / "Show less").
 pub fn show_more_button<'a>(
     p: Palette,
     label: impl Into<String>,

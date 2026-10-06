@@ -1,5 +1,4 @@
 //! Reusable list, form and feedback pieces built on the core widgets.
-//! OWNER: design-system agent.
 use super::appear::slide_in;
 use super::cursor::arrow;
 use super::{icon, ButtonKind};
@@ -10,7 +9,6 @@ use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{button, column, container, progress_bar, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Pixels, Shadow};
 
-/// Small caption that introduces a group of rows or cards.
 pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
         .size(theme::SMALL)
@@ -19,9 +17,6 @@ pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Messag
         .into()
 }
 
-/// Wraps a row so the whole line is clickable (hover / pressed fill, normal
-/// arrow cursor) and sends `on_press`. Rows are at least `ROW` tall when the
-/// content is a 36 px badge plus text.
 pub fn list_button<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
@@ -49,7 +44,6 @@ pub fn list_button<'a>(
     )
 }
 
-/// Friendly placeholder for an empty list or missing data: icon, title, one line of help, optional action.
 pub fn empty_state<'a>(
     p: Palette,
     i: Icon,
@@ -60,7 +54,6 @@ pub fn empty_state<'a>(
     empty_state_art(p, icon(i, 32.0, p.text_muted), title, body_text, action)
 }
 
-/// [`empty_state`] with a drawing (or any element) in place of the icon.
 pub fn empty_state_art<'a>(
     p: Palette,
     art: Element<'a, Message>,
@@ -94,14 +87,12 @@ pub fn empty_state_art<'a>(
         .into()
 }
 
-/// State of one step in a progress checklist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepState {
     Running,
     Done,
 }
 
-/// Checklist line: status icon on the left, label on the right.
 pub fn progress_row<'a>(
     p: Palette,
     label: impl Into<String>,
@@ -127,7 +118,6 @@ pub fn progress_row<'a>(
     .into()
 }
 
-/// Slim rounded progress bar; `ratio` is 0.0..=1.0.
 pub fn bar<'a>(p: Palette, ratio: f32, tone: Tone) -> Element<'a, Message> {
     let fill = p.tone(tone);
     progress_bar(0.0..=1.0, ratio.clamp(0.0, 1.0))
@@ -152,7 +142,6 @@ fn tone_icon(tone: Tone) -> Icon {
     }
 }
 
-/// Calm tinted message box with an icon, for tips, warnings and errors inside a page.
 pub fn inline_notice<'a>(
     p: Palette,
     tone: Tone,
@@ -184,7 +173,6 @@ pub fn inline_notice<'a>(
     .into()
 }
 
-/// Collapsible section ("More details"); `on_toggle` flips `open` in the page state.
 pub fn expander<'a>(
     p: Palette,
     title: impl Into<String>,
@@ -245,8 +233,6 @@ pub fn expander<'a>(
     c.into()
 }
 
-/// Small floating confirmation message with a close button; the shell places
-/// it bottom-centre. It slides up once when it appears (no timers after).
 pub fn toast<'a>(
     p: Palette,
     message: impl Into<String>,
@@ -304,13 +290,10 @@ pub fn toast<'a>(
     slide_in(card, theme::S3, leaving)
 }
 
-/// Convenience: a secondary "See all"-style ghost button.
 pub fn link<'a>(p: Palette, label: impl Into<String>, on_press: Message) -> Element<'a, Message> {
     super::action(p, ButtonKind::Ghost, label, None, Some(on_press))
 }
 
-/// A real hyperlink (opens a web page): text with an external-link glyph and
-/// the hand cursor. This is the only widget that shows the hand.
 pub fn hyperlink<'a>(
     p: Palette,
     label: impl Into<String>,

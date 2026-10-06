@@ -5,20 +5,14 @@ use super::pointer::{Layer, Pointer};
 use crate::gui::widgets::anim;
 use iced::{Size, Vector};
 
-/// How far (units) the back, mid and front layers move at full tilt.
 pub const DEPTHS: [f32; 3] = [1.5, 3.0, 5.0];
-/// Vertical movement is this share of horizontal (the box is wider than tall).
 const Y_SHARE: f32 = 0.7;
 
-/// Two springs (stiffness 90, damping 15) that follow the pointer's place in
-/// the box, -1..=1 on each axis, and the layer offsets they give.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Parallax {
     pub x: Spring,
     pub y: Spring,
-    /// Back, mid and front depth in units.
     pub depths: [f32; 3],
-    /// False for drawings that opt out: offsets stay zero.
     pub enabled: bool,
 }
 
@@ -42,7 +36,6 @@ impl Parallax {
         }
     }
 
-    /// No tilt at all, for drawings where it would distract.
     pub fn off() -> Parallax {
         Parallax {
             enabled: false,
@@ -50,9 +43,6 @@ impl Parallax {
         }
     }
 
-    /// Point the springs at the pointer: its place across the box mapped to
-    /// -1..=1, or back to the middle when it is outside, the drawing opted
-    /// out, or motion is reduced.
     pub fn aim(&mut self, pointer: &Pointer, units: Size) {
         let follow = self.enabled && pointer.inside && !anim::reduced();
         let (tx, ty) = if follow && units.width > 0.0 && units.height > 0.0 {
@@ -67,8 +57,6 @@ impl Parallax {
         self.y.target = ty;
     }
 
-    /// Advance the springs; under reduced motion or when disabled they jump
-    /// to rest. Returns whether the tilt is still moving.
     pub fn step(&mut self, dt: f32) -> bool {
         if !self.enabled || anim::reduced() {
             self.x.target = 0.0;
@@ -86,9 +74,6 @@ impl Parallax {
         self.x.moving() || self.y.moving()
     }
 
-    /// Offset of `layer` in units: the back layer moves against the
-    /// pointer, mid and front with it, front the most. Zero when disabled
-    /// or under reduced motion, and always for [`Layer::Fixed`].
     pub fn offset(&self, layer: Layer) -> Vector {
         if !self.enabled || anim::reduced() {
             return Vector::ZERO;
@@ -103,7 +88,6 @@ impl Parallax {
         }
     }
 
-    /// Back, mid and front offsets at once.
     pub fn layers(&self) -> [Vector; 3] {
         [
             self.offset(Layer::Back),
@@ -142,7 +126,6 @@ mod tests {
         assert!(near(mid, 3.0, -2.1), "{mid:?}");
         assert!(near(back, -1.5, 1.05), "{back:?}");
         assert_eq!(t.offset(Layer::Fixed), Vector::ZERO);
-        // Pointer leaves: back to the middle.
         t.aim(&Pointer::default(), box_);
         assert!(t.step(1.0 / 60.0));
         for _ in 0..240 {

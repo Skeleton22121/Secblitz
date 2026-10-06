@@ -1,12 +1,4 @@
 //! The full-window checking screen and the status ticker.
-//!
-//! [`checking_screen`] is the first check's whole page: the magnifying glass
-//! ([`magnifier`]) as large as the window allows, the title, a progress bar
-//! and the ticker, centred. The drawing drives its own frames; the page's
-//! frame subscription is for the ticker and its `now`.
-//!
-//! [`status_ticker`] shows the last few status lines; each new line eases in
-//! from below while the older ones step back and fade.
 use super::anim::{self, arc_path, partial_line, stroke, EMPHASIZED};
 use super::hairline::magnifier::{self, Magnifier};
 use super::progress;
@@ -18,18 +10,11 @@ use iced::widget::{column, container, responsive};
 use iced::{mouse, Alignment, Element, Length, Point, Rectangle, Renderer, Theme};
 use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// Pure helpers (unit tested)
-// ---------------------------------------------------------------------------
 
-/// Scale of the drawing on the checking screen for the height it has. The
-/// text, bar and ticker below it take `rest`; the drawing gets what is left,
-/// from its compact size up to its full size.
 fn hero_scale(height: f32, rest: f32) -> f32 {
     ((height - rest) / magnifier::VIEW.height).clamp(magnifier::COMPACT, magnifier::FULL)
 }
 
-/// How far each ticker line has entered, 0..=1, from its age.
 fn entered(age: Duration) -> f32 {
     if anim::reduced() {
         return 1.0;
@@ -37,10 +22,6 @@ fn entered(age: Duration) -> f32 {
     EMPHASIZED.at(age.as_secs_f32() / TICKER_ENTER.as_secs_f32())
 }
 
-/// Depth of each line given how far each has entered (oldest first):
-/// `d_j = sum(e_m for m after j) + e_j - 1`. The newest line fully entered
-/// has depth 0, the one before it 1, and so on; mid-entrance values are
-/// fractional so everything glides.
 pub fn ticker_depths(entered: &[f32]) -> Vec<f32> {
     let mut after = 0.0;
     let mut out = vec![0.0; entered.len()];
@@ -51,7 +32,6 @@ pub fn ticker_depths(entered: &[f32]) -> Vec<f32> {
     out
 }
 
-/// (alpha, muted 0..1) of a line at `depth`.
 pub fn ticker_style(depth: f32) -> (f32, f32) {
     const STOPS: [(f32, f32); 5] = [
         (-1.0, 0.0),
@@ -70,18 +50,9 @@ pub fn ticker_style(depth: f32) -> (f32, f32) {
     (alpha, depth.clamp(0.0, 1.0))
 }
 
-// ---------------------------------------------------------------------------
-// Checking screen
-// ---------------------------------------------------------------------------
 
-/// Height taken below the drawing on the checking screen: title and
-/// subtitle, bar, ticker, the gaps between them and some air.
 const SCREEN_REST: f32 = 64.0 + progress::HEIGHT + TICKER_HEIGHT + 3.0 * theme::S6 + theme::S8;
 
-/// The first check's whole page: `art` (the magnifying glass, on the page
-/// background) as large as the space allows, then `title`, `subtitle`, the
-/// progress bar at `ratio` and the ticker, all centred in the space the page
-/// gives it (fill it, don't scroll it).
 pub fn checking_screen<'a>(
     p: Palette,
     title: String,
@@ -111,15 +82,11 @@ pub fn checking_screen<'a>(
     .into()
 }
 
-// ---------------------------------------------------------------------------
-// Status ticker
-// ---------------------------------------------------------------------------
 
 const TICKER_ENTER: Duration = Duration::from_millis(450);
 const ROW: f32 = 26.0;
 const VISIBLE: usize = 3;
 
-/// Height of the ticker region.
 pub const TICKER_HEIGHT: f32 = ROW * VISIBLE as f32;
 
 struct Ticker<'a> {
@@ -140,7 +107,6 @@ impl canvas::Program<Message> for Ticker<'_> {
     ) -> Vec<Geometry> {
         let mut f = Frame::new(renderer, bounds.size());
         let p = &self.p;
-        // Only the lines that can still be visible: VISIBLE plus the one leaving.
         let from = self.lines.len().saturating_sub(VISIBLE + 1);
         let lines = &self.lines[from..];
         let es: Vec<f32> = lines
@@ -156,7 +122,6 @@ impl canvas::Program<Message> for Ticker<'_> {
             let slot = (VISIBLE - 1) as f32 - depths[j];
             let y = (slot + 0.5) * ROW;
             let col = theme::mix(p.text, p.text_muted, muted).scale_alpha(alpha);
-            // Leading marker: a tiny spinner on the newest line, a faint tick on finished ones.
             let mx = 12.0;
             if j == lines.len() - 1 && muted < 0.5 {
                 let age = self.now.saturating_duration_since(*at).as_secs_f32();
@@ -201,8 +166,6 @@ impl canvas::Program<Message> for Ticker<'_> {
 /// The last few status lines of the check. `lines` are `(text, started_at)`
 /// oldest first; when a line is appended it eases in from below (450 ms,
 /// emphasized decelerate) while the older ones glide up, soften and fade.
-/// Needs frames for 450 ms after each new line, or for as long as the newest
-/// line shows its small spinner.
 pub fn status_ticker<'a>(
     p: Palette,
     lines: &'a [(String, Instant)],
@@ -220,11 +183,8 @@ mod tests {
 
     #[test]
     fn ticker_depths_settle_and_glide() {
-        // Everything entered: newest 0, then 1, 2.
         assert_eq!(ticker_depths(&[1.0, 1.0, 1.0]), vec![2.0, 1.0, 0.0]);
-        // Newest just arrived: it sits at -1, the previous one still at 0.
         assert_eq!(ticker_depths(&[1.0, 1.0, 0.0]), vec![1.0, 0.0, -1.0]);
-        // Half way: everything moved half a row.
         let d = ticker_depths(&[1.0, 1.0, 0.5]);
         assert_eq!(d, vec![1.5, 0.5, -0.5]);
         assert!(ticker_depths(&[]).is_empty());
@@ -239,7 +199,6 @@ mod tests {
         let (a2, _) = ticker_style(2.0);
         assert!(a2 < a1);
         assert_eq!(ticker_style(3.5).0, 0.0);
-        // Monotone fade-out with depth.
         let mut prev = 1.0;
         for i in 0..=30 {
             let (a, _) = ticker_style(i as f32 / 10.0);
@@ -254,9 +213,7 @@ mod tests {
         assert_eq!(hero_scale(100.0, SCREEN_REST), magnifier::COMPACT);
         let mid = hero_scale(SCREEN_REST + 150.0, SCREEN_REST);
         assert!((mid - 150.0 / magnifier::VIEW.height).abs() < 1e-6);
-        // At its largest it is the prototype's full-window size.
         assert_eq!(magnifier::VIEW.width * magnifier::FULL, 256.0);
-        // In a compact region it is 160 px wide.
         assert_eq!(magnifier::VIEW.width * magnifier::COMPACT, 160.0);
     }
 }

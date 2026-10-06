@@ -1,18 +1,4 @@
 //! Rewind: a clock running backwards, for putting things back.
-//!
-//! The prototype's `UNDO.rewind` with its `resultBadge`. While working the
-//! hands spin backwards (minute 4.2 rad/s, hour a twelfth of that, with a
-//! ghost trail) inside a back arrow turning backwards too. When the
-//! work reports progress, the back arrow fills with it from its tail to
-//! its head. Done: the hands ease back to ten past ten (the time before)
-//! and a tick draws in on a small badge (good). Partly done: they stop
-//! short and the badge shows an exclamation mark (warn). Failed: the clock
-//! shakes, the hands stay where they were and the badge shows a cross (bad).
-//!
-//! Drag around the clock to turn the hands yourself (the angle follows the
-//! pointer by how far it moved, so nothing jumps); let go and a finished
-//! clock eases back to its time. A click spins it: faster while working, one
-//! more turn back afterwards, a shake when it failed. Hovering names it.
 use super::live::Live;
 use super::motion::{lerp, phase, Spring};
 use super::pointer::{Gesture, Hotspots, Layer};
@@ -26,76 +12,47 @@ use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Them
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::time::Instant;
 
-/// The drawing's box in units: the clock and its back arrow.
 pub const UNITS: Size = Size::new(176.0, 176.0);
-/// Logical pixels per unit at the size pages show it (as the shield).
 pub const SCALE: f32 = 0.75;
-/// The canvas size pages give it: the drawing's height, and wide enough
-/// that the hover name (up to about 330 px in German) fits beside it. The
-/// drawing sits centred in it.
 pub const SIZE: Size = Size::new(360.0, UNITS.height * SCALE);
 
-/// Centre of the clock.
 const C: Point = pt(88.0, 88.0);
-/// Clock face radius.
 const R: f32 = 54.0;
-/// Back arrow radius, and where its arc starts (the head) and ends (the
-/// tail), in radians (y down, so growing angles turn clockwise).
 const RA: f32 = 76.0;
 const A_HEAD: f32 = -1.9;
 const A_TAIL: f32 = 3.3;
-/// Hand lengths.
 const MINUTE: f32 = 40.0;
 const HOUR: f32 = 26.0;
-/// Ten past ten: the time before.
 const M0: f32 = 10.0 / 60.0 * TAU - FRAC_PI_2;
 const H0: f32 = (10.0 + 10.0 / 60.0) / 12.0 * TAU - FRAC_PI_2;
-/// Where the clock starts: about twenty to one.
 const START_M: f32 = M0 + 3.0;
 const START_H: f32 = H0 + TAU / 6.0 + 3.0 / 12.0;
-/// Partly done stops this far short (minute hand, radians).
 const SHORT: f32 = 0.9;
-/// Minute hand speed while working (rad/s); the hour hand turns 12 times
-/// slower. The back arrow turns backwards too, at 70 degrees a second.
 const SPEED: f32 = 4.2;
 const RING_SPEED: f32 = 70.0 * PI / 180.0;
-/// Ambient second shown under reduced motion.
 const STILL: f32 = 1.3;
-/// Easing back to the time before, and back after a drag.
 const EASE_BACK: f32 = 1.1;
 const EASE_RETURN: f32 = 0.8;
 const EASE_SPIN: f32 = 1.4;
-/// A shake lasts this long.
 const SHAKE_END: f32 = 1.6;
-/// The badge has drawn in by then.
 pub const BADGE_END: f32 = 1.4;
-/// A click while working adds this much speed, which dies away.
 const KICK: f32 = 14.0;
-/// The hover area round the face.
 const HOVER_R: f32 = 50.0;
-/// Near the centre the pointer's angle means nothing (a step across it
-/// swings it by up to half a turn), so a drag there leaves the hands be.
 const DEAD_R: f32 = 12.0;
-/// The badge: where and how big.
 const BADGE: Point = pt(C.x + 42.0, C.y + 42.0);
 const BADGE_R: f32 = 13.0;
 
-/// The parts a pointer can name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
     Clock,
 }
 
-/// Which put-back this is, for the hover name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Undo {
-    /// Undo of the last fixes.
     Fixes,
-    /// Putting everything back before Secblitz is removed.
     Everything,
 }
 
-/// The hover name (an English catalog key; the page translates it).
 pub fn label_key(undo: Undo, run: Run) -> &'static str {
     match (undo, run) {
         (Undo::Fixes, Run::Working) => "Putting your settings back",
@@ -108,19 +65,14 @@ pub fn label_key(undo: Undo, run: Run) -> &'static str {
     }
 }
 
-/// The drawing. Build it on the page and call [`Rewind::view`].
 #[derive(Debug, Clone)]
 pub struct Rewind {
     pub p: Palette,
     pub plate: Plate,
     pub run: Run,
-    /// Share put back so far (0..=1), when the work reports it.
     pub progress: Option<f32>,
-    /// When `run` began.
     pub changed: Instant,
-    /// The page's last frame time (or `changed`).
     pub now: Instant,
-    /// The translated hover name ([`label_key`]).
     pub label: String,
 }
 
@@ -145,14 +97,10 @@ impl Rewind {
     }
 }
 
-/// The hover areas, one function for `update` and `draw`: the clock face.
-/// (Grabbing works out to the back arrow, see [`on_clock`]; the name sits
-/// above the face, where there is room for it.)
 pub fn spots() -> Hotspots<Part> {
     Hotspots::new().circle(Part::Clock, C, HOVER_R, Layer::Fixed)
 }
 
-/// Angle a in (-pi, pi].
 pub fn wrap(a: f32) -> f32 {
     let w = (a + PI).rem_euclid(TAU) - PI;
     if w <= -PI {
@@ -162,19 +110,14 @@ pub fn wrap(a: f32) -> f32 {
     }
 }
 
-/// The largest `rest + k turns` at or below `a`: where a hand going
-/// backwards from `a` first shows `rest`.
 pub fn back_to(a: f32, rest: f32) -> f32 {
     rest + TAU * ((a - rest) / TAU).floor()
 }
 
-/// The `rest + k turns` nearest to `a`.
 pub fn nearest(a: f32, rest: f32) -> f32 {
     rest + TAU * ((a - rest) / TAU).round()
 }
 
-/// Where the hands rest for a finished state (minute, hour), or `None` when
-/// they stay where they were (failed).
 pub fn rest(run: Run) -> Option<(f32, f32)> {
     match run {
         Run::Done => Some((M0, H0)),
@@ -183,7 +126,6 @@ pub fn rest(run: Run) -> Option<(f32, f32)> {
     }
 }
 
-/// The pose shown under reduced motion: minute, hour, arrow turn.
 fn still_pose(run: Run, st: &State) -> (f32, f32, f32) {
     match run {
         Run::Working => (
@@ -199,7 +141,6 @@ fn still_pose(run: Run, st: &State) -> (f32, f32, f32) {
     }
 }
 
-/// One eased move of the hands and the arrow.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Ease {
     from: [f32; 3],
@@ -211,27 +152,16 @@ struct Ease {
 #[derive(Debug, Clone)]
 pub struct State {
     live: Live<Part>,
-    /// Minute and hour hand angles, unwrapped so they turn on smoothly.
     m: f32,
     h: f32,
-    /// The back arrow's turn.
     ring: f32,
-    /// Extra speed from clicks while working.
     spin: f32,
     ease: Option<Ease>,
-    /// The hands are held by the pointer.
     held: bool,
-    /// While held: the pointer's last angle around the centre (`None` until
-    /// it is clear of the centre).
     grab: Option<f32>,
-    /// The back arrow's fill, following progress.
     fill: Spring,
-    /// This run reported progress, so the arrow is a track that fills (and
-    /// stays one through the result instead of snapping to a plain arrow).
     tracked: bool,
-    /// Seconds into a shake.
     shake: Option<f32>,
-    /// Where a finished clock's hands come back to after a drag.
     home: Option<(f32, f32)>,
 }
 
@@ -264,7 +194,6 @@ impl State {
         });
     }
 
-    /// A new state: ease back to the time before, or freeze and shake.
     fn enter(&mut self, run: Run) {
         self.ease = None;
         self.shake = None;
@@ -316,9 +245,6 @@ impl State {
         }
     }
 
-    /// Turn the hands by how far the pointer went round the centre. Close
-    /// to the centre nothing turns; the next point clear of it carries on
-    /// from there, so a drag straight through the middle never jumps.
     fn turn_to(&mut self, at: Point) {
         let (dx, dy) = (at.x - C.x, at.y - C.y);
         if dx * dx + dy * dy < DEAD_R * DEAD_R {
@@ -335,13 +261,11 @@ impl State {
     }
 }
 
-/// Close enough to the clock to grab it.
 fn on_clock(at: Point) -> bool {
     let d = ((at.x - C.x).powi(2) + (at.y - C.y).powi(2)).sqrt();
     d <= RA + 10.0
 }
 
-/// The shake, sideways in units.
 fn shake_dx(st: &State) -> f32 {
     match st.shake {
         Some(s) if !anim::reduced() => (s * 34.0).sin() * 3.0 * (-s * 4.0).exp(),
@@ -361,7 +285,6 @@ impl<M> canvas::Program<M> for Rewind {
     ) -> Option<Action<M>> {
         if st.live.fresh(self.changed) {
             if self.run == Run::Working {
-                // A new run starts with an empty arrow.
                 st.fill = Spring::with(0.0, 90.0, 16.0);
                 st.tracked = false;
             }
@@ -373,8 +296,6 @@ impl<M> canvas::Program<M> for Rewind {
         let stage = Stage::fit(UNITS, bounds.size());
         let step = st.live.update(event, bounds, cursor, &stage, &spots());
         let reduced = anim::reduced();
-        // Done runs the fill on to the head; partly done and failed leave
-        // it where the work stopped.
         let aim = match self.run {
             Run::Working => self.progress.unwrap_or(0.0).clamp(0.0, 1.0),
             Run::Done => 1.0,
@@ -421,8 +342,6 @@ impl<M> canvas::Program<M> for Rewind {
                         st.ease_to(to.0, to.1, st.ring, EASE_RETURN);
                     }
                 }
-                // Only on the clock: the canvas is wider than the drawing
-                // (room for the hover name) and the rest is plain sheet.
                 if click && on_clock(at) {
                     st.live.pulses.push(at, false);
                 }
@@ -430,7 +349,6 @@ impl<M> canvas::Program<M> for Rewind {
             _ => {}
         }
         if reduced && !st.held && self.run != Run::Working {
-            // Transitions jump to their end.
             if let Some((m, h)) = st.home {
                 (st.m, st.h) = (m, h);
             }
@@ -460,8 +378,6 @@ impl<M> canvas::Program<M> for Rewind {
         };
         let working = run == Run::Working;
 
-        // The colour of the moment: accent while working, then the result,
-        // cross-faded. A failed clock goes grey; its badge says why.
         let result = match run {
             Run::Working => ink.accent,
             Run::Done => ink.good,
@@ -474,14 +390,11 @@ impl<M> canvas::Program<M> for Rewind {
             phase(age, 0.0, 0.45, STANDARD)
         };
         let face = mix(ink.accent, result, shift);
-        // The face's fill: a blue tint, then the result's tint; a failed
-        // (grey) clock goes back to the plate it sits on.
         let disc_fill = match run {
             Run::Failed => mix(ink.tint(ink.accent), ink.plate, shift),
             _ => ink.tint(face),
         };
 
-        // The back arrow, turned by `ring`.
         let arrow = arrow_shape(ring);
         let track = if working {
             self.progress.is_some()
@@ -489,8 +402,6 @@ impl<M> canvas::Program<M> for Rewind {
             st.tracked
         };
         if track {
-            // A grey track filling from tail to head; through the result
-            // it keeps going in the result's colour, so nothing snaps.
             let fill = match (anim::reduced(), working) {
                 (true, true) => self.progress.unwrap_or(0.0).clamp(0.0, 1.0),
                 (true, false) => st.fill.target,
@@ -528,7 +439,6 @@ impl<M> canvas::Program<M> for Rewind {
             }
         }
 
-        // The face: tinted plate, inner ring and the twelve marks.
         let disc = stage.circle(C, R);
         f.fill(&disc, disc_fill);
         f.stroke(&disc, stroke(face, W_PART));
@@ -547,7 +457,6 @@ impl<M> canvas::Program<M> for Rewind {
         f.stroke(&marks(false), ink.ln2());
         f.stroke(&marks(true), ink.ln());
 
-        // A ghost trail behind the minute hand while it spins back.
         if working {
             for k in 0..3 {
                 let a = m + (k + 1) as f32 * 0.16;
@@ -557,7 +466,6 @@ impl<M> canvas::Program<M> for Rewind {
                 );
             }
         }
-        // A failed clock's hands tremble once.
         let tremble = match (run, st.shake) {
             (Run::Failed, Some(s)) if !anim::reduced() => 0.12 * (s * 26.0).sin() * (-s * 2.5).exp(),
             _ => 0.0,
@@ -569,7 +477,6 @@ impl<M> canvas::Program<M> for Rewind {
         f.stroke(&stage.line(C, hand(m + tremble, MINUTE)), stroke(ink.ink, W_INK));
         f.fill(&stage.circle(C, 2.6), ink.ink);
 
-        // The result badge.
         if !working {
             let (show, mark_at) = match run {
                 Run::Failed => (phase(age, 0.5, 0.7, STANDARD), (0.6, 0.9)),
@@ -618,7 +525,6 @@ impl<M> canvas::Program<M> for Rewind {
     }
 }
 
-/// The end of a hand at angle `a`.
 fn hand(a: f32, len: f32) -> Point {
     pt(C.x + len * a.cos(), C.y + len * a.sin())
 }
@@ -627,12 +533,9 @@ fn polar(a: f32, r: f32) -> Point {
     pt(C.x + r * a.cos(), C.y + r * a.sin())
 }
 
-/// The back arrow's head (the stub past the arc and the two barbs),
-/// turned by `ring`.
 fn head_shape(ring: f32) -> PathData {
     let a0 = A_HEAD + ring;
     let p0 = polar(a0, RA);
-    // Going backwards round the circle (anticlockwise on screen).
     let dv = Vector::new(a0.sin(), -a0.cos());
     let nv = Vector::new(a0.cos(), a0.sin());
     let tip = p0 + dv * 4.0;
@@ -647,7 +550,6 @@ fn head_shape(ring: f32) -> PathData {
     }
 }
 
-/// The whole back arrow: the arc from head to tail plus the head.
 fn arrow_shape(ring: f32) -> PathData {
     let arc = arc_segs(A_HEAD + ring, A_TAIL + ring);
     let mut segs = arc.segs;
@@ -655,8 +557,6 @@ fn arrow_shape(ring: f32) -> PathData {
     PathData { segs }
 }
 
-/// An arc of the back arrow's circle as path data (an SVG arc, which the
-/// parser turns into cubics).
 fn arc_segs(a0: f32, a1: f32) -> PathData {
     let p0 = polar(a0, RA);
     let p1 = polar(a1, RA);
@@ -668,7 +568,6 @@ fn arc_segs(a0: f32, a1: f32) -> PathData {
     ))
 }
 
-/// The tick, exclamation mark or cross inside the badge.
 fn badge_mark(run: Run) -> PathData {
     let (x, y, r) = (BADGE.x, BADGE.y, BADGE_R);
     let segs = match run {
@@ -732,7 +631,6 @@ mod tests {
             .unwrap_or(false)
     }
 
-    /// Unit point to the window position the canvas sees.
     fn px(p: Point) -> Point {
         Stage::fit(UNITS, BOUNDS.size()).point(p)
     }
@@ -749,13 +647,10 @@ mod tests {
     fn angles_unwrap_and_find_the_time_before() {
         assert!(close(wrap(TAU + 0.5), 0.5) && close(wrap(-TAU - 0.5), -0.5));
         assert!(close(wrap(PI), PI) && close(wrap(-PI), PI));
-        // Going back from just past ten past ten reaches it at once; from
-        // just before, a whole turn back.
         assert!(close(back_to(M0 + 0.2, M0), M0));
         assert!(close(back_to(M0 - 0.2, M0), M0 - TAU));
         assert!(close(back_to(M0 + 5.0 * TAU + 1.0, M0), M0 + 5.0 * TAU));
         assert!(close(nearest(M0 - 0.2, M0), M0) && close(nearest(M0 + 6.0, M0), M0 + TAU));
-        // Done rests at ten past ten, partly done short of it, failed stays.
         assert_eq!(rest(Run::Done), Some((M0, H0)));
         let (m, h) = rest(Run::Partial).unwrap();
         assert!(m > M0 && h > H0);
@@ -772,12 +667,10 @@ mod tests {
         assert_eq!(s.hit(polar(A_HEAD, RA), &tilt), None);
         assert_eq!(s.hit(pt(2.0, 2.0), &tilt), None);
         assert!(on_clock(polar(A_HEAD, RA)));
-        // The name fits above the face at the size pages use.
         let anchor = s.anchor(Part::Clock, &tilt).unwrap();
         let stage = Stage::fit(UNITS, SIZE);
         assert!(stage.point(anchor).y >= 6.0 + 24.0, "{anchor:?}");
         assert!(on_clock(polar(1.0, RA + 8.0)) && !on_clock(pt(2.0, 2.0)));
-        // Everything fits the box: the arrow head and the badge.
         for a in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
             let b = arrow_shape(a).bounds().unwrap();
             assert!(b.x >= 0.0 && b.y >= 0.0, "{b:?}");
@@ -815,7 +708,6 @@ mod tests {
         for _ in 0..60 {
             assert!(wants_frame(tick(&mut st, &working, &mut clock)));
         }
-        // About a second of turning backwards.
         assert!(st.m < m_start - 3.5 && st.ring < 0.0);
         assert!((st.fill.value - 0.5).abs() < 0.05);
         let done = Rewind {
@@ -845,7 +737,6 @@ mod tests {
         let mut st = State::default();
         st.live.fresh(t0);
         (st.m, st.h, st.home) = (M0, H0, Some((M0, H0)));
-        // Press on the right edge of the clock: nothing moves yet.
         let start = px(pt(C.x + 60.0, C.y));
         let at = mouse::Cursor::Available(start);
         Program::<()>::update(
@@ -867,8 +758,6 @@ mod tests {
             Program::<()>::mouse_interaction(&done, &st, BOUNDS, at),
             mouse::Interaction::Grabbing
         );
-        // A quarter turn clockwise, in small steps, then right round past
-        // the seam at pi: the hand follows by the same amount.
         for i in 1..=30 {
             let a = i as f32 / 30.0 * (PI + 0.5);
             let p = px(polar(a, 60.0));
@@ -882,7 +771,6 @@ mod tests {
         }
         assert!((st.m - (M0 + PI + 0.5)).abs() < 0.01, "{}", st.m - M0);
         assert!((st.h - (H0 + (PI + 0.5) / 12.0)).abs() < 0.01);
-        // Let go: it eases back to ten past ten (the nearest one).
         let end = px(polar(PI + 0.5, 60.0));
         Program::<()>::update(
             &done,
@@ -913,9 +801,6 @@ mod tests {
         let send = |st: &mut State, e: mouse::Event, at: Point| {
             Program::<()>::update(&done, st, &mouse(e), BOUNDS, mouse::Cursor::Available(at));
         };
-        // Press left of the centre and drag straight across it to the right
-        // in small steps: the pointer's angle flips by half a turn, the
-        // hands do not.
         let from = px(pt(C.x - 30.0, C.y));
         send(&mut st, mouse::Event::CursorMoved { position: from }, from);
         send(&mut st, mouse::Event::ButtonPressed(mouse::Button::Left), from);
@@ -966,7 +851,6 @@ mod tests {
             Program::<()>::update(&working, &mut st, &frame(clock), BOUNDS, off);
         }
         assert!(st.tracked && (st.fill.value - 0.6).abs() < 0.05);
-        // Done: the fill runs on to the head.
         let done = prog(Run::Done, None, clock);
         let mut st_done = st.clone();
         for _ in 0..90 {
@@ -974,14 +858,12 @@ mod tests {
             Program::<()>::update(&done, &mut st_done, &frame(clock), BOUNDS, off);
         }
         assert!(st_done.tracked && st_done.fill.value > 0.99);
-        // Partly done: it stays where the work stopped.
         let partial = prog(Run::Partial, None, clock);
         for _ in 0..90 {
             clock += Duration::from_millis(16);
             Program::<()>::update(&partial, &mut st, &frame(clock), BOUNDS, off);
         }
         assert!(st.tracked && (st.fill.value - 0.6).abs() < 0.05);
-        // A new run starts with an empty arrow.
         let again = prog(Run::Working, None, clock);
         clock += Duration::from_millis(16);
         Program::<()>::update(&again, &mut st, &frame(clock), BOUNDS, off);

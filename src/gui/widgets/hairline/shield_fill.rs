@@ -1,20 +1,4 @@
 //! Shield fills up: the picture while Secblitz makes fixes, and the result.
-//!
-//! The prototype's `FIXES.shield`. An empty shield fills with lines like
-//! water, the level following the real share of fixes made. When every fix
-//! is in, the water reaches the top, the outline draws in green with a tick
-//! and a ring of short rays. Partly done: the water stops part way and an
-//! exclamation mark draws in (warn). Failed: the water drains and a crack
-//! draws across (bad), with one shake.
-//!
-//! The shield turns a little towards the pointer (a cheap 3D turn: squash
-//! on x and y and a small skew, all mapped by hand so line widths stay in
-//! pixels). A click makes a ripple on the water; every fix that lands makes
-//! a small one too. Hovering the shield names the state.
-//!
-//! Water is clipped to the shield by geometry (iced has no clip paths): the
-//! outline is sampled once into a polygon and the water is built column by
-//! column between the wave and the shield's bottom edge.
 use super::glyph::Glyph;
 use super::live::Live;
 use super::motion::{lerp, phase, Spring};
@@ -28,43 +12,24 @@ use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Them
 use std::sync::OnceLock;
 use std::time::Instant;
 
-/// The drawing's box in units: the shield and its rays, nothing more.
 pub const UNITS: Size = Size::new(184.0, 176.0);
-/// Logical pixels per unit at the size pages show it (the prototype sheet
-/// showed its 320-unit box at 240 px).
 pub const SCALE: f32 = 0.75;
-/// The canvas size pages give it: the drawing's height, and wide enough
-/// that the hover name (up to about 330 px in German) fits beside it. The
-/// drawing sits centred in it.
 pub const SIZE: Size = Size::new(360.0, UNITS.height * SCALE);
 
-/// Centre of the shield, in units.
 const C: Point = pt(92.0, 88.0);
-/// Units per icon unit: the 24-unit shield glyph drawn 6.2 times larger.
 const S: f32 = 6.2;
-/// Ambient second shown under reduced motion.
 const STILL: f32 = 0.8;
-/// Every result transition (marks, rays, shake, the wave calming) is over by
-/// then.
 pub const RESULT_END: f32 = 2.4;
-/// The level spring: slow and nearly critically damped, like water.
 const LEVEL_K: f32 = 40.0;
 const LEVEL_C: f32 = 12.0;
-/// A ripple has died away after this many seconds.
 const RIPPLE_LIFE: f32 = 1.9;
-/// The hover area around the shield, in units.
 const HOVER_R: f32 = 60.0;
-/// Water lines: one every 1.25 icon units from the bottom up.
 const LINES: usize = 16;
-/// The crack across a broken shield, in icon units.
 const CRACK: &str = "M8.2 4.6l2.4 4.6-2.6 2.4 4.6 3.4-1.6 2.6 3.2 2.6";
-/// The gap cut through the water behind the exclamation mark.
 const EXCL_GAP: &str = "M12 7.2v6.4M12 16.5v.1";
-/// Shield extent across, in icon units (the glyph is symmetric about 12).
 const X0: f32 = 3.7;
 const X1: f32 = 20.3;
 
-/// Where the work is. Shared with the rewind drawing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Run {
     Working,
@@ -73,8 +38,6 @@ pub enum Run {
     Failed,
 }
 
-/// The hover name for each state (an English catalog key; the page
-/// translates it with `ctx.t`).
 pub fn label_key(run: Run) -> &'static str {
     match run {
         Run::Working => "Making your fixes",
@@ -84,9 +47,6 @@ pub fn label_key(run: Run) -> &'static str {
     }
 }
 
-/// Where the water heads for: 0 is empty, 1 just full (1.04 hides the
-/// surface above the top). `progress` is the share of fixes made, when
-/// known; without it the water rises slowly by itself.
 pub fn level_target(run: Run, progress: Option<f32>, age: f32) -> f32 {
     let of = |f: f32| 0.12 + 0.76 * f.clamp(0.0, 1.0);
     match run {
@@ -100,25 +60,19 @@ pub fn level_target(run: Run, progress: Option<f32>, age: f32) -> f32 {
     }
 }
 
-/// The parts a pointer can name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
     Shield,
 }
 
-/// The drawing. Build it on the page and call [`ShieldFill::view`].
 #[derive(Debug, Clone)]
 pub struct ShieldFill {
     pub p: Palette,
     pub plate: Plate,
     pub run: Run,
-    /// Share of fixes made (0..=1), when known.
     pub progress: Option<f32>,
-    /// When `run` began.
     pub changed: Instant,
-    /// The page's last frame time (or `changed`).
     pub now: Instant,
-    /// The translated hover name ([`label_key`]).
     pub label: String,
 }
 
@@ -140,8 +94,6 @@ impl ShieldFill {
         }
     }
 
-    /// The colour of the moment: accent while working, then the result's
-    /// meaning, cross-faded so nothing flips.
     fn color(&self, ink: &Ink, age: f32) -> Color {
         let to = match self.run {
             Run::Working => return ink.accent,
@@ -153,7 +105,6 @@ impl ShieldFill {
     }
 }
 
-/// The hover areas, one function for `update` and `draw`.
 pub fn spots() -> Hotspots<Part> {
     Hotspots::new().circle(Part::Shield, C, HOVER_R, Layer::Mid)
 }
@@ -162,7 +113,6 @@ pub fn spots() -> Hotspots<Part> {
 pub struct State {
     live: Live<Part>,
     level: Spring,
-    /// A ripple on the water: ambient second it began and its strength.
     ripple: Option<(f32, f32)>,
 }
 
@@ -188,16 +138,12 @@ impl State {
     }
 }
 
-// ---------------------------------------------------------------- geometry
 
-/// The shield outline as a polygon in icon units, sampled once.
 fn outline() -> &'static [Point] {
     static O: OnceLock<Vec<Point>> = OnceLock::new();
     O.get_or_init(|| Glyph::Shield.data().samples(180))
 }
 
-/// Where a line across the outline crosses it: min and max of the other
-/// coordinate. `vertical` cuts at x = `at`, otherwise at y = `at`.
 fn cut(at: f32, vertical: bool) -> Option<(f32, f32)> {
     let pts = outline();
     let mut lo = f32::INFINITY;
@@ -220,17 +166,14 @@ fn cut(at: f32, vertical: bool) -> Option<(f32, f32)> {
     (hi > lo).then_some((lo, hi))
 }
 
-/// Top and bottom of the shield at `x` (icon units).
 pub fn column(x: f32) -> Option<(f32, f32)> {
     cut(x, true)
 }
 
-/// Left and right of the shield at `y` (icon units).
 pub fn span(y: f32) -> Option<(f32, f32)> {
     cut(y, false)
 }
 
-/// Columns across the shield used for the water.
 const COLS: usize = 44;
 
 fn col_x(i: usize) -> f32 {
@@ -238,8 +181,6 @@ fn col_x(i: usize) -> f32 {
     a + (b - a) * i as f32 / COLS as f32
 }
 
-/// The water under `wave` as a closed polygon in icon units, inside the
-/// shield. Empty when no water shows.
 pub fn water(wave: impl Fn(f32) -> f32) -> Vec<Point> {
     let mut upper = Vec::with_capacity(COLS + 1);
     let mut lower = Vec::with_capacity(COLS + 1);
@@ -260,7 +201,6 @@ pub fn water(wave: impl Fn(f32) -> f32) -> Vec<Point> {
     upper
 }
 
-/// The surface line, split where it leaves the shield.
 fn surface(wave: impl Fn(f32) -> f32) -> Vec<Vec<Point>> {
     let mut runs = Vec::new();
     let mut cur: Vec<Point> = Vec::new();
@@ -283,8 +223,6 @@ fn surface(wave: impl Fn(f32) -> f32) -> Vec<Vec<Point>> {
     runs
 }
 
-/// The cheap 3D turn towards the pointer, plus a sideways shake: maps icon
-/// units to drawing units. Affine, so curves stay exact.
 #[derive(Debug, Clone, Copy)]
 struct Turn {
     sx: f32,
@@ -312,7 +250,6 @@ impl Turn {
     }
 }
 
-/// The sideways shake when it fails (drawing units).
 fn shake(run: Run, age: f32) -> f32 {
     if run != Run::Failed || age <= 0.9 {
         return 0.0;
@@ -320,7 +257,6 @@ fn shake(run: Run, age: f32) -> f32 {
     (age * 34.0).sin() * 3.0 * (-(age - 0.9) * 4.0).exp()
 }
 
-// ----------------------------------------------------------------- program
 
 impl<M> canvas::Program<M> for ShieldFill {
     type State = State;
@@ -337,8 +273,6 @@ impl<M> canvas::Program<M> for ShieldFill {
         if fresh {
             match self.run {
                 Run::Working => st.level = Spring::with(0.06, LEVEL_K, LEVEL_C),
-                // Shown straight away as a result: rise from where the work
-                // would have left it.
                 _ if first => st.level = Spring::with(0.88, LEVEL_K, LEVEL_C),
                 _ => {}
             }
@@ -348,8 +282,6 @@ impl<M> canvas::Program<M> for ShieldFill {
         let age = st.live.age(self.changed, self.now);
         let t = st.live.ambient(self.now, STILL);
         let target = level_target(self.run, self.progress, age);
-        // Each fix that lands makes a small splash (not the run's first aim,
-        // which only lifts the empty shield to its starting level).
         if self.run == Run::Working
             && !fresh
             && target > st.level.target + 0.01
@@ -361,8 +293,6 @@ impl<M> canvas::Program<M> for ShieldFill {
         if let Some(dt) = step.dt {
             st.level.tick(dt);
         }
-        // Only a click on the shield itself; the canvas is wider than the
-        // drawing (room for the hover name) and the rest is plain sheet.
         if let Some(at) = step.click().filter(|&at| spots().hit(at, &st.live.tilt).is_some()) {
             if !anim::reduced() {
                 st.ripple = Some((t, 1.0));
@@ -395,7 +325,6 @@ impl<M> canvas::Program<M> for ShieldFill {
             st.level.value
         };
 
-        // Rays when it is done, behind everything.
         let re = phase(age, 1.2, 1.9, DECELERATE);
         if run == Run::Done && re > 0.0 && re < 1.0 {
             let ray = stroke(color.scale_alpha(1.0 - re), W_LINE);
@@ -416,8 +345,6 @@ impl<M> canvas::Program<M> for ShieldFill {
         let shield = Glyph::Shield.data();
         f.fill(&mid.shape(&turn.shape(shield)), ink.plate);
 
-        // The water: a wavy top (two sines, plus any ripple) over a tinted
-        // pool with lines through it.
         let top = 21.2 - level * 19.0;
         let rp = st.ripple_at(t);
         let calm = match run {
@@ -476,7 +403,6 @@ impl<M> canvas::Program<M> for ShieldFill {
         }
         f.stroke(&mid.shape(&turn.shape(shield)), ink.ln());
 
-        // The result marks, drawn in.
         let drawn = |f: &mut Frame, d: &PathData, frac: f32, width: f32| {
             if frac > 0.001 {
                 f.stroke(&mid.shape(&turn.shape(&d.partial(frac))), stroke(color, width));
@@ -591,15 +517,12 @@ mod tests {
 
     #[test]
     fn water_follows_real_progress() {
-        // Rises with each fix made and never reaches the top before the end.
         let w = |f| level_target(Run::Working, Some(f), 0.0);
         assert!((w(0.0) - 0.12).abs() < 1e-6);
         assert!(w(0.5) > w(0.25) && w(1.0) > w(0.5));
         assert!(w(1.0) < 1.0 && w(7.0) == w(1.0) && w(-1.0) == w(0.0));
-        // Unknown progress creeps up by itself but stays below full.
         let slow = |age| level_target(Run::Working, None, age);
         assert!(slow(10.0) > slow(1.0) && slow(1000.0) < 0.75);
-        // Results: full, part way, empty.
         assert!(level_target(Run::Done, None, 0.0) > 1.0);
         assert_eq!(level_target(Run::Failed, Some(1.0), 0.0), 0.0);
         let part = level_target(Run::Partial, Some(0.5), 0.0);
@@ -611,28 +534,22 @@ mod tests {
 
     #[test]
     fn the_outline_bounds_the_water() {
-        // The glyph is symmetric about x = 12, from 3.7 to 20.3 across.
         let (l, r) = span(10.0).unwrap();
         assert!((l - 3.7).abs() < 0.05 && (r - 20.3).abs() < 0.05);
         let (l, r) = span(18.0).unwrap();
         assert!(((12.0 - l) - (r - 12.0)).abs() < 0.05 && r - l < 12.0);
         assert!(span(1.0).is_none() && span(22.0).is_none());
         let (top, bottom) = column(12.0).unwrap();
-        // Sampled, so the two points of the outline are cut a little.
         assert!((top - 2.6).abs() < 0.15 && (bottom - 21.2).abs() < 0.15, "{top} {bottom}");
-        // Water at a flat level stays inside the shield, between the level
-        // and the bottom edge.
         let pool = water(|_| 14.0);
         assert!(pool.len() > 10);
         for q in &pool {
             let (a, b) = column(q.x.clamp(X0 + 0.02, X1 - 0.02)).unwrap();
             assert!(q.y >= 14.0 - 1e-4 && q.y >= a - 1e-3 && q.y <= b + 1e-3, "{q:?}");
         }
-        // Above the top it fills the whole shield; below the bottom, nothing.
         let full = water(|_| 0.0);
         assert!(full.iter().any(|q| q.y < 3.0));
         assert!(water(|_| 22.0).is_empty());
-        // The surface is cut where it leaves the shield.
         assert!(surface(|_| 0.0).is_empty());
         assert_eq!(surface(|_| 14.0).len(), 1);
     }
@@ -644,7 +561,6 @@ mod tests {
         assert_eq!(s.hit(C, &tilt), Some(Part::Shield));
         assert_eq!(s.hit(pt(C.x + 50.0, C.y + 20.0), &tilt), Some(Part::Shield));
         assert_eq!(s.hit(pt(4.0, 4.0), &tilt), None);
-        // The whole drawing fits its box, rays included.
         const {
             assert!(C.x - 88.0 >= 0.0 && C.x + 88.0 <= UNITS.width);
             assert!(C.y - 84.0 >= 0.0 && C.y + 84.0 <= UNITS.height);
@@ -678,12 +594,10 @@ mod tests {
             assert!(wants_frame(tick(&mut st, &working, &mut clock)));
         }
         assert!((st.level.value - 0.5).abs() < 0.02, "{}", st.level.value);
-        // A fix lands: the water rises and splashes.
         st.ripple = None;
         let more = prog(Run::Working, Some(1.0), t0);
         tick(&mut st, &more, &mut clock);
         assert!(st.ripple.is_some() && st.level.target > 0.85);
-        // Done: frames until everything has drawn in and calmed, then none.
         let done = ShieldFill {
             run: Run::Done,
             changed: clock,
@@ -708,7 +622,6 @@ mod tests {
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
         let working = prog(Run::Working, Some(0.0), t0);
-        // The run's first aim lifts the empty shield without a splash.
         Program::<()>::update(&working, &mut st, &frame(t0), BOUNDS, off);
         assert!(st.ripple.is_none() && st.level.target > 0.1);
         let stage = Stage::fit(UNITS, BOUNDS.size());
@@ -722,10 +635,8 @@ mod tests {
                 Program::<()>::update(&working, st, &Event::Mouse(e), BOUNDS, c);
             }
         };
-        // A click on the empty canvas beside the drawing: no ripple, no ring.
         click(&mut st, Point::new(8.0, SIZE.height / 2.0));
         assert!(st.ripple.is_none() && !st.live.pulses.alive());
-        // A click on the shield ripples the water and pulses.
         click(&mut st, stage.point(C));
         assert!(st.ripple.is_some() && st.live.pulses.alive());
         anim::set_reduced_override(None);

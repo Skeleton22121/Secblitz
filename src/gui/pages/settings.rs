@@ -1,8 +1,4 @@
 //! Settings page: appearance, language, background protection, updates, about.
-//!
-//! The shell should call [`on_enter`] when this page opens so the live values
-//! (background checks, update status) are read off the UI thread. Until then
-//! the page shows calm "Checking…" labels with a Refresh button.
 use crate::app::settings::{self as prefs_store, ThemeChoice};
 use crate::gui::icons::Icon;
 use crate::gui::pages::remove;
@@ -13,7 +9,6 @@ use crate::i18n::Lang;
 use iced::widget::{column, container, row, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
 
-/// A value that is read off the UI thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Remote<T> {
     Loading,
@@ -21,15 +16,12 @@ enum Remote<T> {
     Failed,
 }
 
-/// Update status in plain words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateView {
     UpToDate,
     Ready,
-    /// A check is running right now.
     Checking,
     Unknown,
-    /// This copy has no update source (for example a portable build).
     Off,
 }
 
@@ -37,7 +29,6 @@ pub fn update_view(status: &secblitz::updater::UpdateStatus) -> UpdateView {
     use secblitz::updater::UpdateOutcome as O;
     match &status.result {
         O::UpToDate | O::Installed { .. } | O::DeferredRollout { .. } => UpdateView::UpToDate,
-        // `checked_at == 0`: the updater holds its lock (checking now).
         O::DeferredBusy if status.checked_at == 0 => UpdateView::Checking,
         O::WorkerStarted { .. } | O::DeferredBusy => UpdateView::Ready,
         O::Failed { .. } => UpdateView::Unknown,
@@ -46,9 +37,6 @@ pub fn update_view(status: &secblitz::updater::UpdateStatus) -> UpdateView {
     }
 }
 
-/// What the Updates row shows. Only the installed copy can update itself
-/// (the updater refuses any other path), so a copy run from anywhere else
-/// says updates aren't set up instead of "couldn't check" forever.
 fn shown_update(installed: bool, update: Option<UpdateView>) -> Remote<UpdateView> {
     match update {
         _ if !installed => Remote::Ready(UpdateView::Off),
@@ -57,13 +45,10 @@ fn shown_update(installed: bool, update: Option<UpdateView>) -> Remote<UpdateVie
     }
 }
 
-/// Whether the tray switch reads as on. Only the installed copy can show a
-/// tray icon, so any other copy shows the switch off whatever the saved choice.
 fn shown_tray(installed: bool, tray: bool) -> bool {
     installed && tray
 }
 
-/// A change waiting for the person's yes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirm {
     Background(bool),
@@ -76,17 +61,11 @@ pub struct State {
     update: Remote<UpdateView>,
     confirm: Option<Confirm>,
     working: bool,
-    /// Bumped by every load and change; a read from an older one is dropped.
     generation: u32,
     tray: bool,
-    /// Running from the installed location (the only place a logon entry
-    /// may point at).
     installed: bool,
-    /// The About group is open.
     technical: bool,
-    /// Drives the spinner; only ticks while something is busy.
     clock: anim::Clock,
-    /// The Remove Secblitz sheet.
     remove: remove::State,
 }
 
@@ -98,7 +77,6 @@ impl Default for State {
             confirm: None,
             working: false,
             generation: 0,
-            // Cheap local reads; everything slower goes through `Load`.
             tray: prefs_store::tray_enabled(),
             installed: prefs_store::installed_exe().is_some(),
             technical: false,
@@ -116,8 +94,6 @@ impl State {
     }
 }
 
-/// Frame ticks, only while a spinner is showing (and motion is allowed).
-/// The shell batches this into its subscriptions.
 pub fn subscription(state: &State) -> Subscription<Message> {
     let spinner = if state.busy() && !anim::reduced() {
         iced::window::frames().map(|_| Message::Settings(Msg::Frame))
@@ -127,12 +103,10 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     Subscription::batch([spinner, remove::subscription(&state.remove)])
 }
 
-/// The Remove Secblitz sheet, drawn by the shell above the whole window.
 pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     remove::modal(&state.remove, ctx)
 }
 
-/// Escape closes the Remove Secblitz sheet when no work is running.
 pub fn escape(state: &mut State) {
     remove::escape(&mut state.remove);
 }
@@ -152,7 +126,6 @@ impl LangItem {
 }
 
 impl std::fmt::Display for LangItem {
-    /// Each language is named in itself so anyone can find theirs.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self.0 {
             Lang::En => "English",
@@ -167,7 +140,6 @@ impl std::fmt::Display for LangItem {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// (Re)read background protection and update status.
     Load,
     Loaded {
         generation: u32,
@@ -183,12 +155,10 @@ pub enum Msg {
     BackgroundDone(bool, Result<(), String>),
     TrayDone(bool, Result<(), String>),
     ToggleTechnical,
-    /// Animation frame; the redraw is the whole job.
     Frame,
     Remove(remove::Msg),
 }
 
-/// Call when the page opens.
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     update(state, Msg::Load, ctx)
 }
@@ -342,11 +312,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
-// ----- view -----
 
 const CONTROL_WIDTH: f32 = 168.0;
 
-/// Spinner plus a short word, for anything with an unknown wait.
 fn busy<'a>(p: Palette, state: &State, label: String) -> Element<'a, Message> {
     row![
         anim::spinner(16.0, p.text_muted, state.clock.elapsed()),
@@ -382,7 +350,6 @@ fn confirm_text(confirm: Confirm) -> (&'static str, &'static str, &'static str) 
     }
 }
 
-/// A confirmation sits between rows as a quiet tonal block.
 fn confirm_row<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Message> {
     let (title, text_key, yes) = confirm_text(confirm);
     let body = column![
@@ -422,7 +389,6 @@ fn confirm_row<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Messa
         .into()
 }
 
-/// Icon-only "more" menu with a single "Try again" / "Check now" entry.
 fn reload_menu<'a>(p: Palette, label: String) -> Element<'a, Message> {
     widgets::overflow_menu(
         p,
@@ -431,11 +397,9 @@ fn reload_menu<'a>(p: Palette, label: String) -> Element<'a, Message> {
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    // `ctx.palette` is a faded copy during the page entrance.
     let p = Palette::of(ctx.palette.mode);
     let t = |s: &str| ctx.t(s);
 
-    // Appearance
     let theme_options = [
         (ThemeChoice::Light, t("Light")),
         (ThemeChoice::Dark, t("Dark")),
@@ -475,7 +439,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ],
     );
 
-    // Background protection
     let background_control: Element<'a, Message> = if state.working {
         busy(p, state, t("Working"))
     } else {
@@ -523,7 +486,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     }
     let protection = widgets::group(p, t("Background protection"), None, None, rows);
 
-    // Updates: one compact row, details in the menu.
     let (status, line): (Element<'a, Message>, String) = match &state.update {
         Remote::Loading | Remote::Ready(UpdateView::Checking) => {
             (busy(p, state, t("Checking…")), t("Looking for updates."))
@@ -567,7 +529,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         )],
     );
 
-    // About: collapsed shows only the version.
     let mut details = column![
         widgets::small(p, t("A safer PC. Without headaches.")),
         widgets::small(p, t("Fonts: IBM Plex Sans (SIL Open Font License).")),
@@ -609,7 +570,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         container(details).padding([theme::S2, theme::S4 + theme::ICON_ROW + theme::S4]),
     );
 
-    // Remove Secblitz: one button, the choices are in the sheet.
     let removal = widgets::group(
         p,
         t(remove::SECTION_TITLE),
@@ -674,7 +634,6 @@ mod tests {
             UpdateView::Ready
         );
         assert_eq!(update_view(&status(O::DeferredBusy, 5)), UpdateView::Ready);
-        // The updater's lock is held: a check is running, nothing is ready.
         assert_eq!(
             update_view(&status(O::DeferredBusy, 0)),
             UpdateView::Checking
@@ -730,8 +689,6 @@ mod tests {
     }
 }
 
-/// Warm the page in the background: the two slow reads run off the UI thread
-/// and the page keeps whatever it already shows until they land.
 #[allow(clippy::items_after_test_module)]
 pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     let _ = ctx;
@@ -741,7 +698,6 @@ pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     load_task(state)
 }
 
-/// Start a read tagged with a fresh generation; older reads are dropped.
 fn load_task(state: &mut State) -> Task<Message> {
     state.generation = state.generation.wrapping_add(1);
     let generation = state.generation;
