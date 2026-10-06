@@ -52,8 +52,8 @@ fn all_default_block_profiles_are_protected_without_preference_or_wal_changes() 
             && r.effective == Some(EffectiveFirewall::Inbound(InboundAction::Block))));
     let selected = ids.map(str::to_owned);
     for report in [
-        e.apply(|_, _| {}).unwrap(),
-        e.apply_selected(&selected, |_, _| {}).unwrap(),
+        e.apply(|_| {}).unwrap(),
+        e.apply_selected(&selected, |_| {}).unwrap(),
     ] {
         assert!(report.transaction.is_none());
         assert!(report.results.iter().all(|r| r.status == CheckStatus::Unchanged));
@@ -69,7 +69,7 @@ fn genuine_firewall_gaps_repair_and_undo_exact_raw_schema_one_originals() {
     for raw in [json!("Allow"), json!("NotConfigured")] {
         let (dir, state, mut e) = fixture(FIREWALL, raw.clone());
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
-        let report = e.apply_selected(&[FIREWALL.into()], |_, _| {}).unwrap();
+        let report = e.apply_selected(&[FIREWALL.into()], |_| {}).unwrap();
         assert_eq!(report.results[0].status, CheckStatus::Applied);
         assert_eq!(
             report.results[0].effective,
@@ -83,7 +83,7 @@ fn genuine_firewall_gaps_repair_and_undo_exact_raw_schema_one_originals() {
         drop(tx);
         drop(e);
         let mut e = reopen(&dir, &state, &[FIREWALL]);
-        e.revert(|_, _| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         assert_eq!(state.borrow().values[FIREWALL], raw);
         assert_eq!(state.borrow().writes.len(), 2);
     }
@@ -157,7 +157,7 @@ fn missing_contradictory_and_managed_firewall_evidence_never_writes_or_claims_pr
             .insert(id.into(), (effective, authority));
         assert_eq!(e.audit().unwrap().results[0].status, status);
         assert_eq!(
-            e.apply_selected(&[id.into()], |_, _| {}).unwrap().results[0].status,
+            e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
             status
         );
         assert!(state.borrow().writes.is_empty());
@@ -169,12 +169,12 @@ fn missing_contradictory_and_managed_firewall_evidence_never_writes_or_claims_pr
 fn owned_firewall_uses_raw_drift_and_final_gate_rechecks_evidence() {
     let (_dir, state, mut e) = fixture(FIREWALL, json!("Allow"));
     state.borrow_mut().evidence_at = Some((2, None, Some(Authority::Local)));
-    assert!(e.apply_selected(&[FIREWALL.into()], |_, _| {}).is_err());
+    assert!(e.apply_selected(&[FIREWALL.into()], |_| {}).is_err());
     assert!(state.borrow().writes.is_empty());
     assert_eq!(e.load().unwrap()[0].entries[0].before, json!("Allow"));
-    e.revert(|_, _| {}).unwrap(); // original already present, no write needed
+    e.revert(|_| {}).unwrap(); // original already present, no write needed
     state.borrow_mut().evidence.clear();
-    e.apply_selected(&[FIREWALL.into()], |_, _| {}).unwrap();
+    e.apply_selected(&[FIREWALL.into()], |_| {}).unwrap();
     state
         .borrow_mut()
         .values
@@ -188,19 +188,19 @@ fn owned_firewall_uses_raw_drift_and_final_gate_rechecks_evidence() {
     );
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
     assert_eq!(
-        e.apply_selected(&[FIREWALL.into()], |_, _| {})
+        e.apply_selected(&[FIREWALL.into()], |_| {})
             .unwrap()
             .results[0]
             .status,
         CheckStatus::Conflict
     );
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
     state
         .borrow_mut()
         .values
         .insert(FIREWALL.into(), json!("Block"));
     state.borrow_mut().evidence.clear();
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert_eq!(state.borrow().values[FIREWALL], json!("Allow"));
 }
 
@@ -212,14 +212,14 @@ fn default_becoming_protected_after_prepare_requires_explicit_recovery() {
         Some(EffectiveFirewall::Inbound(InboundAction::Block)),
         Some(Authority::Local),
     ));
-    assert!(e.apply_selected(&[FIREWALL.into()], |_, _| {}).is_err());
+    assert!(e.apply_selected(&[FIREWALL.into()], |_| {}).is_err());
     let tx = e.load().unwrap().pop().unwrap();
     assert!(!tx.sealed);
     assert_eq!(tx.entries[0].state, State::Pending);
     assert_eq!(tx.entries[0].before, json!("NotConfigured"));
     assert!(state.borrow().writes.is_empty());
     drop(tx);
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Unchanged);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Unchanged);
     assert!(e.load().unwrap()[0].reverted);
     assert!(state.borrow().writes.is_empty());
 }
@@ -284,9 +284,9 @@ fn firewall_readback_requires_effective_protection_before_sealing() {
                 state.borrow_mut().block_at = Some(3);
             }
             let result = if selected {
-                e.apply_selected(&[id.into()], |_, _| {})
+                e.apply_selected(&[id.into()], |_| {})
             } else {
-                e.apply(|_, _| {})
+                e.apply(|_| {})
             };
             assert!(
                 result.is_err(),
@@ -302,7 +302,7 @@ fn firewall_readback_requires_effective_protection_before_sealing() {
             state.borrow_mut().evidence.clear();
             state.borrow_mut().blocked = false;
             let mut e = reopen(&dir, &state, &[id]);
-            e.revert(|_, _| {}).unwrap();
+            e.revert(|_| {}).unwrap();
             assert_eq!(state.borrow().values[id], before);
         }
     }
@@ -318,7 +318,7 @@ fn blocked_readiness_preserves_owned_noops_and_existing_wal_bytes() {
         .insert(FIREWALL.into(), json!("Allow"));
     let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
     let name = e
-        .apply_selected(&[DEFENDER.into()], |_, _| {})
+        .apply_selected(&[DEFENDER.into()], |_| {})
         .unwrap()
         .transaction
         .unwrap();
@@ -332,7 +332,7 @@ fn blocked_readiness_preserves_owned_noops_and_existing_wal_bytes() {
         vec![DEFENDER.into()],
         vec![DEFENDER.into(), FIREWALL.into()],
     ] {
-        let report = e.apply_selected(&ids, |_, _| {}).unwrap();
+        let report = e.apply_selected(&ids, |_| {}).unwrap();
         assert_eq!(report.results[0].status, CheckStatus::Unchanged);
         if ids.len() == 2 {
             assert_eq!(report.results[1].status, CheckStatus::Skipped);
@@ -342,7 +342,7 @@ fn blocked_readiness_preserves_owned_noops_and_existing_wal_bytes() {
         assert_eq!(e.load().unwrap().len(), 1);
         assert_eq!(state.borrow().writes.len(), 1);
     }
-    e.apply(|_, _| {}).unwrap();
+    e.apply(|_| {}).unwrap();
     assert_eq!(fs::read(path).unwrap(), original);
     assert_eq!(state.borrow().writes.len(), 1);
 }
@@ -375,17 +375,17 @@ fn readiness_refresh_blocks_only_confirmed_storage_conditions_and_never_undo() {
         assert_eq!(audit.readiness, Some(Readiness::default()));
         assert_eq!(state.borrow().readiness_count, 1);
         state.borrow_mut().readiness = readiness.clone();
-        let report = e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+        let report = e.apply_selected(&[DEFENDER.into()], |_| {}).unwrap();
         assert_eq!(report.readiness, Some(readiness.clone()));
         assert_eq!(report.results[0].status, CheckStatus::Skipped);
         assert_eq!(state.borrow().readiness_count, 2);
         assert!(state.borrow().writes.is_empty());
         assert!(e.history().unwrap().is_empty());
         state.borrow_mut().readiness = Readiness::default();
-        e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+        e.apply_selected(&[DEFENDER.into()], |_| {}).unwrap();
         state.borrow_mut().readiness = readiness;
         let calls = state.borrow().readiness_count;
-        e.revert(|_, _| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         assert_eq!(state.borrow().readiness_count, calls);
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
     }
@@ -404,7 +404,7 @@ fn readiness_refresh_blocks_only_confirmed_storage_conditions_and_never_undo() {
     ] {
         let (_dir, state, mut e) = fixture(DEFENDER, json!(true));
         state.borrow_mut().readiness = readiness.clone();
-        let report = e.apply(|_, _| {}).unwrap();
+        let report = e.apply(|_| {}).unwrap();
         assert_eq!(report.readiness, Some(readiness));
         assert_eq!(report.results[0].status, CheckStatus::Applied);
     }
@@ -433,12 +433,12 @@ fn updater_reserved_entries_coexist_with_exact_journal_roundtrip() {
     let mut e = reopen(&dir, &state, &[DEFENDER]);
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
     assert!(e.history().unwrap().is_empty());
-    let applied = e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+    let applied = e.apply_selected(&[DEFENDER.into()], |_| {}).unwrap();
     let name = applied.transaction.unwrap();
     assert_eq!(e.history().unwrap(), vec![format!("{name} applied")]);
     assert_eq!(e.load().unwrap().len(), 1);
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
-    let reverted = e.revert(|_, _| {}).unwrap();
+    let reverted = e.revert(|_| {}).unwrap();
     assert_eq!(reverted.transaction.as_deref(), Some(name.as_str()));
     assert_eq!(reverted.results[0].status, CheckStatus::Restored);
     assert_eq!(e.history().unwrap(), vec![format!("{name} reverted")]);
@@ -458,8 +458,8 @@ fn updater_reserved_entries_coexist_with_exact_journal_roundtrip() {
 
 fn assert_reserved_history_rejected(e: &mut Engine, state: &Rc<RefCell<FakeState>>) {
     assert!(e.audit().is_err());
-    assert!(e.apply_selected(&[DEFENDER.into()], |_, _| {}).is_err());
-    assert!(e.revert(|_, _| {}).is_err());
+    assert!(e.apply_selected(&[DEFENDER.into()], |_| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
     assert!(e.history().is_err());
     assert!(state.borrow().events.is_empty());
 }
@@ -547,7 +547,7 @@ fn selected_validation_and_probe_isolation() {
         vec![DEFENDER.into(), "unknown".into()],
     ] {
         assert!(e
-            .apply_selected(&ids, |_, _| panic!("invalid callback"))
+            .apply_selected(&ids, |_| panic!("invalid callback"))
             .is_err());
         assert!(e.load().unwrap().is_empty());
         assert!(state.borrow().events.is_empty());
@@ -555,8 +555,8 @@ fn selected_validation_and_probe_isolation() {
     }
     let mut callbacks = Vec::new();
     let r = e
-        .apply_selected(&[DEFENDER.into()], |id, status| {
-            callbacks.push((id.to_owned(), status.to_owned()))
+        .apply_selected(&[DEFENDER.into()], |p| {
+            callbacks.push((p.id.to_owned(), p.step.as_str().to_owned()))
         })
         .unwrap();
     assert_eq!(r.results.len(), 1);
@@ -581,17 +581,17 @@ fn selected_disjoint_batches_reopen_and_reverse_undo() {
         .values
         .insert(FIREWALL.into(), json!("Allow"));
     let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
-    e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+    e.apply_selected(&[DEFENDER.into()], |_| {}).unwrap();
     let original = e.load().unwrap()[0].length;
-    e.apply_selected(&[DEFENDER.into(), FIREWALL.into()], |_, _| {})
+    e.apply_selected(&[DEFENDER.into(), FIREWALL.into()], |_| {})
         .unwrap();
     assert_eq!(e.load().unwrap()[0].length, original);
     assert_eq!(e.load().unwrap().len(), 2);
     drop(e);
     let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].id, FIREWALL);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].id, FIREWALL);
     assert_eq!(state.borrow().values[DEFENDER], json!(false));
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].id, DEFENDER);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].id, DEFENDER);
     assert_eq!(state.borrow().values[DEFENDER], json!(true));
     assert_eq!(state.borrow().values[FIREWALL], json!("Allow"));
 }
@@ -611,7 +611,7 @@ fn not_running_notes_for_core_protections_are_only_about_our_own_undoable_change
     );
     state.borrow_mut().extra_findings = vec![note(later)];
     assert!(e.findings().is_empty());
-    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
     state.borrow_mut().extra_findings = vec![note(0)];
     assert!(e.findings().is_empty());
     state.borrow_mut().extra_findings = vec![note(later)];
@@ -629,13 +629,13 @@ fn not_running_notes_for_core_protections_are_only_about_our_own_undoable_change
         .values
         .insert(DEFENDER.into(), json!(true));
     let mut e = reopen(&dir, &state, &[id, DEFENDER]);
-    e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+    e.apply_selected(&[DEFENDER.into()], |_| {}).unwrap();
     state.borrow_mut().extra_findings = vec![note(later)];
     let found = e.findings();
     assert_eq!(found.len(), 1);
     assert!(!found[0].detail.starts_with(crate::vbs::UNDO_READY));
-    e.revert(|_, _| {}).unwrap();
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert!(e.findings().is_empty());
 }
 
@@ -650,13 +650,13 @@ fn selected_exact_acl_conflict_blocks_entire_mixed_batch() {
         .values
         .insert(DEFENDER.into(), json!(true));
     let mut e = reopen(&dir, &state, &[DEFENDER, id]);
-    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
     state
         .borrow_mut()
         .values
         .insert(id.into(), acl_snapshot(0x0002_0030, 1));
     let r = e
-        .apply_selected(&[DEFENDER.into(), id.into()], |_, _| {})
+        .apply_selected(&[DEFENDER.into(), id.into()], |_| {})
         .unwrap();
     assert_eq!(r.results[0].status, CheckStatus::Skipped);
     assert_eq!(r.results[1].status, CheckStatus::Conflict);
@@ -674,13 +674,13 @@ fn selected_pending_and_reverting_block_new_batches_and_earlier_undo() {
         .values
         .insert(FIREWALL.into(), json!("Allow"));
     let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
-    e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+    e.apply_selected(&[DEFENDER.into()], |_| {}).unwrap();
     state.borrow_mut().fail_write = true;
-    assert!(e.apply_selected(&[FIREWALL.into()], |_, _| {}).is_err());
+    assert!(e.apply_selected(&[FIREWALL.into()], |_| {}).is_err());
     state.borrow_mut().fail_write = false;
     let n = state.borrow().observe_count;
     assert_eq!(
-        e.apply_selected(&[DEFENDER.into()], |_, _| {})
+        e.apply_selected(&[DEFENDER.into()], |_| {})
             .unwrap()
             .results[0]
             .status,
@@ -692,12 +692,12 @@ fn selected_pending_and_reverting_block_new_batches_and_earlier_undo() {
         .values
         .insert(FIREWALL.into(), json!("NotConfigured"));
     for _ in 0..2 {
-        let r = e.revert(|_, _| {}).unwrap();
+        let r = e.revert(|_| {}).unwrap();
         assert_eq!(r.results.len(), 1);
         assert_eq!(r.results[0].status, CheckStatus::Conflict);
         assert_eq!(state.borrow().values[DEFENDER], json!(false));
         assert_eq!(
-            e.apply_selected(&[DEFENDER.into()], |_, _| {})
+            e.apply_selected(&[DEFENDER.into()], |_| {})
                 .unwrap()
                 .results[0]
                 .status,
@@ -711,7 +711,7 @@ fn selected_final_gate_rejects_race_and_audit_reports_progress() {
     let (_dir, state, mut e) = fixture(DEFENDER, json!(true));
     let mut progress = Vec::new();
     assert_eq!(
-        e.audit_with_progress(|id, s| progress.push((id.to_owned(), s.to_owned())))
+        e.audit_with_progress(|p| progress.push((p.id.to_owned(), p.step.as_str().to_owned())))
             .unwrap()
             .results[0]
             .status,
@@ -728,7 +728,7 @@ fn selected_final_gate_rejects_race_and_audit_reports_progress() {
         ]
     );
     state.borrow_mut().block_at = Some(3);
-    assert!(e.apply_selected(&[DEFENDER.into()], |_, _| {}).is_err());
+    assert!(e.apply_selected(&[DEFENDER.into()], |_| {}).is_err());
     assert!(state.borrow().writes.is_empty());
     assert!(!e.load().unwrap()[0].sealed);
 }
@@ -752,8 +752,8 @@ fn selected_initial_probe_errors_preserve_success_and_allow_later_batches() {
         let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
         let mut statuses = Vec::new();
         let report = e
-            .apply_selected(&[DEFENDER.into(), FIREWALL.into()], |_, s| {
-                statuses.push(s.to_owned());
+            .apply_selected(&[DEFENDER.into(), FIREWALL.into()], |p| {
+                statuses.push(p.step.as_str().to_owned());
             })
             .unwrap();
         assert_eq!(statuses, ["pending", "complete", "applied", "error"]);
@@ -770,9 +770,9 @@ fn selected_initial_probe_errors_preserve_success_and_allow_later_batches() {
             .values
             .insert(FIREWALL.into(), json!("Allow"));
         let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
-        e.apply_selected(&[FIREWALL.into()], |_, _| {}).unwrap();
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].id, FIREWALL);
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].id, DEFENDER);
+        e.apply_selected(&[FIREWALL.into()], |_| {}).unwrap();
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].id, FIREWALL);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].id, DEFENDER);
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
     }
 }
@@ -799,8 +799,8 @@ fn incomplete_older_batch_rejects_disjoint_active_history_without_changes() {
         drop((older, newer));
         assert!(e.audit().is_err());
         assert!(e.history().is_err());
-        assert!(e.apply_selected(&[DEFENDER.into()], |_, _| {}).is_err());
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.apply_selected(&[DEFENDER.into()], |_| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert!(Engine::open(
             dir.path().into(),
             backend(&state, &[DEFENDER, FIREWALL], "machine-a")
@@ -1064,7 +1064,7 @@ fn exact_readback_failure_keeps_apply_and_restore_recoverable() {
         // A successful write acknowledgment followed by a different, still
         // compliant ACL must not seal the transaction.
         state.borrow_mut().drift_at = Some((3, safe_drift.clone()));
-        assert!(e.apply(|_, _| {}).is_err());
+        assert!(e.apply(|_| {}).is_err());
         let tx = e.load().unwrap().pop().unwrap();
         assert_eq!(tx.entries[0].state, State::Pending);
         assert_eq!(tx.entries[0].before, before);
@@ -1072,21 +1072,21 @@ fn exact_readback_failure_keeps_apply_and_restore_recoverable() {
         drop(tx);
         drop(e);
         let mut e = reopen(&dir, &state, &[id]);
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
         assert_eq!(state.borrow().writes.len(), 1);
 
         state.borrow_mut().values.insert(id.into(), after.clone());
         let n = state.borrow().observe_count;
         state.borrow_mut().drift_at = Some((n + 3, safe_drift));
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert_eq!(e.load().unwrap()[0].entries[0].state, State::Restoring);
         assert!(!e.load().unwrap()[0].reverted);
         drop(e);
         let mut e = reopen(&dir, &state, &[id]);
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
         assert_eq!(state.borrow().writes.len(), 2);
         state.borrow_mut().values.insert(id.into(), after);
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
         assert_eq!(state.borrow().values[id], before);
     }
 }
@@ -1106,12 +1106,12 @@ fn owner_group_and_protection_are_exact_engine_drift_fingerprints() {
             assert_eq!(target_for(id, &drift).unwrap(), drift);
             let before = acl_snapshot(0x0002_0012, 1);
             let (dir, state, mut e) = fixture(id, before.clone());
-            e.apply(|_, _| {}).unwrap();
+            e.apply(|_| {}).unwrap();
             state.borrow_mut().values.insert(id.into(), drift.clone());
             drop(e);
             let mut e = reopen(&dir, &state, &[id]);
-            assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
-            assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+            assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+            assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
             assert_eq!(state.borrow().values[id], drift);
             assert_eq!(state.borrow().writes.len(), 1);
             assert_eq!(e.load().unwrap()[0].entries[0].before, before);
@@ -1185,7 +1185,7 @@ fn wal_and_line_bounds_reject_before_observation_or_mutation() {
         (oversized_wal, "Journal exceeds size limit"),
     ] {
         fs::write(&path, &bytes).unwrap();
-        assert!(format!("{:#}", e.revert(|_, _| {}).unwrap_err()).contains(message));
+        assert!(format!("{:#}", e.revert(|_| {}).unwrap_err()).contains(message));
         assert!(state.borrow().events.is_empty());
         assert!(state.borrow().writes.is_empty());
         assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -1202,19 +1202,19 @@ fn service_acl_targets_are_exact_deterministic_and_not_catalog_sentinels() {
         assert!(validate_value(id, &target(id).unwrap()).is_err());
         let (_dir, state, mut e) = fixture(id, before.clone());
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
-        assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Applied);
+        assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Applied);
         assert_eq!(state.borrow().writes, vec![(id.into(), after.clone())]);
         assert_eq!(e.load().unwrap()[0].entries[0].before, before);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
-        assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Unchanged);
+        assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Unchanged);
         state.borrow_mut().blocked = true;
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Skipped);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Skipped);
         state.borrow_mut().blocked = false;
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
         assert_eq!(state.borrow().values[id], before);
 
         let (_dir, state, mut e) = fixture(id, after);
-        assert!(e.apply(|_, _| {}).unwrap().transaction.is_none());
+        assert!(e.apply(|_| {}).unwrap().transaction.is_none());
         assert!(state.borrow().writes.is_empty());
     }
 }
@@ -1251,20 +1251,20 @@ fn service_acl_unknown_apply_and_restore_outcomes_recover_exactly() {
             let (dir, state, mut e) = fixture(id, before.clone());
             state.borrow_mut().fail_before_write = !mutated;
             state.borrow_mut().fail_write = mutated;
-            assert!(e.apply(|_, _| {}).is_err());
+            assert!(e.apply(|_| {}).is_err());
             assert_eq!(e.load().unwrap()[0].entries[0].state, State::Pending);
             drop(e);
             state.borrow_mut().fail_before_write = false;
             let mut e = reopen(&dir, &state, &[id]);
-            assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Pending);
+            assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Pending);
             if mutated {
-                assert!(e.revert(|_, _| {}).is_err());
+                assert!(e.revert(|_| {}).is_err());
                 assert_eq!(e.load().unwrap()[0].entries[0].state, State::Restoring);
                 drop(e);
                 e = reopen(&dir, &state, &[id]);
             }
             state.borrow_mut().fail_write = false;
-            e.revert(|_, _| {}).unwrap();
+            e.revert(|_| {}).unwrap();
             assert_eq!(state.borrow().values[id], before);
             assert_eq!(state.borrow().writes.len(), if mutated { 2 } else { 0 });
             assert!(e.load().unwrap()[0].reverted);
@@ -1277,7 +1277,7 @@ fn intervening_safe_acl_changes_conflict_with_exact_recorded_after_image() {
     let id = "permissions.service.bits";
     let before = acl_snapshot(0x0002_0012, 1);
     let (dir, state, mut e) = fixture(id, before.clone());
-    e.apply(|_, _| {}).unwrap();
+    e.apply(|_| {}).unwrap();
     let safe_drift = acl_snapshot(0x0002_0030, 1); // additional safe STOP grant
     assert_eq!(target_for(id, &safe_drift).unwrap(), safe_drift);
     state
@@ -1286,8 +1286,8 @@ fn intervening_safe_acl_changes_conflict_with_exact_recorded_after_image() {
         .insert(id.into(), safe_drift.clone());
     drop(e);
     let mut e = reopen(&dir, &state, &[id]);
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
     assert_eq!(state.borrow().values[id], safe_drift);
     assert_eq!(state.borrow().writes.len(), 1);
     assert_eq!(e.load().unwrap()[0].entries[0].before, before);
@@ -1320,8 +1320,8 @@ fn malformed_impossible_and_already_safe_acl_before_images_are_rejected() {
     ] {
         let (_dir, state, mut e) = fixture(id, valid.clone());
         drop(prepare(&mut e, 1, id, bad));
-        assert!(e.revert(|_, _| {}).is_err());
-        assert!(e.apply(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
+        assert!(e.apply(|_| {}).is_err());
         assert!(state.borrow().writes.is_empty());
     }
 }
@@ -1343,12 +1343,12 @@ fn ineligible_complex_acl_is_skipped_without_stranding_prior_registry_repairs() 
     // advertises valid-but-unsupported descriptors as ineligible.
     state.borrow_mut().block_at = Some(4);
     let mut e = reopen(&dir, &state, &[registry, id]);
-    let report = e.apply(|_, _| {}).unwrap();
+    let report = e.apply(|_| {}).unwrap();
     assert_eq!(report.results[0].status, CheckStatus::Applied);
     assert_eq!(report.results[1].status, CheckStatus::Skipped);
     assert!(e.load().unwrap()[0].sealed);
     assert_eq!(e.audit().unwrap().results[1].status, CheckStatus::Skipped);
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[1].status, CheckStatus::Skipped);
+    assert_eq!(e.apply(|_| {}).unwrap().results[1].status, CheckStatus::Skipped);
     assert_eq!(state.borrow().values[id], complex);
     assert_eq!(state.borrow().writes.len(), 1);
 }
@@ -1359,11 +1359,11 @@ fn bounded_large_acl_before_image_survives_wal_roundtrip() {
     let before = acl_snapshot(0x0002_0012, 400);
     assert!(before.as_str().unwrap().len() > 4096);
     let (dir, state, mut e) = fixture(id, before.clone());
-    e.apply(|_, _| {}).unwrap();
+    e.apply(|_| {}).unwrap();
     drop(e);
     let mut e = reopen(&dir, &state, &[id]);
     assert_eq!(e.load().unwrap()[0].entries[0].before, before);
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert_eq!(state.borrow().values[id], before);
 }
 
@@ -1376,7 +1376,7 @@ fn binary_registry_controls_preserve_absence_and_restore_exact_originals() {
         assert_eq!(target(id).unwrap(), safe);
         for before in [&absent, &safe] {
             let (_dir, state, mut e) = fixture(id, before.clone());
-            let report = e.apply(|_, _| {}).unwrap();
+            let report = e.apply(|_| {}).unwrap();
             assert!(report.transaction.is_none());
             assert!(e.history().unwrap().is_empty());
             assert!(state.borrow().writes.is_empty());
@@ -1391,17 +1391,17 @@ fn binary_registry_controls_preserve_absence_and_restore_exact_originals() {
             ));
         }
         let (dir, state, mut e) = fixture(id, unsafe_value.clone());
-        e.apply(|_, _| {}).unwrap();
+        e.apply(|_| {}).unwrap();
         assert_eq!(state.borrow().values[id], safe);
         assert_eq!(e.load().unwrap()[0].entries[0].before, unsafe_value);
-        assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Unchanged);
+        assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Unchanged);
         state.borrow_mut().blocked = true;
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Skipped);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Skipped);
         assert_eq!(state.borrow().writes.len(), 1);
         drop(e);
         state.borrow_mut().blocked = false;
         let mut e = reopen(&dir, &state, &[id]);
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
         assert_eq!(state.borrow().values[id], unsafe_value);
         assert_eq!(state.borrow().writes.len(), 2);
 
@@ -1409,7 +1409,7 @@ fn binary_registry_controls_preserve_absence_and_restore_exact_originals() {
         // apply never invents an explicit value for it.
         let (_dir, state, mut e) = fixture(id, safe);
         drop(prepare(&mut e, 1, id, absent.clone()));
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
         assert_eq!(state.borrow().values[id], absent);
     }
 }
@@ -1433,13 +1433,13 @@ fn binary_registry_malformed_values_fail_before_replay() {
             assert!(validate_value(id, &bad).is_err(), "{id}: {bad}");
             let (_dir, state, mut e) = fixture(id, target(id).unwrap());
             drop(prepare(&mut e, 1, id, bad));
-            assert!(e.revert(|_, _| {}).is_err());
-            assert!(e.apply(|_, _| {}).is_err());
+            assert!(e.revert(|_| {}).is_err());
+            assert!(e.apply(|_| {}).is_err());
             assert!(state.borrow().writes.is_empty());
         }
         let (_dir, state, mut e) = fixture(id, target(id).unwrap());
         drop(prepare(&mut e, 1, id, target(id).unwrap()));
-        assert!(e.revert(|_, _| {}).is_err()); // already-compliant before-image
+        assert!(e.revert(|_| {}).is_err()); // already-compliant before-image
         assert!(state.borrow().writes.is_empty());
     }
 }
@@ -1486,7 +1486,7 @@ fn legacy_twelve_control_schema_one_wal_replays_with_extended_catalog() {
             Some(Authority::Local),
         ),
     );
-    assert_eq!(e.revert(|_, _| {}).unwrap().results.len(), 12);
+    assert_eq!(e.revert(|_| {}).unwrap().results.len(), 12);
     for (id, before) in originals {
         assert_eq!(state.borrow().values[id], before);
     }
@@ -1502,7 +1502,7 @@ fn apply_is_idempotent_and_audit_never_mutates_preferences() {
     assert!(e.history().unwrap().is_empty());
     let mut statuses = Vec::new();
     let first = e
-        .apply(|id, status| statuses.push((id.to_string(), status.to_string())))
+        .apply(|p| statuses.push((p.id.to_string(), p.step.as_str().to_string())))
         .unwrap();
     assert_eq!(
         statuses,
@@ -1512,13 +1512,13 @@ fn apply_is_idempotent_and_audit_never_mutates_preferences() {
             (DEFENDER.into(), "applied".into()),
         ]
     );
-    let second = e.apply(|_, status| assert!(status.is_ascii())).unwrap();
+    let second = e.apply(|p| assert!(p.step.as_str().is_ascii())).unwrap();
     assert_eq!(first.transaction, second.transaction);
     assert_eq!(state.borrow().writes.len(), 1);
     assert_eq!(e.load().unwrap()[0].entries[0].before, json!(true));
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
     assert_eq!(state.borrow().values[DEFENDER], json!(true));
-    assert!(e.revert(|_, _| {}).unwrap().transaction.is_none());
+    assert!(e.revert(|_| {}).unwrap().transaction.is_none());
     assert_eq!(state.borrow().writes.len(), 2);
 }
 
@@ -1535,10 +1535,10 @@ fn prepared_apply_recovery_handles_both_sides_of_write() {
         }
         drop(e);
         let mut e = reopen(&dir, &state, &[DEFENDER]);
-        assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Pending);
+        assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Pending);
         e.audit().unwrap();
         assert!(state.borrow().writes.is_empty());
-        e.revert(|_, _| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
         assert_eq!(state.borrow().writes.len(), usize::from(written));
         assert!(e.history().unwrap()[0].ends_with(" reverted"));
@@ -1551,7 +1551,7 @@ fn write_error_preserves_pending_and_restore_error_is_retryable() {
         let (dir, state, mut e) = fixture(DEFENDER, json!(true));
         state.borrow_mut().fail_write = !before_write;
         state.borrow_mut().fail_before_write = before_write;
-        assert!(e.apply(|_, _| {}).is_err());
+        assert!(e.apply(|_| {}).is_err());
         assert_eq!(e.load().unwrap()[0].entries[0].state, State::Pending);
         drop(e);
         state.borrow_mut().fail_before_write = false;
@@ -1559,12 +1559,12 @@ fn write_error_preserves_pending_and_restore_error_is_retryable() {
         if !before_write {
             // Restore mutates, then reports failure. Retrying recognizes the
             // before image rather than performing a second restore write.
-            assert!(e.revert(|_, _| {}).is_err());
+            assert!(e.revert(|_| {}).is_err());
             assert_eq!(e.load().unwrap()[0].entries[0].state, State::Restoring);
         }
         let writes = state.borrow().writes.len();
         state.borrow_mut().fail_write = false;
-        e.revert(|_, _| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         assert_eq!(state.borrow().writes.len(), writes);
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
     }
@@ -1585,9 +1585,9 @@ fn overlapping_active_owners_fail_closed_before_replay() {
     drop(older);
     let newer = prepare(&mut e, 2, FIREWALL, json!("NotConfigured"));
     drop(newer);
-    assert!(e.revert(|_, _| {}).is_err());
-    assert!(e.apply(|_, _| {}).is_err());
-    assert!(e.apply_selected(&[FIREWALL.into()], |_, _| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
+    assert!(e.apply(|_| {}).is_err());
+    assert!(e.apply_selected(&[FIREWALL.into()], |_| {}).is_err());
     assert!(e.audit().is_err());
     assert!(e.history().is_err());
     assert!(state.borrow().events.is_empty());
@@ -1598,16 +1598,16 @@ fn overlapping_active_owners_fail_closed_before_replay() {
 fn final_probe_detects_apply_and_restore_races() {
     let (_dir, state, mut e) = fixture(FIREWALL, json!("Allow"));
     state.borrow_mut().drift_at = Some((2, json!("NotConfigured")));
-    assert!(e.apply(|_, _| {}).is_err());
+    assert!(e.apply(|_| {}).is_err());
     assert!(state.borrow().writes.is_empty());
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
     state
         .borrow_mut()
         .values
         .insert(FIREWALL.into(), json!("Block"));
     let count = state.borrow().observe_count;
     state.borrow_mut().drift_at = Some((count + 2, json!("NotConfigured")));
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
     assert!(state.borrow().writes.is_empty());
     assert_eq!(e.load().unwrap()[0].entries[0].state, State::Restoring);
 }
@@ -1616,15 +1616,15 @@ fn final_probe_detects_apply_and_restore_races() {
 fn eligibility_blocks_changes_but_allows_uac_restore_after_gate() {
     let (_dir, state, mut e) = fixture("uac.consent", json!({"present":true,"value":0}));
     state.borrow_mut().blocked = true;
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Skipped);
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Skipped);
     assert!(e.history().unwrap().is_empty());
     state.borrow_mut().blocked = false;
-    e.apply(|_, _| {}).unwrap();
+    e.apply(|_| {}).unwrap();
     state.borrow_mut().blocked = true;
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Skipped);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Skipped);
     assert_eq!(state.borrow().writes.len(), 1);
     state.borrow_mut().blocked = false;
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
     assert_eq!(
         state.borrow().values["uac.consent"],
         json!({"present":true,"value":0})
@@ -1670,8 +1670,8 @@ fn all_transactions_are_validated_before_any_replay() {
         let mut corrupt = original.clone();
         corrupt.extend(bad);
         fs::write(&path, &corrupt).unwrap();
-        assert!(e.revert(|_, _| {}).is_err());
-        assert!(e.apply(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
+        assert!(e.apply(|_| {}).is_err());
         assert!(e.audit().is_err());
         assert!(e.history().is_err());
         assert!(state.borrow().writes.is_empty());
@@ -1690,7 +1690,7 @@ fn all_transactions_are_validated_before_any_replay() {
         lines.iter().map(|l| format!("{l}\n")).collect::<String>(),
     )
     .unwrap();
-    assert!(e.revert(|_, _| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
     assert!(state.borrow().writes.is_empty());
 }
 
@@ -1714,7 +1714,7 @@ fn result_storage_failure_retains_recoverable_prepare() {
     drop(e);
     let mut e = reopen(&dir, &state, &[DEFENDER]);
     assert_eq!(e.load().unwrap()[0].entries[0].state, State::Pending);
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert_eq!(state.borrow().values[DEFENDER], json!(true));
 }
 
@@ -1723,13 +1723,13 @@ fn journal_creation_failure_prevents_mutation_and_lock_is_nonblocking() {
     let (dir, state, mut e) = fixture(DEFENDER, json!(true));
     let held = e.lock().unwrap();
     assert!(e.audit().is_err());
-    assert!(e.apply(|_, _| {}).is_err());
-    assert!(e.revert(|_, _| {}).is_err());
+    assert!(e.apply(|_| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
     assert!(e.history().is_err());
     assert!(Engine::open(dir.path().into(), backend(&state, &[DEFENDER], "machine-a")).is_err());
     drop(held);
     fs::create_dir(dir.path().join("invalid.jsonl")).unwrap();
-    assert!(e.apply(|_, _| {}).is_err());
+    assert!(e.apply(|_| {}).is_err());
     assert!(state.borrow().writes.is_empty());
 }
 
@@ -1769,7 +1769,7 @@ fn append_rejects_changed_length_without_repairing_the_tail() {
             .is_err());
         assert_eq!(fs::read(&path).unwrap(), damaged);
         assert!(e.storage_failed);
-        assert!(e.apply(|_, _| {}).is_err());
+        assert!(e.apply(|_| {}).is_err());
         assert!(state.borrow().writes.is_empty());
     }
 }
@@ -1791,7 +1791,7 @@ fn legacy_partial_result_preserves_evidence_but_complete_unterminated_json_requi
                 .err()
                 .unwrap();
             assert!(error.downcast_ref::<JournalRecoveryRequired>().is_some());
-            assert!(e.revert(|_, _| {}).is_err());
+            assert!(e.revert(|_| {}).is_err());
         } else {
             let recovered = reopen(&dir, &state, &[DEFENDER]);
             assert_eq!(recovered.load().unwrap()[0].entries[0].before, json!(true));
@@ -1806,7 +1806,7 @@ fn legacy_partial_result_preserves_evidence_but_complete_unterminated_json_requi
         assert!(state.borrow().writes.is_empty());
     }
     fs::write(&path, prefix).unwrap();
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert_eq!(state.borrow().values[DEFENDER], json!(true));
 }
 
@@ -1822,7 +1822,7 @@ fn legacy_torn_restore_records_recover_without_repeating_a_completed_write() {
         Record::Reverted,
     ] {
         let (dir, state, mut e) = fixture(DEFENDER, json!(true));
-        e.apply(|_, _| {}).unwrap();
+        e.apply(|_| {}).unwrap();
         let mut tx = e.load().unwrap().pop().unwrap();
         e.append(&mut tx, Record::Reverting).unwrap();
         let restore_happened = !matches!(&record, Record::RestorePending { .. });
@@ -1873,7 +1873,7 @@ fn legacy_torn_restore_records_recover_without_repeating_a_completed_write() {
         // not be repeated, with or without an incomplete result append.
         fs::write(&path, &prefix).unwrap();
         let mut e = reopen(&dir, &state, &[DEFENDER]);
-        e.revert(|_, _| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         assert!(e.load().unwrap()[0].reverted);
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
         assert_eq!(
@@ -1886,9 +1886,9 @@ fn legacy_torn_restore_records_recover_without_repeating_a_completed_write() {
 #[test]
 fn repeated_failed_restores_reuse_durable_intent() {
     let (dir, state, mut e) = fixture(DEFENDER, json!(true));
-    e.apply(|_, _| {}).unwrap();
+    e.apply(|_| {}).unwrap();
     state.borrow_mut().fail_before_write = true;
-    assert!(e.revert(|_, _| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
     let tx = e.load().unwrap().pop().unwrap();
     let path = dir.path().join(format!("{}.jsonl", tx.name));
     let intent = fs::read(&path).unwrap();
@@ -1896,12 +1896,12 @@ fn repeated_failed_restores_reuse_durable_intent() {
     for _ in 0..4 {
         drop(e);
         e = reopen(&dir, &state, &[DEFENDER]);
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert_eq!(fs::read(&path).unwrap(), intent);
-        assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Pending);
+        assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Pending);
     }
     state.borrow_mut().fail_before_write = false;
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert_eq!(state.borrow().writes.len(), 2);
     assert!(e.load().unwrap()[0].reverted);
 }
@@ -1910,15 +1910,15 @@ fn repeated_failed_restores_reuse_durable_intent() {
 fn noop_apply_and_empty_crash_transaction_do_not_hide_before_images() {
     let (_dir, state, mut e) = fixture(DEFENDER, json!(false));
     for _ in 0..2 {
-        assert!(e.apply(|_, _| {}).unwrap().transaction.is_none());
+        assert!(e.apply(|_| {}).unwrap().transaction.is_none());
         assert!(e.history().unwrap().is_empty());
     }
     drop(e.create(1).unwrap()); // crash after header, before first Prepare
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Pending);
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Pending);
     assert!(state.borrow().writes.is_empty());
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert!(e.load().unwrap()[0].reverted);
-    assert!(e.apply(|_, _| {}).unwrap().transaction.is_none());
+    assert!(e.apply(|_| {}).unwrap().transaction.is_none());
 }
 
 #[test]
@@ -1951,18 +1951,18 @@ fn audit_reads_in_order_and_fails_a_short_batch_whole() {
 fn audit_marks_unknown_apply_and_interrupted_rollback_as_pending() {
     let (dir, state, mut e) = fixture(DEFENDER, json!(true));
     state.borrow_mut().fail_write = true;
-    assert!(e.apply(|_, _| {}).is_err()); // mutation happened, acknowledgment failed
+    assert!(e.apply(|_| {}).is_err()); // mutation happened, acknowledgment failed
     drop(e);
     let mut e = reopen(&dir, &state, &[DEFENDER]);
     let report = e.audit().unwrap();
     assert_eq!(report.results[0].status, CheckStatus::Compliant);
     assert!(report.findings.iter().any(|f| f.status == CheckStatus::Pending));
-    assert!(e.revert(|_, _| {}).is_err()); // restore happened, acknowledgment failed
+    assert!(e.revert(|_| {}).is_err()); // restore happened, acknowledgment failed
     let report = e.audit().unwrap();
     assert!(report.findings.iter().any(|f| f.status == CheckStatus::Pending));
     assert_eq!(state.borrow().writes.len(), 2);
     state.borrow_mut().fail_write = false;
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     assert!(!e
         .audit()
         .unwrap()
@@ -1982,7 +1982,7 @@ fn findings_failure_preserves_reports_and_journal_outcomes() {
     assert_eq!(audit.results[0].status, CheckStatus::Attention);
     assert!(audit.findings.iter().any(|f| f.status == CheckStatus::Unknown));
     let applied = e
-        .apply(|_, _| {})
+        .apply(|_| {})
         .expect("Completed mutation report must survive findings failure");
     assert_eq!(applied.results[0].status, CheckStatus::Applied);
     assert!(applied.transaction.is_some());
@@ -1990,10 +1990,10 @@ fn findings_failure_preserves_reports_and_journal_outcomes() {
     assert!(e.load().unwrap()[0].sealed);
     drop(e);
     let mut e = reopen(&dir, &state, &[DEFENDER]);
-    let repeated = e.apply(|_, _| {}).unwrap();
+    let repeated = e.apply(|_| {}).unwrap();
     assert_eq!(repeated.transaction, applied.transaction);
     assert_eq!(repeated.results[0].status, CheckStatus::Unchanged);
-    let restored = e.revert(|_, _| {}).unwrap();
+    let restored = e.revert(|_| {}).unwrap();
     assert_eq!(restored.results[0].status, CheckStatus::Restored);
     assert!(restored.findings.iter().any(|f| f.status == CheckStatus::Unknown));
     assert!(e.load().unwrap()[0].reverted);
@@ -2004,26 +2004,26 @@ fn findings_failure_preserves_reports_and_journal_outcomes() {
 fn gate_rejection_does_not_poison_journal_and_recovery_never_bypasses_it() {
     let (dir, state, mut e) = fixture(FIREWALL, json!("Allow"));
     state.borrow_mut().blocked = true;
-    let skipped = e.apply(|_, _| {}).unwrap();
+    let skipped = e.apply(|_| {}).unwrap();
     assert_eq!(skipped.results[0].status, CheckStatus::Skipped);
     assert!(skipped.transaction.is_none());
     assert!(e.history().unwrap().is_empty());
     assert!(state.borrow().writes.is_empty());
 
     state.borrow_mut().blocked = false; // backend corrected its false positive
-    let applied = e.apply(|_, _| {}).unwrap();
+    let applied = e.apply(|_| {}).unwrap();
     assert_eq!(applied.results[0].status, CheckStatus::Applied);
     state.borrow_mut().blocked = true;
-    let skipped = e.revert(|_, _| {}).unwrap();
+    let skipped = e.revert(|_| {}).unwrap();
     assert_eq!(skipped.results[0].status, CheckStatus::Skipped);
     assert!(skipped.findings.iter().any(|f| f.status == CheckStatus::Pending));
     assert_eq!(state.borrow().writes.len(), 1);
     drop(e);
     let mut e = reopen(&dir, &state, &[FIREWALL]);
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Pending);
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Pending);
     assert_eq!(e.load().unwrap()[0].entries[0].before, json!("Allow"));
     state.borrow_mut().blocked = false;
-    let restored = e.revert(|_, _| {}).unwrap();
+    let restored = e.revert(|_| {}).unwrap();
     assert_eq!(restored.transaction, applied.transaction);
     assert_eq!(restored.results[0].status, CheckStatus::Restored);
     assert_eq!(state.borrow().values[FIREWALL], json!("Allow"));
@@ -2035,7 +2035,7 @@ fn gate_rejection_does_not_poison_journal_and_recovery_never_bypasses_it() {
 fn rejection_after_prepare_can_be_closed_without_a_managed_write() {
     let (dir, state, mut e) = fixture(DEFENDER, json!(true));
     state.borrow_mut().block_at = Some(2);
-    assert!(e.apply(|_, _| {}).is_err());
+    assert!(e.apply(|_| {}).is_err());
     assert_eq!(e.load().unwrap()[0].entries[0].state, State::Pending);
     assert!(state.borrow().writes.is_empty());
     drop(e);
@@ -2046,11 +2046,11 @@ fn rejection_after_prepare_can_be_closed_without_a_managed_write() {
         .findings
         .iter()
         .any(|f| f.status == CheckStatus::Pending));
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Unchanged);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Unchanged);
     assert!(state.borrow().writes.is_empty());
     assert!(e.load().unwrap()[0].reverted);
     state.borrow_mut().blocked = false;
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Applied);
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Applied);
 }
 
 #[test]
@@ -2063,13 +2063,13 @@ fn machine_probe_failure_releases_lock_and_creates_no_transaction() {
     state.borrow_mut().fail_machine = false;
     let mut e = reopen(&dir, &state, &[DEFENDER]);
     assert!(e.history().unwrap().is_empty());
-    assert_eq!(e.apply(|_, _| {}).unwrap().results[0].status, CheckStatus::Applied);
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Applied);
 }
 
 #[test]
 fn sealed_success_is_informational_but_header_only_crash_requires_review() {
     let (_dir, _state, mut e) = fixture(DEFENDER, json!(true));
-    e.apply(|_, _| {}).unwrap();
+    e.apply(|_| {}).unwrap();
     let report = e.audit().unwrap();
     assert_eq!(report.results[0].status, CheckStatus::Compliant);
     assert_eq!(
@@ -2081,7 +2081,7 @@ fn sealed_success_is_informational_but_header_only_crash_requires_review() {
             .status,
         CheckStatus::Info
     );
-    e.revert(|_, _| {}).unwrap();
+    e.revert(|_| {}).unwrap();
     drop(e.create(2).unwrap());
     let report = e.audit().unwrap();
     assert_eq!(
@@ -2118,7 +2118,7 @@ fn windows_handles_deny_delete_and_release_locks_on_drop() {
     drop(tx);
     fs::rename(&path, &renamed).unwrap();
     fs::rename(&renamed, &path).unwrap();
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Unchanged);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Unchanged);
     assert!(state.borrow().writes.is_empty());
 }
 
@@ -2137,10 +2137,10 @@ fn windows_native_link_count_rejects_lock_and_wal_hardlinks() {
         let outside = tempfile::tempdir().unwrap();
         let alias = outside.path().join("alias");
         fs::hard_link(&path, &alias).unwrap();
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert!(state.borrow().writes.is_empty());
         fs::remove_file(&alias).unwrap();
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
+        assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
     }
 }
 
@@ -2179,11 +2179,11 @@ fn symlinks_and_hardlinks_are_rejected_for_lock_and_journals() {
     let outside = tempfile::tempdir().unwrap();
     let linked = outside.path().join("linked");
     fs::hard_link(&path, &linked).unwrap();
-    assert!(e.revert(|_, _| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
     fs::remove_file(&linked).unwrap();
     fs::rename(&path, &linked).unwrap();
     symlink(&linked, &path).unwrap();
-    assert!(e.revert(|_, _| {}).is_err());
+    assert!(e.revert(|_| {}).is_err());
     assert!(state.borrow().writes.is_empty());
     fs::remove_file(dir.path().join(LOCK_NAME)).unwrap();
     symlink(&linked, dir.path().join(LOCK_NAME)).unwrap();
@@ -2206,8 +2206,8 @@ fn skipping_a_batch_keeps_computed_outcomes_and_reports_each_control_once() {
     let mut owned = vec![Engine::outcome(&controls[1], CheckStatus::Conflict, "kept")];
     let mut seen = Vec::new();
     let mut report = Report::default();
-    report.skip_all(&controls, &mut owned, "why", &mut |id, status| {
-        seen.push(format!("{id}:{status}"))
+    report.skip_all(&controls, &mut owned, "why", &mut |p| {
+        seen.push(format!("{}:{}", p.id, p.step.as_str()))
     });
     assert!(owned.is_empty());
     assert_eq!(
@@ -2250,4 +2250,13 @@ fn can_change_answers_without_writing_and_names_what_blocks() {
     let err = e.can_change(false).unwrap_err();
     assert!(format!("{err:#}").contains("Revert the active transaction"));
     assert!(state.borrow().writes.is_empty());
+}
+
+#[test]
+fn progress_steps_keep_their_stable_text() {
+    assert_eq!(ProgressStep::Pending.as_str(), "pending");
+    assert_eq!(ProgressStep::Complete.as_str(), "complete");
+    for status in [CheckStatus::Applied, CheckStatus::Error, CheckStatus::Other("x".into())] {
+        assert_eq!(ProgressStep::Result(status.clone()).as_str(), status.as_str());
+    }
 }

@@ -191,7 +191,7 @@ pub fn revert_machine(progress: &dyn Fn(Step, bool)) -> Summary {
     let mut summary = Summary::default();
 
     let before = summary.left.len();
-    match open_engine().and_then(|mut e| e.revert_all(|_, _| {})) {
+    match open_engine().and_then(|mut e| e.revert_all(|_| {})) {
         Ok(report) => fold_settings(&report.results, &mut summary),
         Err(_) => summary.left.push(Left::Setting {
             title: WINDOWS_SETTINGS.into(),

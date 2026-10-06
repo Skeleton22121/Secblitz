@@ -190,7 +190,7 @@ mod recovery {
                     "phase {phase}, cut {cut}"
                 );
                 assert!(e.storage_failed);
-                assert!(e.revert(|_, _| {}).is_err());
+                assert!(e.revert(|_| {}).is_err());
                 assert_eq!(fs::read(&path).unwrap(), committed);
                 assert!(state.borrow().writes.is_empty());
                 drop((tx, e));
@@ -201,7 +201,7 @@ mod recovery {
                 );
                 assert!(!dir.path().join(format!("{NAME}.jsonl.next")).exists());
                 assert_eq!(fs::read(&path).unwrap(), committed);
-                e.revert(|_, _| {}).unwrap();
+                e.revert(|_| {}).unwrap();
                 assert_eq!(state.borrow().values[DEFENDER], json!(true));
                 assert_eq!(
                     state.borrow().writes.len(),
@@ -258,8 +258,8 @@ mod recovery {
             assert!(e.history().unwrap().is_empty());
             assert_eq!(fs::read(evidence(&dir, &stem, &bytes)).unwrap(), bytes);
             assert!(state.borrow().writes.is_empty());
-            e.apply(|_, _| {}).unwrap();
-            e.revert(|_, _| {}).unwrap();
+            e.apply(|_| {}).unwrap();
+            e.revert(|_| {}).unwrap();
             assert_eq!(state.borrow().values[DEFENDER], json!(true));
         }
     }
@@ -319,7 +319,7 @@ mod recovery {
                 drop((tx, e));
                 let mut e = reopen(&dir, &state, &[id]);
                 assert!(e.load().unwrap()[0].entries.is_empty());
-                e.revert(|_, _| {}).unwrap();
+                e.revert(|_| {}).unwrap();
                 assert!(state.borrow().writes.is_empty());
                 assert_eq!(state.borrow().values[id], before);
                 assert_eq!(fs::read(evidence(&dir, NAME, &snapshot)).unwrap(), snapshot);
@@ -341,13 +341,13 @@ mod recovery {
                 for ordinal in 0..4 {
                     let (dir, state, mut e) = fixture(DEFENDER, json!(true));
                     if restore {
-                        e.apply(|_, _| {}).unwrap();
+                        e.apply(|_| {}).unwrap();
                     }
                     fault(point, ordinal);
                     let result = if restore {
-                        e.revert(|_, _| {})
+                        e.revert(|_| {})
                     } else {
-                        e.apply(|_, _| {})
+                        e.apply(|_| {})
                     };
                     assert!(result.is_err(), "{point} {restore} {ordinal}");
                     let expected_writes = usize::from(restore) + usize::from(ordinal >= 2);
@@ -359,7 +359,7 @@ mod recovery {
                     assert!(e.history().is_err());
                     drop(e);
                     let mut e = reopen(&dir, &state, &[DEFENDER]);
-                    e.revert(|_, _| {}).unwrap();
+                    e.revert(|_| {}).unwrap();
                     assert_eq!(state.borrow().values[DEFENDER], json!(true));
                     // A failed result publication cannot repeat a restore that
                     // already happened; a failed intent cannot authorize one.
@@ -396,7 +396,7 @@ mod recovery {
             damaged.extend(b"{\"kind\":\"applied\",\"id\":\"defender.real");
             fs::write(&path, &damaged).unwrap();
             fault(point, 0);
-            assert!(e.revert(|_, _| {}).is_err(), "{point}");
+            assert!(e.revert(|_| {}).is_err(), "{point}");
             assert!(state.borrow().writes.is_empty());
             if point.starts_with("evidence_") {
                 assert_eq!(fs::read(&path).unwrap(), damaged);
@@ -405,7 +405,7 @@ mod recovery {
             }
             drop(e);
             let mut e = reopen(&dir, &state, &[DEFENDER]);
-            e.revert(|_, _| {}).unwrap();
+            e.revert(|_| {}).unwrap();
             assert_eq!(state.borrow().values[DEFENDER], json!(true));
             assert_eq!(state.borrow().writes.len(), 1);
             assert_eq!(fs::read(evidence(&dir, &name, &damaged)).unwrap(), damaged);
@@ -471,7 +471,7 @@ mod recovery {
                 bytes.extend(tail);
                 fs::write(&path, &bytes).unwrap();
                 assert!(
-                    e.revert(|_, _| {}).is_err(),
+                    e.revert(|_| {}).is_err(),
                     "{staged}: {:?}",
                     String::from_utf8_lossy(tail)
                 );
@@ -509,7 +509,7 @@ mod recovery {
         bytes.extend(b"{\"kind\":\"appl");
         fs::write(&path, &bytes).unwrap();
         fs::write(dir.path().join("unknown-file"), b"unknown").unwrap();
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert!(!evidence(&dir, &name, &bytes).exists());
         assert_eq!(fs::read(path).unwrap(), bytes);
         assert!(state.borrow().events.is_empty());
@@ -544,7 +544,7 @@ mod recovery {
             for active_wal in [false, true] {
                 let (dir, state, mut e) = fixture(DEFENDER, json!(true));
                 if active_wal {
-                    e.apply(|_, _| {}).unwrap();
+                    e.apply(|_| {}).unwrap();
                 }
                 let wal = fs::read_dir(dir.path())
                     .unwrap()
@@ -585,11 +585,11 @@ mod recovery {
                     fs::write(&attempt, data).unwrap();
                     let events = state.borrow().events.len();
                     let writes = state.borrow().writes.len();
-                    assert!(e.apply(|_, _| panic!("blocked before callbacks")).is_err());
+                    assert!(e.apply(|_| panic!("blocked before callbacks")).is_err());
                     assert!(e
-                        .apply_selected(&[DEFENDER.into()], |_, _| panic!("blocked"))
+                        .apply_selected(&[DEFENDER.into()], |_| panic!("blocked"))
                         .is_err());
-                    assert!(e.revert(|_, _| panic!("blocked")).is_err());
+                    assert!(e.revert(|_| panic!("blocked")).is_err());
                     assert_eq!(state.borrow().events.len(), events);
                     assert_eq!(state.borrow().writes.len(), writes);
                     assert_eq!(wal.as_ref().map(|p| fs::read(p).unwrap()), original_wal);
@@ -599,9 +599,9 @@ mod recovery {
                 }
                 fs::write(&attempt, b"null").unwrap(); // independently resolved by updater
                 if !active_wal {
-                    e.apply(|_, _| {}).unwrap();
+                    e.apply(|_| {}).unwrap();
                 }
-                e.revert(|_, _| {}).unwrap();
+                e.revert(|_| {}).unwrap();
                 assert_eq!(state.borrow().values[DEFENDER], json!(true));
             }
         }
@@ -641,7 +641,7 @@ mod recovery {
         bytes.extend(b"{\"kind\":\"appl");
         fs::write(&path, &bytes).unwrap();
         let held = e.lock().unwrap();
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert!(
             Engine::open(dir.path().into(), backend(&state, &[DEFENDER], "machine-a")).is_err()
         );
@@ -649,7 +649,7 @@ mod recovery {
         assert!(!archived.exists());
         drop(held);
         fs::write(&archived, b"inconsistent evidence").unwrap();
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         assert_eq!(fs::read(archived).unwrap(), b"inconsistent evidence");
         assert_eq!(fs::read(path).unwrap(), bytes);
         assert!(state.borrow().events.is_empty());
@@ -693,7 +693,7 @@ mod recovery {
             bytes.extend(b"{\"kind\":");
             let path = dir.path().join(format!("{NAME}.jsonl"));
             fs::write(&path, &bytes).unwrap();
-            assert!(e.revert(|_, _| {}).is_err());
+            assert!(e.revert(|_| {}).is_err());
             assert_eq!(fs::read(path).unwrap(), bytes);
             assert!(!evidence(&dir, NAME, &bytes).exists());
             assert!(state.borrow().events.is_empty());
@@ -710,17 +710,17 @@ mod recovery {
             .insert(FIREWALL.into(), json!("Allow"));
         let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
         let older = e
-            .apply_selected(&[DEFENDER.into()], |_, _| {})
+            .apply_selected(&[DEFENDER.into()], |_| {})
             .unwrap()
             .transaction
             .unwrap();
-        e.apply_selected(&[FIREWALL.into()], |_, _| {}).unwrap();
-        e.revert(|_, _| {}).unwrap();
+        e.apply_selected(&[FIREWALL.into()], |_| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         fault("snapshot_sync", 0);
-        assert!(e.revert(|_, _| {}).is_err());
+        assert!(e.revert(|_| {}).is_err());
         drop(e);
         let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
-        assert_eq!(e.revert(|_, _| {}).unwrap().transaction, Some(older));
+        assert_eq!(e.revert(|_| {}).unwrap().transaction, Some(older));
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
         assert_eq!(state.borrow().values[FIREWALL], json!("Allow"));
         assert_eq!(state.borrow().writes.len(), 4);
@@ -731,7 +731,7 @@ mod recovery {
         for staged in [false, true] {
             for complete in [false, true] {
                 let (dir, state, mut e) = fixture(DEFENDER, json!(true));
-                e.apply(|_, _| {}).unwrap();
+                e.apply(|_| {}).unwrap();
                 let newer = e.create(2).unwrap();
                 let name = newer.name.clone();
                 let wal = dir.path().join(format!("{name}.jsonl"));
@@ -756,7 +756,7 @@ mod recovery {
                 };
                 fs::write(&path, &bytes).unwrap();
                 let events = state.borrow().events.len();
-                assert!(e.revert(|_, _| {}).is_err());
+                assert!(e.revert(|_| {}).is_err());
                 assert_eq!(fs::read(path).unwrap(), bytes);
                 assert!(!evidence(&dir, &name, &bytes).exists());
                 assert_eq!(state.borrow().events.len(), events);
@@ -774,7 +774,7 @@ mod recovery {
             .insert(FIREWALL.into(), json!("Allow"));
         let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
         let name = e
-            .apply_selected(&[DEFENDER.into()], |_, _| {})
+            .apply_selected(&[DEFENDER.into()], |_| {})
             .unwrap()
             .transaction
             .unwrap();
@@ -786,7 +786,7 @@ mod recovery {
         let mut e = reopen(&dir, &state, &[DEFENDER, FIREWALL]);
         let observations = state.borrow().observe_count;
         assert_eq!(
-            e.apply_selected(&[FIREWALL.into()], |_, _| {})
+            e.apply_selected(&[FIREWALL.into()], |_| {})
                 .unwrap()
                 .results[0]
                 .status,
@@ -796,9 +796,9 @@ mod recovery {
         assert_eq!(state.borrow().writes.len(), 1);
         assert_eq!(e.history().unwrap(), [format!("{name} pending")]);
         assert_eq!(fs::read(&path).unwrap(), bytes);
-        e.revert(|_, _| {}).unwrap();
-        e.apply_selected(&[FIREWALL.into()], |_, _| {}).unwrap();
-        e.revert(|_, _| {}).unwrap();
+        e.revert(|_| {}).unwrap();
+        e.apply_selected(&[FIREWALL.into()], |_| {}).unwrap();
+        e.revert(|_| {}).unwrap();
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
         assert_eq!(state.borrow().values[FIREWALL], json!("Allow"));
         assert_eq!(fs::read(evidence(&dir, &name, &bytes)).unwrap(), bytes);

@@ -2,7 +2,7 @@
 
 use super::catalog::assessment_status;
 use super::journal::{State, Transaction};
-use super::{Engine, Outcome, Report, READ_BATCH};
+use super::{Engine, Outcome, Progress, ProgressStep, Report, READ_BATCH};
 use crate::model::{CheckStatus, Control, Finding, Observation, Readiness};
 use anyhow::Result;
 
@@ -31,10 +31,10 @@ impl Engine {
         }
     }
 
-    pub(super) fn readiness(&mut self, callback: &mut impl FnMut(&str, &str)) -> Readiness {
-        callback("readiness", "pending");
+    pub(super) fn readiness(&mut self, callback: &mut impl FnMut(Progress<'_>)) -> Readiness {
+        callback(Progress::new("readiness", ProgressStep::Pending));
         let readiness = self.backend.readiness();
-        callback("readiness", "complete");
+        callback(Progress::new("readiness", ProgressStep::Complete));
         readiness
     }
 
@@ -111,10 +111,10 @@ impl Engine {
     }
 
     pub fn audit(&mut self) -> Result<Report> {
-        self.audit_with_progress(|_, _| {})
+        self.audit_with_progress(|_| {})
     }
 
-    pub fn audit_with_progress(&mut self, mut callback: impl FnMut(&str, &str)) -> Result<Report> {
+    pub fn audit_with_progress(&mut self, mut callback: impl FnMut(Progress<'_>)) -> Result<Report> {
         let _lock = self.lock()?;
         let transactions = self.load()?;
         let active = transactions.iter().rev().find(|t| !t.reverted);
@@ -137,9 +137,9 @@ impl Engine {
             }
         }
         report.readiness = Some(self.readiness(&mut callback));
-        callback("findings", "pending");
+        callback(Progress::new("findings", ProgressStep::Pending));
         report.findings = self.findings();
-        callback("findings", "complete");
+        callback(Progress::new("findings", ProgressStep::Complete));
         if let Some(tx) = active {
             report.findings.push(Self::journal_finding(tx));
         }
