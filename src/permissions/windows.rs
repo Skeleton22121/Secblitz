@@ -56,11 +56,17 @@ extern "system" {
 struct Handle(*mut c_void);
 impl Drop for Handle {
     fn drop(&mut self) {
+        // SAFETY: the handle came from OpenSCManagerW/OpenServiceW and is closed exactly once.
         unsafe {
             CloseServiceHandle(self.0);
         }
     }
 }
+/// Copies a word buffer filled by Windows into plain bytes, in memory order.
+fn words_to_bytes(words: &[u32]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_ne_bytes()).collect()
+}
+
 fn handle(raw: *mut c_void) -> io::Result<Handle> {
     if raw.is_null() {
         Err(io::Error::last_os_error())
@@ -70,8 +76,10 @@ fn handle(raw: *mut c_void) -> io::Result<Handle> {
 }
 
 fn open(id: &str, access: u32) -> Result<Handle> {
+    // SAFETY: null machine and database name select the local active services database.
     let manager = handle(unsafe { OpenSCManagerW(ptr::null(), ptr::null(), 1) })?;
     let wide: Vec<u16> = service_name(id)?.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: `manager` is live and `wide` is NUL-terminated UTF-16.
     Ok(handle(unsafe {
         OpenServiceW(manager.0, wide.as_ptr(), access)
     })?)
@@ -81,6 +89,7 @@ fn snapshot(service: &Handle) -> Result<State> {
     let mut storage = vec![0u32; 2048];
     let mut needed = 0;
     // OWNER | GROUP | DACL, deliberately never SACL.
+    // SAFETY: `storage` is a writable 8192-byte buffer and that size is what is passed.
     let ok = unsafe {
         QueryServiceObjectSecurity(service.0, 7, storage.as_mut_ptr().cast(), 8192, &mut needed)
     };
@@ -88,8 +97,7 @@ fn snapshot(service: &Handle) -> Result<State> {
         return Err(io::Error::last_os_error().into());
     }
     ensure!(needed <= 8192, "Invalid service descriptor size");
-    let bytes = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), 8192) };
-    State::from_sd(bytes)
+    State::from_sd(&words_to_bytes(&storage))
 }
 
 #[repr(C)]
@@ -117,9 +125,7 @@ fn config_string(buffer: &[u64], pointer: *const u16) -> Result<String> {
             && offset < std::mem::size_of_val(buffer),
         "Invalid config string offset"
     );
-    let bytes = unsafe {
-        std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), std::mem::size_of_val(buffer))
-    };
+    let bytes: Vec<u8> = buffer.iter().flat_map(|word| word.to_ne_bytes()).collect();
     let mut wide = Vec::new();
     for pair in bytes[offset..].chunks_exact(2) {
         let c = u16::from_le_bytes([pair[0], pair[1]]);
@@ -142,12 +148,14 @@ fn identity(service: &Handle) -> Result<std::fs::File> {
     };
     let mut storage = vec![0u64; 1024];
     let mut needed = 0;
+    // SAFETY: `storage` is a writable 8192-byte buffer and that size is what is passed.
     let ok =
         unsafe { QueryServiceConfigW(service.0, storage.as_mut_ptr().cast(), 8192, &mut needed) };
     if ok == 0 {
         return Err(io::Error::last_os_error().into());
     }
     ensure!(needed <= 8192, "Invalid service config size");
+    // SAFETY: the successful call filled the start of `storage`, which is 8-byte aligned and larger than ServiceConfig.
     let config = unsafe { ptr::read(storage.as_ptr().cast::<ServiceConfig>()) };
     ensure!(config.kind == 0x20, "Unexpected built-in service type");
     ensure!(
@@ -156,6 +164,7 @@ fn identity(service: &Handle) -> Result<std::fs::File> {
     );
     let binary = config_string(&storage, config.binary)?.to_ascii_lowercase();
     let mut directory = vec![0u16; 32768];
+    // SAFETY: the pointer and length describe `directory`.
     let length =
         unsafe { GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) } as usize;
     ensure!(
@@ -192,6 +201,7 @@ fn identity(service: &Handle) -> Result<std::fs::File> {
     );
     let mut owner = ptr::null_mut();
     let mut sd = ptr::null_mut();
+    // SAFETY: the file handle is live; the out pointers are valid and the returned descriptor is freed by `Local` below.
     let error = unsafe {
         GetSecurityInfo(
             file.as_raw_handle(),
@@ -210,6 +220,7 @@ fn identity(service: &Handle) -> Result<std::fs::File> {
     struct Local(*mut c_void);
     impl Drop for Local {
         fn drop(&mut self) {
+            // SAFETY: the descriptor was allocated by GetSecurityInfo and is freed exactly once.
             unsafe {
                 LocalFree(self.0);
             }
@@ -217,11 +228,14 @@ fn identity(service: &Handle) -> Result<std::fs::File> {
     }
     let _allocation = Local(sd);
     ensure!(
+        // SAFETY: the pointer is null-checked first and IsValidSid only inspects the SID header.
         !owner.is_null() && unsafe { IsValidSid(owner) } != 0,
         "Invalid service host owner"
     );
+    // SAFETY: `owner` was just validated as a SID.
     let size = unsafe { GetLengthSid(owner) } as usize;
     ensure!((8..=68).contains(&size), "Invalid service host SID size");
+    // SAFETY: the SID is valid, `size` bytes long and kept alive by `_allocation`.
     trusted_owner(unsafe { std::slice::from_raw_parts(owner.cast::<u8>(), size) })?;
     Ok(file)
 }
@@ -267,11 +281,13 @@ pub(super) fn write(id: &str, value: &Value) -> Result<()> {
     }
     let bytes = desired.sd();
     let mut aligned = vec![0u32; bytes.len().div_ceil(4)];
-    let output = unsafe {
-        std::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), aligned.len() * 4)
-    };
-    output[..bytes.len()].copy_from_slice(&bytes);
+    for (word, chunk) in aligned.iter_mut().zip(bytes.chunks(4)) {
+        let mut padded = [0u8; 4];
+        padded[..chunk.len()].copy_from_slice(chunk);
+        *word = u32::from_ne_bytes(padded);
+    }
     // DACL_SECURITY_INFORMATION only: never set owner, group, SACL or protection.
+    // SAFETY: `aligned` holds the whole descriptor with 4-byte alignment and outlives the call.
     let ok = unsafe { SetServiceObjectSecurity(service.0, 4, aligned.as_ptr().cast()) };
     if ok == 0 {
         return Err(io::Error::last_os_error().into());
@@ -287,6 +303,7 @@ fn inspect(manager: &Handle, name: &str) -> Result<Finding> {
     let title = format!("Service permissions: {name}");
     let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
     // READ_CONTROL only. No CHANGE_CONFIG, WRITE_DAC, owner or SACL access.
+    // SAFETY: `manager` is live and `wide` is NUL-terminated UTF-16.
     let service = match handle(unsafe { OpenServiceW(manager.0, wide.as_ptr(), 0x20000) }) {
         Ok(service) => service,
         Err(e) if e.raw_os_error() == Some(1060) => {
@@ -301,6 +318,7 @@ fn inspect(manager: &Handle, name: &str) -> Result<Finding> {
     // Documented maximum: 8 KiB. u32 storage supplies descriptor alignment.
     let mut storage = vec![0u32; 2048];
     let mut needed = 0;
+    // SAFETY: `storage` is a writable 8192-byte buffer and that size is what is passed.
     let ok = unsafe {
         QueryServiceObjectSecurity(service.0, 4, storage.as_mut_ptr().cast(), 8192, &mut needed)
     };
@@ -310,8 +328,7 @@ fn inspect(manager: &Handle, name: &str) -> Result<Finding> {
     ensure!(needed <= 8192, "Invalid security descriptor length");
     // pcbBytesNeeded is documented for failures; on success the full initialized
     // buffer is safe to inspect. The parser bounds every DACL/ACE/SID access.
-    let bytes = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), 8192) };
-    let assessment = assess(bytes)?;
+    let assessment = assess(&words_to_bytes(&storage))?;
     let (status, detail) = if assessment.unrestricted {
         ("review", "Absent or NULL DACL permits unrestricted access. Administrator investigation required; no automatic repair.".into())
     } else if !assessment.candidates.is_empty() {
@@ -331,6 +348,7 @@ fn inspect(manager: &Handle, name: &str) -> Result<Finding> {
 }
 
 pub(super) fn audit() -> Vec<Finding> {
+    // SAFETY: null machine and database name select the local active services database.
     let manager = handle(unsafe { OpenSCManagerW(ptr::null(), ptr::null(), 1) });
     SERVICES
         .iter()
