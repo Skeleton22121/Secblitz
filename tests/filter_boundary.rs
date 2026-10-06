@@ -155,7 +155,12 @@ fn only_a_marked_answer_counts_as_cut_short() {
 
 #[test]
 fn hostnames_must_be_well_formed_to_be_listed() {
-    for good in ["example.com", "a-b.example.co", "x_y.example", "EXAMPLE.com"] {
+    for good in [
+        "example.com",
+        "a-b.example.co",
+        "x_y.example",
+        "EXAMPLE.com",
+    ] {
         assert!(valid_hostname(good), "{good}");
     }
     let long_label = format!("{}.com", "a".repeat(64));
@@ -214,7 +219,10 @@ fn all() -> Switches {
 fn a_blocked_name_and_its_subdomains_are_stopped_when_the_switch_is_on() {
     let f = filter();
     assert_eq!(f.decide("evil.example", all()), Some(Kind::Dangerous));
-    assert_eq!(f.decide("deep.sub.evil.example", all()), Some(Kind::Dangerous));
+    assert_eq!(
+        f.decide("deep.sub.evil.example", all()),
+        Some(Kind::Dangerous)
+    );
     assert_eq!(f.decide("telemetry.example", all()), Some(Kind::Tracking));
     assert_eq!(f.decide("unrelated.example", all()), None);
 }
@@ -230,7 +238,10 @@ fn a_blocked_name_passes_when_its_switch_is_off() {
 
 #[test]
 fn a_name_on_several_lists_is_reported_as_the_most_serious_kind() {
-    assert_eq!(filter().decide("both.example", all()), Some(Kind::Dangerous));
+    assert_eq!(
+        filter().decide("both.example", all()),
+        Some(Kind::Dangerous)
+    );
 }
 
 #[test]

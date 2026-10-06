@@ -66,7 +66,12 @@ fn a_well_formed_snapshot_is_accepted() {
 fn only_the_two_known_services_are_accepted() {
     let value = encode(&everyone_full());
     validate_value("permissions.service.wuauserv", &value).unwrap();
-    for id in ["permissions.service.other", "", "firewall.public.enabled", TARGET_SENTINEL] {
+    for id in [
+        "permissions.service.other",
+        "",
+        "firewall.public.enabled",
+        TARGET_SENTINEL,
+    ] {
         assert!(validate_value(id, &value).is_err(), "{id}");
         assert!(repair_target(id, &value).is_err(), "{id}");
     }
@@ -74,7 +79,13 @@ fn only_the_two_known_services_are_accepted() {
 
 #[test]
 fn snapshots_that_are_not_text_are_refused() {
-    for value in [json!(null), json!(7), json!(true), json!([1, 2]), json!({"a": 1})] {
+    for value in [
+        json!(null),
+        json!(7),
+        json!(true),
+        json!([1, 2]),
+        json!({"a": 1}),
+    ] {
         assert!(validate_value(BITS, &value).is_err());
     }
 }
@@ -83,7 +94,10 @@ fn snapshots_that_are_not_text_are_refused() {
 fn snapshots_with_the_wrong_version_prefix_are_refused() {
     let hex: String = everyone_full().iter().map(|b| format!("{b:02x}")).collect();
     for prefix in ["", "dacl-v2:", "DACL-V1:", "dacl-v1"] {
-        assert!(validate_value(BITS, &json!(format!("{prefix}{hex}"))).is_err(), "{prefix}");
+        assert!(
+            validate_value(BITS, &json!(format!("{prefix}{hex}"))).is_err(),
+            "{prefix}"
+        );
     }
 }
 
@@ -101,7 +115,10 @@ fn snapshots_with_uppercase_odd_or_stray_hex_are_refused() {
 fn a_snapshot_cut_short_at_any_point_is_refused() {
     let sd = everyone_full();
     for cut in 0..sd.len() {
-        assert!(validate_value(BITS, &encode(&sd[..cut])).is_err(), "cut at {cut}");
+        assert!(
+            validate_value(BITS, &encode(&sd[..cut])).is_err(),
+            "cut at {cut}"
+        );
     }
 }
 
@@ -157,7 +174,10 @@ fn repair_removes_dangerous_rights_from_everyone_and_keeps_the_rest() {
 fn repair_leaves_an_already_safe_snapshot_untouched() {
     let safe = descriptor(
         sid(5, &[18]),
-        acl(&[(0x20002 & !0x000d_0002 | 0x4, sid(1, &[0])), (0xf01ff, sid(5, &[32, 544]))]),
+        acl(&[
+            (0x20002 & !0x000d_0002 | 0x4, sid(1, &[0])),
+            (0xf01ff, sid(5, &[32, 544])),
+        ]),
     );
     let value = encode(&safe);
     assert_eq!(repair_target(BITS, &value).unwrap(), value);
@@ -226,7 +246,10 @@ fn driver_image_paths_that_escape_or_are_odd_are_refused() {
 
 #[test]
 fn file_names_are_kept_only_when_plain() {
-    assert_eq!(safe_name("my-driver_1.sys").as_deref(), Some("my-driver_1.sys"));
+    assert_eq!(
+        safe_name("my-driver_1.sys").as_deref(),
+        Some("my-driver_1.sys")
+    );
     for bad in ["", "a b", "a/b", "a\\b", "a;b", &"x".repeat(65)] {
         assert_eq!(safe_name(bad), None, "{bad:?}");
     }
@@ -235,9 +258,24 @@ fn file_names_are_kept_only_when_plain() {
 #[test]
 fn services_that_are_not_boot_or_system_drivers_are_not_listed() {
     let rows = [
-        ServiceRow { name: "disabled".into(), kind: 1, start: 4, image: None },
-        ServiceRow { name: "userservice".into(), kind: 16, start: 2, image: None },
-        ServiceRow { name: "good".into(), kind: 1, start: 1, image: None },
+        ServiceRow {
+            name: "disabled".into(),
+            kind: 1,
+            start: 4,
+            image: None,
+        },
+        ServiceRow {
+            name: "userservice".into(),
+            kind: 16,
+            start: 2,
+            image: None,
+        },
+        ServiceRow {
+            name: "good".into(),
+            kind: 1,
+            start: 1,
+            image: None,
+        },
     ];
     let list = driver_files(&rows, &[], WINDOWS);
     assert_eq!(list.files.len(), 1);
@@ -260,17 +298,27 @@ fn a_driver_with_an_unreadable_image_is_reported_not_skipped() {
 
 #[test]
 fn a_driver_listed_twice_is_scanned_once() {
-    let rows = [ServiceRow { name: "a".into(), kind: 1, start: 0, image: None }];
+    let rows = [ServiceRow {
+        name: "a".into(),
+        kind: 1,
+        start: 0,
+        image: None,
+    }];
     let loaded = vec![r"\SystemRoot\System32\drivers\A.SYS".to_string()];
     assert_eq!(driver_files(&rows, &loaded, WINDOWS).files.len(), 1);
 }
 
 #[test]
 fn protection_checks_run_one_at_a_time_and_ordinary_ones_together() {
-    let ids: Vec<String> = ["a.one", "vbs.memory_integrity", "b.two", "vbs.kernel_stack_protection"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let ids: Vec<String> = [
+        "a.one",
+        "vbs.memory_integrity",
+        "b.two",
+        "vbs.kernel_stack_protection",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
     assert!(is_vbs_check_id("vbs.memory_integrity"));
     assert!(!is_vbs_check_id("vbs.other"));
     let batches = split_batches(&ids);
