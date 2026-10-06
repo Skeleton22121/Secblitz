@@ -74,8 +74,6 @@ thread_local! {
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
 }
 
-/// Run `f` on the tray state unless it is already borrowed (a nested message
-/// delivered while we are inside Shell or menu calls); skipping is harmless.
 fn with_tray<R>(f: impl FnOnce(&mut Tray) -> R) -> Option<R> {
     TRAY.with(|cell| {
         cell.try_borrow_mut()
@@ -96,7 +94,6 @@ fn copy_text<const N: usize>(dst: &mut [u16; N], text: &str) {
     }
 }
 
-/// Draw a shield into a 32-bit DIB and wrap it as an icon.
 fn make_icon(icon: Icon, size: usize) -> Option<HICON> {
     let pixels = logic::render(icon, size);
     unsafe {
@@ -209,7 +206,6 @@ fn balloon(hwnd: HWND, lang: Lang) {
     }
 }
 
-/// Start the app (it asks for administrator permission itself).
 fn open_app(t: &mut Tray) {
     if t.opened
         .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
@@ -241,7 +237,6 @@ fn refresh(hwnd: HWND, t: &mut Tray) {
     let tip = logic::tooltip(t.lang, now.as_ref());
     set_icon(hwnd, t, icon, &tip);
     if let Some(now) = now {
-        // The first status we see only sets the baseline; it never alerts.
         if t.last
             .as_ref()
             .is_some_and(|prev| logic::worsened(prev, &now))
@@ -290,7 +285,6 @@ fn quiesce_requested() -> bool {
     }
 }
 
-/// Show the context menu (modal) and return the chosen command, 0 for none.
 fn menu(hwnd: HWND, lang: Lang) -> usize {
     unsafe {
         let menu = CreatePopupMenu();
@@ -324,7 +318,6 @@ fn menu(hwnd: HWND, lang: Lang) -> usize {
 
 fn menu_choice(hwnd: HWND, chosen: usize) {
     match chosen {
-        // The app checks on start, so "Check now" starts it the same way.
         ID_OPEN | ID_CHECK => {
             with_tray(open_app);
         }
@@ -344,7 +337,6 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                     with_tray(open_app);
                 }
                 WM_RBUTTONUP | WM_CONTEXTMENU => {
-                    // The menu is modal and pumps messages: no borrow may be held.
                     if let Some(lang) = with_tray(|t| t.lang) {
                         menu_choice(hwnd, menu(hwnd, lang));
                     }
@@ -388,7 +380,6 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 if t.taskbar_created != m {
                     return false;
                 }
-                // Explorer restarted: our icon is gone, add it again.
                 t.shown = None;
                 refresh(hwnd, t);
                 true
@@ -411,7 +402,6 @@ pub fn run(lang: Lang) -> Result<i32> {
         unsafe { CloseHandle(mutex) };
         return Ok(0); // Already running in this session.
     }
-    // A pending update asked trays to leave; do not appear just to vanish.
     if quiesce_requested() {
         unsafe { CloseHandle(mutex) };
         return Ok(0);

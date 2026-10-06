@@ -1,7 +1,6 @@
 use super::*;
 use anyhow::Result;
 
-// Historical data is compiled only into tests, never the production catalog.
 const HISTORICAL: &str = include_str!("fixtures/obsolete-vscode.json");
 const NOW: u64 = 1_791_000_000;
 
@@ -67,7 +66,6 @@ fn historical_target_cannot_be_planned_approved_or_started() {
     let id = Uuid::from_u128(1);
     disabled(approve(id, &old.installer_sha256, full_consent()));
     disabled(start(id, &old.installer_sha256));
-    // No record-loading fallback that could resurrect an old approved plan.
     disabled(get(id));
     disabled(list());
     disabled(verify(id));
@@ -144,8 +142,6 @@ fn rebuilding_or_refreshing_publisher_evidence_cannot_extend_expired_review() {
 fn fresh_static_hash_does_not_prove_current_stable_or_current_security() {
     let mut r = obsolete();
     r.review = fresh_metadata().review;
-    // A fresh timestamp and the historical valid hash cannot make an obsolete
-    // target equal the independently observed current stable version.
     assert!(r.validate_freshness_at(NOW).is_err());
     disabled(plan(&r.package_id, &r.version, 600));
     assert!(!capabilities().supported);

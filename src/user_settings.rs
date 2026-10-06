@@ -1,14 +1,4 @@
 //! Per-user (HKCU) settings, read and changed by the unelevated launcher.
-//!
-//! The elevated GUI cannot touch the signed-in person's own registry hive
-//! (the administrator's hive may be a different account), so it asks the
-//! launcher through the broker. A request carries only a [`Setting`] and an
-//! [`Op`]; every registry path, value name and value lives in this file.
-//!
-//! Every change reads first, journals the prior value (in the person's own
-//! `%LOCALAPPDATA%\Secblitz`), writes, and reads again. If the value did not
-//! stick, the prior value is put back and the change counts as failed. Undo
-//! restores the journalled value exactly (including "was not set at all").
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use anyhow::{bail, Result};
@@ -16,22 +6,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The closed set of per-user settings. The wire byte is the position in
-/// [`Setting::ALL`] and never changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
-    /// `smartscreen.store_apps`
     StoreAppsWebCheck,
-    /// `files.show_extensions`
     ShowExtensions,
-    /// `net.nearby_sharing`
     NearbySharing,
-    /// `privacy.tailored_experiences`
     TailoredExperiences,
-    /// `office.internet_macros`
     OfficeMacros,
-    /// `debloat.suggested_apps`: Windows' own "suggestions" in the Start menu
-    /// and Settings. Not listed on the personal page (the Apps page owns it).
     SuggestedApps,
 }
 
@@ -45,8 +26,6 @@ impl Setting {
         Setting::SuggestedApps,
     ];
 
-    /// The settings the personal page lists: everything except
-    /// `SuggestedApps`, which has its own place on the Apps page.
     pub const PERSONAL: [Setting; 5] = [
         Setting::StoreAppsWebCheck,
         Setting::ShowExtensions,
@@ -75,14 +54,10 @@ impl Setting {
     }
 }
 
-/// What the GUI asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
-    /// Read only.
     Query,
-    /// Move to the safer value.
     Apply,
-    /// Put the journalled prior value back.
     Undo,
 }
 
@@ -104,9 +79,6 @@ impl Op {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Registry access (a trait so the logic is testable on any host)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hive {
@@ -118,32 +90,24 @@ pub enum Hive {
 pub enum Value {
     Absent,
     Dword(u32),
-    /// Present, but not a plain number: never overwritten.
     Other,
 }
 
 pub trait Registry {
     fn get(&self, hive: Hive, key: &str, name: &str) -> Result<Value>;
-    /// Current-user hive only.
     fn set_dword(&mut self, key: &str, name: &str, value: u32) -> Result<()>;
-    /// Current-user hive only; a value that is already gone is fine.
     fn delete(&mut self, key: &str, name: &str) -> Result<()>;
     fn get_string(&self, hive: Hive, key: &str, name: &str) -> Option<String>;
     fn subkeys(&self, hive: Hive, key: &str) -> Vec<String>;
     fn key_exists(&self, hive: Hive, key: &str) -> bool;
-    /// Tell Explorer that file-type display settings changed.
     fn notify_file_view_changed(&mut self) {}
 }
 
-// ---------------------------------------------------------------------------
-// The allowlist: every key this module may touch
-// ---------------------------------------------------------------------------
 
 struct Target {
     key: String,
     name: &'static str,
     safe: u32,
-    /// A missing value already behaves like `safe`.
     absent_safe: bool,
 }
 
@@ -191,7 +155,6 @@ fn targets(setting: Setting) -> Vec<Target> {
             0,
             false,
         )],
-        // 2 = everyone nearby. Only that value is ever changed (to 1).
         Setting::NearbySharing => vec![target(
             r"Software\Microsoft\Windows\CurrentVersion\CDP",
             "CdpSessionUserAuthzPolicy",
@@ -234,7 +197,6 @@ fn targets(setting: Setting) -> Vec<Target> {
             }
             out
         }
-        // A missing value lets Windows suggest, so absent is not safe.
         Setting::SuggestedApps => SUGGESTION_VALUES
             .iter()
             .map(|name| target(CONTENT_DELIVERY, name, 0, false))
@@ -242,17 +204,12 @@ fn targets(setting: Setting) -> Vec<Target> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Safe,
     Unsafe,
-    /// Nothing to do on this PC (for example Office is not installed).
     NotApplicable,
-    /// Could not be read, or has a value we do not recognise. Never "safe".
     Unknown,
 }
 
@@ -269,8 +226,6 @@ fn office_installed(reg: &dyn Registry) -> bool {
     )
 }
 
-/// Domain-joined or work/school-managed PCs get Office policy from their
-/// organisation; the policy path is not ours to write there.
 fn managed_by_organisation(reg: &dyn Registry) -> bool {
     let domain = reg
         .get_string(
@@ -303,7 +258,6 @@ pub fn status(reg: &dyn Registry, setting: Setting) -> Status {
             Ok(Value::Other) => unknown_seen = true,
             Ok(Value::Absent) => {
                 if setting == Setting::NearbySharing {
-                    // Default not documented: say nothing rather than guess.
                     unknown_seen = true;
                 } else if !t.absent_safe {
                     unsafe_seen = true;
@@ -331,11 +285,9 @@ pub fn status(reg: &dyn Registry, setting: Setting) -> Status {
     }
 }
 
-/// What the GUI is told for a query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Report {
     Safe,
-    /// Safe because Secblitz changed it: undo is available.
     SafeByUs,
     Unsafe,
     NotApplicable,
@@ -357,18 +309,12 @@ pub fn report(reg: &dyn Registry, journal: &Path, setting: Setting) -> Report {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Journal
-// ---------------------------------------------------------------------------
 
-/// Journals are tiny; anything bigger is not ours.
 const JOURNAL_LIMIT: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Prior {
-    /// Index into the setting's target list.
     i: usize,
-    /// The value before the change; `None` = the value did not exist.
     prior: Option<u32>,
 }
 
@@ -380,7 +326,6 @@ struct Journal {
     settings: BTreeMap<String, Vec<Prior>>,
 }
 
-/// `%LOCALAPPDATA%\Secblitz\user-settings.json` (the signed-in person's own).
 pub fn journal_path() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty())?;
     Some(
@@ -421,19 +366,12 @@ fn save_journal(path: &Path, journal: &mut Journal) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Apply / undo
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Done,
-    /// Tried and it did not stick (nothing is left half-changed).
     Failed,
-    /// Not offered here: managed PC, nothing to change, or nothing to undo.
     Blocked,
-    /// Undo only: the person (or something else) changed the value after
-    /// Secblitz did, so it was left exactly as it is.
     ChangedSince,
 }
 
@@ -465,18 +403,12 @@ fn restore(reg: &mut dyn Registry, setting: Setting, priors: &[Prior]) -> bool {
     ok
 }
 
-/// What undo found for each recorded value.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Undone {
-    /// Every value that is still ours is back (or already was).
     ok: bool,
-    /// At least one value was changed by someone else and left alone.
     drifted: bool,
 }
 
-/// Put back only values that still hold what Secblitz wrote (`safe`). A value
-/// that already equals the recorded prior is fine; anything else was changed
-/// since, and is never overwritten.
 fn restore_unless_changed(reg: &mut dyn Registry, setting: Setting, priors: &[Prior]) -> Undone {
     let all = targets(setting);
     let mut out = Undone {
@@ -512,7 +444,6 @@ pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcom
         Status::NotApplicable | Status::Unknown => return Outcome::Blocked,
     }
     let all = targets(setting);
-    // Read before write: remember exactly what is there now.
     let mut priors = Vec::new();
     for (i, t) in all.iter().enumerate() {
         let current = match reg.get(Hive::CurrentUser, &t.key, t.name) {
@@ -531,11 +462,7 @@ pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcom
     if priors.is_empty() {
         return Outcome::Failed;
     }
-    // Journal first: if it cannot be saved, nothing is changed.
     let mut stored = load_journal(journal);
-    // An earlier run (even one cut short) may have already moved other values
-    // of this setting to safe. Their original values stay on record, so one
-    // undo still puts everything back.
     if let Some(earlier) = stored.settings.get(setting.id()) {
         for old in earlier {
             let still_ours = all.get(old.i).is_some_and(|t| {
@@ -560,7 +487,6 @@ pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcom
             break;
         }
     }
-    // Read again: only a value that reads back as safe counts.
     if wrote.is_err() || status(reg, setting) != Status::Safe {
         restore(reg, setting, &priors);
         stored.settings.remove(setting.id());
@@ -580,7 +506,6 @@ pub fn undo(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome
     };
     let all = targets(setting);
     if priors.iter().any(|p| p.i >= all.len()) {
-        // Not a journal we wrote: drop it rather than act on it.
         stored.settings.remove(setting.id());
         let _ = save_journal(journal, &mut stored);
         return Outcome::Blocked;
@@ -591,7 +516,6 @@ pub fn undo(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome
     }
     stored.settings.remove(setting.id());
     if save_journal(journal, &mut stored).is_err() {
-        // The value is back; a stale journal entry only offers a second undo.
         return if undone.drifted {
             Outcome::ChangedSince
         } else {
@@ -628,7 +552,6 @@ pub fn undo_all(reg: &mut dyn Registry, journal: &Path) -> Vec<(Setting, Outcome
         .collect()
 }
 
-/// One broker request, end to end.
 pub fn handle(
     reg: &mut dyn Registry,
     journal: Option<&Path>,
@@ -651,9 +574,6 @@ pub enum HandleResult {
     Outcome(Outcome),
 }
 
-// ---------------------------------------------------------------------------
-// The real registry (Windows)
-// ---------------------------------------------------------------------------
 
 #[cfg(windows)]
 pub struct SystemRegistry;
@@ -685,7 +605,6 @@ mod sys {
         }
     }
 
-    /// `Ok(None)` when the key does not exist.
     fn open(hive: Hive, key: &str, access: u32) -> Result<Option<HKEY>> {
         let path = wide(key);
         let mut handle: HKEY = null_mut();
@@ -851,7 +770,6 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// In-memory registry; `fail_writes` simulates a value that will not stick.
     #[derive(Default)]
     struct Fake {
         cu: HashMap<(String, String), Value>,
@@ -961,7 +879,6 @@ mod tests {
                 assert!(t.safe <= 1);
             }
         }
-        // 3 apps x (1 macro value + 3 values x 2 locations)
         assert_eq!(targets(Setting::OfficeMacros).len(), 21);
         assert_eq!(targets(Setting::NearbySharing).len(), 1);
     }
@@ -989,7 +906,6 @@ mod tests {
         assert_eq!(reg.read(Setting::ShowExtensions, 0), Value::Dword(1));
         assert_eq!(reg.notified, 2);
         assert_eq!(report(&reg, &path, Setting::ShowExtensions), Report::Unsafe);
-        // Nothing left to undo.
         assert_eq!(
             undo(&mut reg, &path, Setting::ShowExtensions),
             Outcome::Blocked
@@ -1002,20 +918,17 @@ mod tests {
         let mut reg = Fake::default();
         reg.put(Setting::ShowExtensions, 0, Some(1));
         assert_eq!(apply(&mut reg, &path, Setting::ShowExtensions), Outcome::Done);
-        // The person changed it again by hand (to something we did not write).
         reg.put(Setting::ShowExtensions, 0, Some(7));
         assert_eq!(
             undo(&mut reg, &path, Setting::ShowExtensions),
             Outcome::ChangedSince
         );
         assert_eq!(reg.read(Setting::ShowExtensions, 0), Value::Dword(7));
-        // The stale record is gone, so it never claims the value is ours.
         assert!(!load_journal(&path).settings.contains_key("files.show_extensions"));
         assert_eq!(
             undo(&mut reg, &path, Setting::ShowExtensions),
             Outcome::Blocked
         );
-        // Deleted by hand after we set it: also left alone.
         reg.put(Setting::TailoredExperiences, 0, Some(1));
         assert_eq!(apply(&mut reg, &path, Setting::TailoredExperiences), Outcome::Done);
         reg.put(Setting::TailoredExperiences, 0, None);
@@ -1035,7 +948,6 @@ mod tests {
             reg.put(Setting::SuggestedApps, i, Some(1));
         }
         assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
-        // One suggestion is switched back on by hand, then Secblitz runs again.
         reg.put(Setting::SuggestedApps, 3, Some(1));
         assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
         assert_eq!(undo(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
@@ -1120,7 +1032,6 @@ mod tests {
     #[test]
     fn unwritable_journal_means_no_change() {
         let dir = tempfile::tempdir().unwrap();
-        // A file where the folder should be.
         let blocker = dir.path().join("Secblitz");
         std::fs::write(&blocker, b"x").unwrap();
         let path = blocker.join("user-settings.json");
@@ -1151,7 +1062,6 @@ mod tests {
     fn nearby_sharing_only_changes_everyone_to_my_devices() {
         let (_d, path) = journal();
         let mut reg = Fake::default();
-        // Not set: unknown, not offered, not "protected".
         assert_eq!(status(&reg, Setting::NearbySharing), Status::Unknown);
         assert_eq!(
             apply(&mut reg, &path, Setting::NearbySharing),
@@ -1205,7 +1115,6 @@ mod tests {
         let (_d, path) = journal();
         let mut reg = Fake::default();
         with_office(&mut reg);
-        // Word: macro value missing; Protected View weakened by Disable*InPV=1.
         let all = targets(Setting::OfficeMacros);
         let pv = all
             .iter()
@@ -1219,7 +1128,6 @@ mod tests {
             if t.name == "blockcontentexecutionfrominternet" {
                 assert_eq!(reg.read(Setting::OfficeMacros, i), Value::Dword(1));
             } else if i != pv {
-                // Untouched Protected View values are never created.
                 assert_eq!(reg.read(Setting::OfficeMacros, i), Value::Absent);
             }
         }
@@ -1264,7 +1172,6 @@ mod tests {
             apply(&mut reg, &path, Setting::OfficeMacros),
             Outcome::Blocked
         );
-        // An empty domain value and an empty enrolment are not "managed".
         let mut reg = Fake::default();
         with_office(&mut reg);
         reg.strings.insert(
@@ -1330,7 +1237,6 @@ mod tests {
         reg.put(Setting::SuggestedApps, index, v);
     }
 
-    /// Three values absent, four set to 1 (Windows' default "suggest" state).
     fn suggesting_reg() -> Fake {
         let mut reg = Fake::default();
         for i in 0..7 {

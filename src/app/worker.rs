@@ -1,14 +1,10 @@
 //! The engine worker: owns `Engine` on one dedicated thread so the window
 //! never blocks. The GUI submits a `Job` and receives a stream of `Event`s.
-//!
-//! OWNER: app-core agent (implementation details may change; the public
-//! `Job`/`Event`/`Worker` surface is the contract used by the GUI).
 use iced::futures::channel::mpsc as stream;
 use iced::futures::Stream;
 use secblitz::engine::{Engine, Report};
 use std::sync::{mpsc, Arc};
 
-/// Everything the GUI needs from the hardening engine.
 pub trait Session {
     fn available(&self) -> Vec<String>;
     fn restart_ids(&self) -> Vec<String>;
@@ -56,31 +52,23 @@ impl Session for Engine {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Job {
-    /// Read-only protection check.
     Check,
-    /// Apply exactly these fixes, then always run a fresh post-check.
     Apply(Vec<String>),
-    /// Undo the newest recorded batch, then always run a fresh post-check.
     Undo,
-    /// Read the engine's batch history (newest first).
     History,
 }
 
-/// What the engine knows about its catalog. Sent once after opening.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Catalog {
     pub available: Vec<String>,
     pub restart: Vec<String>,
 }
 
-/// Errors cross the channel as display strings: `anyhow::Error` is not Clone.
 pub type Outcome = Result<Arc<Report>, String>;
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The engine opened (or failed to). Always the first event ever sent.
     Opened(Result<Catalog, String>),
-    /// Live progress: (item id or phase, status word).
     Progress {
         phase: Phase,
         id: String,
@@ -109,7 +97,6 @@ pub enum Phase {
 
 type Request = (Job, stream::UnboundedSender<Event>);
 
-/// Cheap to clone handle to the engine thread.
 #[derive(Clone)]
 pub struct Worker {
     jobs: mpsc::Sender<Request>,
@@ -144,8 +131,6 @@ impl Worker {
                     }
                     Err(error) => {
                         let _ = opened_tx.unbounded_send(Event::Opened(Err(format!("{error:#}"))));
-                        // End the one-shot stream, then keep answering jobs
-                        // with the open failure.
                         drop(opened_tx);
                         let message = format!("{error:#}");
                         for (job, reply) in inbox {
@@ -166,14 +151,12 @@ impl Worker {
         }
     }
 
-    /// The one-shot `Opened` event stream. Returns an empty stream if taken.
     pub fn opened(&self) -> impl Stream<Item = Event> + Send + 'static {
         let rx = self.opened.lock().ok().and_then(|mut slot| slot.take());
         let (_tx, empty) = stream::unbounded();
         rx.unwrap_or(empty)
     }
 
-    /// Submit a job; the returned stream ends after the job's final event.
     pub fn run(&self, job: Job) -> impl Stream<Item = Event> + Send + 'static {
         let (tx, rx) = stream::unbounded();
         if let Err(mpsc::SendError((job, tx))) = self.jobs.send((job, tx)) {
@@ -204,9 +187,6 @@ fn outcome(r: anyhow::Result<Report>) -> Outcome {
     r.map(Arc::new).map_err(|e| format!("{e:#}"))
 }
 
-/// Apply the selection as separate batches: ordinary fixes together, each
-/// core protection alone, so an undo of one never reverts another. A later
-/// batch that fails is reported per control and the earlier ones stay.
 fn apply_in_batches(
     session: &mut dyn Session,
     ids: &[String],
@@ -262,7 +242,6 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
                 &ids,
                 &mut progress(Phase::Applying),
             ));
-            // Always verify, even after a failed or partial apply.
             let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
             Event::Applied {
                 attempted: ids,
@@ -408,7 +387,6 @@ mod tests {
             ]
         );
         assert!(matches!(events.last(), Some(Event::Applied { result: Ok(_), .. })));
-        // A plain selection stays one batch.
         let (w, log) = worker(false, false);
         collect(&w, Job::Apply(vec!["a".into(), "b".into()]));
         assert_eq!(*log.lock().unwrap(), vec!["apply a,b", "audit"]);
