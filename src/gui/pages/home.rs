@@ -81,14 +81,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     Task::none()
 }
 
-/// Home has nothing to read in the background; the hook exists so the shell
-/// can treat every page alike, and it drops stale view state.
-#[allow(dead_code)]
-pub fn preload(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
-    state.protected_all = false;
-    Task::none()
-}
-
 fn frame(state: &mut State, ctx: &Ctx, now: Instant) {
     state.now = now;
     if let Some(progress) = &ctx.checking {
