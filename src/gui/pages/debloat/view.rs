@@ -348,7 +348,12 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                     ago(ctx, t),
                     ctx.t("Can be brought back without internet")
                 ),
-                actions_view(p, ctx, row_actions(state, index, enabled)),
+                actions_view(p, ctx, row_actions(state, ctx.helper, index, enabled)),
+            )
+        } else if let Some(note) = app.store_id.and(super::store_blocker(ctx.helper)) {
+            (
+                format!("{} · {}", ago(ctx, t), ctx.t(note)),
+                widgets::icon(Icon::Info, 16.0, p.text_muted),
             )
         } else if app.store_id.is_none() {
             (
@@ -362,7 +367,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         } else {
             (
                 ago(ctx, t),
-                actions_view(p, ctx, row_actions(state, index, enabled)),
+                actions_view(p, ctx, row_actions(state, ctx.helper, index, enabled)),
             )
         };
         rows.push(widgets::row_item_lead(
@@ -387,7 +392,7 @@ struct RowActions {
     menu: Vec<(Icon, &'static str, Msg, bool)>,
 }
 
-fn row_actions(state: &State, index: u16, enabled: bool) -> RowActions {
+fn row_actions(state: &State, helper: Helper, index: u16, enabled: bool) -> RowActions {
     let mut actions = RowActions {
         primary: None,
         menu: Vec::new(),
@@ -397,7 +402,7 @@ fn row_actions(state: &State, index: u16, enabled: bool) -> RowActions {
     }
     if state.copies.contains(&index) {
         actions.primary = Some(Msg::Restore(index));
-        if app_of(index).store_id.is_some() {
+        if app_of(index).store_id.is_some() && super::store_blocker(helper).is_none() {
             actions.menu.push((
                 Icon::Undo,
                 "Get it from the Microsoft Store",
@@ -411,7 +416,7 @@ fn row_actions(state: &State, index: u16, enabled: bool) -> RowActions {
             Msg::AskDelete(index),
             true,
         ));
-    } else if app_of(index).store_id.is_some() {
+    } else if app_of(index).store_id.is_some() && super::store_blocker(helper).is_none() {
         actions.primary = Some(Msg::Restore(index));
     }
     actions
@@ -519,8 +524,9 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("Game Bar recording and Xbox games may stop working"),
         ));
     }
-    col = col.push(
-        column![
+    col = col.push(match super::store_blocker(ctx.helper) {
+        Some(_) => column![widgets::small(p, ctx.t(suggested_blocker(ctx.helper)))],
+        None => column![
             widgets::checkbox(
                 p,
                 state.block_again.into(),
@@ -537,7 +543,7 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             }),
         ]
         .spacing(theme::S1),
-    );
+    });
     col.push(space::vertical().height(theme::S1))
         .push(
             row![
@@ -751,6 +757,13 @@ fn menu_model(
             .collect(),
         fillers: menu_fillers(state, lang),
         labels: menu_labels(lang, result),
+    }
+}
+
+fn suggested_blocker(helper: Helper) -> &'static str {
+    match helper {
+        Helper::NotOnThisAccount => super::NOT_ON_ACCOUNT,
+        _ => super::NEEDS_REOPEN,
     }
 }
 
@@ -1153,7 +1166,7 @@ mod tests {
         let index = debloat::catalog::owner("Microsoft.BingWeather").unwrap();
         let mut state = State::default();
         state.copies.insert(index);
-        let actions = row_actions(&state, index, true);
+        let actions = row_actions(&state, Helper::Ready, index, true);
         assert_eq!(
             debug(&actions.primary),
             Some(format!("{:?}", Msg::Restore(index)))
@@ -1162,7 +1175,7 @@ mod tests {
         assert!(menu.iter().any(|m| m.contains("AskDelete")));
         assert!(menu.iter().any(|m| m.contains("RestoreStore")));
         state.copies.clear();
-        let actions = row_actions(&state, index, true);
+        let actions = row_actions(&state, Helper::Ready, index, true);
         assert!(!actions
             .menu
             .iter()
@@ -1187,11 +1200,31 @@ mod tests {
     }
 
     #[test]
+    fn store_restore_is_not_offered_without_the_helper() {
+        let index = debloat::catalog::owner("Microsoft.BingWeather").unwrap();
+        let mut state = State::default();
+        let actions = row_actions(&state, Helper::Reopen, index, true);
+        assert!(actions.primary.is_none());
+        state.copies.insert(index);
+        let actions = row_actions(&state, Helper::NotOnThisAccount, index, true);
+        assert_eq!(
+            debug(&actions.primary),
+            Some(format!("{:?}", Msg::Restore(index)))
+        );
+        assert!(!actions
+            .menu
+            .iter()
+            .any(|m| format!("{:?}", m.2).contains("RestoreStore")));
+        assert!(super::store_blocker(Helper::Ready).is_none());
+        assert_eq!(super::store_blocker(Helper::Reopen), Some(super::NEEDS_REOPEN));
+    }
+
+    #[test]
     fn rows_offer_nothing_while_busy() {
         let index = debloat::catalog::owner("Microsoft.BingWeather").unwrap();
         let mut state = State::default();
         state.copies.insert(index);
-        let actions = row_actions(&state, index, false);
+        let actions = row_actions(&state, Helper::Ready, index, false);
         assert!(actions.primary.is_none() && actions.menu.is_empty());
     }
 }

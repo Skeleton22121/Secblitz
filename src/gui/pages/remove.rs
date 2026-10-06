@@ -7,6 +7,7 @@ use crate::gui::theme::Tone;
 use crate::gui::widgets::anim;
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use crate::i18n::Lang;
+use crate::gui::Helper;
 use crate::uninstall::{Left, Plan};
 use crate::user_settings::{Op, Setting};
 use iced::{Element, Subscription, Task};
@@ -121,6 +122,34 @@ pub fn counts(plan: Option<&Plan>, safe: &[Setting]) -> Option<Counts> {
 
 pub fn web_note(plan: Option<&Plan>) -> Option<&'static str> {
     plan.is_some_and(|p| p.web_on).then_some(WEB_STOPS)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Limit {
+    Personal,
+    StoreApps(usize),
+}
+
+pub fn limits(helper: Helper, plan: Option<&Plan>) -> Vec<Limit> {
+    if helper == Helper::Ready {
+        return Vec::new();
+    }
+    let mut out = vec![Limit::Personal];
+    if let Some(n) = plan.map(|p| p.apps_store_only).filter(|n| *n > 0) {
+        out.push(Limit::StoreApps(n));
+    }
+    out
+}
+
+pub fn limit_key(helper: Helper, limit: Limit) -> &'static str {
+    match (helper, limit) {
+        (Helper::Reopen, Limit::Personal) => "Settings Secblitz changed for your own account can't be put back right now. Close Secblitz and open it again from its Start menu shortcut to include them.",
+        (Helper::Reopen, Limit::StoreApps(1)) => "{n} removed app has no saved copy, so it can't be brought back right now. Close Secblitz and open it again from its Start menu shortcut to include it.",
+        (Helper::Reopen, Limit::StoreApps(_)) => "{n} removed apps have no saved copy, so they can't be brought back right now. Close Secblitz and open it again from its Start menu shortcut to include them.",
+        (_, Limit::Personal) => "Windows doesn't let Secblitz put back settings for your own account from the built-in Administrator account or when account protection (UAC) is off. They stay as they are.",
+        (_, Limit::StoreApps(1)) => "{n} removed app has no saved copy, and Windows doesn't let Secblitz get it from the Microsoft Store from this account. You can install it from the Microsoft Store yourself.",
+        (_, Limit::StoreApps(_)) => "{n} removed apps have no saved copy, and Windows doesn't let Secblitz get them from the Microsoft Store from this account. You can install them from the Microsoft Store yourself.",
+    }
 }
 
 pub fn can_put_back(counts: Option<Counts>) -> bool {
@@ -684,6 +713,21 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn missing_helper_is_explained_before_putting_back() {
+        assert!(limits(Helper::Ready, Some(&plan(1, 0, 2, false))).is_empty());
+        assert_eq!(
+            limits(Helper::Reopen, Some(&plan(1, 0, 2, false))),
+            vec![Limit::Personal, Limit::StoreApps(2)]
+        );
+        assert_eq!(
+            limits(Helper::NotOnThisAccount, Some(&plan(1, 3, 0, false))),
+            vec![Limit::Personal]
+        );
+        assert!(limit_key(Helper::Reopen, Limit::StoreApps(1)).contains("Start menu"));
+        assert!(limit_key(Helper::NotOnThisAccount, Limit::Personal).contains("UAC"));
     }
 
     #[test]

@@ -141,6 +141,19 @@ fn choose_sheet<'a>(
         });
     }
     col = col.push(options);
+    if offered.contains(&Choice::PutBack) {
+        for limit in limits(ctx.helper, plan.as_ref()) {
+            let n = match limit {
+                Limit::StoreApps(n) => n,
+                Limit::Personal => 0,
+            };
+            col = col.push(widgets::inline_notice(
+                p,
+                Tone::Warn,
+                ctx.t(limit_key(ctx.helper, limit)).replace("{n}", &n.to_string()),
+            ));
+        }
+    }
     col = col.push(widgets::small(p, ctx.t(STAY_NOTE)));
     if let Some(note) = web_note(plan.as_ref()) {
         col = col.push(widgets::small(p, ctx.t(note)));

@@ -2,7 +2,7 @@
 use crate::gui::icons::Icon;
 use crate::gui::theme::{Palette, Tone};
 use crate::gui::widgets::{self, anim};
-use crate::gui::{blocking, blocking_stream, Ctx, Message};
+use crate::gui::{blocking, blocking_stream, Ctx, Helper, Message};
 use iced::widget::image::Handle;
 use iced::{Element, Subscription, Task};
 use secblitz::debloat::offline::Restored;
@@ -87,6 +87,7 @@ pub struct State {
     journal: Vec<Batch>,
     restoring: Option<u16>,
     restoring_copy: bool,
+    probing: bool,
     icons: BTreeMap<u16, Handle>,
     copies: BTreeSet<u16>,
     saved_bytes: u64,
@@ -121,6 +122,7 @@ impl Default for State {
             journal: Vec::new(),
             restoring: None,
             restoring_copy: false,
+            probing: false,
             icons: BTreeMap::new(),
             copies: BTreeSet::new(),
             saved_bytes: 0,
@@ -167,6 +169,7 @@ pub enum Msg {
     CloseResult,
     Restore(u16),
     RestoreStore(u16),
+    StoreProbed(u16, bool),
     Restored(u16, Result<crate::broker::Reply, String>),
     RestoredOffline(u16, Result<Restored, String>),
     AskDelete(u16),
@@ -392,11 +395,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::ToggleBlock => {
-            state.block_again = !state.block_again;
+            state.block_again = !state.block_again && ctx.helper == Helper::Ready;
             Task::none()
         }
         Msg::Review => {
             if !ctx.busy && !state.selected.is_empty() {
+                state.block_again &= ctx.helper == Helper::Ready;
                 state.sheet = Sheet::Review;
             }
             Task::none()
@@ -425,10 +429,18 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::Restore(index) => restore(state, ctx, index),
         Msg::RestoreStore(index) => {
-            if state.restoring.is_some() || ctx.busy {
+            if state.restoring.is_some() || state.probing || ctx.busy {
                 return Task::none();
             }
             store_restore(state, ctx, index)
+        }
+        Msg::StoreProbed(index, offline) => {
+            state.probing = false;
+            if offline {
+                state.offline = Some(index);
+                return Task::none();
+            }
+            start_store_restore(state, ctx, index)
         }
         Msg::Restored(index, result) => on_restored(state, ctx, index, result),
         Msg::RestoredOffline(index, result) => on_restored_offline(state, ctx, index, result),
@@ -521,7 +533,7 @@ fn close_result(state: &mut State) {
 }
 
 fn restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
-    if state.restoring.is_some() || ctx.busy {
+    if state.restoring.is_some() || state.probing || ctx.busy {
         return Task::none();
     }
     if state.copies.contains(&index) {
@@ -562,6 +574,14 @@ fn on_restored(
                 ctx.t("We opened the Microsoft Store so you can install")
             ),
             Tone::Neutral,
+        ),
+        Err(e) if e == "unavailable" => toast(
+            format!(
+                "{} {name}. {}",
+                ctx.t("We couldn't bring back"),
+                ctx.t(store_note(ctx.helper))
+            ),
+            Tone::Bad,
         ),
         _ => couldnt_bring_back(ctx, &name),
     }
@@ -655,10 +675,38 @@ fn couldnt_bring_back(ctx: &Ctx, name: &str) -> Task<Message> {
     )
 }
 
+pub const NEEDS_REOPEN: &str = "Close Secblitz and open it again from its Start menu shortcut to do this.";
+const NOT_ON_ACCOUNT_STORE: &str = "Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off. Get the app from the Microsoft Store instead.";
+pub const NOT_ON_ACCOUNT: &str = "Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off.";
+
+/// Why a Store reinstall cannot be offered, or nothing when it can.
+pub fn store_blocker(helper: Helper) -> Option<&'static str> {
+    match helper {
+        Helper::Ready => None,
+        Helper::Reopen => Some(NEEDS_REOPEN),
+        Helper::NotOnThisAccount => Some(NOT_ON_ACCOUNT_STORE),
+    }
+}
+
+fn store_note(helper: Helper) -> &'static str {
+    store_blocker(helper).unwrap_or("Restart your PC and try again.")
+}
+
 fn store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
     if app_of(index).store_id.is_none() {
         return Task::none();
     }
+    if let Some(note) = store_blocker(ctx.helper) {
+        return toast(ctx.t(note), Tone::Bad);
+    }
+    state.probing = true;
+    state.offline = None;
+    Task::perform(blocking(secblitz::tools::dns_offline), move |offline| {
+        wrap(Msg::StoreProbed(index, offline))
+    })
+}
+
+fn start_store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
     state.restoring = Some(index);
     state.restoring_copy = false;
     state.offline = None;
