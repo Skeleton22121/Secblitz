@@ -52,7 +52,7 @@ const ITEM_APPS: &str = "Removed apps";
 const ITEM_SUGGESTED: &str = "Suggested apps";
 const ITEM_WEB: &str = "Web protection";
 #[cfg_attr(not(windows), allow(dead_code))]
-const WEB_LEFT: &str = "Web protection could not be turned off. Restart your PC to finish turning it off.";
+const WEB_LEFT: &str = "Web protection could not be turned off. Close Secblitz, open it again and try once more. If it still does not work, check for a Secblitz update.";
 const RESULT_LEFT_TITLE: &str = "Some things could not be put back";
 const RESULT_LEFT_HELP: &str = "These are left as they are. You can remove Secblitz anyway, or keep it and try again later.";
 const RESULT_DONE_TITLE: &str = "Everything is back the way it was";
@@ -1299,7 +1299,7 @@ mod tests {
             .collect();
         assert_eq!(
             lines[0],
-            "Firewall at home: you changed this yourself since, so it was left as it is"
+            "Firewall at home: it has changed since Secblitz set it, so it was left as it is. No action is needed."
         );
         assert_eq!(finish(&lines, true), Finish::ShowResult);
         assert_eq!(
