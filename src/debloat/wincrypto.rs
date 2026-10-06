@@ -1,6 +1,5 @@
 //! AES-256-GCM through Windows CNG and the machine-bound DPAPI seal for the
 //! per-backup key. No crypto is implemented here, only called.
-#![allow(dead_code)] // consumed by offline.rs (Task 6)
 
 use super::vault::Sealer;
 use anyhow::{ensure, Result};
@@ -23,6 +22,7 @@ impl Key {
     pub fn from_bytes(b: [u8; 32]) -> Key {
         Key(b)
     }
+    #[cfg(test)]
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
     }
@@ -42,11 +42,13 @@ pub struct Aes {
     key: BCRYPT_KEY_HANDLE,
 }
 
+// SAFETY: the CNG handles are owned by this value and CNG allows use from any thread.
 unsafe impl Send for Aes {}
 
 impl Aes {
     pub fn new(key: &Key) -> Result<Aes> {
         let mut alg: BCRYPT_ALG_HANDLE = null_mut();
+        // SAFETY: `alg` is a valid out-pointer; the algorithm id is a static string.
         let status =
             unsafe { BCryptOpenAlgorithmProvider(&mut alg, BCRYPT_AES_ALGORITHM, null(), 0) };
         ensure!(
@@ -54,6 +56,7 @@ impl Aes {
             "Encryption is unavailable ({status:#x})"
         );
         let mode: Vec<u16> = "ChainingModeGCM\0".encode_utf16().collect();
+        // SAFETY: `mode` is a live NUL-terminated UTF-16 buffer and its byte length is passed.
         let status = unsafe {
             BCryptSetProperty(
                 alg,
@@ -64,14 +67,17 @@ impl Aes {
             )
         };
         if status != STATUS_SUCCESS {
+            // SAFETY: `alg` was opened above and is not used afterwards.
             unsafe { BCryptCloseAlgorithmProvider(alg, 0) };
             anyhow::bail!("Encryption is unavailable ({status:#x})");
         }
         let mut handle: BCRYPT_KEY_HANDLE = null_mut();
+        // SAFETY: `alg` is open, `handle` is a valid out-pointer and the secret is 32 live bytes.
         let status = unsafe {
             BCryptGenerateSymmetricKey(alg, &mut handle, null_mut(), 0, key.0.as_ptr(), 32, 0)
         };
         if status != STATUS_SUCCESS {
+            // SAFETY: `alg` was opened above and is not used afterwards.
             unsafe { BCryptCloseAlgorithmProvider(alg, 0) };
             anyhow::bail!("Encryption is unavailable ({status:#x})");
         }
@@ -83,25 +89,31 @@ impl Aes {
         aad: &[u8],
         tag: &mut [u8; 16],
     ) -> BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
-        let mut info: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO = unsafe { std::mem::zeroed() };
-        info.cbSize = std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32;
-        info.dwInfoVersion = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION;
-        info.pbNonce = nonce.as_ptr() as *mut u8;
-        info.cbNonce = 12;
-        info.pbAuthData = if aad.is_empty() {
-            null_mut()
-        } else {
-            aad.as_ptr() as *mut u8
-        };
-        info.cbAuthData = aad.len() as u32;
-        info.pbTag = tag.as_mut_ptr();
-        info.cbTag = 16;
-        info
+        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+            cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
+            dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+            pbNonce: nonce.as_ptr() as *mut u8,
+            cbNonce: 12,
+            pbAuthData: if aad.is_empty() {
+                null_mut()
+            } else {
+                aad.as_ptr() as *mut u8
+            },
+            cbAuthData: aad.len() as u32,
+            pbTag: tag.as_mut_ptr(),
+            cbTag: 16,
+            pbMacContext: null_mut(),
+            cbMacContext: 0,
+            cbAAD: 0,
+            cbData: 0,
+            dwFlags: 0,
+        }
     }
 }
 
 impl Drop for Aes {
     fn drop(&mut self) {
+        // SAFETY: both handles are valid and released exactly once, here.
         unsafe {
             BCryptDestroyKey(self.key);
             BCryptCloseAlgorithmProvider(self.alg, 0);
@@ -115,6 +127,8 @@ impl Sealer for Aes {
         let info = Self::info(nonce, aad, &mut tag);
         let mut out = vec![0u8; plain.len()];
         let mut written = 0u32;
+        // SAFETY: input and output buffers are live for the call and the lengths passed match them;
+        // `info` points at `nonce`, `aad` and `tag`, which outlive the call.
         let status = unsafe {
             BCryptEncrypt(
                 self.key,
@@ -144,6 +158,7 @@ impl Sealer for Aes {
         let info = Self::info(nonce, aad, &mut tag);
         let mut out = vec![0u8; ct.len()];
         let mut written = 0u32;
+        // SAFETY: as in `seal`; `ct` and `out` are live and equally long.
         let status = unsafe {
             BCryptDecrypt(
                 self.key,
@@ -182,6 +197,7 @@ pub fn seal_key(key: &Key) -> Result<Vec<u8>> {
         cbData: 0,
         pbData: null_mut(),
     };
+    // SAFETY: input and entropy blobs borrow live slices; `out` is a valid out-parameter.
     let ok = unsafe {
         CryptProtectData(
             &input,
@@ -198,7 +214,10 @@ pub fn seal_key(key: &Key) -> Result<Vec<u8>> {
         "Couldn't protect the saved data key: {}",
         std::io::Error::last_os_error()
     );
+    ensure!(!out.pbData.is_null(), "Couldn't protect the saved data key");
+    // SAFETY: on success CryptProtectData returns `cbData` readable bytes at `pbData`.
     let sealed = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();
+    // SAFETY: `pbData` was allocated by CryptProtectData for the caller to free with LocalFree.
     unsafe { LocalFree(out.pbData.cast()) };
     Ok(sealed)
 }
@@ -210,6 +229,7 @@ pub fn unseal_key(sealed: &[u8]) -> Result<Key> {
         cbData: 0,
         pbData: null_mut(),
     };
+    // SAFETY: input and entropy blobs borrow live slices; `out` is a valid out-parameter.
     let ok = unsafe {
         CryptUnprotectData(
             &input,
@@ -222,6 +242,8 @@ pub fn unseal_key(sealed: &[u8]) -> Result<Key> {
         )
     };
     ensure!(ok != 0, "Damaged saved data key");
+    ensure!(!out.pbData.is_null(), "Damaged saved data key");
+    // SAFETY: on success CryptUnprotectData returns `cbData` writable bytes at `pbData`.
     let plain = unsafe { std::slice::from_raw_parts_mut(out.pbData, out.cbData as usize) };
     let result = if plain.len() == 32 {
         let mut k = [0u8; 32];
@@ -231,8 +253,10 @@ pub fn unseal_key(sealed: &[u8]) -> Result<Key> {
         Err(anyhow::anyhow!("Damaged saved data key"))
     };
     for b in plain.iter_mut() {
+        // SAFETY: `b` is a valid, unique reference into the returned buffer.
         unsafe { std::ptr::write_volatile(b, 0) };
     }
+    // SAFETY: `pbData` was allocated by CryptUnprotectData for the caller to free; `plain` is dead.
     unsafe { LocalFree(out.pbData.cast()) };
     result
 }
