@@ -92,8 +92,7 @@ impl Engine {
                     )
                 }
             };
-            callback(&result.id, &result.status);
-            report.results.push(result);
+            report.push(result, callback);
         }
         if tx.entries.iter().all(|e| e.state == State::Restored) {
             self.append(tx, Record::Reverted)?;
@@ -107,12 +106,7 @@ impl Engine {
         self.mutation_interlocks(&_lock)?;
         let mut transactions = self.load()?;
         self.durable(&transactions)?;
-        let mut report = Report {
-            transaction: None,
-            results: Vec::new(),
-            findings: Vec::new(),
-            readiness: None,
-        };
+        let mut report = Report::default();
         if let Some(tx) = transactions.iter_mut().rev().find(|t| !t.reverted) {
             report.transaction = Some(tx.name.clone());
             self.revert_transaction(tx, &mut report, &mut callback)?;
@@ -163,12 +157,7 @@ impl Engine {
         self.mutation_interlocks(&_lock)?;
         let mut transactions = self.load()?;
         self.durable(&transactions)?;
-        let mut report = Report {
-            transaction: None,
-            results: Vec::new(),
-            findings: Vec::new(),
-            readiness: None,
-        };
+        let mut report = Report::default();
         // Only the newest unreverted batch may be left half undone (`load`
         // rejects an incomplete batch that precedes another active one). So once
         // a newer batch is left over, an older one is only touched if it can be
@@ -179,8 +168,7 @@ impl Engine {
                 let blockers = self.undo_blockers(tx)?;
                 if !blockers.is_empty() {
                     for b in blockers {
-                        callback(&b.id, &b.status);
-                        report.results.push(b);
+                        report.push(b, &mut callback);
                     }
                     continue;
                 }

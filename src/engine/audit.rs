@@ -120,9 +120,7 @@ impl Engine {
         let active = transactions.iter().rev().find(|t| !t.reverted);
         let mut report = Report {
             transaction: active.map(|t| t.name.clone()),
-            results: Vec::new(),
-            findings: Vec::new(),
-            readiness: None,
+            ..Report::default()
         };
         let controls = self.controls.clone();
         for batch in controls.chunks(READ_BATCH) {
@@ -135,8 +133,7 @@ impl Engine {
                     },
                     Err(e) => Self::outcome(c, "error", format!("{e:#}")),
                 };
-                callback(&result.id, &result.status);
-                report.results.push(result);
+                report.push(result, &mut callback);
             }
         }
         report.readiness = Some(self.readiness(&mut callback));
