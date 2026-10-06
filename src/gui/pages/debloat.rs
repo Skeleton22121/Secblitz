@@ -879,7 +879,6 @@ fn record_history(ctx: &Ctx, removed: usize) {
     }
 }
 
-
 fn count_text(ctx: &Ctx, n: usize, one: &str, many: &str) -> String {
     let key = if n == 1 { one } else { many };
     ctx.t(key).replace("{n}", &n.to_string())
@@ -1164,7 +1163,6 @@ fn group_card<'a>(
     .into()
 }
 
-
 fn ago(ctx: &Ctx, t: u64) -> String {
     let days = debloat::now().saturating_sub(t) / 86_400;
     match days {
@@ -1343,7 +1341,6 @@ fn delete_sheet<'a>(index: u16, ctx: &'a Ctx) -> Element<'a, Message> {
     .spacing(theme::S3)
     .into()
 }
-
 
 const WORKING_LIST_MAX: f32 = 200.0;
 const RESULT_BODY_MAX: f32 = 200.0;
@@ -1921,7 +1918,6 @@ pub fn is_busy(state: &State) -> bool {
     !matches!(state.sheet, Sheet::None)
 }
 
-#[allow(clippy::items_after_test_module)]
 pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if is_busy(state) {
         return Task::none();

@@ -312,7 +312,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
-
 const CONTROL_WIDTH: f32 = 168.0;
 
 fn busy<'a>(p: Palette, state: &State, label: String) -> Element<'a, Message> {
@@ -603,6 +602,33 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     .into()
 }
 
+pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    let _ = ctx;
+    if state.working {
+        return Task::none();
+    }
+    load_task(state)
+}
+
+fn load_task(state: &mut State) -> Task<Message> {
+    state.generation = state.generation.wrapping_add(1);
+    let generation = state.generation;
+    Task::perform(
+        blocking(|| {
+            let background = prefs_store::background_on().map_err(|e| format!("{e:#}"));
+            let update = secblitz::updater::status().ok().map(|s| update_view(&s));
+            (background, update)
+        }),
+        move |(background, update)| {
+            Message::Settings(Msg::Loaded {
+                generation,
+                background,
+                update,
+            })
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,32 +713,4 @@ mod tests {
         let codes: Vec<_> = LangItem::ALL.iter().map(|l| l.0.code()).collect();
         assert_eq!(codes, ["en", "es", "fr", "de", "pt", "it"]);
     }
-}
-
-#[allow(clippy::items_after_test_module)]
-pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    let _ = ctx;
-    if state.working {
-        return Task::none();
-    }
-    load_task(state)
-}
-
-fn load_task(state: &mut State) -> Task<Message> {
-    state.generation = state.generation.wrapping_add(1);
-    let generation = state.generation;
-    Task::perform(
-        blocking(|| {
-            let background = prefs_store::background_on().map_err(|e| format!("{e:#}"));
-            let update = secblitz::updater::status().ok().map(|s| update_view(&s));
-            (background, update)
-        }),
-        move |(background, update)| {
-            Message::Settings(Msg::Loaded {
-                generation,
-                background,
-                update,
-            })
-        },
-    )
 }
