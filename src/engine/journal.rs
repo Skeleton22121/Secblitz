@@ -12,7 +12,7 @@ use super::{
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, fs, fs::File};
+use std::{collections::HashSet, fs, fs::File, path::Path};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Record {
@@ -176,6 +176,54 @@ pub(super) fn record_bytes(record: &Record) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn parse_record(line: &[u8]) -> Result<Record> {
+    ensure!(
+        !line.is_empty() && line.len() <= MAX_LINE,
+        "Invalid journal record size"
+    );
+    let record: Record = serde_json::from_slice(line).context("Invalid journal record")?;
+    // Serde's internally tagged unit variants otherwise accept
+    // extra fields despite deny_unknown_fields on the enum.
+    if matches!(
+        record,
+        Record::Sealed | Record::Reverting | Record::Reverted
+    ) {
+        let object: serde_json::Map<String, Value> = serde_json::from_slice(line)?;
+        ensure!(object.len() == 1, "Unexpected fields in journal marker");
+    }
+    Ok(record)
+}
+
+type StagedSnapshot = (String, File, Vec<u8>);
+
+#[derive(Default)]
+struct Scan {
+    transactions: Vec<Transaction>,
+    staged: Vec<StagedSnapshot>,
+    evidence: usize,
+}
+
+/// Validate the whole active stack before any caller probes or replays.
+/// Only the newest active batch can be incomplete; originals must have
+/// exactly one active owner, even when each WAL is valid in isolation.
+fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
+    let active: Vec<_> = transactions.iter().filter(|t| !t.reverted).collect();
+    let mut owners = HashSet::new();
+    for (i, tx) in active.iter().enumerate() {
+        ensure!(
+            i + 1 == active.len() || !tx.incomplete(),
+            "Incomplete transaction precedes another active transaction"
+        );
+        for entry in &tx.entries {
+            ensure!(
+                owners.insert(&entry.id),
+                "Duplicate active control owner; journal history is invalid"
+            );
+        }
+    }
+    Ok(())
+}
+
 impl Engine {
     pub(super) fn decode(
         &self,
@@ -191,40 +239,11 @@ impl Engine {
             "Missing complete journal header; manual review required"
         );
         let mut records = bytes[..end - 1].split(|b| *b == b'\n');
-        let parse = |line: &[u8]| -> Result<Record> {
-            ensure!(
-                !line.is_empty() && line.len() <= MAX_LINE,
-                "Invalid journal record size"
-            );
-            let record: Record = serde_json::from_slice(line).context("Invalid journal record")?;
-            // Serde's internally tagged unit variants otherwise accept
-            // extra fields despite deny_unknown_fields on the enum.
-            if matches!(
-                record,
-                Record::Sealed | Record::Reverting | Record::Reverted
-            ) {
-                let object: serde_json::Map<String, Value> = serde_json::from_slice(line)?;
-                ensure!(object.len() == 1, "Unexpected fields in journal marker");
-            }
-            Ok(record)
-        };
-        match parse(records.next().context("Missing header")?)? {
-            Record::Header {
-                schema,
-                machine,
-                transaction,
-                sequence,
-            } => {
-                ensure!(
-                    schema == SCHEMA
-                        && machine == self.machine
-                        && transaction == stem
-                        && sequence == seq,
-                    "Journal schema, machine, or transaction identity mismatch"
-                );
-            }
-            _ => bail!("Journal must start with a header"),
-        }
+        self.check_header(
+            parse_record(records.next().context("Missing header")?)?,
+            stem,
+            seq,
+        )?;
         let mut tx = Transaction {
             name: stem.into(),
             sequence: seq,
@@ -238,161 +257,127 @@ impl Engine {
             disk_bytes: bytes.clone(),
         };
         for line in records {
-            let record = parse(line)?;
+            let record = parse_record(line)?;
             ensure!(!tx.reverted, "Records after transaction completion");
-            match record {
-                Record::Prepare { id, before } => {
-                    self.control(&id)?;
-                    validate_value(&id, &before)?;
-                    ensure!(
-                        before != target_for(&id, &before)?,
-                        "Redundant before image"
-                    );
-                    ensure!(
-                        !tx.sealed
-                            && !tx.reverting
-                            && tx
-                                .entries
-                                .iter()
-                                .all(|e| e.state == State::Applied && e.id != id),
-                        "Invalid prepare ordering or duplicate before image"
-                    );
-                    tx.entries.push(Entry {
-                        id,
-                        before,
-                        state: State::Pending,
-                    });
-                }
-                Record::Applied { id } => {
-                    ensure!(!tx.sealed && !tx.reverting, "Apply after seal/revert");
-                    let e = tx.entries.last_mut().context("Apply without prepare")?;
-                    ensure!(
-                        e.id == id && e.state == State::Pending,
-                        "Invalid apply result"
-                    );
-                    e.state = State::Applied;
-                }
-                Record::Sealed => {
-                    ensure!(
-                        !tx.sealed
-                            && !tx.reverting
-                            && tx.entries.iter().all(|e| e.state == State::Applied),
-                        "Invalid seal"
-                    );
-                    tx.sealed = true;
-                }
-                Record::Reverting => {
-                    ensure!(!tx.reverting, "Duplicate revert start");
-                    tx.reverting = true;
-                }
-                Record::RestorePending { id } => {
-                    ensure!(tx.reverting, "Restore before revert start");
-                    let e = tx
-                        .entries
-                        .iter_mut()
-                        .find(|e| e.id == id)
-                        .context("Restore without before image")?;
-                    ensure!(e.state != State::Restored, "Restore after completion");
-                    e.state = State::Restoring;
-                }
-                Record::Restored { id } => {
-                    ensure!(tx.reverting, "Restore result before revert start");
-                    let e = tx
-                        .entries
-                        .iter_mut()
-                        .find(|e| e.id == id)
-                        .context("Result without before image")?;
-                    ensure!(e.state == State::Restoring, "Restore result without intent");
-                    e.state = State::Restored;
-                }
-                Record::Reverted => {
-                    ensure!(
-                        tx.reverting && tx.entries.iter().all(|e| e.state == State::Restored),
-                        "Premature revert completion"
-                    );
-                    tx.reverted = true;
-                }
-                Record::Header { .. } => bail!("Duplicate journal header"),
-            }
+            self.replay(&mut tx, record)?;
         }
         if end != bytes.len() && !self.incomplete_tail(&tx, &bytes[end..], &[])? {
             return Err(JournalRecoveryRequired {
-                    transaction: stem.into(), validated_bytes: end,
-                    reason: "tail is not a provably incomplete legal append (complete JSON without a newline is ambiguous)",
-                }.into());
+                transaction: stem.into(),
+                validated_bytes: end,
+                reason: "tail is not a provably incomplete legal append (complete JSON without a newline is ambiguous)",
+            }
+            .into());
         }
         Ok(tx)
     }
 
-    pub(super) fn load(&self) -> Result<Vec<Transaction>> {
-        let mut transactions = Vec::new();
-        let mut staged = Vec::new();
-        let mut evidence_count = 0;
-        for entry in fs::read_dir(&self.dir)? {
-            let entry = entry?;
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| anyhow::anyhow!("Non-UTF8 journal filename"))?;
-            if name == LOCK_NAME {
-                continue;
-            }
-            if matches!(
-                name.as_str(),
-                "Updates" | "operations" | "Patching" | "App" | crate::platform::WEB_PROTECTION
-            ) {
-                // Module-owned protected namespaces, never journal payloads.
-                // Production platform validation supplies ACL/owner protection.
-                metadata_safe(&fs::symlink_metadata(entry.path())?, true)?;
-                continue;
-            }
-            if LEGACY_UPDATE_FILES.contains(&name.as_str()) {
-                validate_update_file(&entry.path())?;
-                continue;
-            }
-            if let Some((stem, digest)) = name.split_once(".evidence-") {
-                journal_name(stem)?;
+    fn check_header(&self, header: Record, stem: &str, seq: u64) -> Result<()> {
+        match header {
+            Record::Header {
+                schema,
+                machine,
+                transaction,
+                sequence,
+            } => {
                 ensure!(
-                    digest.len() == 64
-                        && digest
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-                    "Invalid evidence filename"
+                    schema == SCHEMA
+                        && machine == self.machine
+                        && transaction == stem
+                        && sequence == seq,
+                    "Journal schema, machine, or transaction identity mismatch"
                 );
-                evidence_count += 1;
-                ensure!(
-                    evidence_count <= MAX_EVIDENCE,
-                    "Too many journal evidence files"
-                );
-                let file = open_file(&entry.path(), false)?;
-                ensure!(
-                    file.metadata()?.len() <= MAX_WAL,
-                    "Oversized journal evidence"
-                );
-                // Opaque evidence may itself be a partial failed copy. It is
-                // never a source of originals or a replacement journal.
-                continue;
+                Ok(())
             }
-            if let Some(stem) = name.strip_suffix(".jsonl.next") {
-                journal_name(stem)?;
-                ensure!(staged.is_empty(), "Multiple unpublished journal snapshots");
-                let mut file = open_file(&entry.path(), false)?;
-                let bytes = read_bytes(&mut file)?;
-                staged.push((stem.to_owned(), file, bytes));
-                continue;
-            }
-            ensure!(
-                transactions.len() < MAX_TRANSACTIONS,
-                "Too many journal transactions"
-            );
-            let stem = name
-                .strip_suffix(".jsonl")
-                .context("Unexpected journal entry")?;
-            journal_name(stem)?;
-            let mut file = open_file(&entry.path(), false)?;
-            let bytes = read_bytes(&mut file)?;
-            transactions.push(self.decode(stem, Some(file), bytes)?);
+            _ => bail!("Journal must start with a header"),
         }
+    }
+
+    /// Applies one record to the transaction, enforcing the legal record order.
+    fn replay(&self, tx: &mut Transaction, record: Record) -> Result<()> {
+        match record {
+            Record::Prepare { id, before } => {
+                self.control(&id)?;
+                validate_value(&id, &before)?;
+                ensure!(
+                    before != target_for(&id, &before)?,
+                    "Redundant before image"
+                );
+                ensure!(
+                    !tx.sealed
+                        && !tx.reverting
+                        && tx
+                            .entries
+                            .iter()
+                            .all(|e| e.state == State::Applied && e.id != id),
+                    "Invalid prepare ordering or duplicate before image"
+                );
+                tx.entries.push(Entry {
+                    id,
+                    before,
+                    state: State::Pending,
+                });
+            }
+            Record::Applied { id } => {
+                ensure!(!tx.sealed && !tx.reverting, "Apply after seal/revert");
+                let e = tx.entries.last_mut().context("Apply without prepare")?;
+                ensure!(
+                    e.id == id && e.state == State::Pending,
+                    "Invalid apply result"
+                );
+                e.state = State::Applied;
+            }
+            Record::Sealed => {
+                ensure!(
+                    !tx.sealed
+                        && !tx.reverting
+                        && tx.entries.iter().all(|e| e.state == State::Applied),
+                    "Invalid seal"
+                );
+                tx.sealed = true;
+            }
+            Record::Reverting => {
+                ensure!(!tx.reverting, "Duplicate revert start");
+                tx.reverting = true;
+            }
+            Record::RestorePending { id } => {
+                ensure!(tx.reverting, "Restore before revert start");
+                let e = tx
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    .context("Restore without before image")?;
+                ensure!(e.state != State::Restored, "Restore after completion");
+                e.state = State::Restoring;
+            }
+            Record::Restored { id } => {
+                ensure!(tx.reverting, "Restore result before revert start");
+                let e = tx
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    .context("Result without before image")?;
+                ensure!(e.state == State::Restoring, "Restore result without intent");
+                e.state = State::Restored;
+            }
+            Record::Reverted => {
+                ensure!(
+                    tx.reverting && tx.entries.iter().all(|e| e.state == State::Restored),
+                    "Premature revert completion"
+                );
+                tx.reverted = true;
+            }
+            Record::Header { .. } => bail!("Duplicate journal header"),
+        }
+        Ok(())
+    }
+
+    pub(super) fn load(&self) -> Result<Vec<Transaction>> {
+        let Scan {
+            mut transactions,
+            staged,
+            ..
+        } = self.scan_directory()?;
         transactions.sort_by_key(|t| t.sequence);
         ensure!(
             transactions
@@ -400,26 +385,102 @@ impl Engine {
                 .all(|w| w[0].sequence < w[1].sequence),
             "Duplicate transaction sequence"
         );
-        // Validate the whole active stack before any caller probes or replays.
-        // Only the newest active batch can be incomplete; originals must have
-        // exactly one active owner, even when each WAL is valid in isolation.
-        let active: Vec<_> = transactions.iter().filter(|t| !t.reverted).collect();
-        let mut owners = HashSet::new();
-        for (i, tx) in active.iter().enumerate() {
-            ensure!(
-                i + 1 == active.len() || !tx.incomplete(),
-                "Incomplete transaction precedes another active transaction"
-            );
-            for entry in &tx.entries {
-                ensure!(
-                    owners.insert(&entry.id),
-                    "Duplicate active control owner; journal history is invalid"
-                );
+        check_active_stack(&transactions)?;
+        self.check_incomplete_appends(&transactions)?;
+        for (stem, _, bytes) in &staged {
+            self.validate_staged(stem, bytes, &transactions)?;
+        }
+        for tx in &transactions {
+            if tx.bytes != tx.disk_bytes {
+                self.preserve_evidence(&tx.name, &tx.disk_bytes)?;
             }
         }
-        // Do not hide an older torn append behind subsequent history. Validate
-        // the entire directory/active stack and all staging before any recovery.
-        for tx in &transactions {
+        for snapshot in staged {
+            self.retire_staged(snapshot)?;
+        }
+        Ok(transactions)
+    }
+
+    fn scan_directory(&self) -> Result<Scan> {
+        let mut scan = Scan::default();
+        for entry in fs::read_dir(&self.dir)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("Non-UTF8 journal filename"))?;
+            self.scan_entry(&mut scan, &name, &entry.path())?;
+        }
+        Ok(scan)
+    }
+
+    fn scan_entry(&self, scan: &mut Scan, name: &str, path: &Path) -> Result<()> {
+        if name == LOCK_NAME {
+            return Ok(());
+        }
+        if matches!(
+            name,
+            "Updates" | "operations" | "Patching" | "App" | crate::platform::WEB_PROTECTION
+        ) {
+            // Module-owned protected namespaces, never journal payloads.
+            // Production platform validation supplies ACL/owner protection.
+            return metadata_safe(&fs::symlink_metadata(path)?, true);
+        }
+        if LEGACY_UPDATE_FILES.contains(&name) {
+            return validate_update_file(path);
+        }
+        if let Some((stem, digest)) = name.split_once(".evidence-") {
+            journal_name(stem)?;
+            ensure!(
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "Invalid evidence filename"
+            );
+            scan.evidence += 1;
+            ensure!(
+                scan.evidence <= MAX_EVIDENCE,
+                "Too many journal evidence files"
+            );
+            let file = open_file(path, false)?;
+            ensure!(
+                file.metadata()?.len() <= MAX_WAL,
+                "Oversized journal evidence"
+            );
+            // Opaque evidence may itself be a partial failed copy. It is
+            // never a source of originals or a replacement journal.
+            return Ok(());
+        }
+        if let Some(stem) = name.strip_suffix(".jsonl.next") {
+            journal_name(stem)?;
+            ensure!(
+                scan.staged.is_empty(),
+                "Multiple unpublished journal snapshots"
+            );
+            let mut file = open_file(path, false)?;
+            let bytes = read_bytes(&mut file)?;
+            scan.staged.push((stem.to_owned(), file, bytes));
+            return Ok(());
+        }
+        ensure!(
+            scan.transactions.len() < MAX_TRANSACTIONS,
+            "Too many journal transactions"
+        );
+        let stem = name
+            .strip_suffix(".jsonl")
+            .context("Unexpected journal entry")?;
+        journal_name(stem)?;
+        let mut file = open_file(path, false)?;
+        let bytes = read_bytes(&mut file)?;
+        scan.transactions
+            .push(self.decode(stem, Some(file), bytes)?);
+        Ok(())
+    }
+
+    /// Do not hide an older torn append behind subsequent history.
+    fn check_incomplete_appends(&self, transactions: &[Transaction]) -> Result<()> {
+        for tx in transactions {
             ensure!(
                 tx.bytes == tx.disk_bytes
                     || !transactions
@@ -429,32 +490,25 @@ impl Engine {
             );
             if tx.bytes != tx.disk_bytes {
                 ensure!(
-                    self.incomplete_tail(tx, &tx.disk_bytes[tx.bytes.len()..], &transactions)?,
+                    self.incomplete_tail(tx, &tx.disk_bytes[tx.bytes.len()..], transactions)?,
                     "Incomplete append conflicts with another active control owner"
                 );
             }
         }
-        for (stem, _, bytes) in &staged {
-            self.validate_staged(stem, bytes, &transactions)?;
-        }
-        for tx in &transactions {
-            if tx.bytes != tx.disk_bytes {
-                self.preserve_evidence(&tx.name, &tx.disk_bytes)?;
-            }
-        }
-        for (stem, mut file, bytes) in staged {
-            let path = self.dir.join(format!("{stem}.jsonl.next"));
-            self.preserve_evidence(&stem, &bytes)?;
-            same_file(&file, &path)?;
-            ensure!(
-                read_bytes(&mut file)? == bytes,
-                "Unpublished snapshot changed during recovery"
-            );
-            drop(file); // Windows handles deny delete until explicitly released.
-            io_boundary("retire_stage")?;
-            fs::remove_file(path)?;
-            sync_directory(&self.dir)?;
-        }
-        Ok(transactions)
+        Ok(())
+    }
+
+    fn retire_staged(&self, (stem, mut file, bytes): StagedSnapshot) -> Result<()> {
+        let path = self.dir.join(format!("{stem}.jsonl.next"));
+        self.preserve_evidence(&stem, &bytes)?;
+        same_file(&file, &path)?;
+        ensure!(
+            read_bytes(&mut file)? == bytes,
+            "Unpublished snapshot changed during recovery"
+        );
+        drop(file); // Windows handles deny delete until explicitly released.
+        io_boundary("retire_stage")?;
+        fs::remove_file(path)?;
+        sync_directory(&self.dir)
     }
 }
