@@ -1,4 +1,4 @@
-//! "Your account" and "App updates" settings.
+//! Per-account settings and updates for the apps the user installed, not Windows apps or Secblitz.
 use crate::broker::{Reply, Request};
 use crate::explain;
 use crate::gui::icons::Icon;

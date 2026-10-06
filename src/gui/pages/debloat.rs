@@ -1,4 +1,4 @@
-//! Clean up apps page.
+//! Clean up apps: removes the built-in Windows apps from a catalog, never apps the user installed.
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
@@ -1488,7 +1488,7 @@ fn working_sheet<'a>(
                 anim::check_draw(
                     18.0,
                     p.good,
-                    anim::Clock::at(*at).progress_at(anim::SLOW, state.now),
+                    anim::slow_progress(*at, state.now),
                 ),
                 ctx.t("Removed"),
             ),
@@ -1504,22 +1504,20 @@ fn working_sheet<'a>(
                 anim::cross_draw(
                     18.0,
                     p.bad,
-                    anim::Clock::at(*at).progress_at(anim::SLOW, state.now),
+                    anim::slow_progress(*at, state.now),
                 ),
                 ctx.t("Couldn't remove"),
             ),
         };
-        list = list.push(
-            row![
-                container(lead).center(theme::CHECK),
+        list = list.push(widgets::step_row(
+            p,
+            lead,
+            vec![
                 app_glyph(p, state, *index, theme::CHECK),
                 widgets::body(p, ctx.t(app_of(*index).name)),
-                space::horizontal(),
-                widgets::small(p, note),
-            ]
-            .spacing(theme::S3)
-            .align_y(Alignment::Center),
-        );
+            ],
+            note,
+        ));
     }
     let ratio = if items.is_empty() {
         0.0

@@ -131,6 +131,11 @@ impl Clock {
     }
 }
 
+/// How far a [`SLOW`] animation that began at `at` has got by `now`.
+pub fn slow_progress(at: Instant, now: Instant) -> f32 {
+    Clock::at(at).progress_at(SLOW, now)
+}
+
 fn ratio(elapsed: Duration, d: Duration) -> f32 {
     if d.is_zero() {
         return 1.0;
