@@ -83,6 +83,22 @@ earlier batches from being undone until the newest is fully restored. A second
 revert call then restores the preceding batch. This also applies after reopening
 the engine; ownership comes from validated WAL entries, not process memory.
 
+`revert_selected(ids, callback)` puts back chosen controls only. The ids are
+checked first: at least one, no more than the catalog size, no duplicates, none
+unknown. Each chosen control is restored by the batch that owns it, newest batch
+first, and a control that another active control needs goes after the one that
+needs it (memory integrity waits for stack protection). A restore record is
+legal inside a sealed batch that is not being reverted. A restored control no
+longer owns anything, so the same control can be fixed again, and a batch whose
+controls are all restored is closed as reverted. A control whose value changed
+since Secblitz set it is left as it is and reported, and the pending-restore
+record is only written after the final fresh read passes, so that conflict leaves
+the journal untouched. Controls with nothing recorded, or in a batch that is
+still unfinished, are skipped and reported. `Report.undo_next` lists the controls
+that can be put back, and `Outcome.undoable` marks each one. `revert` and
+`revert_all` first close batches that are already fully restored, then work on
+the newest batch that still has something to restore.
+
 ## Verification
 
 Engine tests cover upfront invalid-selection rejection, selected-only probes and

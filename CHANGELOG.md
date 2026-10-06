@@ -10,6 +10,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [Unreleased]
 
 ### Added
+- **Put back chosen settings.** On the Protection page, settings Secblitz changed are marked "Changed by Secblitz". Tick one or several, or use "Undo..." on a single one, and Secblitz puts exactly those back the way they were. You see what will change first, nothing is ticked for you, and anything you changed yourself since is left as it is. History has a quick way back to this list. A journal that used this can only be read by this version or newer, and Secblitz updates never go back to an older version.
 - **Search on Protection and Clean up apps.** Type a word, or press Ctrl+F, to show only the matching settings or apps. It forgives small typing mistakes and accents, and the choices you already made stay in place while you search.
 - **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
 - **Privacy policy.** A plain privacy page says exactly when Secblitz uses the internet and what it keeps on your PC. The installer shows a short summary, and Settings links to the full page.
