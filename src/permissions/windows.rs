@@ -319,8 +319,10 @@ fn inspect(manager: &Handle, name: &str) -> Result<Finding> {
         ("review", "Absent or NULL DACL permits unrestricted access. Administrator investigation required; no automatic repair.".into())
     } else if !assessment.candidates.is_empty() {
         ("review", format!("Candidate dangerous broad-principal grants: {}. {}This is an ACE scan, not effective access or proof of exploitability. {}", assessment.candidates.join("; "), if assessment.complex { "Deny, inherited or unsupported ACE semantics require manual evaluation. " } else { "" }, if matches!(name, "BITS" | "wuauserv") { "Consult the fixed service repair control for gated eligibility." } else { "Review with the service owner; no automatic repair for this service." }))
-    } else if assessment.complex {
+    } else if assessment.unevaluated_grant {
         ("unknown", "Deny, inherited or unsupported descriptor, ACE or access-mask semantics require manual evaluation; no dangerous supported ALLOW candidate found. No automatic repair.".into())
+    } else if assessment.complex {
+        ("info", "No dangerous ALLOW bits found for Everyone, Authenticated Users or Builtin Users. Some deny, inherited or extra-permission rules were not evaluated, and none of them can widen access. Other principals, ownership and executable paths were not assessed.".into())
     } else {
         ("info", "No dangerous ALLOW bits found for Everyone, Authenticated Users or Builtin Users in this DACL. Limited scan: other principals, ownership and executable paths were not assessed.".into())
     };
