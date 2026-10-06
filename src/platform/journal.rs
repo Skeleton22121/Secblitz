@@ -222,16 +222,19 @@ fn program_data() -> Result<PathBuf> {
     }
 }
 
-/// Inspect every entry under `path`. `opaque` (the saved app copies) is
-/// itself inspected but not walked: it holds thousands of app files, it
-/// inherits this folder's SYSTEM/Administrators-only ACL, and its own code
-/// refuses links. Only an administrator could plant anything inside it.
+/// Inspect every entry under `path`. Each `opaque` folder is itself inspected
+/// but not walked. The saved app copies hold thousands of app files, inherit
+/// this folder's SYSTEM/Administrators-only ACL, and their own code refuses
+/// links. The updater's folder is checked by the updater, and during an update
+/// it is the installer's TEMP, so Setup and PowerShell put their own temporary
+/// files there; nothing here ever reads from it. Only an administrator could
+/// plant anything inside either one.
 /// `foreign` (web protection's folder) has its own, wider permissions: it
 /// only has to be a real folder owned by SYSTEM or Administrators, and it is
 /// not walked because nothing here ever reads from it.
 fn secure_tree(
     path: &Path,
-    opaque: &Path,
+    opaque: &[PathBuf],
     foreign: &Path,
     handles: &mut Vec<Handle>,
     depth: usize,
@@ -256,7 +259,7 @@ fn secure_tree(
         let directory = inspect(&h, true, false)
             .with_context(|| format!("Untrusted journal entry {}", path.display()))?;
         handles.push(h);
-        if directory && path != opaque {
+        if directory && !opaque.contains(&path) {
             secure_tree(&path, opaque, foreign, handles, depth + 1)?;
         }
         ensure!(handles.len() < 4096, "Too many journal entries");
@@ -376,7 +379,10 @@ pub fn state_dir() -> Result<PathBuf> {
     );
     held.push(root);
     let mut entries = Vec::new();
-    let opaque = path.join("App").join(crate::platform::APP_BACKUPS);
+    let opaque = [
+        path.join("App").join(crate::platform::APP_BACKUPS),
+        path.join(crate::platform::UPDATES),
+    ];
     let foreign = path.join(crate::platform::WEB_PROTECTION);
     secure_tree(&path, &opaque, &foreign, &mut entries, 0)?;
     // Keep one set of non-delete-sharing root/ancestor handles for process
