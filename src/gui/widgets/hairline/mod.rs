@@ -89,6 +89,7 @@ pub mod parallax;
 pub mod parts;
 pub mod pointer;
 pub mod stage;
+pub mod start_menu;
 pub mod svg;
 
 pub use glyph::Glyph;

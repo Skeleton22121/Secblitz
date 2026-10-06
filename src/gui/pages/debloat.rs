@@ -6,8 +6,13 @@
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
+use crate::gui::widgets::hairline::start_menu::{
+    self, Fate, Filler, Labels, MenuApp, Outcome, StartMenu,
+};
+use crate::gui::widgets::hairline::{Glyph, Plate};
 use crate::gui::widgets::{anim, progress};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
+use crate::i18n::Lang;
 use iced::widget::image::Handle;
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Subscription, Task};
@@ -61,7 +66,9 @@ struct Finished {
     asked_to_block: bool,
     /// Apps left installed because no copy could be saved first.
     kept: Vec<(u16, Kept)>,
-    /// When the result appeared (drives the check draw-in).
+    /// Each app's last step in the run, for the Start menu drawing.
+    steps: Vec<(u16, Step)>,
+    /// When the result appeared (the drawing's result starts here).
     at: Instant,
 }
 
@@ -74,6 +81,7 @@ impl Default for Finished {
             user_ok: None,
             asked_to_block: false,
             kept: Vec::new(),
+            steps: Vec::new(),
             at: Instant::now(),
         }
     }
@@ -123,6 +131,10 @@ pub struct State {
     /// Start of the current wait animation, and the last frame time.
     spin: anim::Clock,
     now: Instant,
+    /// When the current removal started, and the installed apps it leaves
+    /// alone (they fill the Start menu drawing around the ones going).
+    run_at: Instant,
+    menu_fillers: Vec<u16>,
 }
 
 impl Default for State {
@@ -154,6 +166,8 @@ impl Default for State {
             allowing: None,
             spin: anim::Clock::new(),
             now: Instant::now(),
+            run_at: Instant::now(),
+            menu_fillers: Vec::new(),
         }
     }
 }
@@ -337,18 +351,16 @@ fn is_animating(state: &State) -> bool {
     if matches!(state.scan, Scan::Loading) || state.restoring.is_some() {
         return true;
     }
+    // The Start menu drawing asks for its own frames; the page only needs
+    // them for the small marks drawing in beside each finished app and for
+    // the spinner while Windows is asked about suggested apps.
     match &state.sheet {
-        Sheet::Working(_) => true,
-        Sheet::Done(done) => {
-            !done.at_done(state.now) || (done.asked_to_block && done.user_ok.is_none())
-        }
+        Sheet::Working(items) => items.iter().any(|(_, step)| match step {
+            Step::Done(_, at) => !anim::Clock::at(*at).done(anim::SLOW, state.now),
+            _ => false,
+        }),
+        Sheet::Done(done) => done.asked_to_block && done.user_ok.is_none(),
         _ => false,
-    }
-}
-
-impl Finished {
-    fn at_done(&self, now: Instant) -> bool {
-        anim::Clock::at(self.at).done(anim::SLOW, now)
     }
 }
 
@@ -805,6 +817,11 @@ fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     state.details = false;
     state.now = Instant::now();
     state.spin = anim::Clock::at(state.now);
+    state.run_at = state.now;
+    state.menu_fillers = installed_indices(state)
+        .into_iter()
+        .filter(|i| !state.selected.contains(i))
+        .collect();
     state.sheet = Sheet::Working(indices.iter().map(|i| (*i, Step::Waiting)).collect());
     let block = state.block_again;
     let stream = blocking_stream(move |emit: &dyn Fn(Run)| {
@@ -844,19 +861,21 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
             ctx.busy = false;
             let policy_ok = state.policy.take();
             let asked = state.block_again && result.is_ok();
-            let kept = match &state.sheet {
-                Sheet::Working(items) => items
-                    .iter()
-                    .filter_map(|(i, step)| match step {
-                        Step::Done(ItemResult::Kept(k), _) => Some((*i, k.clone())),
-                        _ => None,
-                    })
-                    .collect(),
+            let steps = match &state.sheet {
+                Sheet::Working(items) => items.clone(),
                 _ => Vec::new(),
             };
+            let kept = steps
+                .iter()
+                .filter_map(|(i, step)| match step {
+                    Step::Done(ItemResult::Kept(k), _) => Some((*i, k.clone())),
+                    _ => None,
+                })
+                .collect();
             let mut done = Finished {
                 asked_to_block: asked,
                 kept,
+                steps,
                 policy_ok,
                 ..Finished::default()
             };
@@ -1398,6 +1417,13 @@ fn delete_sheet<'a>(index: u16, ctx: &'a Ctx) -> Element<'a, Message> {
 
 // ---- sheets --------------------------------------------------------------
 
+/// Tallest the working sheet's app list and the result's middle part grow
+/// before they scroll. With the Start menu drawing above them this keeps
+/// the whole sheet (and its Done button) on screen in the smallest window,
+/// 880 by 600.
+const WORKING_LIST_MAX: f32 = 200.0;
+const RESULT_BODY_MAX: f32 = 200.0;
+
 fn scroll_list<'a>(
     p: theme::Palette,
     list: impl Into<Element<'a, Message>>,
@@ -1520,17 +1546,17 @@ fn working_sheet<'a>(
         .iter()
         .filter(|(_, s)| matches!(s, Step::Done(..)))
         .count();
-    let spin = state.spin.elapsed_at(state.now);
     let mut list = column![].spacing(theme::S3);
     for (index, step) in items {
+        // The app's own icon sits next to the name, and the Start menu above
+        // shows the app being worked on, so no glyph until it is done.
+        let blank = || -> Element<'a, Message> {
+            space::horizontal().width(theme::CHECK).into()
+        };
         let (lead, note): (Element<'a, Message>, String) = match step {
-            // The app's own icon sits next to the name, so no glyph here.
-            Step::Waiting => (
-                space::horizontal().width(theme::CHECK).into(),
-                ctx.t("Waiting"),
-            ),
-            Step::Saving => (anim::spinner(20.0, p.text, spin), ctx.t("Saving a copy…")),
-            Step::Working => (anim::spinner(20.0, p.text, spin), ctx.t("Removing…")),
+            Step::Waiting => (blank(), ctx.t("Waiting")),
+            Step::Saving => (blank(), ctx.t("Saving a copy…")),
+            Step::Working => (blank(), ctx.t("Removing…")),
             Step::Done(ItemResult::Removed, at) => (
                 anim::check_draw(
                     18.0,
@@ -1573,17 +1599,149 @@ fn working_sheet<'a>(
     } else {
         finished as f32 / items.len() as f32
     };
+    let title = ctx.t("Removing apps…");
+    let drawing = removal_menu(
+        state,
+        ctx,
+        items.iter().map(|(i, step)| (*i, fate_of(step))),
+        Outcome::Working,
+        state.run_at,
+        title.clone(),
+    );
     column![
-        widgets::h2(p, ctx.t("Removing apps…")),
+        drawing,
+        widgets::h2(p, title),
         widgets::muted(
             p,
             ctx.t("Please keep this window open. This can take a few minutes.")
         ),
         progress::bar_eased(p, ratio, Tone::Brand),
-        scroll_list(p, list, 300.0),
+        scroll_list(p, list, WORKING_LIST_MAX),
     ]
     .spacing(theme::S3)
     .into()
+}
+
+/// What the Start menu drawing shows for one app's step.
+fn fate_of(step: &Step) -> Fate {
+    match step {
+        Step::Waiting => Fate::Waiting,
+        Step::Saving => Fate::Saving,
+        Step::Working => Fate::Busy,
+        Step::Done(ItemResult::Removed, at) => Fate::Removed(*at),
+        Step::Done(ItemResult::Protected, at) => Fate::Stays(*at),
+        Step::Done(ItemResult::Kept(_), at) => Fate::Kept(*at),
+        Step::Done(ItemResult::Failed(_), at) => Fate::Refused(*at),
+    }
+}
+
+/// An app's fate in the result. One the run never reported on takes its
+/// fate from the batch, at the moment the result appeared; when the whole
+/// run failed it was not removed. An app the batch does not mention at all
+/// was no longer installed (the removal skips those without a word), so
+/// there was nothing to remove.
+fn final_fate(index: u16, step: &Step, done: &Finished) -> Fate {
+    if matches!(step, Step::Done(..)) {
+        return fate_of(step);
+    }
+    let at = done.at;
+    let Some(batch) = &done.batch else {
+        return Fate::Refused(at);
+    };
+    if batch.removed.iter().any(|r| r.index == index) {
+        Fate::Removed(at)
+    } else if batch.failed.iter().any(|f| f.index == index) {
+        Fate::Refused(at)
+    } else if batch.kept.contains(&index) || done.kept.iter().any(|(i, _)| *i == index) {
+        Fate::Kept(at)
+    } else if batch.skipped.contains(&index) {
+        Fate::Stays(at)
+    } else {
+        Fate::Absent(at)
+    }
+}
+
+/// The apps that stay, around the ones being removed: a few parts of
+/// Windows every PC has, then the person's own apps they kept.
+fn menu_fillers(state: &State, lang: Lang) -> Vec<Filler> {
+    [
+        (Glyph::Gear, lang.t("Settings")),
+        (Glyph::Folder, lang.t("File Explorer")),
+        (Glyph::Shield, lang.t("Windows Security")),
+        (Glyph::Cart, lang.t("Microsoft Store")),
+        (Glyph::Doc, lang.t("Notepad")),
+    ]
+    .into_iter()
+    .map(|(glyph, name)| Filler { glyph, name })
+    .chain(state.menu_fillers.iter().map(|i| Filler {
+        glyph: start_menu::glyph_for(app_of(*i).family),
+        name: lang.t(app_of(*i).name),
+    }))
+    .collect()
+}
+
+/// The drawing's hover texts, translated.
+fn menu_labels(lang: Lang, result: String) -> Labels {
+    Labels {
+        waiting: lang.t("Waiting to remove {name}"),
+        saving: lang.t("Saving a copy of {name}"),
+        removing: lang.t("Removing {name}"),
+        refused: lang.t("Couldn't remove {name}"),
+        kept: lang.t("{name} stays on your PC"),
+        protected: lang.t("Windows protects {name}"),
+        more_one: lang.t("1 more app"),
+        more_many: lang.t("{n} more apps"),
+        result,
+    }
+}
+
+/// The Start menu drawing at the top of the working and result sheets.
+/// Same size in both, so the sheet does not jump when the result arrives.
+fn removal_menu<'a>(
+    state: &State,
+    ctx: &Ctx,
+    apps: impl Iterator<Item = (u16, Fate)>,
+    outcome: Outcome,
+    changed: Instant,
+    result: String,
+) -> Element<'a, Message> {
+    start_menu::start_menu(menu_model(
+        state,
+        pal(ctx),
+        ctx.lang,
+        apps,
+        outcome,
+        changed,
+        result,
+    ))
+}
+
+/// What [`removal_menu`] draws.
+fn menu_model(
+    state: &State,
+    palette: theme::Palette,
+    lang: Lang,
+    apps: impl Iterator<Item = (u16, Fate)>,
+    outcome: Outcome,
+    changed: Instant,
+    result: String,
+) -> StartMenu {
+    StartMenu {
+        palette,
+        plate: Plate::Surface,
+        outcome,
+        changed,
+        now: state.now,
+        apps: apps
+            .map(|(i, fate)| MenuApp {
+                glyph: start_menu::glyph_for(app_of(i).family),
+                name: lang.t(app_of(i).name),
+                fate,
+            })
+            .collect(),
+        fillers: menu_fillers(state, lang),
+        labels: menu_labels(lang, result),
+    }
 }
 
 /// Plain reason an app was left installed.
@@ -1635,8 +1793,25 @@ fn result_block<'a>(
 
 fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
-    let t = anim::Clock::at(done.at).progress_at(anim::SLOW, state.now);
-    let mut col = column![].spacing(theme::S3);
+    // The drawing and title stay put; what follows scrolls when it is long,
+    // so the Done button is always on screen.
+    let mut head = column![].spacing(theme::S3);
+    let mut body: Vec<Element<'a, Message>> = Vec::new();
+    let fates = done
+        .steps
+        .iter()
+        .map(|(i, step)| (*i, final_fate(*i, step, done)))
+        .collect::<Vec<_>>();
+    let menu = |outcome: Outcome, title: &str| {
+        removal_menu(
+            state,
+            ctx,
+            fates.iter().copied(),
+            outcome,
+            done.at,
+            title.to_string(),
+        )
+    };
     let mut technical: Vec<String> = Vec::new();
     match (&done.batch, &done.error) {
         (Some(batch), _) => {
@@ -1654,17 +1829,16 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             } else {
                 count_text(ctx, removed.len(), "{n} app removed", "{n} apps removed")
             };
-            let lead: Element<'a, Message> =
-                if failed.is_empty() && done.kept.is_empty() && !removed.is_empty() {
-                    anim::check_draw(40.0, p.good, t)
-                } else if failed.is_empty() && done.kept.is_empty() {
-                    widgets::icon(Icon::Info, 32.0, p.text_muted)
-                } else {
-                    anim::warn_draw(40.0, p.warn, t)
-                };
-            col = col.push(lead).push(widgets::h2(p, title));
+            let outcome = if failed.is_empty() && done.kept.is_empty() && !removed.is_empty() {
+                Outcome::Removed
+            } else if failed.is_empty() && done.kept.is_empty() {
+                Outcome::Unchanged
+            } else {
+                Outcome::Partly
+            };
+            head = head.push(menu(outcome, &title)).push(widgets::h2(p, title));
             if !removed.is_empty() {
-                col = col.push(result_block(
+                body.push(result_block(
                     p,
                     state,
                     Icon::CheckCircle,
@@ -1674,7 +1848,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 ));
             }
             if !protected.is_empty() {
-                col = col.push(result_block(
+                body.push(result_block(
                     p,
                     state,
                     Icon::Info,
@@ -1694,7 +1868,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                         .map(|(i, _)| *i),
                 );
                 if !list.is_empty() {
-                    col = col.push(result_block(
+                    body.push(result_block(
                         p,
                         state,
                         Icon::Info,
@@ -1705,7 +1879,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 }
             }
             if !failed.is_empty() {
-                col = col.push(result_block(
+                body.push(result_block(
                     p,
                     state,
                     Icon::AlertTriangle,
@@ -1713,7 +1887,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Couldn't remove"),
                     failed,
                 ));
-                col = col.push(widgets::small(
+                body.push(widgets::small(
                     p,
                     ctx.t("Restart your PC and try again. Nothing else was changed."),
                 ));
@@ -1743,13 +1917,14 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             }
         }
         (None, error) => {
-            col = col
-                .push(anim::cross_draw(40.0, p.bad, t))
-                .push(widgets::h2(p, ctx.t("We couldn't remove the apps")))
-                .push(widgets::muted(
-                    p,
-                    ctx.t("Nothing was changed. Please try again."),
-                ));
+            let title = ctx.t("We couldn't remove the apps");
+            head = head
+                .push(menu(Outcome::Failed, &title))
+                .push(widgets::h2(p, title));
+            body.push(widgets::muted(
+                p,
+                ctx.t("Nothing was changed. Please try again."),
+            ));
             if let Some(e) = error {
                 technical.push(ctx.t(debloat::friendly::removal_run_failure(e)));
             }
@@ -1780,12 +1955,29 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 ctx.t("Windows was asked not to add suggested apps again, but this may not stop every suggestion."),
             ),
         };
-        col = col.push(note);
+        body.push(note);
     }
     if !technical.is_empty() {
-        col = col.push(details(state, ctx, technical));
+        body.push(details(state, ctx, technical));
     }
-    col.push(space::vertical().height(theme::S1))
+    let mut sheet = column![head].spacing(theme::S3);
+    if !body.is_empty() {
+        sheet = sheet.push(
+            container(
+                scrollable(
+                    // Room on the right for the scrollbar when it shows.
+                    container(column(body).spacing(theme::S3))
+                        .padding(Padding::ZERO.right(theme::S3))
+                        .width(Length::Fill),
+                )
+                .direction(widgets::controls::scrollbar())
+                .style(widgets::controls::scroll_style(p)),
+            )
+            .max_height(RESULT_BODY_MAX),
+        );
+    }
+    sheet
+        .push(space::vertical().height(theme::S1))
         .push(row![
             space::horizontal(),
             widgets::action(
@@ -1846,6 +2038,114 @@ pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secblitz::debloat::{Failure, Removed};
+    use std::time::Duration;
+
+    #[test]
+    fn the_start_menu_follows_each_apps_real_step() {
+        let t = Instant::now();
+        let t2 = t + Duration::from_secs(2);
+        assert_eq!(fate_of(&Step::Waiting), Fate::Waiting);
+        assert_eq!(fate_of(&Step::Saving), Fate::Saving);
+        assert_eq!(fate_of(&Step::Working), Fate::Busy);
+        assert_eq!(fate_of(&Step::Done(ItemResult::Removed, t)), Fate::Removed(t));
+        assert_eq!(
+            fate_of(&Step::Done(ItemResult::Failed("x".into()), t)),
+            Fate::Refused(t)
+        );
+        assert_eq!(fate_of(&Step::Done(ItemResult::Protected, t)), Fate::Stays(t));
+        assert_eq!(
+            fate_of(&Step::Done(ItemResult::Kept(Kept::NoSpace), t)),
+            Fate::Kept(t)
+        );
+        // In the result, reported steps keep their own moment; an app the
+        // run never reported on takes its fate from the batch.
+        let done = Finished {
+            batch: Some(Batch {
+                removed: vec![Removed {
+                    index: 1,
+                    package: "p".into(),
+                    version: "1".into(),
+                    restored: false,
+                }],
+                failed: vec![Failure {
+                    index: 2,
+                    reason: "r".into(),
+                }],
+                skipped: vec![3],
+                ..Batch::default()
+            }),
+            at: t2,
+            ..Finished::default()
+        };
+        assert_eq!(
+            final_fate(1, &Step::Done(ItemResult::Removed, t), &done),
+            Fate::Removed(t)
+        );
+        assert_eq!(final_fate(1, &Step::Working, &done), Fate::Removed(t2));
+        assert_eq!(final_fate(2, &Step::Waiting, &done), Fate::Refused(t2));
+        assert_eq!(final_fate(3, &Step::Waiting, &done), Fate::Stays(t2));
+        // An app the batch never mentions was no longer installed: not
+        // "Windows protects it", just gone.
+        assert_eq!(final_fate(4, &Step::Waiting, &done), Fate::Absent(t2));
+        // The whole run failed: nothing it did not report was removed.
+        let failed = Finished {
+            at: t2,
+            ..Finished::default()
+        };
+        assert_eq!(final_fate(1, &Step::Working, &failed), Fate::Refused(t2));
+        // The drawing for this result: the removed app and the one that was
+        // not installed both leave once they have gone, and the tiles after
+        // them close the gap; the one that could not be removed stays.
+        let steps = [
+            (1, Step::Done(ItemResult::Removed, t)),
+            (2, Step::Working),
+            (4, Step::Waiting),
+        ];
+        let fates = steps.iter().map(|(i, s)| (*i, final_fate(*i, s, &done)));
+        let state = State::default();
+        let m = menu_model(
+            &state,
+            theme::LIGHT,
+            Lang::En,
+            fates,
+            Outcome::Partly,
+            t2,
+            "x".into(),
+        );
+        // Grid: Settings, removed, Explorer, Security, Store, refused,
+        // not installed, Notepad.
+        let sc = m.scene(t2 + Duration::from_millis(300));
+        assert_eq!(m.label(start_menu::Part::Tile(6), &sc), app_of(4).name);
+        assert_eq!(
+            m.label(start_menu::Part::Tile(5), &sc),
+            format!("Couldn't remove {}", app_of(2).name)
+        );
+        let sc = m.scene(t2 + Duration::from_secs(2));
+        use start_menu::Place::{Gone, Slot};
+        assert_eq!(sc.hidden, 0);
+        assert_eq!(
+            sc.places,
+            vec![Slot(0), Gone, Slot(1), Slot(2), Slot(3), Slot(4), Gone, Slot(5)]
+        );
+    }
+
+    #[test]
+    fn start_menu_labels_and_fillers_are_translated() {
+        let l = menu_labels(Lang::Fr, "x".into());
+        assert_eq!(l.removing, "Suppression de {name}");
+        assert_eq!(l.more_many, "{n} applications de plus");
+        assert_eq!(l.refused, "Impossible de supprimer {name}");
+        let state = State {
+            menu_fillers: vec![debloat::catalog::owner("Microsoft.BingWeather").unwrap()],
+            ..State::default()
+        };
+        let fillers = menu_fillers(&state, Lang::De);
+        assert_eq!(fillers[0].name, "Einstellungen");
+        assert_eq!(fillers[1].name, "Datei-Explorer");
+        assert_eq!(fillers.last().unwrap().name, Lang::De.t("Weather"));
+        assert_eq!(fillers.len(), 6);
+    }
 
     fn debug(m: &Option<Msg>) -> Option<String> {
         m.as_ref().map(|m| format!("{m:?}"))
