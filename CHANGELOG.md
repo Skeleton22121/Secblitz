@@ -25,6 +25,11 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - When Windows Update is busy, fixes say so and offer to try again, instead of asking you to restart.
 - **Smoother, faster screens.** Pages slide in gently, buttons no longer get colored outlines, and the app redraws less, so it feels quicker. Checking again shows the full checking screen with live progress, and when a check, fix or removal finishes, the bar completes before the result fades in.
 
+### Fixed
+- **Secblitz no longer hides the Administrator account you are signed in with.** Hiding the built-in Administrator account is only offered when you use a different account, so you can always sign back in.
+- The list of fixes in progress sits in the middle of the window, follows the fix that is running, and its scroll bar no longer covers the names.
+- The score circle turns green when everything it counts is protected, even when a few steps are still up to you.
+
 ### Removed
 - Three notes that only reported something another check already fixes: Remote Desktop waiting for connections, file sharing waiting for connections, and accounts without a password.
 

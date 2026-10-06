@@ -1246,6 +1246,17 @@ HStalePreflight
 $script:calls = @()
 function Disable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('disable', $SID) }
 function Enable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('enable', $SID) }
+$script:inUse = @{ $me = $true; $adm = $true }
+Reject { HBuiltinAdminIdle } 'Not offered: you are signed in with the built-in Administrator account'
+Reject { HSetBuiltinAdmin $null 0 } 'signed in with the built-in Administrator'
+Assert ($script:calls.Count -eq 0) 'the built-in Administrator is never switched off while someone is signed in with it'
+$script:inUseFails = $true
+Reject { HBuiltinAdminIdle } 'Not offered: Secblitz cannot tell who is signed in'
+$script:inUseFails = $false; $script:inUse = @{ $me = $true }
+HBuiltinAdminIdle
+HSetBuiltinAdmin $null 0
+Assert ($script:calls.Count -eq 1 -and $script:calls[0][0] -ceq 'disable' -and [string]$script:calls[0][1].Value -ceq $adm) 'the idle built-in Administrator can be switched off'
+$script:calls = @()
 $script:admins = @($me, $bob)
 HSetStale $bob 0
 HSetStale $bob 1

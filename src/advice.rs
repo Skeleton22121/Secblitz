@@ -455,6 +455,7 @@ mod tests {
             "Not offered: Windows Home cannot accept Remote Desktop connections",
             "Not offered: this PC is set up as a kiosk",
             "Not offered: Secblitz cannot tell who is signed in",
+            "Not offered: you are signed in with the built-in Administrator account",
             "Not offered: a locked sign-in would stay locked until an administrator unlocks it",
             crate::vbs::NOT_SUPPORTED,
             crate::vbs::LOCKED,

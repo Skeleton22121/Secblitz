@@ -103,6 +103,9 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: your account has no password" => {
             "Give your account a password first, then check again."
         }
+        "Not offered: you are signed in with the built-in Administrator account" => {
+            "You are signed in with this account, so we keep it switched on. To hide it, make your own administrator account, sign in with that, then check again."
+        }
         "Not offered: Secblitz cannot tell who is signed in" => {
             "We could not tell which account is signed in, so we leave this alone."
         }
