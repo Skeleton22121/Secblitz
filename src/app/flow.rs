@@ -111,6 +111,8 @@ pub fn plain_failure(raw: &str) -> &'static str {
         "Another Secblitz window is already making changes. Close it, wait a moment, then try again."
     } else if r.contains("revert the active transaction") {
         REASON_UNDO_FIRST
+    } else if r.contains("deferred:") && r.contains("servicing") {
+        crate::app::tools::ERR_BUSY
     } else if r.contains("deferred:") && r.contains("busy") {
         REASON_BUSY
     } else if r.contains("deferred:") {
@@ -137,7 +139,7 @@ pub fn can_retry(raw: &str) -> bool {
     let r = raw.to_ascii_lowercase();
     r.contains("holds the journal lock")
         || r.contains("another secblitz")
-        || (r.contains("deferred:") && r.contains("busy"))
+        || (r.contains("deferred:") && (r.contains("busy") || r.contains("servicing")))
 }
 
 /// The sentence that replaces the fix buttons when the last check found the disk unable to take changes.
@@ -612,7 +614,12 @@ mod tests {
             plain_failure("Repair readiness blocks new changes"),
             REASON_DISK
         );
+        assert_eq!(
+            plain_failure("Deferred: a Windows servicing process is active"),
+            crate::app::tools::ERR_BUSY
+        );
         assert!(can_retry("Deferred: shared engine.lock is busy"));
+        assert!(can_retry("Deferred: a Windows servicing process is active"));
         assert!(!can_retry("Deferred: updater installation requires completion"));
         assert!(can_retry("Another Secblitz operation holds the journal lock"));
         assert!(!can_retry("Repair readiness blocks new changes"));
