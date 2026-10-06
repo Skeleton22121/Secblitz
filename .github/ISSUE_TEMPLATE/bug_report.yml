@@ -1,0 +1,37 @@
+name: Report a problem
+description: Something in Secblitz didn't work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to tell us. Found a security problem? Please don't post it here. Email support@secblitz.lol instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+  - type: input
+    id: version
+    attributes:
+      label: Secblitz version
+      description: Shown in Settings, at the bottom of the page.
+      placeholder: "0.8.1"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: For example "Windows 11 Home 24H2". Settings, System, About shows it.
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Optional. Please hide anything personal first.

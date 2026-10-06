@@ -531,6 +531,8 @@ mod imp {
             Request::OpenBackup => open(Action::OpenBackup),
             Request::OpenStorage => open(Action::OpenStorage),
             Request::OpenInstalledApps => open(Action::OpenInstalledApps),
+            Request::OpenReportProblem => open(Action::OpenReportProblem),
+            Request::OpenSuggestFeature => open(Action::OpenSuggestFeature),
             Request::OpenProtectionHistoryList => open(Action::OpenProtectionHistoryList),
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,

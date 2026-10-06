@@ -1,0 +1,15 @@
+name: Suggest a feature
+description: An idea that would make Secblitz better.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Secblitz to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: How would it help you?
+      description: Tell us about the situation where you would use it.

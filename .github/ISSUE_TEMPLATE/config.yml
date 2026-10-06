@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/Skeleton22121/Secblitz/security/policy
+    about: Please report security problems privately, by email to support@secblitz.lol.
