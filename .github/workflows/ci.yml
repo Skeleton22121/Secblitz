@@ -1,0 +1,61 @@
+name: CI
+
+# Tests and lints on every push and pull request. Nothing here can publish
+# anything: the token is read-only. Releases are built by release.yml.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A newer push to the same pull request replaces the older run. Runs on
+  # branches and tags always finish, so every commit keeps a result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  rust:
+    name: Rust tests and lints (Windows, MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          # The version lives in rust-toolchain.toml only.
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version --verbose
+      - name: Cache cargo downloads and build output
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Tests
+        run: cargo test --locked --all-targets --target x86_64-pc-windows-msvc
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+
+  scripts:
+    name: Locales, release tools and version bump tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install the Python package the release tests need
+        run: python3 -m pip install --disable-pip-version-check "cryptography==46.0.5"
+      - name: Installer languages and launch contracts
+        run: python3 installer/check-locales.py
+      - name: Release signing tools
+        run: python3 scripts/release-tests.py
+      - name: Version bump and release notes tools
+        run: python3 scripts/bump-version-tests.py

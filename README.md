@@ -84,7 +84,7 @@ cargo build --locked --release --target x86_64-pc-windows-gnu
 cargo clippy --locked --target x86_64-pc-windows-gnu --all-targets -- -D warnings
 ```
 
-On Windows, `scripts/build-release.ps1` runs the same tests, lint and build with MSVC and compiles the installer. CI runs it on every push, along with a RustSec audit of `Cargo.lock`.
+On Windows, `scripts/build-release.ps1` runs the same tests, lint and build with MSVC and compiles the installer. CI runs it on every push, along with a RustSec audit of `Cargo.lock`. Releases are built from source by GitHub Actions: see [docs/RELEASING.md](docs/RELEASING.md) and the [changelog](CHANGELOG.md).
 
 **House rules**
 

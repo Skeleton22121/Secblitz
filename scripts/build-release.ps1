@@ -7,7 +7,12 @@ param(
     [string]$TimestampUrl = 'https://timestamp.digicert.com',
     [string]$SignToolPath = 'signtool.exe',
     [string]$SigningKeyPath,
-    [string]$UpdateOrigin
+    [string]$UpdateOrigin,
+    # All: tests, exe and setup (the default).
+    # Exe: tests and the exe only (CI signs the exe next).
+    # Setup: pack the exe already in dist\ (signed or not) into the setup.
+    [ValidateSet('All', 'Exe', 'Setup')][string]$Stage = 'All',
+    [switch]$SkipTests
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -101,28 +106,43 @@ function Assert-ReleasePe([string]$Path) {
 $previousFlags = $env:RUSTFLAGS
 $previousEncoded = $env:CARGO_ENCODED_RUSTFLAGS
 $previousOrigin = $env:SECBLITZ_UPDATE_ORIGIN
+$previousEpoch = $env:SOURCE_DATE_EPOCH
 Push-Location $root
 try {
     $null = New-Item -ItemType Directory -Path $dist -Force
-    $env:RUSTFLAGS = '-C target-feature=+crt-static'
+    # Reproducible build: no local paths in the binary, a fixed PE timestamp
+    # (/Brepro) and no absolute .pdb path. Local paths become fixed names.
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+    $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
+    $env:RUSTFLAGS = @('-C target-feature=+crt-static', '-C link-arg=/Brepro', '-C link-arg=/PDBALTPATH:secblitz.pdb',
+        "--remap-path-prefix=$root=secblitz", "--remap-path-prefix=$cargoHome=cargo",
+        "--remap-path-prefix=$rustupHome=rustup") -join ' '
+    if (-not $env:SOURCE_DATE_EPOCH) {
+        $commitTime = & git -C $root log -1 --format=%ct 2>$null
+        if ($LASTEXITCODE -eq 0 -and $commitTime) { $env:SOURCE_DATE_EPOCH = ([string]$commitTime).Trim() }
+    }
     # Windows PowerShell removes empty environment values. A whitespace sentinel
     # compiles to NotConfigured (core trims it), even if the fallback asset is set.
     $env:SECBLITZ_UPDATE_ORIGIN = if ($UpdateOrigin) { $UpdateOrigin } else { ' ' }
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
-    Invoke-Checked 'python' @((Join-Path $root 'installer\check-locales.py'))
-    Invoke-Checked 'powershell.exe' @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-        '-File', (Join-Path $root 'installer\test-lifecycle.ps1'), '-OwnershipFixtures')
-    foreach ($test in @('test-diagnostics-script.ps1', 'test-operations-script.ps1', 'test-patching-script.ps1')) {
-        Invoke-Checked 'powershell.exe' @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-            '-File', (Join-Path $root ('scripts\' + $test)))
+    if ($Stage -ne 'Setup') {
+        Invoke-Checked 'rustup' @('target', 'add', $target)
+        if (-not $SkipTests) {
+            Invoke-Checked 'python' @((Join-Path $root 'installer\check-locales.py'))
+            Invoke-Checked 'powershell.exe' @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                '-File', (Join-Path $root 'installer\test-lifecycle.ps1'), '-OwnershipFixtures')
+            foreach ($test in @('test-diagnostics-script.ps1', 'test-operations-script.ps1', 'test-patching-script.ps1')) {
+                Invoke-Checked 'powershell.exe' @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                    '-File', (Join-Path $root ('scripts\' + $test)))
+            }
+            Invoke-Checked 'cargo' @('fmt', '--all', '--', '--check')
+            Invoke-Checked 'cargo' @('test', '--locked', '--all-targets', '--target', $target)
+            Invoke-Checked 'cargo' @('clippy', '--locked', '--all-targets', '--target', $target, '--', '-D', 'warnings')
+        }
+        # build.rs does not track the icon itself yet: force a resource rebuild.
+        Invoke-Checked 'cargo' @('clean', '-p', 'secblitz', '--release', '--target', $target, '--target-dir', (Join-Path $root 'target'))
+        Invoke-Checked 'cargo' @('build', '--locked', '--release', '--target', $target, '--target-dir', (Join-Path $root 'target'))
     }
-    Invoke-Checked 'rustup' @('target', 'add', $target)
-    Invoke-Checked 'cargo' @('fmt', '--all', '--', '--check')
-    Invoke-Checked 'cargo' @('test', '--locked', '--all-targets', '--target', $target)
-    Invoke-Checked 'cargo' @('clippy', '--locked', '--all-targets', '--target', $target, '--', '-D', 'warnings')
-    # build.rs does not track the icon itself yet: force a resource rebuild.
-    Invoke-Checked 'cargo' @('clean', '-p', 'secblitz', '--release', '--target', $target, '--target-dir', (Join-Path $root 'target'))
-    Invoke-Checked 'cargo' @('build', '--locked', '--release', '--target', $target, '--target-dir', (Join-Path $root 'target'))
     $metadataText = & cargo metadata --locked --no-deps --format-version 1
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed.' }
     $metadata = $metadataText | ConvertFrom-Json
@@ -131,16 +151,27 @@ try {
     $version = $packages[0].version
     if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Installer requires a numeric major.minor.patch version.' }
     $exe = Join-Path $dist "secblitz-$version-windows-x64.exe"
-    Copy-Item -LiteralPath (Join-Path $root "target\$target\release\secblitz.exe") -Destination $exe -Force
+    if ($Stage -eq 'Setup') {
+        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Stage Setup needs $exe (build the exe stage first)." }
+    } else {
+        Copy-Item -LiteralPath (Join-Path $root "target\$target\release\secblitz.exe") -Destination $exe -Force
+    }
     $binaryVersion = & $exe '--version'
     if ($LASTEXITCODE -ne 0 -or ($binaryVersion -join "`n").Trim() -cne "secblitz $version") {
         throw "Executable version does not match Cargo package version $version."
     }
-    # Use a VS Developer PowerShell (CI initializes it below). Inspect actual PE imports.
-    $imports = & dumpbin.exe /dependents $exe
-    if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed.' }
-    if (($imports -join "`n") -match '(?i)(VCRUNTIME\d*|MSVCP\d*|ucrtbase|api-ms-win-crt-[\w-]+)\.dll') {
-        throw 'Dynamic CRT import detected; refusing to package.'
+    if ($Stage -ne 'Setup') {
+        # Use a VS Developer PowerShell (CI initializes it below). Inspect actual PE imports.
+        $imports = & dumpbin.exe /dependents $exe
+        if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed.' }
+        if (($imports -join "`n") -match '(?i)(VCRUNTIME\d*|MSVCP\d*|ucrtbase|api-ms-win-crt-[\w-]+)\.dll') {
+            throw 'Dynamic CRT import detected; refusing to package.'
+        }
+        Assert-ReleasePe $exe
+        if ($Stage -eq 'Exe') {
+            Write-Host "Executable built: $exe"
+            return
+        }
     }
     if (-not $IsccPath) {
         $IsccPath = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
@@ -184,11 +215,13 @@ try {
             '--installer', $setup, '--output', (Join-Path $dist 'stable.json'))
     }
     if ($CertificateThumbprint) { Write-Host 'Signed executable and installer verified.' }
+    elseif ($Stage -eq 'Setup') { Write-Host 'No local certificate was used. Check the Authenticode status of the packed exe and this setup before publishing.' }
     else { Write-Host 'UNSIGNED PREVIEW: no signing certificate was supplied. Production signing requires credentials; this preview is not publisher-certified.' }
     Write-Host "Release artifacts: $dist"
 } finally {
     $env:RUSTFLAGS = $previousFlags
     $env:CARGO_ENCODED_RUSTFLAGS = $previousEncoded
     $env:SECBLITZ_UPDATE_ORIGIN = $previousOrigin
+    $env:SOURCE_DATE_EPOCH = $previousEpoch
     Pop-Location
 }

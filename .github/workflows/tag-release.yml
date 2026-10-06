@@ -1,0 +1,56 @@
+name: Tag release
+
+# When a "Release X.Y.Z" commit (from the bump pull request) lands on main and
+# the tag does not exist yet, create the tag v<X.Y.Z> and start release.yml.
+# A tag created with the built-in token does not start other workflows by
+# itself, so this workflow starts release.yml explicitly.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag the release commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: true
+      - name: Create the tag and start the release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          subject="${MESSAGE%%$'\n'*}"
+          # "Release 0.8.1", also as a squash merge title: "Release 0.8.1 (#12)".
+          if ! [[ "$subject" =~ ^Release\ ([0-9]+\.[0-9]+\.[0-9]+)(\ \(#[0-9]+\))?$ ]]; then
+            echo "Not a release commit. Nothing to do."; exit 0
+          fi
+          version="${BASH_REMATCH[1]}"
+          tag="v$version"
+          cargo_version=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -n 1)
+          if [ "$cargo_version" != "$version" ]; then
+            echo "::error::Commit says $version but Cargo.toml says $cargo_version."; exit 1
+          fi
+          python3 scripts/release-notes.py "$version" > /dev/null
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "Tag $tag already exists. Nothing to do."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Secblitz $version" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          gh workflow run release.yml --ref main -f "tag=$tag"
