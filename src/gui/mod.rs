@@ -151,6 +151,16 @@ impl Ctx {
         let Some(client) = self.broker.clone() else {
             return Task::done(map(Err("unavailable".into())));
         };
+        // The page is opened by the launcher, which is not the foreground
+        // process, so Windows would put it behind this window. This window
+        // has the focus (the person just clicked), so it may hand that on.
+        #[cfg(windows)]
+        if request.opens_window() {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                AllowSetForegroundWindow, ASFW_ANY,
+            };
+            unsafe { AllowSetForegroundWindow(ASFW_ANY) };
+        }
         Task::perform(
             blocking(move || client.send(request).map_err(|e| format!("{e:#}"))),
             map,

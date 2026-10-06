@@ -342,11 +342,16 @@ fn other(
         name,
         line: if managed {
             ctx.t("This PC's owner controls this setting, so we leave it as it is.")
+        } else if guide.is_some() && !a.impact.is_empty() {
+            // The steps below say what to do; this line says why it matters.
+            format!("{} {}", ctx.t("Leaves you open to:"), ctx.t(a.impact))
         } else {
             ctx.t(a.next)
         },
         status: if managed {
             ctx.t("For your information")
+        } else if guide.is_some() && bucket == Bucket::Look {
+            ctx.t("To do")
         } else {
             ctx.t(a.status)
         },

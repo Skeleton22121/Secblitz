@@ -2246,6 +2246,8 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["Nothing is being blocked for now.", "Por ahora no se está bloqueando nada.", "Rien n’est bloqué pour le moment.", "Im Moment wird nichts blockiert.", "Nada está sendo bloqueado por enquanto.", "Per ora non viene bloccato nulla."],
     ["Not working right now", "No funciona en este momento", "Ne fonctionne pas pour le moment", "Funktioniert gerade nicht", "Não está funcionando agora", "Al momento non funziona"],
     ["Blocking starts as soon as the lists are ready.", "El bloqueo empieza en cuanto las listas estén preparadas.", "Le blocage commence dès que les listes sont prêtes.", "Das Blockieren beginnt, sobald die Listen bereit sind.", "O bloqueio começa assim que as listas estiverem prontas.", "Il blocco inizia appena gli elenchi sono pronti."],
+    // Merged from i18n-pending (checks, explanations, GUI follow-ups).
+    ["To do", "Por hacer", "À faire", "Zu tun", "A fazer", "Da fare"],
 ];
 
 // Each row is English, Spanish, French, German, Portuguese.
