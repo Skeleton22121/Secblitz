@@ -349,6 +349,7 @@ pub fn clear_search(state: &mut State) {
 /// Whether the page has its search box on screen right now.
 pub fn shows_search(state: &State) -> bool {
     state.tab == Tab::Apps
+        && matches!(state.sheet, Sheet::None)
         && !state.groups.is_empty()
         && !matches!(state.scan, Scan::Failed(_))
 }
