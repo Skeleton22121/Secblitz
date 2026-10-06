@@ -469,10 +469,7 @@ mod tests {
         assert_eq!(spots.anchor(1, &still), Some(Point::new(20.0, 20.0 - 14.0 * 0.7)));
         assert_eq!(spots.anchor(3, &still), Some(Point::new(50.0, 80.0 - 3.5)));
         assert_eq!(spots.anchor(9, &still), None);
-        let _g = crate::gui::widgets::anim::MOTION_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        crate::gui::widgets::anim::set_reduced_override(Some(false));
+        let _m = crate::gui::widgets::anim::forced::set(false);
         let mut tilt = Parallax::new();
         tilt.x.value = 1.0;
         let o = tilt.offset(Layer::Front);
@@ -480,7 +477,6 @@ mod tests {
         let edge = Point::new(20.0 + o.x, 20.0 - 13.5);
         assert_eq!(spots.hit(edge, &tilt), Some(1));
         assert_eq!(spots.hit(edge, &still), None);
-        crate::gui::widgets::anim::set_reduced_override(None);
     }
 
     #[test]

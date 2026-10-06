@@ -149,7 +149,7 @@ impl Pulses {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::widgets::anim::{LINEAR, MOTION_LOCK, STANDARD};
+    use crate::gui::widgets::anim::{LINEAR, STANDARD};
 
     #[test]
     fn spring_arrives_and_rests() {
@@ -187,8 +187,7 @@ mod tests {
 
     #[test]
     fn spring_jumps_under_reduced_motion() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let mut s = Spring::new(0.0);
         s.aim(3.0);
         assert_eq!(s.value, 3.0);
@@ -198,7 +197,6 @@ mod tests {
         let mut p = Pulses::default();
         p.push(Point::ORIGIN, true);
         assert!(!p.alive());
-        anim::set_reduced_override(None);
     }
 
     #[test]
@@ -212,8 +210,7 @@ mod tests {
 
     #[test]
     fn pulses_fade_out_on_time() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let mut p = Pulses::default();
         p.push(Point::new(10.0, 10.0), false);
         assert!(p.alive());
@@ -222,6 +219,5 @@ mod tests {
             t += 1.0 / 60.0;
         }
         assert!((t - PULSE_LIFE).abs() < 0.05, "{t}");
-        anim::set_reduced_override(None);
     }
 }

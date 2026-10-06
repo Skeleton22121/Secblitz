@@ -100,13 +100,11 @@ impl Parallax {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::widgets::anim::MOTION_LOCK;
     use iced::Point;
 
     #[test]
     fn follows_the_pointer_and_returns_home() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let box_ = Size::new(320.0, 256.0);
         let mut t = Parallax::new();
         let ptr = Pointer {
@@ -132,12 +130,10 @@ mod tests {
             t.step(1.0 / 60.0);
         }
         assert_eq!(t.layers(), [Vector::ZERO; 3]);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn still_under_reduced_motion_or_when_off() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let ptr = Pointer {
             at: Point::new(0.0, 0.0),
             inside: true,
@@ -147,13 +143,12 @@ mod tests {
         off.aim(&ptr, Size::new(100.0, 100.0));
         assert!(!off.step(0.016));
         assert_eq!(off.layers(), [Vector::ZERO; 3]);
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let mut t = Parallax::new();
         t.x.value = 0.8;
         assert_eq!(t.offset(Layer::Front), Vector::ZERO);
         t.aim(&ptr, Size::new(100.0, 100.0));
         assert!(!t.step(0.016));
         assert_eq!(t.x.value, 0.0);
-        anim::set_reduced_override(None);
     }
 }
