@@ -828,10 +828,15 @@ function HSetService([string]$name, $v) {
         $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
     }
     Set-Service -Name $name -StartupType $type -ErrorAction Stop
-    if ($start -eq 2 -or $start -eq 5) {
-        $delayed = 0
-        if ($start -eq 5) { $delayed = 1 }
-        New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value $delayed -Force -ErrorAction Stop | Out-Null
+    if ($start -eq 5) {
+        New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value 1 -Force -ErrorAction Stop | Out-Null
+    } elseif ($start -eq 2) {
+        # Plain automatic: only clear a delayed flag that is really set. A value
+        # that was never there is not created, so undo puts back exactly what was.
+        $flag = Get-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -ErrorAction SilentlyContinue
+        if ($null -ne $flag -and [int]$flag.DelayedAutostart -ne 0) {
+            New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value 0 -Force -ErrorAction Stop | Out-Null
+        }
     }
     $svc.Refresh()
     if ($run -and [string]$svc.Status -cne 'Running') { Start-Service -Name $name -ErrorAction Stop }
