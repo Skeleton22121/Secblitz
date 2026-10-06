@@ -9,7 +9,12 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-06
+
 ### Added
+- **Web protection.** Secblitz can block ads, trackers and known dangerous websites for the whole PC. It runs as a small background service, keeps today's blocked counts, and offers "Try again" if it stops working.
+- **Remove Secblitz.** Settings now has a clear way to remove the app. You choose whether to keep the changes Secblitz made or put everything back the way it was, and the uninstaller cleans up after itself.
+- **Put everything back.** One step undoes every change in a single pass, including the apps you removed. Store apps are downloaded again when needed, and the progress bar keeps moving.
 - **Three more fixes you can choose, with undo.** Secblitz can now turn off automatic sign-in, stop Remote Desktop connections and switch off the very old file-sharing feature (SMB1) for you, instead of only telling you where to click. Each one is your choice, shows what will change, and can be undone from History. Remote Desktop is never turned off while you are connected remotely, and the old file sharing is left alone while something is using it.
 - **Core system protection, fixed for you.** Secblitz can now turn on Memory integrity and, once that runs, the extra kernel stack protection. It only offers this when your PC supports it, nothing manages it, nothing is locked, and none of your drivers look like they would stop working. You choose it, restart once, and can undo it. It is never offered inside a virtual machine. If it is not offered, Protection says why in plain words and names any driver it was unsure about. After the restart, Secblitz tells you if it is not running and offers the undo.
 - **Four more fixes you can approve.** Risky background program locations, firewall allowances for programs in Downloads or Desktop, redirected trusted websites in the hosts file, and risky start-up programs now appear under "Needs your attention". Each lists exactly what will change, switches things off instead of deleting them, and can be undone exactly. If anything changed again since, Secblitz leaves it alone and says so.
@@ -18,13 +23,6 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - **Remove found threats from Tools.** When Windows Security has found something harmful, the Tools page offers to remove it after a confirmation, and then says whether everything was removed, only part, or nothing could be removed.
 - **Recovery tools turned back on for you.** When the Windows recovery tools are off but Windows still has their files, Protection offers to turn them back on with Windows' own tool, and the "Recovery tools" health tip has a "Review fix" button. Nothing else about your drives or start-up is touched, and undo turns them off again. If the files are gone, Protection says so in plain words.
 - **Health tips point to the fix.** When Protection offers a fix for a health tip, the tip says so and has a "Review fix" button that opens the same review. Nothing changes until you agree. If the fix is not offered, "See why" shows the reason, and if Protection has not checked yet, "Check now" runs a check.
-
-## [0.8.0] - Unreleased
-
-### Added
-- **Web protection.** Secblitz can block ads, trackers and known dangerous websites for the whole PC. It runs as a small background service, keeps today's blocked counts, and offers "Try again" if it stops working.
-- **Remove Secblitz.** Settings now has a clear way to remove the app. You choose whether to keep the changes Secblitz made or put everything back the way it was, and the uninstaller cleans up after itself.
-- **Put everything back.** One step undoes every change in a single pass, including the apps you removed. Store apps are downloaded again when needed, and the progress bar keeps moving.
 - **Windows file details.** The app and its Setup now show their name, version and copyright in Properties, Task Manager and security prompts.
 - A build pipeline on GitHub that builds the app from source, publishes checksums and can attach a proof of where each file was built.
 
