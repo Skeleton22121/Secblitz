@@ -78,6 +78,8 @@ pub mod motion;
 pub mod parallax;
 pub mod parts;
 pub mod pointer;
+pub mod rewind;
+pub mod shield_fill;
 pub mod stage;
 pub mod svg;
 
@@ -90,6 +92,8 @@ pub use pointer::{
     interaction, label_width, tooltip, tooltip_rect, Area, Gesture, Hotspots, Layer, Pointer,
     Spot, CLICK_SLOP, TIP_SIZE,
 };
+pub use rewind::Rewind;
+pub use shield_fill::{Run, ShieldFill};
 pub use stage::{
     pt, stroke, tint, tint_by, Ink, Meaning, Plate, Sketch, Stage, TINT, W_ACCENT, W_FAINT,
     W_INK, W_LINE, W_MARK, W_PART, W_THICK,
