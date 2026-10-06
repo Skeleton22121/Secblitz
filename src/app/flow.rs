@@ -97,6 +97,7 @@ pub const REASON_KEPT: &str = "We kept your current setting to stay safe. Nothin
 
 pub const REASON_DISK: &str = "Your disk is full or can't be written to right now, so Secblitz can't save changes safely. Free up some space, then check again.";
 pub const REASON_BUSY: &str = "Secblitz is finishing another job, like an update or a repair. Wait for it to finish, then try again.";
+pub const REASON_EARLIER: &str = "An earlier update or repair didn't finish cleanly, so Secblitz is waiting until it can check it. Restart your PC, then open Secblitz again.";
 pub const NOTICE_DISK_READ_ONLY: &str = "Your disk can't be written to right now, so fixes will wait.";
 pub const NOTICE_DISK_FULL: &str = "Your disk is full, so fixes will wait. Free up some space, then check again.";
 
@@ -110,8 +111,10 @@ pub fn plain_failure(raw: &str) -> &'static str {
         "Another Secblitz window is already making changes. Close it, wait a moment, then try again."
     } else if r.contains("revert the active transaction") {
         REASON_UNDO_FIRST
-    } else if r.contains("deferred:") {
+    } else if r.contains("deferred:") && r.contains("busy") {
         REASON_BUSY
+    } else if r.contains("deferred:") {
+        REASON_EARLIER
     } else if r.contains("readiness blocks") {
         REASON_DISK
     } else if r.contains("journal") || r.contains("transaction completion") {
@@ -132,7 +135,9 @@ pub fn plain_failure(raw: &str) -> &'static str {
 /// Whether waiting and trying again can clear a refusal from the pre-flight check.
 pub fn can_retry(raw: &str) -> bool {
     let r = raw.to_ascii_lowercase();
-    r.contains("holds the journal lock") || r.contains("another secblitz") || r.contains("deferred:")
+    r.contains("holds the journal lock")
+        || r.contains("another secblitz")
+        || (r.contains("deferred:") && r.contains("busy"))
 }
 
 /// The sentence that replaces the fix buttons when the last check found the disk unable to take changes.
@@ -596,14 +601,19 @@ mod tests {
     #[test]
     fn refusals_from_the_pre_flight_get_their_own_plain_line() {
         assert_eq!(
-            plain_failure("Deferred: a Windows servicing process is active"),
+            plain_failure("Deferred: shared engine.lock is busy"),
             REASON_BUSY
+        );
+        assert_eq!(
+            plain_failure("Deferred: unresolved patching intent/reboot; independent verification required"),
+            REASON_EARLIER
         );
         assert_eq!(
             plain_failure("Repair readiness blocks new changes"),
             REASON_DISK
         );
-        assert!(can_retry("Deferred: updater installation requires completion"));
+        assert!(can_retry("Deferred: shared engine.lock is busy"));
+        assert!(!can_retry("Deferred: updater installation requires completion"));
         assert!(can_retry("Another Secblitz operation holds the journal lock"));
         assert!(!can_retry("Repair readiness blocks new changes"));
         assert!(!can_retry("Revert the active transaction before applying again"));
@@ -680,6 +690,7 @@ mod tests {
             REASON_KEPT,
             REASON_DISK,
             REASON_BUSY,
+            REASON_EARLIER,
             NOTICE_DISK_READ_ONLY,
             NOTICE_DISK_FULL,
             FAILURE_GENERAL,
