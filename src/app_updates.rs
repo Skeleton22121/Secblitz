@@ -1,22 +1,4 @@
 //! Application-upgrade API: deliberately unsupported in production.
-//!
-//! No current installer workflow has been fully validated. In particular, an
-//! official version/hash is not proof of current installed protection, complete
-//! payload identity, safe process supervision, or consent to every side effect.
-//! `capabilities()` always reports supported=false with no selectable packages.
-//! All operational entry points return the same typed Unsupported error before
-//! any network, filesystem, token, process, installer, or state access.
-//!
-//! The previous downloader, Windows executor, supervisor, pin-database reader,
-//! and state wrappers have been removed. Old plans cannot be loaded or replayed.
-//! Existing on-disk evidence is left intact; list/get do NOT pretend it is empty.
-//! Serialized data types remain available for coordinator/API compatibility.
-//! Review metadata and consent values never enable a production operation.
-//!
-//! Freshness is a separate, bounded property: see CatalogReview. A build date,
-//! valid signature, matching installer version, or fresh review alone must never
-//! be reported as current security. See app_updates/catalog_review.rs for the
-//! dated upstream observations and the remaining validation gaps.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -33,7 +15,6 @@ mod tests;
 
 pub const UNSUPPORTED_REASON: &str = "Application upgrades are unsupported: no current stable installer workflow has fully validated payload identity, process supervision, and separately approved disruptive side effects. The production catalog is empty. Historical targets, expired reviews, and persisted plans cannot enable download or execution. No security-currency claim is available.";
 
-/// A stable, machine-readable reason; callers need not parse localized text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unsupported;
 
@@ -52,15 +33,12 @@ fn unavailable<T>() -> Result<T> {
 #[derive(Debug, Clone, Serialize)]
 pub struct Capabilities {
     pub supported: bool,
-    /// Compatibility field. False on Windows too; platform availability does
-    /// not establish the existence of a reviewed production backend.
     pub native_backend: bool,
     pub reviewed_packages: Vec<Release>,
     pub limitations: &'static str,
     pub assessment: Assessment,
 }
 
-/// Dated research observations, NOT a selectable catalog or live status check.
 #[derive(Debug, Clone, Serialize)]
 pub struct Assessment {
     pub observed_on_utc: &'static str,
@@ -113,15 +91,11 @@ pub struct Release {
     pub license_text: String,
     pub source_terms: String,
     pub execution_policy: String,
-    /// Legacy records have no review window and fail freshness validation.
-    /// Deserialization does not authenticate these assertions or authorize work.
     #[serde(default)]
     pub review: Option<CatalogReview>,
 }
 
 impl Release {
-    /// Structural freshness validation only. Even a valid result cannot make
-    /// this release selectable: the production catalog and backend are disabled.
     pub fn validate_freshness_at(&self, utc_seconds: u64) -> Result<()> {
         catalog::validate(self, utc_seconds)
     }
@@ -174,8 +148,6 @@ pub struct Plan {
     pub digest: String,
 }
 
-/// Separate acknowledgements of distinct vendor effects. None is implicit in
-/// accepting the package license. No combination enables this disabled backend.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DisruptiveConsent {
@@ -193,7 +165,6 @@ pub struct Consent {
     pub accept_package_license: bool,
     pub accept_microsoft_source: bool,
     pub acknowledge_no_automatic_rollback: bool,
-    /// Old approvals lack these acknowledgements and deserialize as all false.
     #[serde(default)]
     pub disruptions: DisruptiveConsent,
 }
@@ -227,8 +198,6 @@ pub struct Record {
     pub detail: String,
 }
 
-/// Compatibility type. This disabled implementation creates no tasks, threads,
-/// jobs or child processes; all public operations fail synchronously.
 pub struct Task<T> {
     _result: PhantomData<T>,
 }

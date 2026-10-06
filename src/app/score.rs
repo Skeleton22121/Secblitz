@@ -1,9 +1,4 @@
 //! Protection score: protected checks over all checks (findings excluded).
-//! OWNER: app-core agent.
-//!
-//! Same semantics as the former terminal "N of M checks protected" header:
-//! every control result counts once; Information-group items are excluded
-//! from the total; results that could not be verified count as unknown.
 use crate::advice::{self, Group};
 use secblitz::engine::{Outcome, Report};
 use secblitz::model::Authority;
@@ -12,42 +7,28 @@ use secblitz::model::Authority;
 pub struct Score {
     pub protected: usize,
     pub total: usize,
-    /// Results that need the user's attention (fixable or a choice to review).
     pub attention: usize,
-    /// Results that could not be checked.
     pub unknown: usize,
-    /// Results this PC's owner (Group Policy, MDM) controls: not protected by
-    /// us and not something the person can act on.
     pub managed: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
-    /// Everything protected.
     Protected,
-    /// Some things need attention.
     Attention,
-    /// The check failed or is incomplete.
     Unknown,
 }
 
-/// How one result counts towards the score.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Protected,
-    /// Can be fixed here.
     Fixable,
-    /// Needs the person's own choice or step.
     Review,
-    /// Controlled by this PC's owner (Group Policy, MDM): nothing to do here.
     Managed,
-    /// Could not be checked right now.
     Unknown,
-    /// Not part of the score.
     Excluded,
 }
 
-/// Classify a result using stable statuses and typed evidence only.
 pub fn classify(r: &Outcome) -> Class {
     let unavailable = r.authority == Some(Authority::Unknown)
         || (r.id.starts_with("firewall.")
@@ -79,7 +60,6 @@ pub fn classify(r: &Outcome) -> Class {
         return Class::Managed;
     }
     if a.step == advice::NextStep::CheckAgain {
-        // "Check again" means we could not confirm the state.
         return Class::Unknown;
     }
     if a.status == "Left as it is" {
@@ -95,8 +75,6 @@ pub fn classify(r: &Outcome) -> Class {
     }
 }
 
-/// Only positive management evidence. `ReviewWithAdministrator` alone is also
-/// the fallback step of ordinary controls, so it is not proof of an owner.
 fn managed(a: &advice::Advice) -> bool {
     a.status == "Managed elsewhere"
 }
@@ -125,21 +103,17 @@ pub fn classify_finding(f: &secblitz::model::Finding) -> Class {
     }
 }
 
-/// True for notes that are only "Good to know" (never counted, never a problem).
 #[allow(dead_code)] // consumed by the GUI integration
 pub fn is_good_to_know(f: &secblitz::model::Finding) -> bool {
     classify_finding(f) == Class::Excluded
 }
 
-/// One thing the person should look at.
 #[derive(Debug, Clone, Copy)]
 pub enum ToCheck<'a> {
     Control(&'a Outcome),
     Finding(&'a secblitz::model::Finding),
 }
 
-/// True when a core protection is set but the PC says it is not running: our
-/// own note after a restart, or the older check of the running state.
 pub fn core_not_running(report: &Report, id: &str) -> bool {
     report.findings.iter().any(|f| {
         (secblitz::vbs::finding_control(&f.title) == Some(id)
@@ -148,8 +122,6 @@ pub fn core_not_running(report: &Report, id: &str) -> bool {
     })
 }
 
-/// A control that says "set" while the PC says "not running" is not protected
-/// and is not listed as protected: the finding is the row that tells the truth.
 pub fn classify_in(report: &Report, r: &Outcome) -> Class {
     match classify(r) {
         Class::Protected
@@ -161,10 +133,6 @@ pub fn classify_in(report: &Report, r: &Outcome) -> Class {
     }
 }
 
-/// What the person should look at, in report order: control results that need
-/// a fix, a choice or a step, then findings that are actual tips. Protected,
-/// informational, owner-managed and unverifiable items are never included.
-/// Home and Protection both count and list exactly this.
 pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
     let controls = report
         .results
@@ -224,9 +192,6 @@ pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
     }
 }
 
-/// The older "Memory integrity" tip while the setting is already on but the PC
-/// has not started it yet (no restart since, so our own not-running note is not
-/// there either). The person must restart, not turn on something that is on.
 pub fn waits_for_restart(report: &Report, f: &secblitz::model::Finding) -> bool {
     f.title == "Memory integrity"
         && f.status == "attention"
@@ -237,9 +202,6 @@ pub fn waits_for_restart(report: &Report, f: &secblitz::model::Finding) -> bool 
             .any(|r| r.id == secblitz::vbs::MEMORY_INTEGRITY && classify(r) == Class::Protected)
 }
 
-/// What a listed finding says, on Protection and Home alike. Same as
-/// [`advice::for_finding`], except a core protection that only waits for a
-/// restart says to restart (and has no steps or page to compete with that).
 pub fn finding_advice(report: &Report, f: &secblitz::model::Finding) -> advice::Advice {
     let mut a = advice::for_finding(&f.title, &f.status, &f.detail);
     if waits_for_restart(report, f) {
@@ -251,12 +213,9 @@ pub fn finding_advice(report: &Report, f: &secblitz::model::Finding) -> advice::
     a
 }
 
-/// The line for a core protection that is on and waits for a restart.
 pub const RESTART_TO_START: &str =
     "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down).";
 
-/// Not offered reasons that already say, on the control's own row, why the
-/// manual tip would only contradict it.
 const REASONS_THAT_REPLACE_THE_TIP: [&str; 2] = [
     "Not offered: you are connected to this PC from another device right now",
     "Not offered: this PC is set up as a kiosk",
@@ -266,8 +225,6 @@ pub fn to_check_count(report: &Report) -> usize {
     to_check(report).len()
 }
 
-/// The verdict shown everywhere (Home, sidebar dot, tray): the control score,
-/// except that a tip still to check is never shown as "protected".
 pub fn overall(report: &Report) -> Verdict {
     match Score::of(report).verdict() {
         Verdict::Protected if to_check_count(report) > 0 => Verdict::Attention,
@@ -275,8 +232,6 @@ pub fn overall(report: &Report) -> Verdict {
     }
 }
 
-/// Stable ids of the things to check, for the tray status file: control ids,
-/// and `finding.<slug>` for tips (titles are fixed English catalog keys).
 pub fn to_check_ids(report: &Report) -> Vec<String> {
     to_check(report)
         .into_iter()
@@ -326,11 +281,9 @@ impl Score {
         } else if self.unknown > 0 {
             Verdict::Unknown
         } else {
-            // Only owner-managed settings are left: nothing for the person to do.
             Verdict::Protected
         }
     }
-    /// 0.0..=1.0 for the ring.
     pub fn ratio(&self) -> f32 {
         if self.total == 0 {
             0.0
@@ -397,9 +350,6 @@ mod tests {
         assert!(finding_has_fix(&done, &finding));
     }
 
-    /// Protection lists every fix candidate: counted ones under "Needs your
-    /// attention", Excluded ones (privacy extras) in their own group. No
-    /// candidate may fall outside those two, or the page and count disagree.
     #[test]
     fn every_fix_candidate_is_counted_or_a_privacy_extra() {
         let report = rep(vec![
@@ -529,17 +479,14 @@ mod tests {
             ("Remote Desktop", "remote_desktop.disabled"),
             ("SMB1", "smb1.disabled"),
         ] {
-            // Alone, the tip is listed.
             let mut r = rep(vec![out("uac.enabled", "compliant")]);
             r.findings.push(tip(title));
             assert_eq!(to_check_count(&r), 1, "{title}");
-            // With a fix row, only the fix row is.
             let mut r = rep(vec![eligible(id)]);
             r.findings.push(tip(title));
             assert!(finding_has_fix(&r, &r.findings[0]), "{title}");
             assert_eq!(to_check_count(&r), 1, "{title}");
             assert!(matches!(to_check(&r)[0], ToCheck::Control(_)));
-            // Not offered or managed: the tip and its steps stay.
             let not_offered = Outcome {
                 detail: "Not offered: this edition of Windows does not include it".into(),
                 ..out(id, "skipped")
@@ -552,7 +499,6 @@ mod tests {
         let mut r = rep(vec![eligible("accounts.autologon")]);
         r.findings.push(tip("Secure Boot"));
         assert_eq!(to_check_count(&r), 2);
-        // A saved password with automatic sign-in off is a separate warning.
         let mut r = rep(vec![out("accounts.autologon", "compliant")]);
         r.findings.push(secblitz::model::Finding {
             title: "Automatic logon".into(),
@@ -561,7 +507,6 @@ mod tests {
         });
         assert!(!finding_has_fix(&r, &r.findings[0]));
         assert_eq!(to_check_count(&r), 1);
-        // While connected remotely or on a kiosk, the control's own reason replaces the tip.
         for reason in [
             "Not offered: you are connected to this PC from another device right now",
             "Not offered: this PC is set up as a kiosk",
@@ -574,9 +519,6 @@ mod tests {
         }
     }
 
-    /// One predicate, per-control rules: memory integrity's row replaces the
-    /// old tip whenever it exists (also Not offered, managed or unchecked),
-    /// while the other mapped controls keep the tip for those states.
     #[test]
     fn memory_integrity_and_the_other_mapped_controls_follow_their_own_rules() {
         let tip = |title: &str| secblitz::model::Finding {
@@ -620,13 +562,10 @@ mod tests {
                 assert!(!finding_has_fix(&r, &r.findings[0]), "{id} {status} {detail}");
                 assert_eq!(to_check_ids(&r), vec![format!("finding.{}", title.to_lowercase().replace(' ', "-"))]);
             }
-            // A restart-needed row replaces the tip too.
             let mut r = rep(vec![row(id, "applied", "Preference applied; restart required")]);
             r.findings.push(tip(title));
             assert!(finding_has_fix(&r, &r.findings[0]), "{id}");
         }
-        // The kiosk and remote-session reasons only replace the tip of their
-        // own control, never a different finding.
         let mut r = rep(vec![row(
             "accounts.autologon",
             "skipped",
@@ -634,7 +573,6 @@ mod tests {
         )]);
         r.findings.push(tip("Remote Desktop"));
         assert!(!finding_has_fix(&r, &r.findings[0]));
-        // A saved password with automatic sign-in off stays even on a kiosk.
         r.findings.push(secblitz::model::Finding {
             title: "Automatic logon".into(),
             status: "attention".into(),
@@ -656,9 +594,7 @@ mod tests {
         r.findings.push(find("Memory integrity not running"));
         assert!(finding_has_fix(&r, &r.findings[0]));
         assert!(!finding_has_fix(&r, &r.findings[1]));
-        // One row for the fix, one for the not-running note: never a duplicate.
         assert_eq!(to_check_count(&r), 2);
-        // Without a fix row (an older Windows), the tip stays.
         let mut r = rep(vec![]);
         r.findings.push(find("Memory integrity"));
         assert!(!finding_has_fix(&r, &r.findings[0]));
@@ -672,27 +608,22 @@ mod tests {
             status: status.into(),
             detail: String::new(),
         };
-        // Set, and the older check says it runs: protected, no tip.
         let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
         r.findings.push(find("Memory integrity", "ok"));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
         assert_eq!(Score::of(&r).protected, 1);
         assert!(finding_has_fix(&r, &r.findings[0]) || r.findings[0].status == "ok");
-        // Set, but the PC says it is not running: the old tip stays, the
-        // control is neither protected nor listed as protected.
         let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
         r.findings.push(find("Memory integrity", "attention"));
         assert!(!finding_has_fix(&r, &r.findings[0]));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Excluded);
         assert_eq!(Score::of(&r).protected, 0);
         assert_eq!(to_check_count(&r), 1);
-        // Before the restart it says to restart, never to turn it on again.
         assert!(waits_for_restart(&r, &r.findings[0]));
         let a = finding_advice(&r, &r.findings[0]);
         assert_eq!(a.next, RESTART_TO_START);
         assert_eq!(a.step, advice::NextStep::Restart);
         assert_eq!(a.status, "Restart needed");
-        // Off, or no fix row: the usual words.
         let mut off = rep(vec![out("vbs.memory_integrity", "attention")]);
         off.findings.push(find("Memory integrity", "attention"));
         assert!(!waits_for_restart(&off, &off.findings[0]));
@@ -700,19 +631,16 @@ mod tests {
         none.findings.push(find("Memory integrity", "attention"));
         assert!(!waits_for_restart(&none, &none.findings[0]));
         assert_ne!(finding_advice(&none, &none.findings[0]).next, RESTART_TO_START);
-        // Our own note replaces the old tip: one row, never two.
         r.findings
             .push(find("Memory integrity not running", "attention"));
         assert!(finding_has_fix(&r, &r.findings[0]));
         assert!(!finding_has_fix(&r, &r.findings[1]));
         assert_eq!(to_check_count(&r), 1);
-        // Stack protection has only our own note.
         let mut r = rep(vec![out("vbs.kernel_stack_protection", "compliant")]);
         assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
         r.findings
             .push(find("Kernel stack protection not running", "attention"));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Excluded);
-        // A blocked device while it runs does not make it "not running".
         let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
         r.findings.push(find("A device may not be working", "attention"));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);

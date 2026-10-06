@@ -1,8 +1,4 @@
-//! Per-user GUI preferences (theme, language override) and the system
-//! switches behind the Settings page (background checks, tray autostart).
-//!
-//! Preferences are a small JSON file in the engine state dir. Loading is
-//! tolerant (a damaged file means defaults); saving is atomic.
+//! Per-user GUI preferences and the system switches behind the Settings page.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -18,13 +14,11 @@ pub enum ThemeChoice {
 pub struct Prefs {
     #[serde(default)]
     pub theme: ThemeChoice,
-    /// Two-letter language code, or None for the Windows display language.
     #[serde(default)]
     pub lang: Option<String>,
 }
 
 const FILE: &str = "gui-prefs.json";
-/// Preferences are tiny; anything bigger is not ours.
 const LIMIT: u64 = 8 * 1024;
 
 fn path() -> anyhow::Result<PathBuf> {
@@ -84,13 +78,10 @@ fn write_to(path: &Path, prefs: &Prefs) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ----- tray autostart -----
 
-/// Run-key value that starts the tray agent at logon.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const TRAY_VALUE: &str = "SecblitzTray";
 
-/// The command stored in the Run key.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn tray_command(exe: &Path) -> String {
     format!("\"{}\" tray", exe.display())
@@ -122,7 +113,6 @@ fn same_path(a: &Path, b: &Path) -> bool {
         .eq_ignore_ascii_case(&b.to_string_lossy().replace('/', "\\"))
 }
 
-/// Is the tray set to start at logon?
 pub fn tray_enabled() -> bool {
     #[cfg(windows)]
     {
@@ -187,7 +177,6 @@ mod run_key {
         }
     }
 
-    /// The stored command, if the value exists.
     pub fn get() -> Option<String> {
         let key = open(KEY_QUERY_VALUE).ok()?;
         let name = wide(TRAY_VALUE);
@@ -260,9 +249,7 @@ mod run_key {
     }
 }
 
-// ----- background protection (monitor service) -----
 
-/// Is the background check installed and running (or about to be)?
 pub fn background_on() -> anyhow::Result<bool> {
     use secblitz::service::MonitorState;
     Ok(!matches!(
@@ -271,7 +258,6 @@ pub fn background_on() -> anyhow::Result<bool> {
     ))
 }
 
-/// Install (if needed) and start the monitor. Blocking.
 pub fn enable_background() -> anyhow::Result<()> {
     use secblitz::service::{self, MonitorState};
     if service::query_status()?.state == MonitorState::NotInstalled {
@@ -286,7 +272,6 @@ pub fn enable_background() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Stop and remove the monitor registration. Blocking (up to ~30 s).
 pub fn disable_background() -> anyhow::Result<()> {
     #[cfg(windows)]
     stop_monitor()?;
@@ -306,7 +291,6 @@ fn stop_monitor() -> anyhow::Result<()> {
         ServiceAccess::QUERY_STATUS | ServiceAccess::STOP,
     ) {
         Ok(service) => service,
-        // Already gone: nothing to stop.
         Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1060) => return Ok(()),
         Err(e) => return Err(e.into()),
     };
@@ -336,14 +320,12 @@ mod tests {
         let p = parse(br#"{"theme":"dark","lang":"es","extra":1}"#);
         assert_eq!(p.theme, ThemeChoice::Dark);
         assert_eq!(p.lang.as_deref(), Some("es"));
-        // One bad field never discards the other.
         let p = parse(br#"{"theme":"neon","lang":"fr"}"#);
         assert_eq!(p.theme, ThemeChoice::Light);
         assert_eq!(p.lang.as_deref(), Some("fr"));
         let p = parse(br#"{"theme":"dark","lang":"../../etc"}"#);
         assert_eq!(p.theme, ThemeChoice::Dark);
         assert_eq!(p.lang, None);
-        // Oversized input is not ours.
         let big = format!(r#"{{"theme":"dark","pad":"{}"}}"#, "x".repeat(9000));
         assert_eq!(parse(big.as_bytes()), Prefs::default());
     }
@@ -359,7 +341,6 @@ mod tests {
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
         assert!(!dir.path().join("gui-prefs.json.tmp").exists());
-        // Damaged files fall back to defaults instead of failing.
         std::fs::write(&file, b"{broken").unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), Prefs::default());
     }
