@@ -86,6 +86,16 @@ pub fn local_seconds(t: u64) -> u64 {
         FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
     };
     const EPOCH_GAP_SECS: u64 = 11_644_473_600;
+    const EMPTY_TIME: SYSTEMTIME = SYSTEMTIME {
+        wYear: 0,
+        wMonth: 0,
+        wDayOfWeek: 0,
+        wDay: 0,
+        wHour: 0,
+        wMinute: 0,
+        wSecond: 0,
+        wMilliseconds: 0,
+    };
     let ticks = (t + EPOCH_GAP_SECS) * 10_000_000;
     let utc_file = FILETIME {
         dwLowDateTime: ticks as u32,
@@ -93,9 +103,12 @@ pub fn local_seconds(t: u64) -> u64 {
     };
     // SAFETY: all pointers refer to live local values of the right type.
     unsafe {
-        let mut utc: SYSTEMTIME = std::mem::zeroed();
-        let mut local: SYSTEMTIME = std::mem::zeroed();
-        let mut local_file: FILETIME = std::mem::zeroed();
+        let mut utc = EMPTY_TIME;
+        let mut local = EMPTY_TIME;
+        let mut local_file = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
         if FileTimeToSystemTime(&utc_file, &mut utc) == 0
             || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) == 0
             || SystemTimeToFileTime(&local, &mut local_file) == 0
