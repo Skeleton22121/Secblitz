@@ -456,7 +456,7 @@ impl UpdateReport {
                 "Your update is ready. Close Secblitz so the installer can continue."
             }
             UpdateOutcome::Installed { .. } => "Secblitz was updated.",
-            UpdateOutcome::Failed { .. } => "The update could not be completed. Connect to the internet and try again later.",
+            UpdateOutcome::Failed { .. } => "The update could not be completed. Check your internet connection and try again later. If it keeps happening, download the latest Secblitz from our website.",
         }
     }
 }
@@ -1092,7 +1092,7 @@ mod tests {
                     assert_ne!(lang.t(message), message);
                 }
                 if failed {
-                    assert_eq!(message, "The update could not be completed. Connect to the internet and try again later.");
+                    assert_eq!(message, "The update could not be completed. Check your internet connection and try again later. If it keeps happening, download the latest Secblitz from our website.");
                 }
                 let (mut out, mut err) = (Vec::new(), Vec::new());
                 let code = write_update_result(

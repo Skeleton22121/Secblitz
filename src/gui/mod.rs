@@ -575,7 +575,8 @@ impl App {
                 );
             }
             Err(e) => {
-                self.ctx.check_error = Some(self.ctx.t(crate::launcher::friendly_problem(e)));
+                self.ctx.check_error =
+                    Some(self.ctx.t(crate::launcher::friendly_check_problem(e)));
                 let entry = if operation && n > 0 {
                     self.ctx
                         .report

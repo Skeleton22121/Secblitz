@@ -412,10 +412,10 @@ fn problem_hint(snapshot: &Snapshot, line: Line) -> Option<&'static str> {
     let status = snapshot.status.as_ref().filter(|s| config::fresh(s, snapshot.now));
     match status.and_then(|s| s.last_error) {
         Some(ErrorCode::PortInUse) => Some(
-            "Another program on your PC is using what web protection needs. Close other ad blockers or VPN apps, then press Try again.",
+            "Another program on your PC is using what web protection needs. Close other ad blockers or VPN apps.",
         ),
         Some(ErrorCode::NoUpstream) => Some(
-            "Web protection can't find your internet connection. Connect to the internet, then press Try again.",
+            "Web protection can't find your internet connection. Connect to the internet.",
         ),
         Some(ErrorCode::DownloadFailed) => Some(
             "The block lists couldn't be downloaded. Connect to the internet. Secblitz will try again by itself.",
@@ -938,7 +938,7 @@ mod tests {
         };
         let s = snapshot(on.clone(), Some(port), true);
         let line = status_line(&s.config, s.status.as_ref(), s.service, s.now);
-        assert!(problem_hint(&s, line).unwrap().contains("Try again"));
+        assert!(!problem_hint(&s, line).unwrap().contains("Try again"));
         // Service stopped with no report: generic restart advice.
         let down = Snapshot {
             service: ServiceState::Stopped,

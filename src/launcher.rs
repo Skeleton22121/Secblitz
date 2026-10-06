@@ -35,18 +35,29 @@ pub fn friendly_problem(raw: &str) -> &'static str {
         "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
     } else if has(&["declined", "cancel"]) {
         "Secblitz needs your permission to open. Open it again and choose Yes when Windows asks."
-    } else if has(&["access is denied", "os error 5", "permission", "administrator", "elevat"]) {
+    } else if has(&["access is denied", "os error 5", "permission denied", "administrator", "elevat"]) {
         "Windows wouldn't let Secblitz open its files. Sign in with an account that can make changes to this PC, then open Secblitz again."
-    } else if has(&["journal lock", "another secblitz", "already running", "lock"]) {
+    } else if has(&["journal lock", "another secblitz", "already running"]) {
         "Secblitz is already busy with another task. Wait a minute, then open it again."
     } else if has(&["no space", "os error 112", "disk full"]) {
         "Your PC is almost out of space. Free up some space, then open Secblitz again."
-    } else if has(&["journal", "invalid", "corrupt", "missing header", "schema", "utf8"]) {
+    } else if has(&["journal", "corrupt", "missing header", "utf8"]) {
         "Secblitz couldn't read its saved information. Restart your PC and open Secblitz again. If it keeps happening, install the latest Secblitz."
     } else if has(&["timed out", "did not answer", "broker", "powershell", "script", "backend"]) {
         "Windows didn't answer in time. Restart your PC, then open Secblitz again."
     } else {
         "Something unexpected got in the way. Restart your PC and open Secblitz again. If it keeps happening, check for a Secblitz update."
+    }
+}
+
+/// Plain words for a check that did not finish. The window is already open,
+/// so the next step is to check again, never to open Secblitz again.
+pub fn friendly_check_problem(raw: &str) -> &'static str {
+    let found = friendly_problem(raw);
+    if found.starts_with("Secblitz works on Windows 10") {
+        found
+    } else {
+        "Something unexpected got in the way. Press Check again. If it keeps happening, restart your PC."
     }
 }
 
@@ -984,6 +995,20 @@ mod tests {
         let text = friendly_problem(raw);
         assert!(text.starts_with("Something unexpected"));
         assert!(!text.contains("0x8") && !text.contains("engine.rs"));
+    }
+
+    #[test]
+    fn broad_words_do_not_misroute() {
+        for raw in ["blocked by policy", "clock skew", "unlock failed", "invalid argument", "bad schema"] {
+            assert!(friendly_problem(raw).starts_with("Something unexpected"), "{raw}");
+        }
+    }
+
+    #[test]
+    fn check_problems_say_to_check_again() {
+        let text = friendly_check_problem("The administrator prompt was declined");
+        assert!(text.contains("Press Check again") && !text.contains("open"));
+        assert!(friendly_check_problem("Secblitz requires Windows").contains("Windows 10"));
     }
 
     #[test]

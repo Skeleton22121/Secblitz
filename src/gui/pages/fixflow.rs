@@ -9,7 +9,7 @@
 //! draw-in as each item finishes, the overall bar easing to each new value and
 //! one check draw on the result. Frames are requested by `subscription()` only
 //! while one of these runs; the shell must batch it into its subscriptions.
-use super::fixes::{row_text, sanitize};
+use super::fixes::row_text;
 use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
 use crate::app::history::{self as log, Entry, Kind};
@@ -407,6 +407,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 verify.as_deref().map_err(String::as_str),
             );
             let technical = technical_lines(
+                ctx.lang,
                 attempted,
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
@@ -432,6 +433,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 verify.as_deref().map_err(String::as_str),
             );
             let technical = technical_lines(
+                ctx.lang,
                 &[],
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
@@ -459,8 +461,11 @@ fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<S
     };
 }
 
-/// Raw evidence lines for the "More details" expander.
+/// Plain lines for the "More details" expander: one line per fix with its
+/// outcome in words, and a friendly reason when a step failed. Raw engine
+/// text never reaches the screen.
 fn technical_lines(
+    lang: crate::i18n::Lang,
     attempted: &[String],
     result: Result<&secblitz::engine::Report, &str>,
     verify: Result<&secblitz::engine::Report, &str>,
@@ -470,14 +475,19 @@ fn technical_lines(
         Ok(report) => {
             for r in &report.results {
                 if attempted.is_empty() || attempted.contains(&r.id) {
-                    lines.push(format!("{} · {} · {}", r.id, r.status, sanitize(&r.detail)));
+                    let advice = crate::advice::for_control(&r.id, &r.status, &r.detail);
+                    lines.push(format!(
+                        "{} · {}",
+                        lang.control(&r.id),
+                        lang.t(advice.status)
+                    ));
                 }
             }
         }
-        Err(e) => lines.push(format!("result · {}", sanitize(e))),
+        Err(e) => lines.push(lang.t(crate::launcher::friendly_problem(e))),
     }
     if let Err(e) = verify {
-        lines.push(format!("check · {}", sanitize(e)));
+        lines.push(lang.t(crate::launcher::friendly_check_problem(e)));
     }
     lines.truncate(60);
     lines
