@@ -1,4 +1,6 @@
 //! Drives the public engine end to end against an in-memory backend.
+// On Windows the engine only opens its protected state folder; its unit tests cover this flow there.
+#![cfg(not(windows))]
 use anyhow::Result;
 use secblitz::engine::{Engine, Report};
 use secblitz::model::{Authority, Backend, Control, EffectiveFirewall, Finding, Observation};
