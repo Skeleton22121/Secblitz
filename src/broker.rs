@@ -340,7 +340,10 @@ impl Client {
             let mut pipe = self
                 .inner
                 .lock()
-                .map_err(|_| anyhow::anyhow!("broker unavailable"))?;
+                .map_err(|e| {
+                    eprintln!("{e}");
+                    anyhow::anyhow!("broker unavailable")
+                })?;
             let byte = pipe.round_trip(request.encode(), request.timeout())?;
             Reply::decode(byte).ok_or_else(|| anyhow::anyhow!("invalid broker reply"))
         }
@@ -408,6 +411,7 @@ mod imp {
                 return None;
             }
             let me = GetCurrentProcessId();
+            // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
             let mut found = None;
@@ -482,6 +486,7 @@ mod imp {
         fn io(&mut self, write: bool, buf: &mut [u8], timeout: Duration) -> anyhow::Result<()> {
             let mut done = 0usize;
             while done < buf.len() {
+                // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
                 let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
                 overlapped.hEvent = self.event;
                 let rest = &mut buf[done..];

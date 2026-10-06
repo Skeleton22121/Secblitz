@@ -6,6 +6,6 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         embed_resource::compile("assets/secblitz.rc", embed_resource::NONE)
             .manifest_required()
-            .expect("embed Windows manifest");
+            .unwrap_or_else(|error| panic!("embed Windows manifest: {error}"));
     }
 }

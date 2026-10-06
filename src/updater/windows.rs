@@ -80,6 +80,7 @@ fn inspect_pinned(
     system_image: bool,
 ) -> Result<()> {
     unsafe {
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut i: BY_HANDLE_FILE_INFORMATION = zeroed();
         ensure!(
             GetFileInformationByHandle(f.as_raw_handle(), &mut i) != 0,
@@ -372,7 +373,10 @@ fn device_id(root: &Path, create_missing: bool) -> Result<[u8; 16]> {
     }
     read_bounded(root, name, 16)?
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid rollout identity"))
+        .map_err(|v: Vec<u8>| {
+            eprintln!("{} bytes", v.len());
+            anyhow::anyhow!("Invalid rollout identity")
+        })
 }
 fn fetch_manifest(client: &reqwest::blocking::Client, url: reqwest::Url) -> Result<Vec<u8>> {
     let response = client.get(url).send()?;
@@ -424,9 +428,7 @@ fn lock(root: &Path, name: &str) -> Result<Option<File>> {
     if !path.try_exists()? {
         match create(&path) {
             Ok(f) => drop(f),
-            Err(e) if path.try_exists()? => {
-                let _ = e;
-            }
+            Err(_) if path.try_exists()? => {}
             Err(e) => return Err(e),
         }
     }
@@ -455,16 +457,10 @@ fn known_folder(id: &windows_sys::core::GUID) -> Result<PathBuf> {
         "Native machine known folder unavailable"
     );
     let result = (|| {
-        let mut n = 0;
-        unsafe {
-            while n < 32768 && *p.add(n) != 0 {
-                n += 1;
-            }
-            ensure!(n < 32768, "Invalid known folder");
-            Ok(PathBuf::from(String::from_utf16(
-                std::slice::from_raw_parts(p, n),
-            )?))
-        }
+        // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+        let text = unsafe { crate::platform::security::wide_str(p) }
+            .context("Invalid known folder")?;
+        Ok(PathBuf::from(String::from_utf16(text)?))
     })();
     unsafe {
         CoTaskMemFree(p.cast());
@@ -514,7 +510,7 @@ fn trusted_image(path: &Path, system_image: bool) -> Result<Vec<File>> {
     Ok(held)
 }
 fn require_admin() -> Result<()> {
-    ensure!(crate::platform::is_elevated()?, "Updates require elevation");
+    crate::platform::require_admin("Updates require elevation")?;
     let admin = sid("S-1-5-32-544")?;
     let mut member = 0;
     ensure!(
@@ -684,6 +680,7 @@ fn validate_engine_lock(held: &File, base: &Path) -> Result<()> {
         .open(base.join("engine.lock"))?;
     inspect(&expected, false, true, false)?;
     let id = |file: &File| -> Result<(u32, u32, u32)> {
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
         ensure!(
             unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } != 0,
@@ -1115,6 +1112,7 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
         }
     }
     let _snapshot = Snapshot(snapshot);
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut entry: ProcessEntry = unsafe { zeroed() };
     entry.size = size_of::<ProcessEntry>() as u32;
     let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) };
@@ -1189,7 +1187,10 @@ fn key() -> Result<[u8; 32]> {
         .context("Invalid embedded update public key")?;
     bytes
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Embedded update public key must be 32 bytes"))
+        .map_err(|v: Vec<u8>| {
+            eprintln!("{} bytes", v.len());
+            anyhow::anyhow!("Embedded update public key must be 32 bytes")
+        })
 }
 fn record(root: &Path, result: UpdateOutcome) -> Result<UpdateOutcome> {
     replace(

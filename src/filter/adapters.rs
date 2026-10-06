@@ -154,6 +154,7 @@ mod imp {
                 return false;
             };
             let get: GetHint = std::mem::transmute(proc);
+            // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
             let mut hint: NL_NETWORK_CONNECTIVITY_HINT = std::mem::zeroed();
             if get(&mut hint) != ERROR_SUCCESS {
                 return false;

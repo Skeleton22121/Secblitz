@@ -288,7 +288,7 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     };
     let application = wide(&exe)?;
     let mut pins =
-        crate::operations::pin_system_executable(&exe).map_err(|_| UnknownReason::Unavailable)?;
+        crate::operations::pin_system_executable(&exe).map_err(because(UnknownReason::Unavailable))?;
     if native_tool(id).is_none() {
         for module in modules(id) {
             let relative = if module == "Microsoft.PowerShell.LocalAccounts" {
@@ -301,7 +301,7 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
                 crate::operations::pin_system_module(&root.join(format!(
                     "System32/WindowsPowerShell/v1.0/Modules/{relative}"
                 )))
-                .map_err(|_| UnknownReason::Unavailable)?,
+                .map_err(because(UnknownReason::Unavailable))?,
             );
         }
         if id == ProbeId::Management {
@@ -309,7 +309,7 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
                 crate::operations::pin_system_executable(
                     &root.join("System32/MDMRegistration.dll"),
                 )
-                .map_err(|_| UnknownReason::Unavailable)?,
+                .map_err(because(UnknownReason::Unavailable))?,
             );
         }
     }
@@ -414,7 +414,7 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     let input_thread = std::thread::Builder::new()
         .name("diagnostics-input".into())
         .spawn(move || writer.write_all(input.as_bytes()))
-        .map_err(|_| UnknownReason::Unavailable)?;
+        .map_err(because(UnknownReason::Unavailable))?;
     let result = (|| {
         let mut output = Vec::new();
         loop {
@@ -441,7 +441,7 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
                 let take = chunk.len().min(available as usize);
                 let count = reader
                     .read(&mut chunk[..take])
-                    .map_err(|_| UnknownReason::ProcessFailed)?;
+                    .map_err(because(UnknownReason::ProcessFailed))?;
                 if output.len() + count > MAX_OUTPUT_BYTES {
                     return Err(UnknownReason::OutputLimit);
                 }
@@ -480,8 +480,16 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     let input_result = input_thread
         .join()
         .map_err(|_| UnknownReason::ProcessFailed)
-        .and_then(|r| r.map_err(|_| UnknownReason::ProcessFailed));
+        .and_then(|r| r.map_err(because(UnknownReason::ProcessFailed)));
     result.and_then(|output| input_result.map(|_| output))
+}
+
+/// Maps a failure to its probe reason; the cause goes to the log, not into the report.
+fn because<E: std::fmt::Display>(reason: UnknownReason) -> impl FnOnce(E) -> UnknownReason {
+    move |error| {
+        eprintln!("{error:#}");
+        reason
+    }
 }
 
 fn modules(id: ProbeId) -> Vec<&'static str> {
@@ -574,7 +582,7 @@ fn native_bounded(
         .spawn(move || {
             let _ = send.send(query());
         })
-        .map_err(|_| UnknownReason::Unavailable)?;
+        .map_err(because(UnknownReason::Unavailable))?;
     *slot = Some(receive);
     match slot.as_ref().unwrap().recv_timeout(timeout) {
         Ok(result) => {
@@ -696,7 +704,7 @@ fn wifi() -> ProbeResult<Evidence> {
 }
 
 fn permissions() -> ProbeResult<Evidence> {
-    let findings = crate::permissions::audit().map_err(|_| UnknownReason::Unavailable)?;
+    let findings = crate::permissions::audit().map_err(because(UnknownReason::Unavailable))?;
     if findings.len() > 32 {
         return Err(UnknownReason::OutputLimit);
     }
