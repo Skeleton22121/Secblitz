@@ -28,6 +28,24 @@ pub enum Request {
     OpenAppBrowserControl,
     OpenOptionalFeatures,
     OpenAccounts,
+    /// Windows Security > Device security > Core isolation.
+    OpenCoreIsolation,
+    /// Windows Security > Firewall and network protection.
+    OpenFirewall,
+    /// Windows Security > Device security.
+    OpenDeviceSecurity,
+    /// Settings > Accounts > Access work or school.
+    OpenWorkAccounts,
+    /// Settings > System > Recovery (Advanced startup).
+    OpenRecovery,
+    /// Settings > System > Remote Desktop.
+    OpenRemoteDesktop,
+    /// Settings > Privacy and security > Find my device.
+    OpenFindMyDevice,
+    /// The classic BitLocker page (editions without device encryption).
+    OpenBitLocker,
+    /// Settings > Network and internet > Wi-Fi.
+    OpenWifi,
     /// Read, apply or undo one per-user (HKCU) setting; see `user_settings`.
     UserSetting(Setting, Op),
     /// Run `winget upgrade` once as the signed-in user and remember which
@@ -136,6 +154,15 @@ impl Request {
             Request::OpenAppBrowserControl => (10, 0),
             Request::OpenOptionalFeatures => (11, 0),
             Request::OpenAccounts => (12, 0),
+            Request::OpenCoreIsolation => (20, 0),
+            Request::OpenFirewall => (21, 0),
+            Request::OpenDeviceSecurity => (22, 0),
+            Request::OpenWorkAccounts => (23, 0),
+            Request::OpenRecovery => (24, 0),
+            Request::OpenRemoteDesktop => (25, 0),
+            Request::OpenFindMyDevice => (26, 0),
+            Request::OpenBitLocker => (27, 0),
+            Request::OpenWifi => (28, 0),
             // One byte for the setting, one for the operation.
             Request::UserSetting(setting, op) => (
                 13,
@@ -179,6 +206,15 @@ impl Request {
             10 => Request::OpenAppBrowserControl,
             11 => Request::OpenOptionalFeatures,
             12 => Request::OpenAccounts,
+            20 => Request::OpenCoreIsolation,
+            21 => Request::OpenFirewall,
+            22 => Request::OpenDeviceSecurity,
+            23 => Request::OpenWorkAccounts,
+            24 => Request::OpenRecovery,
+            25 => Request::OpenRemoteDesktop,
+            26 => Request::OpenFindMyDevice,
+            27 => Request::OpenBitLocker,
+            28 => Request::OpenWifi,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -497,6 +533,15 @@ mod tests {
             Request::OpenAppBrowserControl,
             Request::OpenOptionalFeatures,
             Request::OpenAccounts,
+            Request::OpenCoreIsolation,
+            Request::OpenFirewall,
+            Request::OpenDeviceSecurity,
+            Request::OpenWorkAccounts,
+            Request::OpenRecovery,
+            Request::OpenRemoteDesktop,
+            Request::OpenFindMyDevice,
+            Request::OpenBitLocker,
+            Request::OpenWifi,
             Request::AppUpdatesScan,
             Request::AppUpdateQuery(0),
             Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
@@ -526,10 +571,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 20, 21, 100, 255] {
+        for kind in [0u8, 29, 30, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain([17]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=28).chain([17]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }

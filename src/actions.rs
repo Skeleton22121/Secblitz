@@ -17,6 +17,15 @@ pub enum Action {
     OpenAppBrowserControl,
     OpenOptionalFeatures,
     OpenAccounts,
+    OpenCoreIsolation,
+    OpenFirewall,
+    OpenDeviceSecurity,
+    OpenWorkAccounts,
+    OpenRecovery,
+    OpenRemoteDesktop,
+    OpenFindMyDevice,
+    OpenBitLocker,
+    OpenWifi,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -29,24 +38,66 @@ pub struct ActionResult {
 #[path = "actions/windows.rs"]
 mod windows;
 
+/// The classic Control Panel item for BitLocker, for Windows editions that
+/// have no device-encryption page. Opened through the system's own
+/// `control.exe` by absolute path; the name below is the only argument.
+const BITLOCKER_CONTROL: &str = "Microsoft.BitLockerDriveEncryption";
+
+/// Where an action goes: a Settings or Windows Security page by address, or a
+/// fixed Control Panel item. Nothing here is built from input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Uri(&'static str),
+    Control(&'static str),
+}
+
 // No user-supplied URI, arguments, executable, or PowerShell is accepted.
+// ms-settings: addresses are listed on Microsoft Learn ("Launch Windows
+// Settings"); windowsdefender: addresses are the Windows Security app's own
+// page links (coreisolation, network, devicesecurity, threatsettings, threat,
+// appbrowser).
+fn target(action: Action) -> Option<Target> {
+    use Target::{Control, Uri};
+    Some(match action {
+        Action::OpenWindowsUpdate => Uri("ms-settings:windowsupdate"),
+        Action::OpenWindowsSecurity => Uri("ms-settings:windowsdefender"),
+        Action::OpenSignInSettings => Uri("ms-settings:signinoptions"),
+        Action::OpenEncryptionSettings => Uri("ms-settings:deviceencryption"),
+        Action::OpenTamperProtection => Uri("windowsdefender://threatsettings"),
+        Action::OpenProtectionHistory => Uri("windowsdefender://threat"),
+        Action::OpenAppBrowserControl => Uri("windowsdefender://appbrowser"),
+        Action::OpenOptionalFeatures => Uri("ms-settings:optionalfeatures"),
+        Action::OpenAccounts => Uri("ms-settings:otherusers"),
+        Action::OpenCoreIsolation => Uri("windowsdefender://coreisolation"),
+        Action::OpenFirewall => Uri("windowsdefender://network"),
+        Action::OpenDeviceSecurity => Uri("windowsdefender://devicesecurity"),
+        Action::OpenWorkAccounts => Uri("ms-settings:workplace"),
+        Action::OpenRecovery => Uri("ms-settings:recovery"),
+        Action::OpenRemoteDesktop => Uri("ms-settings:remotedesktop"),
+        Action::OpenFindMyDevice => Uri("ms-settings:findmydevice"),
+        Action::OpenWifi => Uri("ms-settings:network-wifi"),
+        Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
 fn settings_uri(action: Action) -> Option<&'static str> {
-    match action {
-        Action::OpenWindowsUpdate => Some("ms-settings:windowsupdate"),
-        Action::OpenWindowsSecurity => Some("ms-settings:windowsdefender"),
-        Action::OpenSignInSettings => Some("ms-settings:signinoptions"),
-        Action::OpenEncryptionSettings => Some("ms-settings:deviceencryption"),
-        Action::OpenTamperProtection => Some("windowsdefender://threatsettings"),
-        Action::OpenProtectionHistory => Some("windowsdefender://threat"),
-        Action::OpenAppBrowserControl => Some("windowsdefender://appbrowser"),
-        Action::OpenOptionalFeatures => Some("ms-settings:optionalfeatures"),
-        Action::OpenAccounts => Some("ms-settings:otherusers"),
+    match target(action) {
+        Some(Target::Uri(uri)) => Some(uri),
         _ => None,
     }
 }
 
+/// `split_elevated` is true only for the elevated half of a split (UAC) token:
+/// someone chose "Run as administrator" while a normal-rights copy of the same
+/// account is also running and could plant a protocol handler. A full-token
+/// administrator (the built-in Administrator account, or UAC turned off) has no
+/// less-trusted twin, so there is nobody to steer the handler and opening is
+/// allowed there. Refusing every elevated token, as before, made every "Open"
+/// fail on those accounts.
 #[cfg(any(windows, test))]
-fn validate_settings_request(uri: &str, elevated: bool) -> Result<()> {
+fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
     anyhow::ensure!(
         matches!(
             uri,
@@ -59,13 +110,32 @@ fn validate_settings_request(uri: &str, elevated: bool) -> Result<()> {
                 | "windowsdefender://appbrowser"
                 | "ms-settings:optionalfeatures"
                 | "ms-settings:otherusers"
+                | "windowsdefender://coreisolation"
+                | "windowsdefender://network"
+                | "windowsdefender://devicesecurity"
+                | "ms-settings:workplace"
+                | "ms-settings:recovery"
+                | "ms-settings:remotedesktop"
+                | "ms-settings:findmydevice"
+                | "ms-settings:network-wifi"
         ),
         "Unknown settings URI"
     );
     // An allowlisted URI still resolves through user-writable protocol handlers.
-    // Never dispatch it with the elevated worker's token.
+    // Never dispatch it with the elevated half of a split token.
     anyhow::ensure!(
-        !elevated,
+        !split_elevated,
+        "Open Settings from the non-elevated interactive application"
+    );
+    Ok(())
+}
+
+/// Same boundary for the one Control Panel item.
+#[cfg(any(windows, test))]
+fn validate_control_request(name: &str, split_elevated: bool) -> Result<()> {
+    anyhow::ensure!(name == BITLOCKER_CONTROL, "Unknown control panel item");
+    anyhow::ensure!(
+        !split_elevated,
         "Open Settings from the non-elevated interactive application"
     );
     Ok(())
@@ -74,12 +144,12 @@ fn validate_settings_request(uri: &str, elevated: bool) -> Result<()> {
 /// Blocking, explicitly selected action. Errors never imply that in-flight
 /// Defender work stopped. Settings dispatch does not verify remediation.
 pub fn run(action: Action) -> Result<ActionResult> {
-    if let Some(uri) = settings_uri(action) {
+    if let Some(target) = target(action) {
         #[cfg(windows)]
-        windows::open_settings(uri)?;
+        windows::open(target)?;
         #[cfg(not(windows))]
         {
-            let _ = uri;
+            let _ = target;
             anyhow::bail!("Settings actions require Windows");
         }
         #[cfg(windows)]
@@ -137,10 +207,34 @@ mod tests {
             ),
             (Action::OpenOptionalFeatures, "ms-settings:optionalfeatures"),
             (Action::OpenAccounts, "ms-settings:otherusers"),
+            (Action::OpenCoreIsolation, "windowsdefender://coreisolation"),
+            (Action::OpenFirewall, "windowsdefender://network"),
+            (Action::OpenDeviceSecurity, "windowsdefender://devicesecurity"),
+            (Action::OpenWorkAccounts, "ms-settings:workplace"),
+            (Action::OpenRecovery, "ms-settings:recovery"),
+            (Action::OpenRemoteDesktop, "ms-settings:remotedesktop"),
+            (Action::OpenFindMyDevice, "ms-settings:findmydevice"),
+            (Action::OpenWifi, "ms-settings:network-wifi"),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
             assert!(validate_settings_request(uri, true).is_err());
+        }
+        // BitLocker goes through its one fixed Control Panel item.
+        assert_eq!(
+            target(Action::OpenBitLocker),
+            Some(Target::Control("Microsoft.BitLockerDriveEncryption"))
+        );
+        validate_control_request("Microsoft.BitLockerDriveEncryption", false).unwrap();
+        assert!(validate_control_request("Microsoft.BitLockerDriveEncryption", true).is_err());
+        for bad in [
+            "",
+            "Microsoft.System",
+            "microsoft.bitlockerdriveencryption",
+            "Microsoft.BitLockerDriveEncryption ",
+            "Microsoft.BitLockerDriveEncryption & calc.exe",
+        ] {
+            assert!(validate_control_request(bad, false).is_err(), "{bad}");
         }
         for action in [
             Action::UpdateDefender,
@@ -167,6 +261,10 @@ mod tests {
             "WINDOWSDEFENDER://threat",
             "windowsdefender://threat&calc.exe",
             "ms-settings:otherusers ",
+            "windowsdefender://coreisolation/",
+            "ms-settings:remotedesktop?x",
+            "ms-settings:recovery ",
+            "WINDOWSDEFENDER://network",
         ] {
             for elevated in [false, true] {
                 assert!(validate_settings_request(uri, elevated).is_err());
@@ -190,6 +288,15 @@ mod tests {
             Action::OpenAppBrowserControl,
             Action::OpenOptionalFeatures,
             Action::OpenAccounts,
+            Action::OpenCoreIsolation,
+            Action::OpenFirewall,
+            Action::OpenDeviceSecurity,
+            Action::OpenWorkAccounts,
+            Action::OpenRecovery,
+            Action::OpenRemoteDesktop,
+            Action::OpenFindMyDevice,
+            Action::OpenBitLocker,
+            Action::OpenWifi,
         ] {
             assert!(run(action).is_err());
         }

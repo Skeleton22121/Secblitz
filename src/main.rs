@@ -3,6 +3,7 @@
 pub(crate) mod advice;
 mod app;
 mod broker;
+mod guide;
 pub(crate) mod explain;
 mod gui;
 mod i18n;
