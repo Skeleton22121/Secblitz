@@ -172,6 +172,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             let note = match reply {
                 Ok(Reply::Done) => None,
                 Ok(Reply::Unavailable) => Some(ctx.t("This setting can't be changed on this PC. Your work or school may control it.")),
+                Ok(Reply::ChangedSince) => Some(ctx.t("This setting was changed again after Secblitz set it. Whatever you changed was left as it is.")),
                 _ => Some(ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")),
             };
             // Always read it back: the switch shows what is really set.

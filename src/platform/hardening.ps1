@@ -461,9 +461,16 @@ function HPreflight() {
             } catch { throw 'Not offered: no other administrator account could be confirmed' }
             if (!$other) { throw 'Not offered: no other administrator account is enabled' }
         }
+        'accounts.lockout_policy' {
+            # A lockout length of 0 (or "forever") keeps a locked account locked
+            # until an administrator unlocks it: on a one-account PC that is a lock-out.
+            $lockInfo = HLockoutInfo
+            if ($lockInfo[0] -le 0) { throw 'Not offered: a locked sign-in would stay locked until an administrator unlocks it' }
+        }
         'printer.spooler_remote' {
             Load 'PrintManagement'
             if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.Shared -eq $true }).Count -gt 0) { throw 'Not offered: a printer on this PC is shared with other computers' }
+            if (HPrintBusy) { throw 'Not offered: printing is busy right now' }
         }
         'privacy.recall' {
             if ((HFeatureState 'Recall') -ceq 'Missing') { throw 'Not offered: Recall is not available on this PC' }
@@ -674,7 +681,7 @@ function HSetWifi($name, $v) {
 function HSet([string]$name, $v) {
     $def = HDef $name
     switch -CaseSensitive ($spec.source) {
-        'Registry' { HSetRegistry $def $v; HAfterRegistry }
+        'Registry' { HSetRegistry $def $v; HAfterRegistry $def $v }
         'DefenderPref' { HSetDefenderPref $def $v }
         'DefenderAsr' { HSetAsr $def $v }
         'Lockout' { HSetLockout $def $v }
@@ -710,11 +717,23 @@ function HWantedNames() {
     if ($null -eq $v -or $null -eq $v.Value) { return @() }
     return @($v.Value.Keys)
 }
-function HAfterRegistry() {
+# Is anything waiting to print (or can that not be told)? Unreadable counts as busy.
+function HPrintBusy() {
+    try {
+        $dir = [string](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers' -Name 'DefaultSpoolDirectory' -ErrorAction SilentlyContinue).DefaultSpoolDirectory
+        if ([string]::IsNullOrWhiteSpace($dir)) { $dir = [IO.Path]::Combine($env:SystemRoot, 'System32\spool\PRINTERS') }
+        return (@(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop).Count -gt 0)
+    } catch { return $true }
+}
+function HAfterRegistry($def, $v) {
     if ($spec.id -ceq 'printer.spooler_remote') {
         # The setting is read when the Spooler starts: restart it once, only if it runs.
         $svc = Get-Service -Name 'Spooler' -ErrorAction Stop
-        if ([string]$svc.Status -ceq 'Running') { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
+        # Applying is only offered while nothing is queued (see HPreflight). Putting
+        # it back never cuts off a print in progress: with anything queued it takes
+        # effect the next time the Spooler starts.
+        $applying = HIsSafe $def $v
+        if ([string]$svc.Status -ceq 'Running' -and ($applying -or !(HPrintBusy))) { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
     }
 }
 
@@ -818,10 +837,15 @@ function HSetService([string]$name, $v) {
         $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
     }
     Set-Service -Name $name -StartupType $type -ErrorAction Stop
-    if ($start -eq 2 -or $start -eq 5) {
-        $delayed = 0
-        if ($start -eq 5) { $delayed = 1 }
-        New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value $delayed -Force -ErrorAction Stop | Out-Null
+    if ($start -eq 5) {
+        New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value 1 -Force -ErrorAction Stop | Out-Null
+    } elseif ($start -eq 2) {
+        # Plain automatic: only clear a delayed flag that is really set. A value
+        # that was never there is not created, so undo puts back exactly what was.
+        $flag = Get-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -ErrorAction SilentlyContinue
+        if ($null -ne $flag -and [int]$flag.DelayedAutostart -ne 0) {
+            New-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -PropertyType DWord -Value 0 -Force -ErrorAction Stop | Out-Null
+        }
     }
     $svc.Refresh()
     if ($run -and [string]$svc.Status -cne 'Running') { Start-Service -Name $name -ErrorAction Stop }

@@ -23,6 +23,12 @@ pub fn append(batch: &Batch) -> Result<()> {
     append_to(&default_path()?, batch)
 }
 
+/// Save a run's batch: replaces this run's earlier checkpoint (same start
+/// time, newest line) or appends a new line.
+pub fn upsert(batch: &Batch) -> Result<()> {
+    upsert_to(&default_path()?, batch)
+}
+
 /// Mark every removed copy of catalog app `index` as restored.
 pub fn mark_restored(index: u16) -> Result<()> {
     mark_restored_in(&default_path()?, index)
@@ -55,6 +61,30 @@ pub fn load_from(path: &Path) -> Vec<Batch> {
 pub fn append_to(path: &Path, batch: &Batch) -> Result<()> {
     let mut batches = load_from(path);
     batches.push(batch.clone());
+    if batches.len() > MAX_BATCHES {
+        let extra = batches.len() - MAX_BATCHES;
+        batches.drain(..extra);
+    }
+    write_all(path, &batches)
+}
+
+pub fn upsert_to(path: &Path, batch: &Batch) -> Result<()> {
+    let mut batches = load_from(path);
+    match batches.last_mut() {
+        // Same run: same start second, and the older line is an earlier
+        // checkpoint of this batch (a prefix), not a different run.
+        Some(last)
+            if last.t == batch.t
+                && last.removed.iter().all(|r| !r.restored)
+                && batch.removed.starts_with(&last.removed)
+                && batch.skipped.starts_with(&last.skipped)
+                && batch.kept.starts_with(&last.kept)
+                && batch.failed.starts_with(&last.failed) =>
+        {
+            *last = batch.clone();
+        }
+        _ => batches.push(batch.clone()),
+    }
     if batches.len() > MAX_BATCHES {
         let extra = batches.len() - MAX_BATCHES;
         batches.drain(..extra);

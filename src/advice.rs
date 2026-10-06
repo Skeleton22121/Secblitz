@@ -520,11 +520,17 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: a printer on this PC is shared with other computers" => {
             "A printer on this PC is shared with others, so we leave this alone."
         }
+        "Not offered: printing is busy right now" => {
+            "Something is waiting to print, so we leave this for now. Try again when printing is finished."
+        }
         "Not offered: your account has no password" => {
             "Give your account a password first, then check again."
         }
         "Not offered: Secblitz cannot tell who is signed in" => {
             "We could not tell which account is signed in, so we leave this alone."
+        }
+        "Not offered: a locked sign-in would stay locked until an administrator unlocks it" => {
+            "A locked account here would stay locked until an administrator unlocks it, so we leave this alone."
         }
         _ => return None,
     })
@@ -970,8 +976,10 @@ mod tests {
             "Not offered: Recall is not available on this PC",
             "Not offered: this setting is not available on Windows Home",
             "Not offered: a printer on this PC is shared with other computers",
+            "Not offered: printing is busy right now",
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
+            "Not offered: a locked sign-in would stay locked until an administrator unlocks it",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");

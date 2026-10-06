@@ -575,6 +575,23 @@ fn web_protection_off() -> bool {
     secblitz::filter::control::apply_switches(Config::default()).is_ok()
 }
 
+/// What one personal setting leaves behind after "put everything back".
+/// `reply` is `None` without a connection. A setting with no record is only
+/// a problem when it looked like Secblitz's (`was_ours`).
+#[cfg(any(windows, test))]
+fn put_back_left(setting: Setting, was_ours: bool, reply: Option<Option<&Reply>>) -> Option<Left> {
+    match reply {
+        Some(Some(Reply::Done)) => None,
+        Some(Some(Reply::ChangedSince)) => Some(Left::Setting {
+            title: crate::uninstall::personal_title(setting.id()).to_owned(),
+            reason: crate::uninstall::LeftReason::ChangedSince,
+        }),
+        Some(Some(Reply::Unavailable)) if !was_ours => None,
+        None if !was_ours => None,
+        _ => Some(Left::Personal { id: setting.id() }),
+    }
+}
+
 #[cfg(windows)]
 fn run_put_back(
     client: Option<std::sync::Arc<crate::broker::Client>>,
@@ -586,15 +603,15 @@ fn run_put_back(
     let mut left: Vec<Left> = Vec::new();
 
     emit(Event::Started(Item::Personal));
-    for setting in &safe {
-        let back = client.as_ref().is_some_and(|c| {
-            matches!(
-                c.send(Request::UserSetting(*setting, Op::Undo)),
-                Ok(Reply::Done)
-            )
-        });
-        if !back {
-            left.push(Left::Personal { id: setting.id() });
+    // Every setting is asked, not only the ones that look untouched: one that
+    // is only partly changed back by hand still has values Secblitz set.
+    for setting in Setting::ALL {
+        let reply = client
+            .as_ref()
+            .map(|c| c.send(Request::UserSetting(setting, Op::Undo)));
+        let reply = reply.as_ref().map(|r| r.as_ref().ok());
+        if let Some(l) = put_back_left(setting, safe.contains(&setting), reply) {
+            left.push(l);
         }
     }
     emit(Event::Finished(Item::Personal, left.is_empty()));
@@ -1371,6 +1388,25 @@ mod tests {
             kept,
             vec![Left::App { name: "B".into() }, Left::SuggestedOlderVersion]
         );
+    }
+
+    #[test]
+    fn put_back_reports_each_personal_reply_plainly() {
+        let s = Setting::OfficeMacros;
+        assert_eq!(put_back_left(s, true, Some(Some(&Reply::Done))), None);
+        assert!(matches!(
+            put_back_left(s, false, Some(Some(&Reply::ChangedSince))),
+            Some(Left::Setting { reason: crate::uninstall::LeftReason::ChangedSince, .. })
+        ));
+        // No record and it did not look like ours: nothing to do.
+        assert_eq!(put_back_left(s, false, Some(Some(&Reply::Unavailable))), None);
+        assert_eq!(put_back_left(s, false, None), None);
+        // A setting that looked ours but could not be put back is reported.
+        assert!(matches!(put_back_left(s, true, None), Some(Left::Personal { .. })));
+        assert!(matches!(
+            put_back_left(s, false, Some(Some(&Reply::Failed))),
+            Some(Left::Personal { .. })
+        ));
     }
 
     #[test]

@@ -823,7 +823,7 @@ static SPECS: &[Spec] = &[
     Spec {
         id: "printer.spooler_remote",
         title: "Printing service reachable from the network",
-        description: "Stop the Print Spooler accepting connections from other computers (RegisterSpoolerRemoteRpcEndPoint=2) when no printer on this PC is shared. The Spooler restarts once; local printing is unaffected.",
+        description: "Stop the Print Spooler accepting connections from other computers (RegisterSpoolerRemoteRpcEndPoint=2) when no printer on this PC is shared and nothing is waiting to print. The Spooler restarts once; local printing is unaffected.",
         source: Source::Registry,
         reboot: false,
         ask: true,

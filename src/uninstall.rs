@@ -70,7 +70,7 @@ const SUGGESTED_CHANGED: &str =
 const WINDOWS_SETTINGS: &str = "Windows settings";
 
 /// The plain name of a personal setting (never a registry or technical word).
-fn personal_title(id: &str) -> &'static str {
+pub(crate) fn personal_title(id: &str) -> &'static str {
     match id {
         "smartscreen.store_apps" => "Web check for Store apps",
         "files.show_extensions" => "Show file endings",
@@ -153,6 +153,11 @@ fn fold_user(results: Vec<(Setting, UserOutcome)>) -> Summary {
     for (setting, outcome) in results {
         if outcome == UserOutcome::Done {
             summary.restored += 1;
+        } else if outcome == UserOutcome::ChangedSince {
+            summary.left.push(Left::Setting {
+                title: personal_title(setting.id()).to_owned(),
+                reason: LeftReason::ChangedSince,
+            });
         } else {
             summary.left.push(Left::Personal { id: setting.id() });
         }
@@ -599,6 +604,7 @@ mod tests {
             (Setting::ShowExtensions, UserOutcome::Done),
             (Setting::NearbySharing, UserOutcome::Failed),
             (Setting::OfficeMacros, UserOutcome::Blocked),
+            (Setting::TailoredExperiences, UserOutcome::ChangedSince),
         ]);
         assert_eq!(s.restored, 1);
         assert_eq!(
@@ -609,6 +615,10 @@ mod tests {
                 },
                 Left::Personal {
                     id: "office.internet_macros"
+                },
+                Left::Setting {
+                    title: "Tailored tips and ads".into(),
+                    reason: LeftReason::ChangedSince
                 }
             ]
         );
