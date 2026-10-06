@@ -4,6 +4,12 @@ version = "0.8.1"
 edition = "2021"
 description = "A safer PC. Without headaches."
 license = "MIT"
+repository = "https://github.com/Skeleton22121/Secblitz"
+homepage = "https://secblitz.lol"
+readme = "README.md"
+keywords = ["windows", "security", "hardening", "privacy", "desktop"]
+categories = ["command-line-utilities", "gui"]
+publish = false
 build = "build.rs"
 
 [dependencies]
