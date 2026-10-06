@@ -533,6 +533,20 @@ pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcom
     }
     // Journal first: if it cannot be saved, nothing is changed.
     let mut stored = load_journal(journal);
+    // An earlier run (even one cut short) may have already moved other values
+    // of this setting to safe. Their original values stay on record, so one
+    // undo still puts everything back.
+    if let Some(earlier) = stored.settings.get(setting.id()) {
+        for old in earlier {
+            let still_ours = all.get(old.i).is_some_and(|t| {
+                matches!(reg.get(Hive::CurrentUser, &t.key, t.name), Ok(Value::Dword(v)) if v == t.safe)
+            });
+            if still_ours && !priors.iter().any(|p| p.i == old.i) {
+                priors.push(old.clone());
+            }
+        }
+        priors.sort_by_key(|p| p.i);
+    }
     stored
         .settings
         .insert(setting.id().to_owned(), priors.clone());
@@ -1010,6 +1024,24 @@ mod tests {
             Outcome::ChangedSince
         );
         assert_eq!(reg.read(Setting::TailoredExperiences, 0), Value::Absent);
+    }
+
+    #[test]
+    fn a_second_apply_keeps_the_first_runs_originals_on_record() {
+        let (_d, path) = journal();
+        let mut reg = Fake::default();
+        let n = targets(Setting::SuggestedApps).len();
+        for i in 0..n {
+            reg.put(Setting::SuggestedApps, i, Some(1));
+        }
+        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        // One suggestion is switched back on by hand, then Secblitz runs again.
+        reg.put(Setting::SuggestedApps, 3, Some(1));
+        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        assert_eq!(undo(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        for i in 0..n {
+            assert_eq!(reg.read(Setting::SuggestedApps, i), Value::Dword(1), "{i}");
+        }
     }
 
     #[test]
