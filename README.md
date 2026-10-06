@@ -2,49 +2,46 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.webp">
-  <img src="docs/banner-light.webp" width="900" alt="Secblitz. A safer PC, without the headaches.">
+  <img src="docs/banner-light.webp" width="900" alt="Secblitz">
 </picture>
 
-Security, privacy and cleanup for Windows, all in one app.
+Secblitz checks the security, privacy and cleanup settings on a Windows PC and fixes the ones you approve. Every change can be undone.
 
-Secblitz checks your Windows PC, tells you what needs fixing and why, and fixes it when you say yes. You don't need to know anything about computers.
-
-[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](#security) · [Contributing](#contributing)
+[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ![Version 0.8.2](https://img.shields.io/badge/version-0.8.2-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
-  <img src="website/assets/app-home-light.webp" width="900" alt="The Secblitz home screen: a score ring showing how many protections are on, and a short list of what needs attention.">
+  <img src="website/assets/app-home-light.webp" width="900" alt="The Secblitz home screen: how many protections are on, and what needs attention.">
 </picture>
 
 </div>
 
-## Why Secblitz
+## How it works
 
-Windows has strong security and privacy settings, but many are turned off by default and spread across menus written for IT professionals. Secblitz brings security, privacy and PC upkeep together in one app made for people without technical knowledge:
+1. **Check.** Secblitz reads your antivirus, firewall, sign-in, update and privacy settings. It takes about a minute and changes nothing.
+2. **Choose.** Each item says what it does, what can go wrong without it, and what changes once it is on.
+3. **Fix.** Secblitz applies the fixes you approved, then checks again to confirm each one.
+4. **Undo.** Your original settings are saved first. History puts them back.
 
-1. **Check.** One click looks at your antivirus, firewall, sign-in, updates and more. About a minute, and nothing is changed.
-2. **Choose.** Every check says what it does, what could go wrong without it and what you'll notice once it's on, downsides included.
-3. **Fix.** Say yes once. Secblitz applies your choices, then checks again to make sure each one really took.
-4. **Undo.** Your original settings are saved first. History puts them back with one click.
+## Features
 
-## What's inside
+- **Over 50 checks** for virus protection, network, sign-in, updates, startup, disk and privacy. Settings that are already on are left alone.
+- **Clean up apps.** Remove apps that came with Windows. Secblitz keeps a copy of each, so you can restore it later, even offline.
+- **Web protection.** Optional blocking of ads, trackers and dangerous websites.
+- **Tools.** Microsoft Defender scans and updates, Windows repair, security updates and an optional Bitwarden install.
+- **Background checks** from the notification area, which tell you when a setting changes.
+- **History** of every change and every removed app.
+- **Six languages:** English, Spanish, French, German, Portuguese and Italian. Light and dark mode.
 
-- **More than 50 checks** across virus protection, network and Wi-Fi, sign-in and accounts, updates, startup and disk, and privacy. Protection you already have is recognized, so nothing changes for the sake of it.
-- **Clean up apps.** Remove the apps Windows came with that you never use. Secblitz keeps a copy of each one, so you can bring it back any time, even without internet.
-- **Tools.** Microsoft Defender scans and protection updates, Windows repair, security updates, PC health tips and an optional Bitwarden install. Bitwarden is a free password manager that also makes strong passwords for you.
-- **Background checks.** Secblitz can keep an eye on your PC from the notification area and tell you if something changes.
-- **History.** How your protection changed over time, every change made, and every app removed.
-- **Six languages** (English, Spanish, French, German, Portuguese, Italian), light and dark mode.
-
-Secblitz is not an antivirus. It makes sure the protection Windows already gives you is switched on and set up well, and it leaves third-party antivirus settings and PCs managed by work or school alone.
+Secblitz is not an antivirus. It turns on and configures the protection built into Windows, and it leaves third-party antivirus and PCs managed by work or school alone.
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) (8.6 MB) and run it. Secblitz asks for administrator permission when it opens, because reading and changing security settings needs it.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) (8.6 MB) and run it. Secblitz asks for administrator permission because it reads and changes system settings.
 
-The installer is not code-signed yet, so Windows may say the publisher is unknown. Choose **More info**, then **Run anyway**. To confirm you have the exact published file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
+The installer is not code-signed yet, so Windows may show an unknown publisher warning. Choose **More info**, then **Run anyway**. To check the file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
 ```powershell
 Get-FileHash .\secblitz-0.8.2-windows-x64-setup.exe -Algorithm SHA256
@@ -52,51 +49,14 @@ Get-FileHash .\secblitz-0.8.2-windows-x64-setup.exe -Algorithm SHA256
 
 Tested on Windows 11, 64-bit. Windows 10 is not tested.
 
-## Security
+## Privacy
 
-A tool that changes security settings has to be held to a higher bar than the settings it changes. What Secblitz promises:
+No account, no ads, no telemetry. Secblitz goes online to update itself (if updates are on), for actions you start, and to download block lists if web protection is on. See the [privacy policy](https://secblitz.lol/privacy.html).
 
-- **Nothing changes without a yes.** A check is read-only. Fixes run only for the exact list you approved, and settings that are a matter of taste are never pre-selected.
-- **A fixed menu, not a remote control.** Secblitz can only touch the settings compiled into it. It never runs commands, scripts or downloads chosen at run time, and anything passed between the elevated window and your normal account is a fixed request code, never a path or a command.
-- **Undo you can trust.** Original values are written to a local journal before every change, and History restores them newest first. It does not undo Windows updates, app installs or changes made outside Secblitz.
-- **Signed updates.** Updates are checked against an Ed25519 public key pinned in the app, plus the installer's exact size and hash. Older releases are refused, so no one can push you back to a version with known problems. Updates never close the app while you use it and never restart your PC.
-- **Your data stays on your PC.** No account, no ads, no telemetry. Secblitz goes online only to update itself, if you leave updates on, and for things you ask for. Web protection, if you turn it on, also downloads block lists. See the [privacy policy](https://secblitz.lol/privacy.html).
+## Security and contributing
 
-Known limits: the executables are not Authenticode-signed, so trust in the first download rests on HTTPS and the published checksum. Windows 10, Home and Pro editions and many hardware setups are not yet tested.
-
-### Reporting a vulnerability
-
-Please **don't open a public issue** for security problems. Email **[support@secblitz.lol](mailto:support@secblitz.lol)**, or use GitHub's private reporting: **Security → Report a vulnerability** on this repository. Include the Secblitz version, your Windows version and steps to reproduce. We aim to reply within a week, and to ship a fix or give a clear answer before anything is made public. Reports about the updater, the elevated process, undo, or anything that could let another user or program change your settings are especially welcome.
-
-Deeper reading: [security model](docs/security-model.md), [update contract](docs/update-contract.md), [security review](docs/SECURITY-REVIEW.md). These were written for earlier releases; the guarantees above are the current ones.
-
-## Contributing
-
-Bug reports, translations and fixes are all welcome. For anything bigger than a small fix, open an issue first so we can agree on the approach.
-
-**Build and test**
-
-```sh
-# Portable logic and tests, on any OS
-cargo test --locked --all-targets
-
-# The Windows app (from Linux, with a MinGW-w64 toolchain)
-cargo build --locked --release --target x86_64-pc-windows-gnu
-cargo clippy --locked --target x86_64-pc-windows-gnu --all-targets -- -D warnings
-```
-
-On Windows, `scripts/build-release.ps1` runs the same tests, lint and build with MSVC and compiles the installer. CI runs it on every push, along with a RustSec audit of `Cargo.lock`. Releases are built from source by GitHub Actions: see [docs/RELEASING.md](docs/RELEASING.md) and the [changelog](CHANGELOG.md).
-
-**House rules**
-
-- **No jargon.** The app is for people who don't know what a firewall profile is. No acronyms, no fear, no em dashes in user-facing text.
-- **Every check explains itself.** A new check needs its what it is / if it's off / if you turn it on text in [`src/explain/`](src/explain/).
-- **Every string in six languages.** Add translations to [`src/i18n.rs`](src/i18n.rs), or drop them in [`i18n-pending/`](i18n-pending/) if you only speak some of them.
-- **Reversible or read-only.** A change Secblitz makes must record what it replaced and be undoable, or be clearly labeled as one-way before the user says yes.
-- **Tests with the change.** Run the tests and clippy before you open a pull request, and say in the description what you tested on a real Windows PC.
-
-Maintainers and coding agents: the full working rules are in [AGENTS.md](AGENTS.md).
+To report a security problem, see [SECURITY.md](SECURITY.md). To build Secblitz or send a change, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE). Secblitz is free and stays free. Fonts, icons, libraries and block lists from others are credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). Fonts, icons, libraries and block lists from others are credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

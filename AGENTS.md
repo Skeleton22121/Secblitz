@@ -1,7 +1,7 @@
 # Working on Secblitz
 
 Instructions for maintainers and coding agents. Read this before changing
-anything. The README has the short version for first-time contributors.
+anything. CONTRIBUTING.md has the short version for first-time contributors.
 
 ## What Secblitz is
 
@@ -115,7 +115,7 @@ one per branch or worktree, and delete worktree build folders when done.
   generic "run this command as admin" path.
 - Do not weaken the update checks: signature, pinned key, version floor,
   expiry and hash all stay mandatory.
-- Report vulnerabilities privately (see the Security section of the README).
+- Report vulnerabilities privately (see `SECURITY.md`).
 
 ## Versions and releases
 
