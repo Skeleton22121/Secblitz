@@ -954,7 +954,7 @@ fn review_view<'a>(
         ctx.t(if state.checking {
             "Checking…"
         } else if chosen {
-            "Put back"
+            "Put back now"
         } else if undo {
             "Undo fixes"
         } else {

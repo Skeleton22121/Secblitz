@@ -466,8 +466,8 @@ impl App {
                 fixflow::open_undo_some(&mut self.fix, ids, &mut self.ctx)
             }
             Message::PutBackChosen => Task::batch([
-                Task::done(Message::Navigate(Page::Fixes)),
-                Task::done(Message::Fixes(fixes::Msg::FocusUndo)),
+                self.update(Message::Navigate(Page::Fixes)),
+                self.update(Message::Fixes(fixes::Msg::FocusUndo)),
             ]),
             Message::CloseRequested(id) => {
                 // A fix, undo, removal or repair must not be cut off halfway.

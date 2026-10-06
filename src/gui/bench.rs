@@ -452,8 +452,6 @@ fn the_history_row_opens_the_protection_page_on_the_changed_settings() {
     drop(app.update(Message::Navigate(Page::History)));
     assert_eq!(app.page, Page::History);
     drop(app.update(Message::PutBackChosen));
-    drop(app.update(Message::Navigate(Page::Fixes)));
-    drop(app.update(Message::Fixes(fixes::Msg::FocusUndo)));
     assert_eq!(app.page, Page::Fixes);
     assert!(fixes::open_protected(&app.fixes));
 }
