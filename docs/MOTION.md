@@ -268,3 +268,49 @@ requests its own redraws; `steps` is a row of 4 px segments for flows.
   only the hover layer redraws. One point shows a level line and the value.
 - `ring::ring` / `ring::ring_counting`: stroke `size * 0.045` (4..9 px),
   7 % track, round cap, arc and number ease together over `SLOW`.
+
+### Fixing and putting back (`hairline::shield_fill`, `hairline::rewind`)
+
+Two hairline drawings (toolkit in `widgets/hairline/`) replace the spinner
+beside the title and the 40 to 60 px result marks in the fix flow sheet
+(`pages/fixflow.rs`) and the "put everything back" sheet of Remove Secblitz
+(`pages/remove.rs`). Each sits centred at the top of its sheet in a fixed
+360 x 132 px canvas (the drawing itself about 138 x 132), the same widget in
+the same place in the working view and the result, so it carries straight on
+from one into the other and the layout never jumps. The lists under it scroll
+from 240 px (fix flow) and 168 px (what was left) so the sheet still fits a
+600 px window. The small per-row spinners and marks stay as they were. Each
+drawing asks for its own frames while it moves and none once it has settled.
+
+**Shield fills up** (applying fixes). An empty shield in grey fills with blue
+"water": a tinted pool with faint lines and a wavy surface, plus rising
+bubbles. The level follows the real share of fixes made (0.12 to 0.88 of the
+shield, full once the check runs), on a slow water-like spring; each fix that
+lands makes a small splash. Done: the water reaches the top and turns green,
+the outline draws in green, a tick draws in and a ring of ten short rays
+fades out (all within 2.4 s, then still). Partly done: the water settles at
+the share that went through and turns amber, the outline half draws in, an
+exclamation mark draws in over a plate-coloured gap. Failed: the water drains
+and turns red, the outline draws in red, a crack draws across and the shield
+shakes once. The shield turns a little towards the pointer (squash and skew
+mapped by hand, so lines stay 1 to 2.5 px), a click makes a ripple and a
+pulse, hovering names the state.
+
+**Rewind** (undo, and putting everything back). A clock whose hands spin
+backwards (minute 4.2 rad/s, hour 12 times slower, with a faint blue trail)
+inside a back arrow turning the other way at 70 degrees a second. When the
+work reports progress, the arrow is a grey track that fills in blue from its
+tail to its head. Done: everything eases (1.1 s, `DECELERATE`) back to ten
+past ten, the face and arrow turn green and a tick draws in on a small badge.
+Partly done: the hands stop short (about eight minutes), amber, with an
+exclamation mark. Failed: the hands stay, the face goes grey, the clock
+shakes once and a red cross draws in. Drag round the clock (the face or the
+arrow) to turn the hands yourself: they follow how far the pointer went
+round, so nothing jumps, and a finished clock eases back to its time when let
+go. A click spins it (faster while working, one more turn back afterwards, a
+shake when failed). Hovering the face names it.
+
+Colours: greys for lines and plates, accent only while working, then good,
+warn or bad for the result, cross-faded over 0.45 s. Reduced motion: the
+working loops show one still frame, results appear finished, no tilt, ripple,
+shake or pulse; hover names and dragging still work.

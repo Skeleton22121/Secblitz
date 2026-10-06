@@ -33,8 +33,10 @@ pub const UNITS: Size = Size::new(184.0, 176.0);
 /// Logical pixels per unit at the size pages show it (the prototype sheet
 /// showed its 320-unit box at 240 px).
 pub const SCALE: f32 = 0.75;
-/// The canvas size pages give it.
-pub const SIZE: Size = Size::new(UNITS.width * SCALE, UNITS.height * SCALE);
+/// The canvas size pages give it: the drawing's height, and wide enough
+/// that the hover name (up to about 330 px in German) fits beside it. The
+/// drawing sits centred in it.
+pub const SIZE: Size = Size::new(360.0, UNITS.height * SCALE);
 
 /// Centre of the shield, in units.
 const C: Point = pt(92.0, 88.0);
@@ -490,7 +492,7 @@ impl<M> canvas::Program<M> for ShieldFill {
                 let gap = phase(age, 0.8, 1.0, STANDARD);
                 if gap > 0.0 {
                     let knock = ink.knock(stage.len(9.0)).with_color(ink.plate.scale_alpha(gap));
-                    f.stroke(&mid.shape(&turn.shape(&excl_gap())), knock);
+                    f.stroke(&mid.shape(&turn.shape(excl_gap())), knock);
                 }
                 drawn(
                     &mut f,
@@ -635,8 +637,10 @@ mod tests {
         assert_eq!(s.hit(pt(C.x + 50.0, C.y + 20.0), &tilt), Some(Part::Shield));
         assert_eq!(s.hit(pt(4.0, 4.0), &tilt), None);
         // The whole drawing fits its box, rays included.
-        assert!(C.x - 88.0 >= 0.0 && C.x + 88.0 <= UNITS.width);
-        assert!(C.y - 84.0 >= 0.0 && C.y + 84.0 <= UNITS.height);
+        const {
+            assert!(C.x - 88.0 >= 0.0 && C.x + 88.0 <= UNITS.width);
+            assert!(C.y - 84.0 >= 0.0 && C.y + 84.0 <= UNITS.height);
+        }
     }
 
     #[test]

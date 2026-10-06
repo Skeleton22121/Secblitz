@@ -10,6 +10,7 @@ use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
 use crate::gui::pages::settings;
 use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::widgets::hairline::{self, rewind, Plate, Run};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use crate::i18n::Lang;
@@ -273,6 +274,8 @@ pub struct State {
     generation: u32,
     spin: anim::Clock,
     now: Instant,
+    /// When putting back began (the rewind drawing's clock while it works).
+    since: Instant,
 }
 
 impl Default for State {
@@ -283,6 +286,7 @@ impl Default for State {
             generation: 0,
             spin: anim::Clock::new(),
             now: Instant::now(),
+            since: Instant::now(),
         }
     }
 }
@@ -778,6 +782,7 @@ fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
             ctx.busy = true;
             state.now = Instant::now();
             state.spin = anim::Clock::at(state.now);
+            state.since = state.now;
             state.sheet = Sheet::Working {
                 steps: [StepState::Waiting; 5],
             };
@@ -800,7 +805,7 @@ fn remove(state: &mut State) -> Task<Message> {
 pub fn subscription(state: &State) -> Subscription<Message> {
     let moving = match &state.sheet {
         Sheet::Loading { .. } | Sheet::Working { .. } | Sheet::Leaving => true,
-        Sheet::Result { at, .. } => !anim::Clock::at(*at).done(anim::SLOW, state.now),
+        // The result's drawing asks for its own frames.
         _ => false,
     };
     if moving && anim::animating() {
@@ -993,6 +998,39 @@ fn choose_sheet<'a>(
         .into()
 }
 
+/// The rewind clock at the top of the working sheet and the result. The
+/// same widget in the same place in both, so it carries on from one into
+/// the other.
+fn rewind_art<'a>(
+    ctx: &Ctx,
+    p: Palette,
+    run: Run,
+    progress: Option<f32>,
+    changed: Instant,
+    now: Instant,
+) -> El<'a> {
+    let drawing = hairline::Rewind {
+        p,
+        plate: Plate::Surface,
+        run,
+        progress,
+        changed,
+        now: now.max(changed),
+        label: ctx.t(rewind::label_key(rewind::Undo::Everything, run)),
+    }
+    .view();
+    container(drawing).center_x(Length::Fill).into()
+}
+
+/// The drawing's state for the result: everything back, or some left.
+fn result_run(lines: &[String]) -> Run {
+    if lines.is_empty() {
+        Run::Done
+    } else {
+        Run::Partial
+    }
+}
+
 fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5]) -> El<'a> {
     let spin = state.spin.elapsed_at(state.now);
     let mut list = column![].spacing(theme::S3);
@@ -1033,6 +1071,7 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
     }
     let ratio = state.finished_steps() as f32 / Item::ALL.len() as f32;
     column![
+        rewind_art(ctx, p, Run::Working, Some(ratio), state.since, state.now),
         widgets::h2(p, ctx.t(WORKING_TITLE)),
         widgets::muted(p, ctx.t(WORKING_HELP)),
         progress::bar_eased(p, ratio, Tone::Brand),
@@ -1052,11 +1091,10 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
 }
 
 fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: Instant) -> El<'a> {
-    let t = anim::Clock::at(at).progress_at(anim::SLOW, state.now);
-    let mut col = column![].spacing(theme::S3);
+    let mut col = column![rewind_art(ctx, p, result_run(lines), None, at, state.now)]
+        .spacing(theme::S3);
     if lines.is_empty() {
         col = col
-            .push(anim::check_draw(40.0, p.good, t))
             .push(widgets::h2(p, ctx.t(RESULT_DONE_TITLE)))
             .push(widgets::muted(p, ctx.t(DELETE_EXE)));
     } else {
@@ -1065,7 +1103,6 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
             list = list.push(widgets::body(p, line.clone()));
         }
         col = col
-            .push(anim::warn_draw(40.0, p.warn, t))
             .push(widgets::h2(p, ctx.t(RESULT_LEFT_TITLE)))
             .push(widgets::muted(
                 p,
@@ -1081,7 +1118,8 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
                         .direction(widgets::controls::scrollbar())
                         .style(widgets::controls::scroll_style(p)),
                 )
-                .max_height(260.0)
+                // Room for the drawing above in the smallest window.
+                .max_height(168.0)
                 .style(move |_| container::Style {
                     background: Some(Background::Color(p.surface_alt)),
                     border: Border {
@@ -1398,6 +1436,12 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn rewind_ends_done_or_partly_done() {
+        assert_eq!(result_run(&[]), Run::Done);
+        assert_eq!(result_run(&["Web protection".into()]), Run::Partial);
     }
 
     #[test]
