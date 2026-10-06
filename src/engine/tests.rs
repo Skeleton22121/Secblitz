@@ -2260,3 +2260,4 @@ fn progress_steps_keep_their_stable_text() {
         assert_eq!(ProgressStep::Result(status.clone()).as_str(), status.as_str());
     }
 }
+include!("selective_undo_tests.rs");

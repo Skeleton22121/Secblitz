@@ -77,6 +77,15 @@ impl Transaction {
     pub(super) fn incomplete(&self) -> bool {
         !self.sealed || self.reverting || self.bytes != self.disk_bytes
     }
+
+    /// Every setting in a complete batch has been put back one at a time; only the closing record is missing.
+    pub(super) fn fully_restored(&self) -> bool {
+        self.sealed
+            && !self.reverting
+            && !self.reverted
+            && !self.entries.is_empty()
+            && self.entries.iter().all(|e| e.state == State::Restored)
+    }
 }
 
 // Do not deserialize before images directly as Value: Value silently accepts
@@ -205,7 +214,8 @@ struct Scan {
 
 /// Validate the whole active stack before any caller probes or replays.
 /// Only the newest active batch can be incomplete; originals must have
-/// exactly one active owner, even when each WAL is valid in isolation.
+/// exactly one owner that is not yet put back, even when each WAL is valid in
+/// isolation. A control put back inside a batch that is still active owns nothing.
 fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
     let active: Vec<_> = transactions.iter().filter(|t| !t.reverted).collect();
     let mut owners = HashSet::new();
@@ -214,7 +224,7 @@ fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
             i + 1 == active.len() || !tx.incomplete(),
             "Incomplete transaction precedes another active transaction"
         );
-        for entry in &tx.entries {
+        for entry in tx.entries.iter().filter(|e| e.state != State::Restored) {
             ensure!(
                 owners.insert(&entry.id),
                 "Duplicate active control owner; journal history is invalid"
@@ -341,7 +351,7 @@ impl Engine {
                 tx.reverting = true;
             }
             Record::RestorePending { id } => {
-                ensure!(tx.reverting, "Restore before revert start");
+                ensure!(tx.reverting || tx.sealed, "Restore before revert start");
                 let e = tx
                     .entries
                     .iter_mut()
@@ -351,7 +361,10 @@ impl Engine {
                 e.state = State::Restoring;
             }
             Record::Restored { id } => {
-                ensure!(tx.reverting, "Restore result before revert start");
+                ensure!(
+                    tx.reverting || tx.sealed,
+                    "Restore result before revert start"
+                );
                 let e = tx
                     .entries
                     .iter_mut()
@@ -362,7 +375,8 @@ impl Engine {
             }
             Record::Reverted => {
                 ensure!(
-                    tx.reverting && tx.entries.iter().all(|e| e.state == State::Restored),
+                    (tx.reverting || tx.sealed)
+                        && tx.entries.iter().all(|e| e.state == State::Restored),
                     "Premature revert completion"
                 );
                 tx.reverted = true;

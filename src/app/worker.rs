@@ -15,6 +15,11 @@ pub trait Session {
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> anyhow::Result<Report>;
     fn undo(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report>;
+    fn undo_selected(
+        &mut self,
+        ids: &[String],
+        progress: &mut dyn FnMut(Progress<'_>),
+    ) -> anyhow::Result<Report>;
     fn history(&mut self) -> anyhow::Result<Vec<String>>;
     fn can_start(&mut self, undo: bool) -> anyhow::Result<()>;
 }
@@ -46,6 +51,13 @@ impl Session for Engine {
     fn undo(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
         self.revert(progress)
     }
+    fn undo_selected(
+        &mut self,
+        ids: &[String],
+        progress: &mut dyn FnMut(Progress<'_>),
+    ) -> anyhow::Result<Report> {
+        self.revert_selected(ids, progress)
+    }
     fn history(&mut self) -> anyhow::Result<Vec<String>> {
         Engine::history(self)
     }
@@ -59,6 +71,7 @@ pub enum Job {
     Check,
     Apply(Vec<String>),
     Undo,
+    UndoSome(Vec<String>),
     History,
     Preflight { undo: bool },
 }
@@ -86,6 +99,8 @@ pub enum Event {
         verify: Outcome,
     },
     Undone {
+        /// The settings asked to be put back; empty when the last fixes were undone.
+        chosen: Vec<String>,
         result: Outcome,
         verify: Outcome,
     },
@@ -185,6 +200,12 @@ fn failed(job: &Job, message: &str) -> Event {
             verify: e(),
         },
         Job::Undo => Event::Undone {
+            chosen: Vec::new(),
+            result: e(),
+            verify: e(),
+        },
+        Job::UndoSome(ids) => Event::Undone {
+            chosen: ids.clone(),
             result: e(),
             verify: e(),
         },
@@ -265,7 +286,20 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
         Job::Undo => {
             let result = outcome(session.undo(&mut progress(Phase::Undoing)));
             let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
-            Event::Undone { result, verify }
+            Event::Undone {
+                chosen: Vec::new(),
+                result,
+                verify,
+            }
+        }
+        Job::UndoSome(ids) => {
+            let result = outcome(session.undo_selected(&ids, &mut progress(Phase::Undoing)));
+            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
+            Event::Undone {
+                chosen: ids,
+                result,
+                verify,
+            }
         }
         Job::History => Event::History(session.history().map_err(|e| format!("{e:#}"))),
         Job::Preflight { undo } => Event::Preflight {
@@ -338,6 +372,20 @@ mod tests {
             self.note("undo");
             progress(Progress::new("a", ProgressStep::Result(CheckStatus::Restored)));
             Ok(report("undo"))
+        }
+        fn undo_selected(
+            &mut self,
+            ids: &[String],
+            progress: &mut dyn FnMut(Progress<'_>),
+        ) -> anyhow::Result<Report> {
+            self.note(format!("undo_selected {}", ids.join(",")));
+            for id in ids {
+                progress(Progress::new(id, ProgressStep::Result(CheckStatus::Restored)));
+            }
+            if self.fail_apply {
+                anyhow::bail!("disk full");
+            }
+            Ok(report("undo_selected"))
         }
         fn history(&mut self) -> anyhow::Result<Vec<String>> {
             Ok(vec!["tx applied".into()])
@@ -468,10 +516,55 @@ mod tests {
         assert!(matches!(
             events.last(),
             Some(Event::Undone {
+                chosen,
                 result: Ok(_),
                 verify: Ok(_)
-            })
+            }) if chosen.is_empty()
         ));
+    }
+
+    #[test]
+    fn chosen_settings_are_put_back_then_verified() {
+        let (w, log) = worker(false, false);
+        let events = collect(&w, Job::UndoSome(vec!["a".into(), "b".into()]));
+        assert_eq!(*log.lock().unwrap(), vec!["undo_selected a,b", "audit"]);
+        let phases: Vec<Phase> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Progress { phase, .. } => Some(*phase),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            phases,
+            vec![Phase::Undoing, Phase::Undoing, Phase::Verifying]
+        );
+        match events.last() {
+            Some(Event::Undone {
+                chosen,
+                result: Ok(_),
+                verify: Ok(_),
+            }) => assert_eq!(chosen, &vec!["a".to_owned(), "b".to_owned()]),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_chosen_undo_is_still_verified() {
+        let (w, log) = worker(true, false);
+        match collect(&w, Job::UndoSome(vec!["a".into()])).last() {
+            Some(Event::Undone {
+                chosen,
+                result,
+                verify,
+            }) => {
+                assert_eq!(chosen, &vec!["a".to_owned()]);
+                assert!(result.as_ref().unwrap_err().contains("disk full"));
+                assert!(verify.is_ok());
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(*log.lock().unwrap(), vec!["undo_selected a", "audit"]);
     }
 
     #[test]
@@ -510,6 +603,7 @@ mod tests {
             Job::Check,
             Job::Apply(vec!["a".into()]),
             Job::Undo,
+            Job::UndoSome(vec!["a".into()]),
             Job::History,
             Job::Preflight { undo: true },
         ] {

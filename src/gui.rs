@@ -217,6 +217,9 @@ pub enum Message {
     Worker(worker::Event),
     ReviewFixes(Vec<String>),
     ReviewUndo,
+    ReviewUndoSome(Vec<String>),
+    /// Opens the Protection page on the settings Secblitz changed.
+    PutBackChosen,
     Escape,
     SearchEscape,
     Find,
@@ -459,6 +462,13 @@ impl App {
             Message::Worker(event) => self.on_worker(event),
             Message::ReviewFixes(ids) => fixflow::open_fixes(&mut self.fix, ids, &mut self.ctx),
             Message::ReviewUndo => fixflow::open_undo(&mut self.fix, &mut self.ctx),
+            Message::ReviewUndoSome(ids) => {
+                fixflow::open_undo_some(&mut self.fix, ids, &mut self.ctx)
+            }
+            Message::PutBackChosen => Task::batch([
+                self.update(Message::Navigate(Page::Fixes)),
+                self.update(Message::Fixes(fixes::Msg::FocusUndo)),
+            ]),
             Message::CloseRequested(id) => {
                 // A fix, undo, removal or repair must not be cut off halfway.
                 if self.ctx.busy {
@@ -557,7 +567,22 @@ impl App {
                 }
             }
             Message::Home(m) => home::update(&mut self.home, m, &mut self.ctx),
-            Message::Fixes(m) => fixes::update(&mut self.fixes, m, &mut self.ctx),
+            Message::Fixes(m) => {
+                let focus = matches!(m, fixes::Msg::FocusUndo);
+                let task = fixes::update(&mut self.fixes, m, &mut self.ctx);
+                if focus {
+                    // The group is the last one on the page.
+                    Task::batch([
+                        task,
+                        iced::widget::operation::snap_to(
+                            PAGE_SCROLL,
+                            iced::widget::operation::RelativeOffset::END,
+                        ),
+                    ])
+                } else {
+                    task
+                }
+            }
             Message::Fix(m) => fixflow::update(&mut self.fix, m, &mut self.ctx),
             Message::Debloat(m) => {
                 if let debloat::Msg::Scanned(g, _) = &m {
@@ -654,13 +679,26 @@ impl App {
                 };
                 self.assessed(verify, app::history::Kind::Fix, n);
             }
-            E::Undone { result, verify } => {
+            E::Undone {
+                chosen,
+                result,
+                verify,
+            } => {
                 self.ctx.checking = None;
+                let back = |o: &&secblitz::engine::Outcome| {
+                    o.status == CheckStatus::Restored
+                        || (!chosen.is_empty() && o.status == CheckStatus::Unchanged)
+                };
                 let n = match result {
-                    Ok(r) => r.results.iter().filter(|o| o.status == CheckStatus::Restored).count(),
+                    Ok(r) => r.results.iter().filter(back).count(),
                     Err(_) => 0,
                 };
-                self.assessed(verify, app::history::Kind::Undo, n);
+                let kind = if chosen.is_empty() {
+                    app::history::Kind::Undo
+                } else {
+                    app::history::Kind::UndoSome
+                };
+                self.assessed(verify, kind, n);
             }
             E::History(_) | E::Preflight { .. } => {}
         }

@@ -38,8 +38,20 @@ impl Engine {
         transactions: &[Transaction],
     ) -> bool {
         transactions.iter().any(|other| {
-            other.name != tx.name && !other.reverted && other.entries.iter().any(|e| e.id == id)
+            other.name != tx.name
+                && !other.reverted
+                && other
+                    .entries
+                    .iter()
+                    .any(|e| e.id == id && e.state != State::Restored)
         })
+    }
+
+    /// Whether no later batch is still active, so this one may take any new record.
+    fn is_newest_active(tx: &Transaction, transactions: &[Transaction]) -> bool {
+        !transactions
+            .iter()
+            .any(|later| later.sequence > tx.sequence && !later.reverted)
     }
 
     // Only strict canonical prefixes of legal next records qualify. In
@@ -75,17 +87,28 @@ impl Engine {
         tx: &Transaction,
         transactions: &[Transaction],
     ) -> Result<Vec<Record>> {
-        let mut candidates = vec![Record::Sealed, Record::Reverting, Record::Reverted];
+        let newest = Self::is_newest_active(tx, transactions);
+        // An older batch can only have settings put back, never grow or start reverting.
+        let mut candidates = if newest {
+            vec![Record::Sealed, Record::Reverting, Record::Reverted]
+        } else {
+            vec![Record::Reverted]
+        };
         for entry in &tx.entries {
-            candidates.push(Record::Applied {
-                id: entry.id.clone(),
-            });
+            if newest {
+                candidates.push(Record::Applied {
+                    id: entry.id.clone(),
+                });
+            }
             candidates.push(Record::RestorePending {
                 id: entry.id.clone(),
             });
             candidates.push(Record::Restored {
                 id: entry.id.clone(),
             });
+        }
+        if !newest {
+            return Ok(candidates);
         }
         for control in &self.controls {
             if Self::owned_elsewhere(tx, &control.id, transactions) {
@@ -151,11 +174,9 @@ impl Engine {
         tx: &Transaction,
         transactions: &[Transaction],
     ) -> Result<()> {
+        let newest = Self::is_newest_active(tx, transactions);
         ensure!(
-            !tx.reverted
-                && !transactions
-                    .iter()
-                    .any(|later| later.sequence > tx.sequence && !later.reverted),
+            !tx.reverted && (newest || (tx.sealed && !tx.reverting)),
             "Unpublished append is not newest active transaction"
         );
         let prefix_len = bytes.len().min(tx.bytes.len());
@@ -179,11 +200,15 @@ impl Engine {
             }
             let next = self.decode(stem, None, complete)?;
             ensure!(
-                next.entries.iter().all(|entry| !Self::owned_elsewhere(
-                    tx,
-                    &entry.id,
-                    transactions
-                )),
+                newest
+                    || (next.reverting == tx.reverting
+                        && next.sealed == tx.sealed
+                        && next.entries.len() == tx.entries.len()),
+                "Unpublished append is not newest active transaction"
+            );
+            ensure!(
+                next.entries.iter().all(|entry| entry.state == State::Restored
+                    || !Self::owned_elsewhere(tx, &entry.id, transactions)),
                 "Unpublished record duplicates an active control owner"
             );
             return Ok(());

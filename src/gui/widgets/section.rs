@@ -508,6 +508,32 @@ pub fn collapsible_toned<'a>(
     on_toggle: Message,
     body: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    collapsible_group(p, title, summary, open, on_toggle, None, body)
+}
+
+/// A collapsible group with controls beside its heading that stay usable while it is closed.
+pub fn collapsible_with<'a>(
+    p: Palette,
+    title: impl Into<String>,
+    summary: Option<String>,
+    open: bool,
+    on_toggle: Message,
+    trailing: Option<Element<'a, Message>>,
+    body: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let summary = summary.map(|s| (s, p.text_muted));
+    collapsible_group(p, title, summary, open, on_toggle, trailing, body)
+}
+
+fn collapsible_group<'a>(
+    p: Palette,
+    title: impl Into<String>,
+    summary: Option<(String, Color)>,
+    open: bool,
+    on_toggle: Message,
+    trailing: Option<Element<'a, Message>>,
+    body: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
     let mut head = row![
         row![
             container(chevron(16.0, p.text_muted, open)).center_x(theme::ICON_ROW),
@@ -559,6 +585,13 @@ pub fn collapsible_toned<'a>(
             snap: true,
         }),
     );
+    let header: Element<'a, Message> = match trailing {
+        Some(t) => row![header, t]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into(),
+        None => header,
+    };
     let mut c = column![header].spacing(theme::S1).width(Length::Fill);
     if open {
         c = c.push(body.into());

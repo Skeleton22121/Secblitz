@@ -1,0 +1,4 @@
+{"kind":"header","schema":1,"machine":"machine-a","transaction":"00000000000000000002-3e8fab93-c5b9-4671-9e58-18da2e8ec99d","sequence":2}
+{"kind":"prepare","id":"firewall.private.inbound","before":"Allow"}
+{"kind":"applied","id":"firewall.private.inbound"}
+{"kind":"sealed"}

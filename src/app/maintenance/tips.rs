@@ -713,6 +713,7 @@ mod tests {
             }],
             findings: vec![],
             readiness: None,
+            undo_next: Vec::new(),
         }
     }
 
