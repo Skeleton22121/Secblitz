@@ -34,6 +34,7 @@ pub enum Request {
     OpenBackup,
     OpenStorage,
     OpenInstalledApps,
+    OpenTaskbar,
     OpenReportProblem,
     OpenSuggestFeature,
     OpenPrivacyPolicy,
@@ -158,7 +159,8 @@ impl Request {
             | Request::OpenWifi
             | Request::OpenBackup
             | Request::OpenStorage
-            | Request::OpenInstalledApps => false,
+            | Request::OpenInstalledApps
+            | Request::OpenTaskbar => false,
         }
     }
 
@@ -193,6 +195,7 @@ impl Request {
             Request::OpenBackup => Action::OpenBackup,
             Request::OpenStorage => Action::OpenStorage,
             Request::OpenInstalledApps => Action::OpenInstalledApps,
+            Request::OpenTaskbar => Action::OpenTaskbar,
             Request::OpenReportProblem => Action::OpenReportProblem,
             Request::OpenSuggestFeature => Action::OpenSuggestFeature,
             Request::OpenPrivacyPolicy => Action::OpenPrivacyPolicy,
@@ -242,6 +245,7 @@ impl Request {
             Request::OpenSuggestFeature => (35, 0),
             Request::AppInstallerStatus => (36, 0),
             Request::OpenPrivacyPolicy => (37, 0),
+            Request::OpenTaskbar => (38, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -299,6 +303,7 @@ impl Request {
             35 => Request::OpenSuggestFeature,
             36 => Request::AppInstallerStatus,
             37 => Request::OpenPrivacyPolicy,
+            38 => Request::OpenTaskbar,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -623,6 +628,7 @@ mod tests {
             Request::OpenBackup,
             Request::OpenStorage,
             Request::OpenInstalledApps,
+            Request::OpenTaskbar,
             Request::OpenReportProblem,
             Request::OpenSuggestFeature,
             Request::OpenPrivacyPolicy,
@@ -712,10 +718,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 38, 39, 100, 255] {
+        for kind in [0u8, 39, 40, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=37).chain([17]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
