@@ -9,3 +9,4 @@
 video/node_modules/
 video/out/
 __pycache__/
+/deploy/node_modules/

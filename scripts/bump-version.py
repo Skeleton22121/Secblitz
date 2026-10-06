@@ -5,11 +5,17 @@
 
 Updates Cargo.toml, the secblitz entry in Cargo.lock, assets/secblitz.rc (both
 numeric and text versions), assets/secblitz.manifest, and moves the
-"Unreleased" section of CHANGELOG.md into a new dated section. With --site it
-also moves the download links and version text in README.md and
-website/index.html (only do that when the new setup is really published).
-With --site-only it changes just those two files, for a version that Cargo.toml
-already has (the step after the release is published).
+"Unreleased" section of CHANGELOG.md into a new dated section. It also moves
+every version string and download link on the website (website/index.html and
+any other text file under website/, including structured data such as
+softwareVersion) and in README.md to the new version, resets the checksum on the
+page to a placeholder (the real one is written at deploy time by
+finalize-site.py) and adds the version being replaced to the HISTORICAL
+download list in scripts/stage-pages.py. Nothing reaches the live website until
+publish-website.yml deploys the published release.
+With --site-only it changes just the website files and README.md, for a version
+that Cargo.toml already has. With --check-site it changes nothing and fails
+when the website or README still show any other version (release.yml runs it).
 
 The new version must be greater than the current one. One exception: when
 CHANGELOG.md has "## [X] - Unreleased" for the version already in Cargo.toml
@@ -102,19 +108,79 @@ def site_version(readme):
     return m.group(1) if m else None
 
 
-def bump_site_text(text, old, new, rel):
-    """Download links, 'Version X' text and the version badge, nothing else."""
-    n_total = 0
-    for pat, rep in [
+SITE_SUFFIXES = {".html", ".js", ".json", ".xml", ".txt", ".webmanifest", ".md"}
+SHA_PLACEHOLDER = "0" * 64
+SHA_ELEMENT = re.compile(r'(<code id="sha">)[0-9a-f]{64}(</code>)')
+
+
+def site_text_files(root):
+    """Text files whose version strings move with a release (README plus website/)."""
+    found = ["README.md"]
+    base = root / "website"
+    if base.is_dir():
+        for path in sorted(base.rglob("*")):
+            rel = path.relative_to(root).as_posix()
+            if (path.is_file() and not path.is_symlink() and path.suffix.lower() in SITE_SUFFIXES
+                    and not rel.startswith(("website/releases/", "website/assets/"))):
+                found.append(rel)
+    return found
+
+
+def site_patterns(old, new):
+    return [
         (r"secblitz-" + re.escape(old) + r"-windows-x64", "secblitz-" + new + "-windows-x64"),
         (r"Version " + re.escape(old) + r"\b", "Version " + new),
         (r"version-" + re.escape(old) + r"-", "version-" + new + "-"),
-    ]:
+        # Structured data (JSON-LD or JSON files).
+        (r'("softwareVersion"\s*:\s*")' + re.escape(old) + '"', r'\g<1>' + new + '"'),
+    ]
+
+
+def bump_site_text(text, old, new, rel, required=True):
+    """Download links, 'Version X' text, the version badge and structured data, nothing else."""
+    n_total = 0
+    for pat, rep in site_patterns(old, new):
         text, n = re.subn(pat, rep, text)
         n_total += n
-    if n_total == 0:
+    if rel.endswith(".html"):
+        text = SHA_ELEMENT.sub(lambda m: m[1] + SHA_PLACEHOLDER + m[2], text)
+    if n_total == 0 and required:
         raise BumpError(f"{rel}: no mention of version {old} found.")
     return text
+
+
+def check_site(root, version):
+    """Return a list of problems: any version on the site or README other than `version`."""
+    problems = []
+    seen_download = False
+    for rel in site_text_files(root):
+        text = read(root, rel)
+        found = []
+        for pat in (r"secblitz-(" + VERSION.pattern + r")-windows-x64", r"Version (" + VERSION.pattern + r")\b",
+                    r"version-(" + VERSION.pattern + r")-", r'"softwareVersion"\s*:\s*"(' + VERSION.pattern + r')"'):
+            found += [m.group(1) for m in re.finditer(pat, text)]
+        seen_download = seen_download or bool(re.search(r"downloads/secblitz-" + VERSION.pattern + r"-windows-x64-setup\.exe", text))
+        for shown in sorted(set(found) - {version}):
+            problems.append(f"{rel} still shows version {shown}, the release is {version}.")
+    if not seen_download:
+        problems.append("No setup download link found on the website or in README.md.")
+    index = read(root, "website/index.html")
+    if len(SHA_ELEMENT.findall(index)) != 1:
+        problems.append('website/index.html must have exactly one <code id="sha"> with a 64-digit checksum.')
+    if not re.search(r"downloads/secblitz-" + re.escape(version) + r"-windows-x64-setup\.exe", index):
+        problems.append(f"website/index.html does not link the {version} setup.")
+    return problems
+
+
+def add_historical(text, old):
+    """Add the replaced version's two downloads to HISTORICAL in stage-pages.py."""
+    setup, portable = f"secblitz-{old}-windows-x64-setup.exe", f"secblitz-{old}-windows-x64.exe"
+    if setup in text and portable in text:
+        return text
+    m = re.search(r"(HISTORICAL = \(\n)(.*?)(\n\)\n)", text, re.S)
+    if not m:
+        raise BumpError("scripts/stage-pages.py: HISTORICAL list not found.")
+    return text[:m.end(2)] + f'\n    "{setup}", "{portable}",' + text[m.end(2):]
 
 
 HEADING = re.compile(r"^## \[([^\]]+)\](?: - (.*))?[ \t]*$", re.M)
@@ -180,16 +246,27 @@ def plan(root, new, today, site=False, allow_empty=False, site_only=False):
         changes["Cargo.lock"] = bump_cargo_lock(read(root, "Cargo.lock"), old, new)
         changes["assets/secblitz.rc"] = bump_rc(read(root, "assets/secblitz.rc"), old, new)
         changes["assets/secblitz.manifest"] = bump_manifest(read(root, "assets/secblitz.manifest"), old, new)
-    if site:
-        readme = read(root, "README.md")
-        shown = site_version(readme)
-        if not shown:
-            raise BumpError("README.md has no setup download link to update.")
-        if parse(shown) >= new_t:
-            raise BumpError(f"The site already shows {shown}, which is not older than {new}.")
-        changes["README.md"] = bump_site_text(readme, shown, new, "README.md")
-        changes["website/index.html"] = bump_site_text(read(root, "website/index.html"), shown, new, "website/index.html")
-        warnings.append("The installer size text (for example '8.2 MB') in README.md and website/index.html is not updated. Check it.")
+    index = read(root, "website/index.html")
+    shown = site_version(index)
+    if not shown:
+        raise BumpError("website/index.html has no setup download link to update.")
+    if parse(shown) > new_t:
+        raise BumpError(f"The website already shows {shown}, which is newer than {new}.")
+    core = ("README.md", "website/index.html")
+    for rel in site_text_files(root):
+        text = read(root, rel)
+        own = site_version(text)
+        if own is None and rel in core:
+            raise BumpError(f"{rel} has no setup download link to update.")
+        if own is not None and parse(own) > new_t:
+            raise BumpError(f"{rel} already shows {own}, which is newer than {new}.")
+        if own is not None and parse(own) == new_t:
+            continue
+        changes[rel] = bump_site_text(text, own or shown, new, rel, required=rel in core)
+    if parse(shown) < new_t:
+        changes["scripts/stage-pages.py"] = add_historical(read(root, "scripts/stage-pages.py"), shown)
+        warnings.append("The size text in README.md (for example '8.2 MB') is not updated. Check it. "
+                        "The website's size and checksum are written at deploy time.")
     return {k: v for k, v in changes.items() if v != read(root, k)}, warnings, old
 
 
@@ -218,9 +295,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Bump the Secblitz version everywhere.")
     ap.add_argument("version", help="new version, for example 0.8.1")
     ap.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
-    ap.add_argument("--site", action="store_true", help="also update README.md and website/index.html download links")
+    ap.add_argument("--site", action="store_true", help="kept for old habits: the website and README always move with the version now")
     ap.add_argument("--site-only", action="store_true",
-                    help="only move the README and website download links to the version already in Cargo.toml")
+                    help="only move the README and website to the version already in Cargo.toml")
+    ap.add_argument("--check-site", action="store_true",
+                    help="write nothing; fail when the website or README show a version other than the one given")
     ap.add_argument("--allow-empty", action="store_true", help="allow an empty Unreleased section")
     ap.add_argument("--date", help="release date YYYY-MM-DD (default: today, UTC)")
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]), help=argparse.SUPPRESS)
@@ -229,6 +308,14 @@ def main(argv=None):
     try:
         datetime.date.fromisoformat(today)
         root = Path(args.root)
+        if args.check_site:
+            parse(args.version)
+            problems = check_site(root, args.version)
+            for problem in problems:
+                print(f"error: {problem}", file=sys.stderr)
+            if not problems:
+                print(f"The website and README match version {args.version}.")
+            return 1 if problems else 0
         changes, warnings, old = plan(root, args.version, today, args.site, args.allow_empty, args.site_only)
         print(f"Secblitz {old} -> {args.version} ({today})")
         for rel in sorted(changes):

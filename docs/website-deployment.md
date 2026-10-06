@@ -1,5 +1,7 @@
 # Secblitz website
 
+> Since 0.8.0 the website is deployed by `.github/workflows/publish-website.yml` after you publish a release, with the checks described in `docs/RELEASING.md`. The notes below are the history of the earlier manual deploys and the emergency manual path.
+
 ## Published 0.7.0 release
 
 Deployed from `dist/pages` (35 allowlisted files) to production on 2026-10-05. Deployment: https://b5736d75.secblitz.pages.dev. After upload, https://secblitz.lol and the legacy https://beacons.lol feed returned the exact signed local bytes with `Cache-Control: no-store`, and `prepare-pages.py --verify-feed` accepted both feeds plus the downloaded installer against the pinned key. The live installer, portable binary and hero video matched the hashes below; the homepage links and displayed checksum identify the 0.7.0 installer. Downloads are served with `max-age=14400` (a zone browser-cache setting overriding `_headers`); the versioned filenames make this harmless.

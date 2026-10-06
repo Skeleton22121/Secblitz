@@ -2,30 +2,38 @@ name: Release
 
 # Builds Secblitz from source for a version tag and prepares a DRAFT GitHub
 # Release. Nothing is published to users by this workflow: the owner reviews
-# the draft, signs the update manifest offline and publishes by hand
-# (docs/RELEASING.md).
+# the draft, signs the update feed offline, attaches it and publishes by hand
+# (docs/RELEASING.md). Publishing starts publish-website.yml.
 #
 # The update-feed signing key is never used here. It stays offline.
 #
-# Signing (SignPath) is off until the repository variable SIGNPATH_ENABLED is
-# "true". Order: build exe -> sign exe -> pack setup from the signed exe ->
-# sign setup -> attest -> draft release.
+# Order: check tag, website and notes -> build exe (tests first) -> sign exe
+# (SignPath, optional) -> pack setup -> sign setup (optional) -> test the
+# installer -> checksums and build attestations -> draft release. A broken
+# installer stops the run before anything is drafted.
+#
+# The run is always on the tag itself (push of the tag, or started by
+# tag-release.yml with --ref <tag>), so the workflow code, the built source and
+# the commit named in the attestations are the same commit.
 on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  # To rebuild by hand: Actions, Release, Run workflow. Choose the TAG (not a
+  # branch) under "Use workflow from" and type the same tag below.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build, for example v0.8.0"
+        description: "Tag to build, for example v0.8.0. Must be the same tag as chosen under 'Use workflow from'."
         required: true
         type: string
 
-permissions:
-  contents: read
+# No permission by default. Every job asks for exactly what it needs.
+permissions: {}
 
+# One release build at a time. A second one waits instead of running beside it.
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 env:
@@ -33,7 +41,7 @@ env:
 
 jobs:
   verify:
-    name: Check tag, version and release notes
+    name: Check tag, version, website and release notes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -45,17 +53,30 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Install the Python package the release tests need
-        run: python3 -m pip install --disable-pip-version-check "cryptography==46.0.5"
-      - name: Check the tag against Cargo.toml and the changelog
-        id: check
-        env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+      - name: Install the Python packages the release tests need (hash-pinned)
         run: |
           set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --disable-pip-version-check --require-hashes --only-binary=:all: -r scripts/requirements-release.txt
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Check the tag against Cargo.toml, the changelog and the website
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="$REF_NAME"
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::Run the release on a tag. Choose the tag under 'Use workflow from'."; exit 1
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_TAG" != "$TAG" ]; then
+            echo "::error::The tag you typed does not match the tag chosen under 'Use workflow from'."; exit 1
+          fi
           if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH."; exit 1
           fi
@@ -70,6 +91,11 @@ jobs:
           fi
           # Fails when the changelog has no dated section with entries.
           python3 scripts/release-notes.py "$version" > release-notes.md
+          # Fails when the website or README show any other version, or lack
+          # the download link or the checksum element.
+          python3 scripts/bump-version.py "$version" --check-site
+          # The pinned hashes of the older downloads must cover the whole list.
+          python3 scripts/historical-downloads.py check
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -100,9 +126,10 @@ jobs:
           ref: ${{ needs.verify.outputs.sha }}
           persist-credentials: false
       - name: Initialize x64 MSVC tools
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
+      # No build or download cache here: a poisoned cache must never reach a release.
       - name: Install the pinned Rust toolchain
         shell: pwsh
         run: |
@@ -110,12 +137,6 @@ jobs:
           rustup toolchain install $channel --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           rustc --version --verbose
-      - name: Cache cargo downloads
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # Only downloaded crates are cached, never compiled output, so the
-          # release binary is always built fresh from source.
-          cache-targets: "false"
       - name: Test, lint and build the exe
         shell: pwsh
         run: ./scripts/build-release.ps1 -Stage Exe
@@ -135,9 +156,11 @@ jobs:
     if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The SignPath token lives in this environment only (docs/RELEASING.md).
+    environment: signing
     permissions:
       contents: read
-      actions: read
+      actions: read   # SignPath reads the uploaded artifact from this run
     steps:
       - name: Submit the exe to SignPath
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
@@ -219,9 +242,10 @@ jobs:
     if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: signing
     permissions:
       contents: read
-      actions: read
+      actions: read   # SignPath reads the uploaded artifact from this run
     steps:
       - name: Submit the setup to SignPath
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
@@ -242,17 +266,69 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  test-installer:
+    name: Test the final setup (exit codes, upgrade, uninstall)
+    needs: [verify, build-setup, sign-setup]
+    # The tests run against the very bytes that will be released: the signed
+    # setup when signing is on. A failure here stops the release before any
+    # attestation or draft exists.
+    if: ${{ !cancelled() && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') }}
+    # The same runner image the installer harnesses were proven on (windows.yml).
+    runs-on: windows-2022
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Get the final setup (signed when signing is on)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ vars.SIGNPATH_ENABLED == 'true' && 'setup-signed' || 'setup-unsigned' }}
+          path: dist
+      - name: Check the Inno Setup compiler is on the runner
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw 'Inno Setup 6 is not installed on this runner image, so the installer tests cannot run. Nothing was released.'
+          }
+          Write-Host (Get-Item -LiteralPath $iscc).VersionInfo.FileVersion
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          foreach ($file in @('scripts/build-release.ps1', 'installer/maintenance.ps1', 'installer/test-maintenance.ps1', 'installer/test-lifecycle.ps1', 'installer/test-setup-exit.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+      - name: Test installer path and ACL validation (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./installer/test-maintenance.ps1
+      - name: Test setup failure exit codes with isolated harnesses
+        shell: powershell
+        run: ./installer/test-setup-exit.ps1 -IsccPath "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+      - name: Test running monitor upgrade and uninstall preservation on the final setup
+        shell: powershell
+        run: |
+          $setup = @(Get-ChildItem dist/secblitz-*-windows-x64-setup.exe)
+          if ($setup.Count -ne 1) { throw 'Expected exactly one built installer.' }
+          ./installer/test-lifecycle.ps1 -SetupPath $setup[0].FullName
+
   attest:
     name: Checksums and build provenance
-    needs: [verify, build-exe, build-setup, sign-exe, sign-setup]
-    if: ${{ !cancelled() && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') }}
+    needs: [verify, build-exe, build-setup, sign-exe, sign-setup, test-installer]
+    if: ${{ !cancelled() && needs.test-installer.result == 'success' && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Only this job may mint attestations. It cannot write to the repository.
     permissions:
       contents: read
-      id-token: write
-      attestations: write
+      id-token: write       # sign the provenance with the run's OIDC identity
+      attestations: write   # store the provenance attestations
     steps:
       - name: Get the exe (signed when signing is on)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -298,7 +374,7 @@ jobs:
     timeout-minutes: 15
     # The only job that can write to the repository.
     permissions:
-      contents: write
+      contents: write   # create the draft release and attach the files
     steps:
       - name: Get the release files
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -318,8 +394,8 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          # Always a draft. The owner signs the update manifest offline, checks
-          # the files and publishes by hand.
+          # Always a draft. The owner checks the files, signs the update feed
+          # offline, attaches stable.json and publishes by hand.
           gh release create "$TAG" \
             --draft --verify-tag \
             --title "Secblitz $VERSION" \

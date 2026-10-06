@@ -1,0 +1,36 @@
+# Weekly update pull requests. Review each one: the pinned commit SHAs of
+# actions are updated together with the version comment next to them.
+# The cooldown skips releases younger than a week, so a poisoned release that
+# is pulled quickly never reaches a pull request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "CI"
+
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "Dependencies"
+
+  # The pinned Cloudflare deploy tool (deploy/package.json and package-lock.json).
+  - package-ecosystem: npm
+    directory: "/deploy"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "Deploy tool"

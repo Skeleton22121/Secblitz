@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for bump-version.py and release-notes.py on a temporary copy of the repo files."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 from pathlib import Path
@@ -11,7 +12,9 @@ import unittest
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 FILES = ["Cargo.toml", "Cargo.lock", "assets/secblitz.rc", "assets/secblitz.manifest",
-         "CHANGELOG.md", "README.md", "website/index.html"]
+         "CHANGELOG.md", "README.md", "website/index.html", "scripts/stage-pages.py"]
+# Written by setUp: structured data with a version, and the signed feed that must never be touched.
+EXTRA = ["website/structured.json", "website/releases/stable.json"]
 
 
 def load(name):
@@ -23,6 +26,9 @@ def load(name):
 
 bump = load("bump-version")
 notes = load("release-notes")
+finalize = load("finalize-site")
+live = load("verify-live-site")
+historical = load("historical-downloads")
 
 
 def run(*args):
@@ -47,12 +53,16 @@ class BumpTests(unittest.TestCase):
             "## [0.7.0] - 2026-10-05\n\n### Added\n- Seven.\n\n- More seven.\n\n"
             "## [0.6.1] - 2026-10-04\n\n### Changed\n- Six one.\n", encoding="utf-8")
         self.shown = bump.site_version((self.root / "README.md").read_text(encoding="utf-8"))
+        (self.root / "website/releases").mkdir(parents=True, exist_ok=True)
+        (self.root / "website/structured.json").write_text(
+            '{"@type": "SoftwareApplication", "softwareVersion": "%s"}\n' % self.shown, encoding="utf-8")
+        shutil.copyfile(REPO / "website/releases/stable.json", self.root / "website/releases/stable.json")
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def snapshot(self):
-        return {rel: (self.root / rel).read_bytes() for rel in FILES}
+        return {rel: (self.root / rel).read_bytes() for rel in FILES + EXTRA}
 
     def bump(self, version, *extra):
         return run(version, "--root", str(self.root), "--date", "2030-01-02", *extra)
@@ -78,9 +88,14 @@ class BumpTests(unittest.TestCase):
             b = after[rel].decode().splitlines()
             self.assertEqual(len(a), len(b))
             self.assertLessEqual(sum(x != y for x, y in zip(a, b)), 4)
-        # Site files only change with --site.
-        self.assertEqual(before["README.md"], after["README.md"])
-        self.assertEqual(before["website/index.html"], after["website/index.html"])
+        # The website moves with the version too, but the signed feed never does.
+        page = after["website/index.html"].decode()
+        self.assertIn("downloads/secblitz-9.8.7-windows-x64-setup.exe", page)
+        self.assertNotIn(f"secblitz-{self.shown}-windows", page + after["README.md"].decode())
+        self.assertIn('"softwareVersion": "9.8.7"', after["website/structured.json"].decode())
+        self.assertEqual(before["website/releases/stable.json"], after["website/releases/stable.json"])
+        self.assertEqual(bump.check_site(self.root, "9.8.7"), [])
+        self.assertTrue(bump.check_site(self.root, self.shown))
 
     def test_changelog_moves_unreleased_into_dated_section(self):
         self.assertEqual(self.bump("9.8.7")[0], 0)
@@ -156,6 +171,13 @@ class BumpTests(unittest.TestCase):
         self.assertIn("version-9.8.7-", readme)
         self.assertIn("Version 9.8.7", page)
         self.assertNotIn(f"secblitz-{self.shown}-windows", readme + page)
+        self.assertIn('"softwareVersion": "9.8.7"', (self.root / "website/structured.json").read_text())
+        # The checksum on the page is reset: the real one is written at deploy time.
+        self.assertIn('<code id="sha">' + "0" * 64 + "</code>", page)
+        # The replaced version stays downloadable.
+        stage = (self.root / "scripts/stage-pages.py").read_text()
+        self.assertIn(f'"secblitz-{self.shown}-windows-x64-setup.exe", "secblitz-{self.shown}-windows-x64.exe",', stage)
+        self.assertEqual(stage.count(f"secblitz-{self.shown}-windows-x64-setup.exe"), 1)
 
     def test_site_only_changes_just_the_site_files(self):
         before = self.snapshot()
@@ -164,9 +186,84 @@ class BumpTests(unittest.TestCase):
         code, out, err = self.bump(self.old, "--site-only")
         self.assertEqual(code, 0, err)
         after = self.snapshot()
-        changed = {rel for rel in FILES if before[rel] != after[rel]}
-        self.assertEqual(changed, {"README.md", "website/index.html"})
+        changed = {rel for rel in FILES + EXTRA if before[rel] != after[rel]}
+        self.assertEqual(changed, {"README.md", "website/index.html", "scripts/stage-pages.py", "website/structured.json"})
         self.assertIn(f"downloads/secblitz-{self.old}-windows-x64-setup.exe", after["README.md"].decode())
+        self.assertEqual(bump.check_site(self.root, self.old), [])
+
+    def test_site_check_finds_stale_versions_and_missing_pieces(self):
+        self.assertEqual(bump.check_site(self.root, self.shown), [])
+        self.assertTrue(any("still shows" in p for p in bump.check_site(self.root, "9.8.7")))
+        code, out, err = run("9.8.7", "--root", str(self.root), "--check-site")
+        self.assertEqual(code, 1)
+        self.assertIn("still shows version", err)
+        page = self.root / "website/index.html"
+        original = page.read_text()
+        for broken in (original.replace('<code id="sha">', '<code id="other">'),
+                       original + '<script type="application/ld+json">{"softwareVersion": "0.0.1"}</script>'):
+            page.write_text(broken)
+            self.assertTrue(bump.check_site(self.root, self.shown))
+        page.write_text(original)
+        (self.root / "website/structured.json").write_text('{"softwareVersion": "0.0.1"}')
+        self.assertTrue(any("structured.json" in p for p in bump.check_site(self.root, self.shown)))
+        # The signed feed is data for the updater and is not scanned.
+        (self.root / "website/structured.json").write_text("{}")
+        (self.root / "website/releases/stable.json").write_text('{"softwareVersion": "0.0.1"}')
+        self.assertEqual(bump.check_site(self.root, self.shown), [])
+
+    def test_finalize_writes_checksum_and_size_into_the_staged_page(self):
+        setup = self.root / f"secblitz-{self.shown}-windows-x64-setup.exe"
+        setup.write_bytes(b"MZ" + b"x" * 8_127_998)
+        site = self.root / "website"
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = finalize.main(["--site", str(site), "--version", self.shown, "--setup", str(setup)])
+        self.assertEqual(code, 0, err.getvalue())
+        page = (site / "index.html").read_text()
+        self.assertIn('<code id="sha">' + hashlib.sha256(setup.read_bytes()).hexdigest() + "</code>", page)
+        self.assertIn(f"<p>Version {self.shown} \u00b7 8.1 MB installer</p>", page)
+        # Wrong name, wrong version and a page without the elements are all refused.
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(finalize.main(["--site", str(site), "--version", "9.9.9", "--setup", str(setup)]), 1)
+            other = self.root / "setup.exe"
+            other.write_bytes(b"MZ")
+            self.assertEqual(finalize.main(["--site", str(site), "--version", self.shown, "--setup", str(other)]), 1)
+            (site / "index.html").write_text("<p>nothing</p>")
+            self.assertEqual(finalize.main(["--site", str(site), "--version", self.shown, "--setup", str(setup)]), 1)
+
+    def test_historical_downloads_are_pinned_and_verified(self):
+        stage = historical.load_stage()
+        names = list(stage.HISTORICAL)
+        manifest = historical.read_manifest()
+        self.assertEqual(historical.check(stage, manifest), manifest)  # the real list is fully pinned
+        with self.assertRaises(historical.HistoryError):
+            historical.check(stage, {k: v for k, v in manifest.items() if k != names[0]})
+        pe = (b"MZ" + b"\0" * 58 + (64).to_bytes(4, "little") + b"PE\0\0" + (0x8664).to_bytes(2, "little")
+              + b"\0" * 18 + (0x20b).to_bytes(2, "little") + b"\0" * 100)
+        served = {n: pe for n in names}
+        pinned = {n: hashlib.sha256(pe).hexdigest() for n in names}
+        base = "https://example.test"
+        dest = self.root / "dl"
+        self.assertEqual(historical.fetch(dest, base, lambda url: served[url.rsplit("/", 1)[1]], stage, pinned), len(names))
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), sorted(names))
+        # A changed file on the live site is refused, and nothing is deployed from it.
+        served[names[1]] = pe + b"tampered"
+        with self.assertRaises(historical.HistoryError):
+            historical.fetch(self.root / "dl2", base, lambda url: served[url.rsplit("/", 1)[1]], stage, pinned)
+        # Recording never changes an existing pin.
+        path = self.root / "pins.sha256"
+        historical.record("0.7.0", base, lambda url: pe, stage, path)
+        self.assertEqual(len(historical.read_manifest(path)), 2)
+        with self.assertRaises(historical.HistoryError):
+            historical.record("0.7.0", base, lambda url: pe + b"x", stage, path)
+        with self.assertRaises(historical.HistoryError):
+            historical.download("http://insecure.test/x")
+        # record-missing pins only what is listed but not yet pinned.
+        partial = self.root / "partial.sha256"
+        keep = {n: h for n, h in manifest.items() if not n.startswith("secblitz-0.6.1-")}
+        historical.write_manifest(keep, partial)
+        self.assertEqual(historical.record_missing(base, lambda url: pe, stage, partial), ["0.6.1"])
+        self.assertEqual(historical.record_missing(base, lambda url: self.fail("nothing is missing"), stage, partial), [])
 
     def test_failed_plan_writes_nothing(self):
         (self.root / "assets/secblitz.rc").write_text("1 VERSIONINFO\n")
@@ -182,6 +279,151 @@ class BumpTests(unittest.TestCase):
             notes.section(text, "9.9.9")
         self.assertIn("### Added", notes.section(text, "0.7.0"))
         self.assertNotIn("Six one", notes.section(text, "0.7.0"))
+
+
+
+def fake_pe(machine=0x8664, pad=b""):
+    """The smallest bytes that pass stage-pages.py's PE header check."""
+    return (b"MZ" + b"\0" * 58 + (64).to_bytes(4, "little") + b"PE\0\0" + machine.to_bytes(2, "little")
+            + b"\0" * 18 + (0x20b).to_bytes(2, "little") + b"\0" * 100 + pad)
+
+
+class AssembleTests(unittest.TestCase):
+    """The whole publish path on a scratch copy of the repo with a throwaway signing key."""
+
+    def setUp(self):
+        import os
+        import subprocess
+        import sys
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        self.subprocess, self.sys = subprocess, sys
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.root = base / "repo"
+        for folder in ("scripts", "assets", "website"):
+            shutil.copytree(REPO / folder, self.root / folder, ignore=shutil.ignore_patterns("__pycache__", "*.mp4", "*.webm"))
+        for rel in ("README.md", "Cargo.toml", "Cargo.lock", "CHANGELOG.md"):
+            shutil.copyfile(REPO / rel, self.root / rel)
+        # The page lists media that is not needed here; keep the real files so the allowlist passes.
+        for rel in ("website/assets/intro-6bb434a9c067.mp4", "website/assets/secblitz-demo.mp4"):
+            (self.root / rel).write_bytes(b"\0\0\0\x18ftypmp42")
+        key = Ed25519PrivateKey.generate()
+        public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        (self.root / "assets/update-public-key.hex").write_text(public.hex() + "\n")
+        self.key = base / "keys" / "test.pem"
+        self.key.parent.mkdir()
+        self.key.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                               serialization.NoEncryption()))
+        os.chmod(self.key, 0o600)
+        (self.root / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- A test entry.\n\n"
+            "## [0.8.0] - 2026-10-05\n\n### Added\n- Eight.\n", encoding="utf-8")
+        self.old = bump.current_version(self.root)
+        self.version = "9.9.9"
+        code, out, err = run(self.version, "--root", str(self.root), "--date", "2030-01-02")
+        self.assertEqual(code, 0, err)
+        # What release.yml would have attached, signed with the throwaway key.
+        self.assets = base / "assets"
+        self.assets.mkdir()
+        self.setup = self.assets / f"secblitz-{self.version}-windows-x64-setup.exe"
+        self.setup.write_bytes(fake_pe(0x8664, b"s" * 5000))
+        (self.assets / f"secblitz-{self.version}-windows-x64.exe").write_bytes(fake_pe(0x8664, b"p" * 7000))
+        (self.assets / "SHA256SUMS").write_text("unused here\n")
+        self.sign()
+        spec = importlib.util.spec_from_file_location("stage_copy", self.root / "scripts/stage-pages.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.old_downloads = base / "historical"
+        self.old_downloads.mkdir()
+        for name in module.HISTORICAL:
+            (self.old_downloads / name).write_bytes(fake_pe(0x8664, name.encode()))
+        self.out = base / "pages"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def sign(self):
+        done = self.subprocess.run([self.sys.executable, str(self.root / "scripts/sign-release.py"), "--key", str(self.key),
+                                    "--public-key", str(self.root / "assets/update-public-key.hex"),
+                                    "--version", self.version, "--installer", str(self.setup),
+                                    "--output", str(self.assets / "stable.json")], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def assemble(self):
+        return self.subprocess.run([self.sys.executable, str(self.root / "scripts/assemble-site.py"),
+                                    "--version", self.version, "--assets", str(self.assets),
+                                    "--historical", str(self.old_downloads), "--output", str(self.out)],
+                                   capture_output=True, text=True)
+
+    def test_verify_feed_command_used_by_the_workflow(self):
+        command = [self.sys.executable, str(self.root / "scripts/prepare-pages.py"), "--verify-feed",
+                   str(self.assets / "stable.json"), "--installer-directory", str(self.assets),
+                   "--expected-version", self.version]
+        self.assertEqual(self.subprocess.run(command, capture_output=True, text=True).returncode, 0)
+        command[-1] = "9.9.8"
+        self.assertNotEqual(self.subprocess.run(command, capture_output=True, text=True).returncode, 0)
+
+    def test_verified_release_becomes_a_complete_site(self):
+        done = self.assemble()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        page = (self.out / "index.html").read_text()
+        digest = hashlib.sha256(self.setup.read_bytes()).hexdigest()
+        self.assertIn(f'<code id="sha">{digest}</code>', page)
+        self.assertIn(f"downloads/secblitz-{self.version}-windows-x64-setup.exe", page)
+        self.assertEqual((self.out / "releases/stable.json").read_bytes(), (self.assets / "stable.json").read_bytes())
+        names = {p.name for p in (self.out / "downloads").iterdir()}
+        self.assertIn(f"secblitz-{self.version}-windows-x64.exe", names)
+        self.assertIn(f"secblitz-{self.shown_before()}-windows-x64-setup.exe", names)  # the replaced version stays
+
+    def test_live_check_compares_bytes_and_fails_loudly(self):
+        self.assertEqual(self.assemble().returncode, 0)
+        files = live.expected_files(self.out, self.version)
+        served = {"https://secblitz.test" + path: local.read_bytes() for path, local in files.items()}
+        args = ["--site", str(self.out), "--version", self.version, "--origin", "https://secblitz.test", "--attempts", "3"]
+        sleeps = []
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(live.main(args, lambda url: served[url], sleeps.append), 0)
+            # One stale file at the edge: retried, then a loud failure naming it.
+            setup_url = f"https://secblitz.test/downloads/secblitz-{self.version}-windows-x64-setup.exe"
+            served[setup_url] = b"old"
+            self.assertEqual(live.main(args, lambda url: served[url], sleeps.append), 1)
+            self.assertEqual(len(sleeps), 2)
+            # A feed that arrives on the second try is accepted.
+            calls = []
+            def flaky(url):
+                calls.append(url)
+                return b"old" if url.endswith("stable.json") and len(calls) == 1 else files["/releases/stable.json"].read_bytes() if url.endswith("stable.json") else served[url]
+            served[setup_url] = files[f"/downloads/secblitz-{self.version}-windows-x64-setup.exe"].read_bytes()
+            self.assertEqual(live.main(args, flaky, lambda _: None), 0)
+        self.assertIn("DOES NOT MATCH", err.getvalue())
+        self.assertIn(setup_url, err.getvalue())
+
+    def shown_before(self):
+        return bump.site_version((REPO / "README.md").read_text(encoding="utf-8"))
+
+    def test_feed_for_other_installer_bytes_is_refused(self):
+        self.setup.write_bytes(fake_pe(0x8664, b"changed after signing"))
+        done = self.assemble()
+        self.assertNotEqual(done.returncode, 0)
+        self.assertFalse(self.out.exists())
+
+    def test_feed_signed_by_another_key_is_refused(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        other = Ed25519PrivateKey.generate().public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        (self.root / "assets/update-public-key.hex").write_text(other.hex() + "\n")
+        done = self.assemble()
+        self.assertNotEqual(done.returncode, 0)
+        self.assertFalse(self.out.exists())
+
+    def test_wrong_set_of_release_files_is_refused(self):
+        (self.assets / "extra.txt").write_text("x")
+        self.assertNotEqual(self.assemble().returncode, 0)
+        (self.assets / "extra.txt").unlink()
+        (self.assets / "stable.json").unlink()
+        self.assertNotEqual(self.assemble().returncode, 0)
 
 
 if __name__ == "__main__":
