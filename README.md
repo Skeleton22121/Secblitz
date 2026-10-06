@@ -65,7 +65,7 @@ Known limits: the executables are not Authenticode-signed, so trust in the first
 
 ### Reporting a vulnerability
 
-Please **don't open a public issue** for security problems. Use GitHub's private reporting instead: **Security → Report a vulnerability** on this repository. Include the Secblitz version, your Windows version and steps to reproduce. We aim to reply within a week, and to ship a fix or give a clear answer before anything is made public. Reports about the updater, the elevated process, undo, or anything that could let another user or program change your settings are especially welcome.
+Please **don't open a public issue** for security problems. Email **[support@secblitz.lol](mailto:support@secblitz.lol)**, or use GitHub's private reporting: **Security → Report a vulnerability** on this repository. Include the Secblitz version, your Windows version and steps to reproduce. We aim to reply within a week, and to ship a fix or give a clear answer before anything is made public. Reports about the updater, the elevated process, undo, or anything that could let another user or program change your settings are especially welcome.
 
 Deeper reading: [security model](docs/security-model.md), [update contract](docs/update-contract.md), [security review](docs/SECURITY-REVIEW.md). These were written for earlier releases; the guarantees above are the current ones.
 
