@@ -32,22 +32,34 @@ pub(super) fn metadata_safe(m: &Metadata, directory: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn handle_information(
+    file: &File,
+    what: &str,
+) -> Result<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    // SAFETY: the struct is plain integers, so all-zero is valid; the call below fills it.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `file` owns a live handle for the whole call and `info` is a valid out pointer.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
+    ensure!(
+        ok != 0,
+        "Cannot inspect journal {what}: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(info)
+}
+
 pub(super) fn file_safe(file: &File) -> Result<()> {
     metadata_safe(&file.metadata()?, false)?;
     #[cfg(windows)]
     {
         // std's by-handle link-count metadata is not stable on all supported
         // toolchains. Use the native query for this one additional check.
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        ensure!(
-            unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } != 0,
-            "Cannot inspect journal handle: {}",
-            std::io::Error::last_os_error()
-        );
+        let info = handle_information(file, "handle")?;
         ensure!(info.nNumberOfLinks == 1, "Journal hard links are forbidden");
     }
     Ok(())
@@ -112,18 +124,9 @@ pub(super) fn same_file(file: &File, path: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
         let current = open_file(path, false)?;
         let identity = |f: &File| -> Result<(u32, u32, u32)> {
-            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-            ensure!(
-                unsafe { GetFileInformationByHandle(f.as_raw_handle(), &mut info) } != 0,
-                "Cannot inspect journal identity: {}",
-                std::io::Error::last_os_error()
-            );
+            let info = handle_information(f, "identity")?;
             Ok((
                 info.dwVolumeSerialNumber,
                 info.nFileIndexHigh,
@@ -173,14 +176,16 @@ pub(super) fn publish_snapshot(from: &Path, to: &Path) -> Result<()> {
         };
         let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
         let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: both buffers are NUL-terminated UTF-16 that outlive the call.
+        let moved = unsafe {
+            MoveFileExW(
+                from.as_ptr(),
+                to.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
         ensure!(
-            unsafe {
-                MoveFileExW(
-                    from.as_ptr(),
-                    to.as_ptr(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                )
-            } != 0,
+            moved != 0,
             "Publish journal snapshot: {}",
             std::io::Error::last_os_error()
         );
