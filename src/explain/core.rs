@@ -6,7 +6,6 @@ const fn e(what: &'static str, risk: &'static str, change: &'static str) -> Expl
 }
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
-    // One shared entry for every audited service (title carries the name).
     if id.starts_with("Service permissions: ") {
         return get("permissions.service");
     }

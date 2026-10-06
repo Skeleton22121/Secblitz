@@ -1,6 +1,4 @@
-// revert_all tests; included inside engine::tests to reuse its stateful backend.
-// Each batch owns a different control: the journal allows one active owner per
-// control, so two live batches never touch the same setting.
+// Included inside engine::tests. Each batch owns a different control: the journal allows one active owner per control.
 mod revert_all {
     use super::*;
 
@@ -8,7 +6,6 @@ mod revert_all {
     const Y: &str = "firewall.private.inbound";
     const Z: &str = "firewall.domain.inbound";
 
-    /// Three controls that are all open ("Allow") before anything is applied.
     fn three_controls() -> (TempDir, Rc<RefCell<FakeState>>, Engine) {
         let (dir, state, e) = fixture(X, json!("Allow"));
         drop(e);
@@ -56,7 +53,6 @@ mod revert_all {
         apply_one(&mut e, X);
         let middle = apply_one(&mut e, Y);
         let newest = apply_one(&mut e, Z);
-        // The person changes the middle batch's setting themselves.
         set(&state, Y, json!("NotConfigured"));
         let report = e.revert_all(|_, _| {}).unwrap();
         let statuses: Vec<_> = report
@@ -101,8 +97,6 @@ mod revert_all {
             vec![(Z, "conflict"), (Y, "conflict"), (X, "restored")]
         );
         assert_eq!(report.findings.len(), 2);
-        // The journal still loads, and a later pass finishes once the person's
-        // changes are gone.
         set(&state, Y, json!("Block"));
         set(&state, Z, json!("Block"));
         let report = e.revert_all(|_, _| {}).unwrap();
@@ -116,7 +110,6 @@ mod revert_all {
         let (_dir, state, mut e) = three_controls();
         apply_one(&mut e, X);
         apply_one(&mut e, Y);
-        // A managed setting is not eligible for a restore.
         state.borrow_mut().blocked = true;
         let report = e.revert_all(|_, _| {}).unwrap();
         assert_eq!(report.results.len(), 2);

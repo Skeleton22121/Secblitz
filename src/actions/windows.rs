@@ -16,10 +16,7 @@ use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 
-/// Restart the PC the way Windows Update would: a planned "Operating System:
-/// Security fix" restart through the documented shutdown API (no console, no
-/// child process). Open programs are asked to close and may stop it, so
-/// unsaved work is never thrown away.
+/// Planned "Security fix" restart through the shutdown API. Open programs may still stop it, so unsaved work is never lost.
 pub(super) fn restart_for_updates() -> Result<()> {
     unsafe {
         let mut token: HANDLE = null_mut();
@@ -58,9 +55,7 @@ pub(super) fn restart_for_updates() -> Result<()> {
     Ok(())
 }
 
-/// True only for the elevated half of a split (UAC) administrator token.
-/// A full-token administrator (built-in Administrator, or UAC off) reports
-/// `TokenElevationTypeDefault` even though it is elevated, and may open pages.
+/// Elevated half of a split token only: a full-token administrator reports TokenElevationTypeDefault but may open pages.
 pub fn split_token_elevated() -> Result<bool> {
     unsafe {
         let mut token: HANDLE = null_mut();
@@ -83,9 +78,7 @@ pub fn split_token_elevated() -> Result<bool> {
     }
 }
 
-/// True when this process runs as LocalSystem, LocalService or NetworkService.
-/// Those tokens also report `TokenElevationTypeDefault`, but opening pages is
-/// for a signed-in person, never a service.
+/// LocalSystem, LocalService and NetworkService also report TokenElevationTypeDefault; pages are for signed-in people only.
 fn service_account() -> Result<bool> {
     unsafe {
         let mut token: HANDLE = null_mut();
@@ -112,7 +105,6 @@ fn service_account() -> Result<bool> {
     }
 }
 
-/// Control Panel's switch for opening one item by its canonical name.
 const CONTROL_SWITCH: &str = "/name";
 
 fn wide(s: &str) -> Vec<u16> {

@@ -1,17 +1,7 @@
 //! Serialized, crash-recoverable preference transactions.
-//!
-//! Windows callers must use platform::state_dir(): its ACL/owner checks and
-//! pinned ancestors are the trust boundary (a hostile administrator is excluded).
-//! The engine additionally rejects links, opens files without delete sharing on
-//! Windows, and never interprets journal data as a path, command, or target.
-//! Appends publish a flushed copy-on-write snapshot. Only a recognizable,
-//! incomplete final append can be recovered from old JSONL journals; complete
-//! malformed records and damaged committed prefixes always fail closed.
-//! Recovery retains byte-for-byte evidence before retiring any damaged file.
-//! The crash model is an interrupted sequential append / atomic same-directory
-//! rename with honored file flushes. Schema 1 has no integrity checksum: it
-//! cannot distinguish post-commit truncation or valid-looking media corruption
-//! from a crash prefix. It is not a general corruption-repair format.
+//! Windows callers must use platform::state_dir(): its ACL/owner checks and pinned ancestors are the trust boundary. The engine also rejects links, opens files without delete sharing on Windows, and never interprets journal data as a path, command or target.
+//! Appends publish a flushed copy-on-write snapshot. Only a recognizable, incomplete final append is recovered from old JSONL journals; other malformed records and damaged committed prefixes fail closed, and damaged files are kept as evidence.
+//! Schema 1 has no checksum, so it cannot tell post-commit truncation or media corruption from a crash prefix.
 use crate::model::{
     validate_observation, Authority, Backend, Control, EffectiveFirewall, Finding, InboundAction,
     Observation, Readiness,
@@ -35,7 +25,6 @@ const MAX_WAL: u64 = 1024 * 1024;
 const MAX_TRANSACTIONS: usize = 2048;
 const LOCK_NAME: &str = "engine.lock";
 const MAX_EVIDENCE: usize = 4096;
-/// Controls read side by side during a check.
 const READ_BATCH: usize = 4;
 const LEGACY_UPDATE_FILES: [&str; 5] = [
     "update.lock",
@@ -64,15 +53,11 @@ pub struct Outcome {
     pub effective: Option<EffectiveFirewall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
-    /// The exact items a fix would change (plain names, display only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<crate::model::ItemLabel>,
 }
 
-/// Downcast an Engine::open/operation error to this type to offer diagnostics.
-/// Approval alone cannot make an ambiguous original safe: there is deliberately
-/// no force-truncate API. Restore a verified journal backup under engine.lock,
-/// or obtain independent evidence before designing an explicit recovery action.
+/// Approval alone cannot make an ambiguous original safe, so there is deliberately no force-truncate API. Restore a verified journal backup under engine.lock instead.
 #[derive(Debug, Serialize)]
 pub struct JournalRecoveryRequired {
     pub transaction: String,
@@ -92,17 +77,13 @@ impl std::fmt::Display for JournalRecoveryRequired {
 
 impl std::error::Error for JournalRecoveryRequired {}
 
-/// Callback arguments are (control id or phase, stable ASCII status). Methods require
-/// &mut self because Backend's probes can be stateful. The OS lock lasts through
-/// validation, probes, writes, callbacks, and the final findings probe.
+/// Callback arguments are (control id or phase, stable ASCII status). The OS lock lasts through validation, probes, writes, callbacks and the final findings probe.
 pub struct Engine {
     dir: PathBuf,
     backend: Box<dyn Backend>,
     controls: Vec<Control>,
     machine: String,
     storage_failed: bool,
-    // Fixtures use isolated stores/backends, not native machine namespaces.
-    // Injection exercises the same locked pre-mutation boundary on every host.
     #[cfg(test)]
     mutation_check: Option<Box<MutationCheck>>,
 }
@@ -201,8 +182,7 @@ fn deserialize_before<'de, D: serde::Deserializer<'de>>(
     ) -> std::result::Result<Option<u32>, D::Error> {
         Option::<u32>::deserialize(d)
     }
-    /// Extended hardening slice: `{"items": {key: u32 | null}}`. Duplicate
-    /// keys are rejected here; id-specific domains are checked by the catalog.
+    /// Duplicate keys are rejected here; id-specific domains are checked by the catalog.
     #[derive(Serialize)]
     #[serde(deny_unknown_fields)]
     struct Items {
@@ -568,8 +548,6 @@ fn publish_snapshot(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-// Test-only failures use the real filesystem up to the chosen boundary. A
-// thread-local avoids interference with parallel tests and other engine users.
 #[cfg(test)]
 thread_local! {
     static IO_FAULT: std::cell::RefCell<Option<(&'static str, usize)>> = const { std::cell::RefCell::new(None) };
@@ -596,10 +574,7 @@ fn io_boundary(point: &'static str) -> Result<()> {
 
 #[cfg(test)]
 fn write_snapshot_with_fault(writer: &mut impl Write, bytes: &[u8]) -> Result<()> {
-    // A short write followed by failure must leave the exact same prefix as
-    // the original byte-at-a-time injector, including a count spanning calls.
-    // Do not issue one WRITE_THROUGH syscall per byte on Windows: even tests
-    // with NO armed fault otherwise perform tens of thousands of disk flushes.
+    // A short write then failure must leave the same prefix as a byte-at-a-time injector. One WRITE_THROUGH syscall per byte would make even unarmed tests perform tens of thousands of disk flushes.
     let cut = IO_FAULT.with(|fault| {
         let mut fault = fault.borrow_mut();
         if let Some(("snapshot_byte", remaining)) = fault.as_mut() {
@@ -721,9 +696,7 @@ impl Engine {
         Ok(obs)
     }
 
-    /// [`Self::observe`] for a batch, read side by side when the backend can.
-    /// A reply of the wrong length fails the whole batch rather than letting
-    /// one control's reading land on another.
+    /// A reply of the wrong length fails the whole batch, so one control's reading never lands on another.
     fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
         let mut observed = self.backend.observe_many(ids);
         if observed.len() != ids.len() {
@@ -1268,8 +1241,6 @@ impl Engine {
             io_boundary("snapshot_create")?;
             let mut staged = open_file(&stage_path, true)?;
             io_boundary("snapshot_write")?;
-            // Inject an exact short-write prefix using bulk I/O. Flush/replace
-            // boundaries and production's single write_all remain unchanged.
             #[cfg(test)]
             write_snapshot_with_fault(&mut staged, &bytes)?;
             #[cfg(not(test))]
@@ -1397,11 +1368,7 @@ impl Engine {
         found
     }
 
-    /// "Not running" notes for memory integrity and stack protection are only
-    /// about a change Secblitz made: the journal must hold that change, not
-    /// yet undone, and the PC must have restarted since it was written. The
-    /// note says whether undoing that change is the next undo, so the Undo
-    /// button never reverts something else. Anything unreadable drops the note.
+    /// Memory integrity and stack protection "not running" notes only describe a change Secblitz made: it must be in the journal, not yet undone, and the PC must have restarted since. The note says whether undoing it is the next undo. Anything unreadable drops the note.
     fn keep_own_core_protection_findings(&self, found: &mut Vec<Finding>) {
         if !found
             .iter()
@@ -1463,13 +1430,10 @@ impl Engine {
         self.audit_with_progress(|_, _| {})
     }
 
-    /// Immutable compiled/validated catalog; reading it performs no probes.
     pub fn available_controls(&self) -> &[Control] {
         &self.controls
     }
 
-    /// Each observation emits its outcome. The separate readiness and findings
-    /// phases each emit (phase, "pending") followed by (phase, "complete").
     pub fn audit_with_progress(&mut self, mut callback: impl FnMut(&str, &str)) -> Result<Report> {
         let _lock = self.lock()?;
         let transactions = self.load()?;
@@ -1480,7 +1444,6 @@ impl Engine {
             findings: Vec::new(),
             readiness: None,
         };
-        // Small batches keep progress moving while the reads run side by side.
         let controls = self.controls.clone();
         for batch in controls.chunks(READ_BATCH) {
             let ids: Vec<&str> = batch.iter().map(|c| c.id.as_str()).collect();
@@ -1534,8 +1497,6 @@ impl Engine {
         self.apply_impl(None, callback)
     }
 
-    /// IDs only: no audit snapshot or caller-supplied target is trusted.
-    /// Invalid selections fail before locking, probing, or modifying the WAL.
     pub fn apply_selected(
         &mut self,
         ids: &[String],
@@ -1640,8 +1601,6 @@ impl Engine {
             report.findings.push(Self::journal_finding(tx));
             return Ok(report);
         }
-        // Preflight every selected existing owner before any new intent/write.
-        // Compare against the original-derived exact target, including ACLs.
         let mut owned = Vec::new();
         for c in &controls {
             if let Some(entry) = transactions
@@ -1838,8 +1797,6 @@ impl Engine {
         Ok(report)
     }
 
-    /// Undo one batch: write-ahead journal, per-entry conflict/skip rules, and
-    /// mark it reverted once every entry is back. Shared by `revert` and `revert_all`.
     fn revert_transaction(
         &mut self,
         tx: &mut Transaction,
@@ -1863,8 +1820,6 @@ impl Engine {
             let expected_eff = recorded_scope(&id, &expected, &observation.value);
             let seen = scope(&id, &observation.value, Some(&before_eff));
             let result = if seen == before_eff {
-                // Includes a prepared apply that never wrote, and a restore
-                // that crashed between its write and result flush.
                 if tx.entries[i].state != State::Restoring {
                     self.append(tx, Record::RestorePending { id: id.clone() })?;
                 }
@@ -1960,8 +1915,6 @@ impl Engine {
         Ok(report)
     }
 
-    /// Read-only look at what `revert_transaction` would meet: the entries that
-    /// would be a conflict or skipped. Empty means the batch can be fully undone.
     fn undo_blockers(&mut self, tx: &Transaction) -> Result<Vec<Outcome>> {
         let mut blockers = Vec::new();
         for entry in tx
@@ -1995,9 +1948,7 @@ impl Engine {
         Ok(blockers)
     }
 
-    /// Undo every unreverted batch, newest first. A batch with a conflict stays
-    /// unreverted and is reported; older batches are still processed. Safe because
-    /// each entry is restored only while the setting still holds what Secblitz wrote.
+    /// Newest first. A batch with a conflict stays unreverted and older batches are still processed.
     pub fn revert_all(&mut self, mut callback: impl FnMut(&str, &str)) -> Result<Report> {
         let _lock = self.lock()?;
         self.mutation_interlocks(&_lock)?;
@@ -2035,7 +1986,6 @@ impl Engine {
         Ok(report)
     }
 
-    /// How many distinct settings `revert_all` could still put back. Read-only.
     pub fn undoable_changes(&mut self) -> Result<usize> {
         let _lock = self.lock()?;
         let transactions = self.load()?;
@@ -2126,7 +2076,6 @@ fn assessment_status(id: &str, o: &Observation) -> Result<&'static str> {
         return Ok("skipped");
     }
     if let Some(spec) = crate::hardening::spec(id) {
-        // Safe and absent-default states are protected, even on a managed PC.
         return Ok(if !spec.any_unsafe(&o.value) {
             "compliant"
         } else if apply_eligible(id, o) {
@@ -2151,9 +2100,6 @@ fn apply_eligible(id: &str, o: &Observation) -> bool {
     if firewall_control(id) {
         return o.authority == Some(Authority::Local) && matches!(firewall_protected(o), Ok(false));
     }
-    // Extended controls: management/capability evidence (`eligible`) plus
-    // something that is genuinely unsafe. Safe or absent-default state is
-    // never a repair request.
     if let Some(spec) = crate::hardening::spec(id) {
         return spec.any_unsafe(&o.value);
     }
@@ -2351,7 +2297,6 @@ mod tests {
     #[test]
     fn owned_firewall_uses_raw_drift_and_final_gate_rechecks_evidence() {
         let (_dir, state, mut e) = fixture(FIREWALL, json!("Allow"));
-        // Inject evidence loss at the fresh probe after Prepare, not a new raw target.
         state.borrow_mut().evidence_at = Some((2, None, Some(Authority::Local)));
         assert!(e.apply_selected(&[FIREWALL.into()], |_, _| {}).is_err());
         assert!(state.borrow().writes.is_empty());
@@ -2526,7 +2471,6 @@ mod tests {
             assert_eq!(e.load().unwrap().len(), 1);
             assert_eq!(state.borrow().writes.len(), 1);
         }
-        // The existing-active legacy path performs no intent/write either.
         e.apply(|_, _| {}).unwrap();
         assert_eq!(fs::read(path).unwrap(), original);
         assert_eq!(state.borrow().writes.len(), 1);
@@ -2609,7 +2553,6 @@ mod tests {
             #[cfg(windows)]
             {
                 use std::os::windows::fs::OpenOptionsExt;
-                // Model the published worker/installer allowing only readers.
                 options.share_mode(0x1);
             }
             held.push(options.open(path).unwrap());
@@ -2793,24 +2736,19 @@ mod tests {
         let later = i64::MAX / 4;
         let (dir, state, mut e) = fixture(id, json!({"items": {"Enabled": null, "WasEnabledBy": null}}));
         state.borrow_mut().extra_findings = vec![note(later)];
-        // Nothing of ours in the journal: somebody else turned it on.
         assert!(e.findings().is_empty());
         e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-        // Written after the start-up time: still waiting for the first restart.
         state.borrow_mut().extra_findings = vec![note(0)];
         assert!(e.findings().is_empty());
-        // Restarted since: the note stays, and undo is its own next undo.
         state.borrow_mut().extra_findings = vec![note(later)];
         let found = e.findings();
         assert_eq!(found.len(), 1);
         assert!(found[0].detail.starts_with(crate::vbs::UNDO_READY));
-        // A note without a start-up time is dropped.
         state.borrow_mut().extra_findings = vec![Finding {
             detail: "Not running.".into(),
             ..note(later)
         }];
         assert!(e.findings().is_empty());
-        // Another fix made after it: the note stays but never offers a blind undo.
         drop(e);
         state.borrow_mut().values.insert(DEFENDER.into(), json!(true));
         let mut e = reopen(&dir, &state, &[id, DEFENDER]);
@@ -2819,7 +2757,6 @@ mod tests {
         let found = e.findings();
         assert_eq!(found.len(), 1);
         assert!(!found[0].detail.starts_with(crate::vbs::UNDO_READY));
-        // Undone: nothing left to say.
         e.revert(|_, _| {}).unwrap();
         e.revert(|_, _| {}).unwrap();
         assert!(e.findings().is_empty());
@@ -3288,7 +3225,6 @@ mod tests {
                 acl_snapshot_principals(0x0002_0010, 1, &[18], &[32, 545]),
                 json!(protected),
             ] {
-                // These are valid and repair-safe states, not parser failures.
                 validate_value(id, &drift).unwrap();
                 assert_eq!(target_for(id, &drift).unwrap(), drift);
                 let before = acl_snapshot(0x0002_0012, 1);
@@ -3568,7 +3504,6 @@ mod tests {
                 assert!(report.transaction.is_none());
                 assert!(e.history().unwrap().is_empty());
                 assert!(state.borrow().writes.is_empty());
-                // Defense in depth even if a backend mistakes absence for eligibility.
                 assert!(!apply_eligible(
                     id,
                     &Observation {
@@ -3835,7 +3770,6 @@ mod tests {
                 "accepted {before}"
             );
         }
-        // Explicit absence is a real before image, not a default value.
         let line =
             r#"{"kind":"prepare","id":"uac.enabled","before":{"present":false,"value":null}}"#;
         assert!(serde_json::from_str::<Record>(line).is_ok());
@@ -3892,7 +3826,6 @@ mod tests {
     fn result_storage_failure_retains_recoverable_prepare() {
         let (dir, state, mut e) = fixture(DEFENDER, json!(true));
         let mut tx = prepare(&mut e, 1, DEFENDER, json!(true));
-        // COW failure after the mutation but before the result is published.
         e.observe(DEFENDER).unwrap();
         e.backend.write(DEFENDER, &json!(false)).unwrap();
         IO_FAULT.with(|f| *f.borrow_mut() = Some(("snapshot_sync", 0)));
@@ -4003,7 +3936,6 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), torn);
             assert!(state.borrow().writes.is_empty());
         }
-        // No result bytes at all is the legitimate unknown-write window.
         fs::write(&path, prefix).unwrap();
         e.revert(|_, _| {}).unwrap();
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
@@ -4134,7 +4066,6 @@ mod tests {
         let ids: Vec<&str> = report.results.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, [DEFENDER, FIREWALL]);
         assert!(report.results.iter().all(|r| r.status != "error"));
-        // A reply missing one reading never shifts the other onto a wrong id.
         state.borrow_mut().short_batch = true;
         let report = e.audit().unwrap();
         assert!(report.results.iter().all(|r| r.status == "error"));

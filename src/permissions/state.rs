@@ -216,7 +216,6 @@ impl State {
             if mask & (REMOVE | 0x10000000 | 0x40000000) == 0 {
                 continue;
             }
-            // Map every generic bit on a changed ACE, preserving its safe rights.
             let mut mapped = mask & !0xf0000000;
             for (generic, rights) in [
                 (0x80000000, 0x2008d),
@@ -382,7 +381,6 @@ mod tests {
         after.check_transition(&another_before).unwrap();
 
         let mut reordered = after.clone();
-        // Move the first 20-byte ACE after the administrator ACE.
         reordered.acl.as_mut().unwrap()[8..].rotate_left(20);
         assert!(after.check_transition(&reordered).is_err());
         for mask in [0, 0x10, 0x20, 0x20000] {
