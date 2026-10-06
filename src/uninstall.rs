@@ -251,7 +251,8 @@ pub fn revert_user() -> Summary {
 }
 
 /// Delete `%LOCALAPPDATA%\Secblitz` after checking it is a plain directory
-/// (not a link) owned by the current person. A missing folder is fine.
+/// (not a link) owned by the current person, or by the Administrators group
+/// (what an administrator's programs create). A missing folder is fine.
 #[cfg(windows)]
 pub fn cleanup_user() -> Result<()> {
     use anyhow::{bail, ensure};
@@ -274,7 +275,7 @@ pub fn cleanup_user() -> Result<()> {
             "The per-user data folder is not a plain directory"
         );
     }
-    if !owned_by_current_user(&dir)? {
+    if !owned_by_person_or_admins(&dir)? {
         bail!("The per-user data folder is not owned by this user");
     }
     std::fs::remove_dir_all(&dir)?;
@@ -282,12 +283,14 @@ pub fn cleanup_user() -> Result<()> {
 }
 
 #[cfg(windows)]
-fn owned_by_current_user(path: &std::path::Path) -> Result<bool> {
+fn owned_by_person_or_admins(path: &std::path::Path) -> Result<bool> {
     use anyhow::{bail, ensure};
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::null_mut;
     use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE};
-    use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
     use windows_sys::Win32::Security::{
         EqualSid, GetTokenInformation, TokenUser, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
         PSID, TOKEN_QUERY, TOKEN_USER,
@@ -328,7 +331,14 @@ fn owned_by_current_user(path: &std::path::Path) -> Result<bool> {
             }
             bail!("Cannot read the folder owner ({status})");
         }
-        let same = EqualSid(owner, user) != 0;
+        let mut admins: PSID = null_mut();
+        let admins_text: Vec<u16> = "S-1-5-32-544".encode_utf16().chain(Some(0)).collect();
+        let same = EqualSid(owner, user) != 0
+            || (ConvertStringSidToSidW(admins_text.as_ptr(), &mut admins) != 0
+                && EqualSid(owner, admins) != 0);
+        if !admins.is_null() {
+            LocalFree(admins);
+        }
         LocalFree(sd);
         Ok(same)
     }

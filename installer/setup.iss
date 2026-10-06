@@ -186,6 +186,9 @@ Name: "{commondesktop}\Secblitz"; Filename: "{app}\secblitz.exe"; WorkingDir: "{
 ; directory (tray status file written by the monitor/app) is removed.
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\Status"
+; Setup records the program folder only when it creates it; an install into a
+; folder that already existed would otherwise leave it behind, empty.
+Type: dirifempty; Name: "{app}"
 
 [Run]
 ; Start Setup normally so Inno retains the original unelevated user context.
@@ -469,9 +472,10 @@ begin
 end;
 
 { ---- Removing Secblitz ----------------------------------------------------------
-  Interactive uninstall asks one question: keep the PC as it is, or put
-  everything back. A silent uninstall, and one the app started after it already
-  put things back (/SECBLITZDONE), keeps the changes and never asks. }
+  Interactive uninstall asks one question, right after Windows' own "Are you
+  sure" box: keep the PC as it is, or put everything back. A silent uninstall,
+  and one the app started after it already put things back (/SECBLITZDONE),
+  keeps the changes and never asks. }
 
 function SecblitzExe: String;
 begin
@@ -604,8 +608,10 @@ begin
   end;
 end;
 
-{ Personal settings first, as the person (the uninstaller itself is elevated),
-  then the machine part elevated. The machine part writes one plain line per
+{ Personal settings first, then the machine part. The uninstaller cannot run
+  anything as the original person (Inno allows that only in Setup), so the
+  personal part runs elevated, which is the same person's account and settings
+  when they approved the prompt themselves. The machine part writes one plain line per
   thing it left to a file in the uninstaller's private temp folder; the lines
   are UTF-8. Failures never stop the removal: the person already chose it. }
 procedure PutEverythingBack;
@@ -620,7 +626,7 @@ begin
   SetArrayLength(Lines, 0);
 
   PersonalLeft := True;
-  if ExecAsOriginalUser(SecblitzExe, 'uninstall-revert --user', ExpandConstant('{app}'),
+  if Exec(SecblitzExe, 'uninstall-revert --user', ExpandConstant('{app}'),
       SW_HIDE, ewWaitUntilTerminated, Code) then
     PersonalLeft := Code <> 0;
   Log('Secblitz put back (personal): left=' + IntToStr(Code));
@@ -652,52 +658,63 @@ end;
 procedure CleanUserData;
 var Code: Integer;
 begin
-  if not ExecAsOriginalUser(SecblitzExe, 'uninstall-cleanup --user', ExpandConstant('{app}'),
+  if not Exec(SecblitzExe, 'uninstall-cleanup --user', ExpandConstant('{app}'),
       SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
     Log('Secblitz could not remove the per-user data folder, code ' + IntToStr(Code));
 end;
 
-function InitializeUninstall(): Boolean;
+{ Runs after Windows' "Are you sure" box and before anything is removed.
+  Abort here ends the uninstall quietly with everything still in place. }
+procedure PrepareRemoval;
+var Ready: Boolean;
 begin
-  Result := True;
   UninstallPutBack := False;
-  { Inno may call this once before its elevation relaunch. }
-  if not IsAdmin then Exit;
   if HasSwitch('/SECBLITZDONE') then
     Log('Secblitz uninstall: the app already answered the question; keeping the PC as it is.')
   else if UninstallSilent then
     Log('Secblitz uninstall: a silent uninstall keeps the changes.')
   else if not AskRemoveChoice(UninstallPutBack) then begin
     Log('Secblitz uninstall: cancelled before anything was touched.');
-    Result := False;
-    Exit;
+    Abort;
   end;
   CloseTray;
   try
-    Result := Maintain('RemoveMonitor');
+    Ready := Maintain('RemoveMonitor');
   except
     Log('Secblitz uninstall maintenance exception: ' + GetExceptionMessage);
-    Result := False;
+    Ready := False;
   end;
-  if not Result then begin
+  if not Ready then begin
     Log(ExpandConstant('{cm:Failed}'));
     if not UninstallSilent then
       SuppressibleMsgBox(ExpandConstant('{cm:Failed}'), mbError, MB_OK, IDOK);
+    Abort;
   end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usUninstall then begin
-    { The program is still in place here. Whatever fails below is logged and the
-      removal carries on. }
+  if CurUninstallStep = usAppMutexCheck then
+    PrepareRemoval
+  else if CurUninstallStep = usUninstall then begin
+    { The program is still in place here. Each part is tried on its own; a
+      failure is logged and the removal carries on. }
+    if UninstallPutBack then
+      try
+        PutEverythingBack;
+      except
+        Log('Secblitz put back exception: ' + GetExceptionMessage);
+      end;
     try
-      if UninstallPutBack then PutEverythingBack;
       if not Maintain('RemoveFilter') then
         Log('Secblitz could not fully turn off web protection.');
+    except
+      Log('Secblitz web protection removal exception: ' + GetExceptionMessage);
+    end;
+    try
       CleanUserData;
     except
-      Log('Secblitz uninstall cleanup exception: ' + GetExceptionMessage);
+      Log('Secblitz per-user cleanup exception: ' + GetExceptionMessage);
     end;
   end else if CurUninstallStep = usPostUninstall then begin
     try
