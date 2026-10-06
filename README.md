@@ -98,4 +98,4 @@ Maintainers and coding agents: the full working rules are in [AGENTS.md](AGENTS.
 
 ## License
 
-[MIT](LICENSE). Secblitz is free and stays free.
+[MIT](LICENSE). Secblitz is free and stays free. Fonts, icons, libraries and block lists from others are credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

@@ -682,11 +682,15 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         None,
         switches,
     ));
-    page.push(widgets::small(
+    page = page.push(widgets::small(
         p,
         ctx.t(
             "Some ads, like the ones inside YouTube videos, come from the same place as the video and can't be blocked this way.",
         ),
+    ));
+    page.push(widgets::small(
+        p,
+        ctx.t("Block lists by AdGuard, EasyList and HaGeZi."),
     ))
     .into()
 }
