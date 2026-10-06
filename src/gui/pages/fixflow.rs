@@ -475,7 +475,13 @@ fn technical_lines(
             for r in &report.results {
                 if attempted.is_empty() || attempted.contains(&r.id) {
                     let a = crate::advice::for_outcome(r);
-                    let (status, next) = flow::plain_detail(&r.status, &a);
+                    // An apply or undo that errored did not go through; the
+                    // "couldn't read" wording is for the Protection page only.
+                    let (status, next) = if r.status == "error" {
+                        ("Not done", flow::NOT_DONE)
+                    } else {
+                        flow::plain_detail(&r.status, &a)
+                    };
                     lines.push(format!(
                         "{} · {} · {}",
                         ctx.lang.control(&r.id),

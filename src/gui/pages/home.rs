@@ -263,7 +263,7 @@ fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Ele
             ctx.t("More details"),
             state.details_open,
             Message::Home(Msg::ToggleDetails),
-            widgets::small(p, raw.to_owned()),
+            widgets::small(p, ctx.t(crate::app::flow::plain_failure(raw))),
         ),
     ]
     .spacing(theme::S4)

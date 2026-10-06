@@ -129,14 +129,11 @@ pub fn plain_failure(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     if r.contains("holds the journal lock") || r.contains("another secblitz") {
         "Another Secblitz window is already making changes. Close it, wait a moment, then try again."
-    } else if r.contains("journal") || r.contains("transaction") {
+    } else if r.contains("revert the active transaction") {
+        REASON_UNDO_FIRST
+    } else if r.contains("journal") || r.contains("transaction completion") {
         "Secblitz can't read its record of your earlier changes, so it stopped to stay safe. Restart your PC and try again. If it keeps happening, check for a Secblitz update."
-    } else if r.contains("administrator")
-        || r.contains("access is denied")
-        || r.contains("elevat")
-        || r.contains("split-token")
-        || r.contains("permission")
-    {
+    } else if r.contains("administrator") || r.contains("elevat") || r.contains("split-token") {
         "Secblitz needs an account that can make changes to this PC. Sign in with one, then open Secblitz again."
     } else if r.contains("could not be read") || r.contains("could not be collected") {
         COULDNT_READ
@@ -197,10 +194,11 @@ pub fn summarize(
     };
     let verified = verify.ok();
     match (attempted, result) {
-        (Some(ids), Err(_)) => {
+        (Some(ids), Err(e)) => {
+            let why = plain_failure(e);
             s.not_done = ids
                 .iter()
-                .map(|id| (id.clone(), REASON_BLOCKED.to_owned()))
+                .map(|id| (id.clone(), why.to_owned()))
                 .collect();
         }
         (Some(ids), Ok(report)) => {
@@ -567,5 +565,66 @@ mod tests {
         assert!(!next.contains("0xdead"));
         let (st, next) = plain_detail("weird", &a);
         assert_eq!((st, next), ("Not done", NOT_DONE));
+    }
+
+    #[test]
+    fn failure_precedence_and_narrow_matching() {
+        assert_eq!(
+            plain_failure("Revert the active transaction before applying"),
+            REASON_UNDO_FIRST
+        );
+        assert!(plain_failure("Another Secblitz operation holds the journal lock")
+            .contains("Close it"));
+        // A plain file permission problem is not an administrator problem.
+        assert_eq!(plain_failure("Access is denied. (os error 5)"), FAILURE_GENERAL);
+        assert_eq!(plain_failure("permission denied"), FAILURE_GENERAL);
+    }
+
+    #[test]
+    fn whole_apply_failure_uses_the_matching_plain_reason() {
+        let a = ids(&["uac.enabled"]);
+        let verified = rep(vec![out("uac.enabled", "compliant", "")]);
+        let s = summarize(
+            Some(&a),
+            Err("Another Secblitz operation holds the journal lock"),
+            Ok(&verified),
+        );
+        assert!(s.not_done[0].1.contains("Close it"));
+    }
+
+    #[test]
+    fn every_plain_message_is_translated() {
+        use crate::i18n::Lang;
+        let raws = [
+            "Another Secblitz operation holds the journal lock",
+            "Journal exceeds size limit",
+            "Interactive split-token administrator required",
+            "Findings could not be read",
+            "engine stopped",
+            "Select at least one fix",
+            "Revert the active transaction",
+            "anything else",
+        ];
+        let mut all: Vec<&str> = raws.iter().map(|r| plain_failure(r)).collect();
+        all.extend([
+            REASON_BLOCKED,
+            REASON_RESTART,
+            REASON_MANAGED,
+            REASON_UNDO_FIRST,
+            REASON_CHANGED,
+            REASON_STILL_OPEN,
+            REASON_KEPT,
+            FAILURE_GENERAL,
+            COULDNT_READ,
+            NOT_DONE,
+            "Couldn't check",
+            "Not done",
+            "Left as it is",
+        ]);
+        for text in all {
+            for lang in [Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
+                assert_ne!(lang.t(text), text, "{} missing for {text}", lang.code());
+            }
+        }
     }
 }
