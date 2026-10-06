@@ -943,13 +943,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let mut body = column![].spacing(theme::S8);
 
     if let Some(error) = &ctx.engine_error {
-        let details = widgets::expander(
-            p,
-            ctx.t("More details"),
-            state.show_error,
-            Message::Fixes(Msg::ErrorDetails),
-            widgets::small(p, ctx.t(crate::app::flow::plain_failure(error))),
-        );
         return page(body.push(widgets::region(
             p,
             widgets::empty_state(
@@ -959,7 +952,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 ctx.t(
                     "Close Secblitz and open it again. If this keeps happening, restart your PC.",
                 ),
-                Some(details),
+                Some(error_details(state, ctx, error)),
             ),
         )));
     }
@@ -969,37 +962,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             return page(column![first_check(state, ctx)].height(Length::Fill));
         }
         if let Some(error) = &ctx.check_error {
-            let details = widgets::expander(
-                p,
-                ctx.t("More details"),
-                state.show_error,
-                Message::Fixes(Msg::ErrorDetails),
-                widgets::small(p, ctx.t(crate::app::flow::plain_failure(error))),
-            );
-            let again = widgets::action(
-                p,
-                ButtonKind::Primary,
-                ctx.t("Check again"),
-                Some(Icon::Refresh),
-                (ctx.checking.is_none() && !ctx.busy).then_some(Message::CheckNow),
-            );
-            return page(
-                body.push(widgets::region(
-                    p,
-                    widgets::empty_state(
-                        p,
-                        Icon::ShieldAlert,
-                        ctx.t("We couldn't finish checking"),
-                        ctx.t("Nothing was changed. Press Check again. If it keeps failing, restart your PC."),
-                        Some(
-                            column![again, details]
-                                .spacing(theme::S3)
-                                .align_x(Alignment::Center)
-                                .into(),
-                        ),
-                    ),
-                )),
-            );
+            return page(body.push(check_failed(state, ctx, error)));
         }
         return page(body);
     };
@@ -1020,21 +983,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if report.results.iter().any(|r| r.status == "pending")
         || report.findings.iter().any(|f| f.status == "pending")
     {
-        body = body.push(widgets::row_item_tinted(
-            p,
-            Some(Icon::Undo),
-            Some(Tone::Warn),
-            ctx.t("An earlier change isn't finished"),
-            Some(ctx.t("Undo your last fixes before making new ones.")),
-            widgets::action(
-                p,
-                ButtonKind::Secondary,
-                ctx.t("Undo"),
-                None,
-                (!ctx.busy).then_some(Message::ReviewUndo),
-            ),
-            None,
-        ));
+        body = body.push(unfinished_change(ctx));
     }
 
     if rows.attention.is_empty() && ctx.checking.is_none() {
@@ -1049,107 +998,201 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ),
         ));
     }
-    if !rows.attention.is_empty() || !rows.privacy.is_empty() {
-        let all: Vec<String> = rows
-            .attention
-            .iter()
-            .chain(&rows.privacy)
-            .map(|a| a.id.clone())
-            .collect();
-        let chosen = selection(state, ctx, &all);
-        let n = chosen.len();
-        let restart_label = ctx.t("Restart needed");
-        let choice_label = ctx.t("Your choice");
-        let rows_of = |list: &[Att], extra: bool| -> Vec<Element<'a, Message>> {
-            list.iter()
-                .map(|a| {
-                    attention_row(
-                        state,
-                        ctx,
-                        a,
-                        chosen.contains(&a.id),
-                        &restart_label,
-                        &choice_label,
-                        extra,
-                    )
-                })
-                .collect()
-        };
-        let count = match n {
-            0 => ctx.t("Nothing selected"),
-            1 => ctx.t("1 selected"),
-            _ => ctx.t("{n} selected").replace("{n}", &n.to_string()),
-        };
-        let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
-        let select = if n == all.len() {
-            (
-                Icon::X,
-                ctx.t("Select none"),
-                Message::Fixes(Msg::SelectNone),
-            )
-        } else {
-            (
-                Icon::Check,
-                ctx.t("Select all"),
-                Message::Fixes(Msg::SelectAll),
-            )
-        };
-        let mut trailing = Some(
-            row![
-                widgets::action(
-                    p,
-                    ButtonKind::Primary,
-                    ctx.t("Fix selected"),
-                    Some(Icon::Wrench),
-                    (ready && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
-                ),
-                widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
-            ]
-            .spacing(theme::S1)
-            .align_y(Alignment::Center),
-        );
-        if !rows.attention.is_empty() {
-            let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
-            let mut list = rows_of(shown, false);
-            if let Some(m) = more(
-                ctx,
-                rows.attention.len(),
-                state.all_attention,
-                Msg::AllAttention,
-            ) {
-                list.push(m);
-            }
-            body = body.push(widgets::group(
-                p,
-                ctx.t("Needs your attention"),
-                Some(count.clone()),
-                trailing.take().map(Into::into),
-                list,
-            ));
-        }
-        if !rows.privacy.is_empty() {
-            let note = ctx.t("Optional. Not part of your protection score.");
-            let subtitle = if trailing.is_some() {
-                format!("{note} · {count}")
-            } else {
-                note
-            };
-            body = body.push(widgets::group(
-                p,
-                ctx.t("Privacy extras"),
-                Some(subtitle),
-                trailing.take().map(Into::into),
-                rows_of(&rows.privacy, true),
-            ));
-        }
+    for group in attention_groups(state, ctx, rows) {
+        body = body.push(group);
     }
+    for group in other_groups(state, ctx, rows) {
+        body = body.push(group);
+    }
+    if !rows.protected.is_empty() {
+        body = body.push(protected_group(state, ctx, rows));
+    }
+    page(body)
+}
 
+fn error_details<'a>(state: &State, ctx: &Ctx, error: &str) -> Element<'a, Message> {
+    let p = ctx.palette;
+    widgets::expander(
+        p,
+        ctx.t("More details"),
+        state.show_error,
+        Message::Fixes(Msg::ErrorDetails),
+        widgets::small(p, ctx.t(crate::app::flow::plain_failure(error))),
+    )
+}
+
+fn check_failed<'a>(state: &State, ctx: &Ctx, error: &str) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let again = widgets::action(
+        p,
+        ButtonKind::Primary,
+        ctx.t("Check again"),
+        Some(Icon::Refresh),
+        (ctx.checking.is_none() && !ctx.busy).then_some(Message::CheckNow),
+    );
+    widgets::region(
+        p,
+        widgets::empty_state(
+            p,
+            Icon::ShieldAlert,
+            ctx.t("We couldn't finish checking"),
+            ctx.t("Nothing was changed. Press Check again. If it keeps failing, restart your PC."),
+            Some(
+                column![again, error_details(state, ctx, error)]
+                    .spacing(theme::S3)
+                    .align_x(Alignment::Center)
+                    .into(),
+            ),
+        ),
+    )
+    .into()
+}
+
+fn unfinished_change<'a>(ctx: &Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    widgets::row_item_tinted(
+        p,
+        Some(Icon::Undo),
+        Some(Tone::Warn),
+        ctx.t("An earlier change isn't finished"),
+        Some(ctx.t("Undo your last fixes before making new ones.")),
+        widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Undo"),
+            None,
+            (!ctx.busy).then_some(Message::ReviewUndo),
+        ),
+        None,
+    )
+}
+
+/// The "Needs your attention" and "Privacy extras" groups with their shared
+/// selection count and Fix selected button.
+fn attention_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<'a, Message>> {
+    if rows.attention.is_empty() && rows.privacy.is_empty() {
+        return Vec::new();
+    }
+    let p = ctx.palette;
+    let all: Vec<String> = rows
+        .attention
+        .iter()
+        .chain(&rows.privacy)
+        .map(|a| a.id.clone())
+        .collect();
+    let chosen = selection(state, ctx, &all);
+    let n = chosen.len();
+    let restart_label = ctx.t("Restart needed");
+    let choice_label = ctx.t("Your choice");
+    let rows_of = |list: &[Att], extra: bool| -> Vec<Element<'a, Message>> {
+        list.iter()
+            .map(|a| {
+                attention_row(
+                    state,
+                    ctx,
+                    a,
+                    chosen.contains(&a.id),
+                    &restart_label,
+                    &choice_label,
+                    extra,
+                )
+            })
+            .collect()
+    };
+    let count = match n {
+        0 => ctx.t("Nothing selected"),
+        1 => ctx.t("1 selected"),
+        _ => ctx.t("{n} selected").replace("{n}", &n.to_string()),
+    };
+    let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
+    let select = if n == all.len() {
+        (
+            Icon::X,
+            ctx.t("Select none"),
+            Message::Fixes(Msg::SelectNone),
+        )
+    } else {
+        (
+            Icon::Check,
+            ctx.t("Select all"),
+            Message::Fixes(Msg::SelectAll),
+        )
+    };
+    let mut trailing = Some(
+        row![
+            widgets::action(
+                p,
+                ButtonKind::Primary,
+                ctx.t("Fix selected"),
+                Some(Icon::Wrench),
+                (ready && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
+            ),
+            widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
+        ]
+        .spacing(theme::S1)
+        .align_y(Alignment::Center),
+    );
+    let mut groups = Vec::new();
+    if !rows.attention.is_empty() {
+        let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
+        let mut list = rows_of(shown, false);
+        if let Some(m) = more(
+            ctx,
+            rows.attention.len(),
+            state.all_attention,
+            Msg::AllAttention,
+        ) {
+            list.push(m);
+        }
+        groups.push(widgets::group(
+            p,
+            ctx.t("Needs your attention"),
+            Some(count.clone()),
+            trailing.take().map(Into::into),
+            list,
+        ));
+    }
+    if !rows.privacy.is_empty() {
+        let note = ctx.t("Optional. Not part of your protection score.");
+        let subtitle = if trailing.is_some() {
+            format!("{note} · {count}")
+        } else {
+            note
+        };
+        groups.push(widgets::group(
+            p,
+            ctx.t("Privacy extras"),
+            Some(subtitle),
+            trailing.take().map(Into::into),
+            rows_of(&rows.privacy, true),
+        ));
+    }
+    groups
+}
+
+/// The "Worth a look" group and the collapsed groups for checks that need no action from the user.
+fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<'a, Message>> {
+    let p = ctx.palette;
     let bucket =
         |b: Bucket| -> Vec<&Other> { rows.others.iter().filter(|o| o.bucket == b).collect() };
-
+    let collapsed = |list: Vec<&Other>, title: String, open: bool, toggle: Msg| {
+        let mut items = column![].spacing(theme::S1);
+        for o in &list {
+            items = items.push(other_row(state, ctx, o));
+        }
+        widgets::collapsible(
+            p,
+            title,
+            Some(count_text(ctx, list.len())),
+            open,
+            Message::Fixes(toggle),
+            items,
+        )
+    };
+    let mut groups = Vec::new();
     let look = bucket(Bucket::Look);
     if !look.is_empty() {
-        body = body.push(widgets::group(
+        groups.push(widgets::group(
             p,
             ctx.t("Worth a look"),
             Some(ctx.t("Most of these are done in Windows itself. Steps are shown where they help.")),
@@ -1157,79 +1200,58 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             look.iter().map(|o| other_row(state, ctx, o)).collect(),
         ));
     }
-
     let cant = bucket(Bucket::Unavailable);
     if !cant.is_empty() {
-        let mut list = column![].spacing(theme::S1);
-        for o in &cant {
-            list = list.push(other_row(state, ctx, o));
-        }
-        body = body.push(widgets::collapsible(
-            p,
+        groups.push(collapsed(
+            cant,
             ctx.t("Can't check right now"),
-            Some(count_text(ctx, cant.len())),
             state.open_cant,
-            Message::Fixes(Msg::ToggleCant),
-            list,
+            Msg::ToggleCant,
         ));
     }
-
     let managed = bucket(Bucket::Managed);
     if !managed.is_empty() {
-        let mut list = column![].spacing(theme::S1);
-        for o in &managed {
-            list = list.push(other_row(state, ctx, o));
-        }
-        body = body.push(widgets::collapsible(
-            p,
+        groups.push(collapsed(
+            managed,
             ctx.t("Managed elsewhere"),
-            Some(count_text(ctx, managed.len())),
             state.open_managed,
-            Message::Fixes(Msg::ToggleManaged),
-            list,
+            Msg::ToggleManaged,
         ));
     }
-
     let info = bucket(Bucket::GoodToKnow);
     if !info.is_empty() {
-        let mut list = column![].spacing(theme::S1);
-        for o in &info {
-            list = list.push(other_row(state, ctx, o));
-        }
-        body = body.push(widgets::collapsible(
-            p,
+        groups.push(collapsed(
+            info,
             ctx.t("Good to know"),
-            Some(count_text(ctx, info.len())),
             state.open_info,
-            Message::Fixes(Msg::ToggleInfo),
-            list,
+            Msg::ToggleInfo,
         ));
     }
+    groups
+}
 
-    if !rows.protected.is_empty() {
-        let shown = widgets::limited(&rows.protected, FIRST_ROWS, state.all_protected);
-        let mut list = column![].spacing(theme::S1);
-        for r in shown {
-            list = list.push(protected_row(ctx, r));
-        }
-        if let Some(m) = more(
-            ctx,
-            rows.protected.len(),
-            state.all_protected,
-            Msg::AllProtected,
-        ) {
-            list = list.push(m);
-        }
-        body = body.push(widgets::collapsible(
-            p,
-            ctx.t("Protected"),
-            Some(count_text(ctx, rows.protected.len())),
-            state.open_protected,
-            Message::Fixes(Msg::ShowProtected),
-            list,
-        ));
+fn protected_group<'a>(state: &State, ctx: &Ctx, rows: &Rows) -> Element<'a, Message> {
+    let shown = widgets::limited(&rows.protected, FIRST_ROWS, state.all_protected);
+    let mut list = column![].spacing(theme::S1);
+    for r in shown {
+        list = list.push(protected_row(ctx, r));
     }
-    page(body)
+    if let Some(m) = more(
+        ctx,
+        rows.protected.len(),
+        state.all_protected,
+        Msg::AllProtected,
+    ) {
+        list = list.push(m);
+    }
+    widgets::collapsible(
+        ctx.palette,
+        ctx.t("Protected"),
+        Some(count_text(ctx, rows.protected.len())),
+        state.open_protected,
+        Message::Fixes(Msg::ShowProtected),
+        list,
+    )
 }
 
 #[cfg(test)]
