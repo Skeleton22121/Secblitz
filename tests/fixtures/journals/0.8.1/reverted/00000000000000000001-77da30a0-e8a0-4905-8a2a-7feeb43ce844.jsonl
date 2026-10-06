@@ -1,0 +1,12 @@
+{"kind":"header","schema":1,"machine":"machine-a","transaction":"00000000000000000001-77da30a0-e8a0-4905-8a2a-7feeb43ce844","sequence":1}
+{"kind":"prepare","id":"firewall.public.inbound","before":"Allow"}
+{"kind":"applied","id":"firewall.public.inbound"}
+{"kind":"prepare","id":"firewall.private.inbound","before":"Allow"}
+{"kind":"applied","id":"firewall.private.inbound"}
+{"kind":"sealed"}
+{"kind":"reverting"}
+{"kind":"restore_pending","id":"firewall.private.inbound"}
+{"kind":"restored","id":"firewall.private.inbound"}
+{"kind":"restore_pending","id":"firewall.public.inbound"}
+{"kind":"restored","id":"firewall.public.inbound"}
+{"kind":"reverted"}

@@ -1,0 +1,5 @@
+{
+  "firewall.domain.inbound": "Allow",
+  "firewall.private.inbound": "Allow",
+  "firewall.public.inbound": "Block"
+}

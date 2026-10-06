@@ -3,7 +3,7 @@
 use super::catalog::{
     apply_eligible, firewall_control, firewall_protected, permission_control, scope, target_for,
 };
-use super::journal::{Record, Transaction};
+use super::journal::{Record, State, Transaction};
 use super::{Engine, Outcome, Progress, ProgressStep, Report, MAX_TRANSACTIONS};
 use crate::model::{CheckStatus, Control, Observation};
 use anyhow::{ensure, Context, Result};
@@ -69,7 +69,8 @@ impl Engine {
     ) -> Result<Report> {
         let _lock = self.lock()?;
         self.mutation_interlocks(&_lock)?;
-        let transactions = self.load()?;
+        let mut transactions = self.load()?;
+        self.close_finished(&mut transactions)?;
         let controls: Vec<_> = self
             .controls
             .iter()
@@ -85,6 +86,8 @@ impl Engine {
             self.report_blocked_by_active(tx, &controls, &mut report, &mut callback);
             return Ok(report);
         }
+        self.settle_restoring(&mut transactions, selected)?;
+        self.close_finished(&mut transactions)?;
         let mut owned = self.observe_owned(&transactions, &controls)?;
         if owned.iter().any(|r| r.status != CheckStatus::Unchanged) {
             report.skip_all(
@@ -157,7 +160,10 @@ impl Engine {
     }
 
     fn assess_under_active(&mut self, c: &Control, tx: &Transaction) -> Outcome {
-        let entry = tx.entries.iter().find(|e| e.id == c.id);
+        let entry = tx
+            .entries
+            .iter()
+            .find(|e| e.id == c.id && e.state != State::Restored);
         let observed = self.observe(&c.id).and_then(|o| {
             let expected = if entry.is_none() && firewall_control(&c.id) {
                 firewall_protected(&o)?.then(|| o.value.clone())
@@ -207,7 +213,7 @@ impl Engine {
                 .iter()
                 .filter(|t| !t.reverted)
                 .flat_map(|t| &t.entries)
-                .find(|e| e.id == c.id)
+                .find(|e| e.id == c.id && e.state != State::Restored)
             else {
                 continue;
             };

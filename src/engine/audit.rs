@@ -61,7 +61,7 @@ impl Engine {
             return;
         }
         let transactions = self.load().unwrap_or_default();
-        let newest = transactions.iter().rev().find(|t| !t.reverted);
+        let newest = Self::next_to_undo(&transactions);
         found.retain_mut(|f| {
             let Some(id) = crate::vbs::finding_control(&f.title) else {
                 return true;
@@ -89,7 +89,7 @@ impl Engine {
             if !crate::vbs::restarted_since(written, Some(boot)) {
                 return false;
             }
-            let own_batch = tx.entries.iter().all(|e| e.id == id);
+            let own_batch = tx.entries.iter().all(|e| e.id == id || e.state == State::Restored);
             if own_batch && newest.is_some_and(|n| n.sequence == tx.sequence) {
                 f.detail = format!("{}. {}", crate::vbs::UNDO_READY, f.detail);
             }
@@ -110,6 +110,25 @@ impl Engine {
         }
     }
 
+    /// The batch "undo your last fixes" works on: the newest one not yet closed or fully put back.
+    pub(super) fn next_to_undo(transactions: &[Transaction]) -> Option<&Transaction> {
+        transactions
+            .iter()
+            .rev()
+            .find(|t| !t.reverted && !t.fully_restored())
+    }
+
+    /// Settings that can be put back one at a time: still owned, in a complete batch.
+    fn undoable_ids(transactions: &[Transaction]) -> std::collections::HashSet<&str> {
+        transactions
+            .iter()
+            .filter(|t| !t.reverted && t.sealed && !t.reverting && !t.incomplete())
+            .flat_map(|t| &t.entries)
+            .filter(|e| matches!(e.state, State::Applied | State::Restoring))
+            .map(|e| e.id.as_str())
+            .collect()
+    }
+
     pub fn audit(&mut self) -> Result<Report> {
         self.audit_with_progress(|_| {})
     }
@@ -120,19 +139,30 @@ impl Engine {
         let active = transactions.iter().rev().find(|t| !t.reverted);
         let mut report = Report {
             transaction: active.map(|t| t.name.clone()),
+            undo_next: Self::next_to_undo(&transactions)
+                .map(|t| {
+                    t.entries
+                        .iter()
+                        .filter(|e| e.state != State::Restored)
+                        .map(|e| e.id.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
             ..Report::default()
         };
+        let undoable = Self::undoable_ids(&transactions);
         let controls = self.controls.clone();
         for batch in controls.chunks(READ_BATCH) {
             let ids: Vec<&str> = batch.iter().map(|c| c.id.as_str()).collect();
             for (c, observed) in batch.iter().zip(self.observe_many(&ids)) {
-                let result = match observed {
+                let mut result = match observed {
                     Ok(o) => match assessment_status(&c.id, &o) {
                         Ok(status) => Self::observed_outcome(c, status, &o.reason, &o),
                         Err(e) => Self::observed_outcome(c, CheckStatus::Error, format!("{e:#}"), &o),
                     },
                     Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
                 };
+                result.undoable = undoable.contains(c.id.as_str());
                 report.push(result, &mut callback);
             }
         }
@@ -156,7 +186,7 @@ impl Engine {
                 format!(
                     "{} {}",
                     tx.name,
-                    if tx.reverted {
+                    if tx.reverted || tx.fully_restored() {
                         "reverted"
                     } else if tx.reverting {
                         "reverting"
