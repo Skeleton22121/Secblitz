@@ -1,5 +1,3 @@
-# Cross-platform parsing and mocked WUA boundaries ONLY. No Windows updates,
-# metadata searches, COM activation, downloads, installs or registry probes run.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $root = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot,'..'))
@@ -46,8 +44,6 @@ foreach ($case in @('valid','wsus','third_party_default','managed_extra','duplic
     if ($case -eq 'valid') { PatchSource }
     else { Reject { PatchSource } "Unsafe/unknown source accepted: $case" }
 }
-# Run the actual shared management functions with local OS/registry providers
-# replaced. This is gate behavior coverage, not native RSOP/WSUS validation.
 $policyAst=[Management.Automation.Language.Parser]::ParseInput($parts[0],[ref]$tokens,[ref]$errors)
 foreach ($f in @($policyAst.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] })) { . ([scriptblock]::Create($f.Extent.Text)) }
 function Load([string]$name) {}
@@ -171,8 +167,6 @@ foreach ($times in @(@(1000,1001),@(1000,1000),@(1001,1100),@(1,999))) {
     if ($times[0] -eq 1000 -and $times[1] -eq 1001) { PatchDeadline }
     else { Reject { PatchDeadline } 'Expired/future permit accepted' }
 }
-# Evaluate actual dispatcher body with mocked mutation objects. Guards and exact
-# metadata remain real; no OS command can run through these provider replacements.
 $try=@($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] })
 Assert ($try.Count -eq 1) 'Ambiguous dispatcher'
 $bodyText=$try[0].Body.Extent.Text
@@ -234,7 +228,6 @@ foreach ($action in @('download','install')) {
         else { Assert ($failed -and $submitted -eq 0) "Unsafe submission: $action/$case" }
     }
 }
-# Independent verification uses installed search and exact returned identity.
 $script:currentUpdate=FixtureUpdate; $script:currentUpdate.IsInstalled=$true; $script:reboot=$true
 $verification=PatchVerify $script:session
 Assert ($verification.installed.Count -eq 1 -and $verification.reboot_pending -and $script:criteria.Contains('IsInstalled=1')) 'Independent verification failed'

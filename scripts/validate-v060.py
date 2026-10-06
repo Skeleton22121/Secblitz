@@ -83,8 +83,6 @@ elif mode == "build":
                 z.write(p, p.relative_to(dest / "source"))
     print(json.dumps(hashes, indent=2))
 elif mode == "guest-script":
-    # Preserve the previous run's script/evidence. Generate this run's wrapper
-    # from the reviewed owned harness with a new namespace and explicit tests.
     text = (ROOT / "scripts/validate-foundation-guest.ps1").read_text()
     text = text.replace("SecblitzFoundationValidation20261003", "SecblitzV060CandidateValidation")
     text = text.replace("'candidate-b'", "'candidate-final'")

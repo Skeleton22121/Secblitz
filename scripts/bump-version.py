@@ -131,7 +131,6 @@ def site_patterns(old, new):
         (r"secblitz-" + re.escape(old) + r"-windows-x64", "secblitz-" + new + "-windows-x64"),
         (r"Version " + re.escape(old) + r"\b", "Version " + new),
         (r"version-" + re.escape(old) + r"-", "version-" + new + "-"),
-        # Structured data (JSON-LD or JSON files).
         (r'("softwareVersion"\s*:\s*")' + re.escape(old) + '"', r'\g<1>' + new + '"'),
     ]
 
@@ -203,7 +202,6 @@ def bump_changelog(text, old, new, today, allow_empty, warnings):
         name, label, start, end = by_name[new]
         if label.lower() != "unreleased" or new != old:
             raise BumpError(f"CHANGELOG.md already has a section for {new}.")
-        # Date the version that is already in Cargo.toml.
         body = text[start:end]
         if not re.search(r"^- ", body, re.M):
             raise BumpError(f"CHANGELOG.md section {new} has no entries.")
