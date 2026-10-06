@@ -8,9 +8,6 @@ param(
     [string]$SignToolPath = 'signtool.exe',
     [string]$SigningKeyPath,
     [string]$UpdateOrigin,
-    # All: tests, exe and setup (the default).
-    # Exe: tests and the exe only (CI signs the exe next).
-    # Setup: pack the exe already in dist\ (signed or not) into the setup.
     [ValidateSet('All', 'Exe', 'Setup')][string]$Stage = 'All',
     [switch]$SkipTests
 )
@@ -30,7 +27,6 @@ if ($CertificateThumbprint) {
     $SignToolPath = (Get-Command $SignToolPath -ErrorAction Stop).Source
 }
 
-# Build-time trust inputs only; never accept a URL from the installed task.
 if (-not $PSBoundParameters.ContainsKey('UpdateOrigin')) {
     $UpdateOrigin = ([string](Get-Content -LiteralPath (Join-Path $root 'assets\update-origin.txt') -Raw)).Trim()
 }
@@ -110,8 +106,6 @@ $previousEpoch = $env:SOURCE_DATE_EPOCH
 Push-Location $root
 try {
     $null = New-Item -ItemType Directory -Path $dist -Force
-    # Reproducible build: no local paths in the binary, a fixed PE timestamp
-    # (/Brepro) and no absolute .pdb path. Local paths become fixed names.
     $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
     $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
     $env:RUSTFLAGS = @('-C target-feature=+crt-static', '-C link-arg=/Brepro', '-C link-arg=/PDBALTPATH:secblitz.pdb',
@@ -121,8 +115,6 @@ try {
         $commitTime = & git -C $root log -1 --format=%ct 2>$null
         if ($LASTEXITCODE -eq 0 -and $commitTime) { $env:SOURCE_DATE_EPOCH = ([string]$commitTime).Trim() }
     }
-    # Windows PowerShell removes empty environment values. A whitespace sentinel
-    # compiles to NotConfigured (core trims it), even if the fallback asset is set.
     $env:SECBLITZ_UPDATE_ORIGIN = if ($UpdateOrigin) { $UpdateOrigin } else { ' ' }
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
     if ($Stage -ne 'Setup') {
@@ -139,7 +131,6 @@ try {
             Invoke-Checked 'cargo' @('test', '--locked', '--all-targets', '--target', $target)
             Invoke-Checked 'cargo' @('clippy', '--locked', '--all-targets', '--target', $target, '--', '-D', 'warnings')
         }
-        # build.rs does not track the icon itself yet: force a resource rebuild.
         Invoke-Checked 'cargo' @('clean', '-p', 'secblitz', '--release', '--target', $target, '--target-dir', (Join-Path $root 'target'))
         Invoke-Checked 'cargo' @('build', '--locked', '--release', '--target', $target, '--target-dir', (Join-Path $root 'target'))
     }
@@ -161,7 +152,6 @@ try {
         throw "Executable version does not match Cargo package version $version."
     }
     if ($Stage -ne 'Setup') {
-        # Use a VS Developer PowerShell (CI initializes it below). Inspect actual PE imports.
         $imports = & dumpbin.exe /dependents $exe
         if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed.' }
         if (($imports -join "`n") -match '(?i)(VCRUNTIME\d*|MSVCP\d*|ucrtbase|api-ms-win-crt-[\w-]+)\.dll') {
@@ -190,7 +180,6 @@ try {
     $compilerArgs = @("/DAppVersion=$version", "/DSourceExe=$exe", "/DOutputPath=$dist")
     if ($CertificateThumbprint) {
         Sign-ReleaseFile $exe
-        # Inno signs its uninstaller and final installer with this configured tool.
         $signCommand = '"' + $SignToolPath + '" sign /sha1 ' + $CertificateThumbprint + ' /fd SHA256 /tr ' + $TimestampUrl + ' /td SHA256 $f'
         $compilerArgs += '/DSignToolName=secblitz'
         $compilerArgs += '/Ssecblitz=' + $signCommand
@@ -198,7 +187,6 @@ try {
     $compilerArgs += (Join-Path $root 'installer\setup.iss')
     Invoke-Checked $IsccPath $compilerArgs
     $setup = Join-Path $dist "secblitz-$version-windows-x64-setup.exe"
-    # Verify final artifacts before checksums or the signed update manifest.
     Assert-ReleasePe $exe
     if ($CertificateThumbprint) {
         Assert-PublisherSignature $exe
@@ -208,7 +196,6 @@ try {
         '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
     }
     $hashes | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
-    # Sign only the final bytes, after Inno and optional Authenticode have finished.
     if ($SigningKeyPath) {
         Invoke-Checked 'python' @((Join-Path $root 'scripts\sign-release.py'),
             '--key', $SigningKeyPath, '--public-key', $publicKeyPath, '--version', $version,

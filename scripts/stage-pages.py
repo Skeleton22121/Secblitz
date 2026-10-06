@@ -19,7 +19,6 @@ spec = importlib.util.spec_from_file_location("prepare_pages", ROOT / "scripts/p
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-# No recursive asset glob, extension-only allowlist, or source-selected manifest.
 STATIC = (
     "index.html", "404.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json",
     "assets/favicon.svg", "assets/preview-92912b03eb97.webp",
@@ -29,14 +28,12 @@ STATIC = (
     "assets/fonts/ibm-plex-sans-600.woff2", "assets/fonts/IBMPlexSans-LICENSE.txt",
 )
 FONT_LICENSES = ("assets/fonts/OFL.txt", "assets/fonts/LICENSE.txt")
-# Accepted only when replacing our previous snapshot, never copied to new output.
 LEGACY_ASSETS = {
     "assets/poster.webp", "assets/preview-33b342ab21fb.webp", "assets/secblitz-demo.mp4", "assets/intro-6bb434a9c067.mp4",
     "assets/secblitz.svg", "assets/fonts/schibsted-grotesk-latin.woff2", "assets/fonts/OFL.txt",
     "assets/intro-a18b68fac12f.mp4", "assets/intro-a8f1e9ace5d9.webm",
     "assets/preview-541ff80cb74f.webp", "assets/home-dark-1215a72074e4.webp", "assets/preview-b081691b149a.webp",
 }
-# Preserve already published immutable URLs. New historical versions require review.
 HISTORICAL = (
     "secblitz-0.3.0-windows-x64-setup.exe",
     "secblitz-0.4.0-windows-x64-setup.exe", "secblitz-0.4.0-windows-x64.exe",
@@ -85,8 +82,6 @@ def read_file(path, limit=gate.LIMIT):
 
 
 def check_content(relative, data):
-    # Include UTF-16 strings embedded in PE images. This is a marker scan, not
-    # knowledge of the operator's actual secret values or a malware detector.
     if gate.SECRET_MARKERS.search(data) or gate.SECRET_MARKERS.search(data.replace(b"\x00", b"")):
         raise ValueError("potential secret in release input (content and path suppressed)")
     hashed_asset = re.fullmatch(r"assets/(?:intro|preview)-([0-9a-f]{12})\.(?:mp4|webm|webp)", relative)
@@ -131,8 +126,6 @@ def validate_snapshot(site, version, origin, references):
     payload = gate.verify_feed(site, version)
     gate.verify_site_references(site, origin, version, payload)
     gate.verify_not_found_page(site)
-    # CSS assets are not covered by HTMLParser. Fail closed on unsupported CSS
-    # escaping/imports so this site's simple URL syntax stays auditable.
     css = (site / "styles.css").read_text(encoding="utf-8")
     if "\\" in css or re.search(r"@import\b", css, re.I):
         raise ValueError("CSS imports/escapes require explicit staging review")
@@ -143,8 +136,6 @@ def validate_snapshot(site, version, origin, references):
         relative = gate.local_reference(url.path)
         if not (site / relative).is_file():
             raise ValueError("CSS references an unstaged asset")
-    # Compare current public files to independently selected final build paths.
-    # Historical images remain available but are not authenticated by stable.json.
     for filename, reference in references.items():
         expected = read_file(reference)
         check_content(filename, expected)
@@ -154,8 +145,6 @@ def validate_snapshot(site, version, origin, references):
 
 
 def check_existing_output(output, allowed):
-    # Never recursively remove an arbitrary user directory. An existing generated
-    # tree may contain only the known publication files/directories, without links.
     directories = {parent.as_posix() for name in allowed for parent in Path(name).parents if str(parent) != "."}
     for path in output.rglob("*"):
         relative = path.relative_to(output).as_posix()
@@ -167,7 +156,6 @@ def check_existing_output(output, allowed):
 
 
 def stage(source, output, version, reference_dir):
-    # Preserve lexical .. checks before abspath can normalize user arguments.
     if any(".." in p.parts for p in (source, output, reference_dir)):
         raise ValueError("directory arguments must not contain traversal components")
     source, output, reference_dir = map(plain_path, (source, output, reference_dir))
@@ -202,7 +190,6 @@ def stage(source, output, version, reference_dir):
             dest.write_bytes(data)
             dest.chmod(0o644)
         validate_snapshot(snapshot, version, origin, references)
-        # No writes to source. Failure above leaves an existing good snapshot intact.
         if output.exists():
             output.rename(work / "previous")
         try:

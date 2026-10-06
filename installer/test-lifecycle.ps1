@@ -4,7 +4,6 @@ param([string]$SetupPath, [switch]$OwnershipFixtures)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($OwnershipFixtures) {
-    # Exercise the actual pure XML validator on the host, without COM or Windows.
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'maintenance.ps1'), [ref]$tokens, [ref]$errors)
     if ($errors.Count) { throw ($errors | Out-String) }
@@ -40,8 +39,6 @@ if ($OwnershipFixtures) {
         if (-not $rejected) { throw "Ownership mutation accepted: $($mutation[0])" }
     }
     Write-Host "PASS: 3 accepted ownership fixtures, $($mutations.Count) rejected mutations."
-    # The web protection reconcile task: SYSTEM running our executable with the
-    # fixed arguments is ours; the triggers only decide when it runs.
     $reconcileValidator = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-OwnedReconcileXml' }, $true)
     . ([scriptblock]::Create($reconcileValidator.Extent.Text))
     $reconcile = '<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task" version="1.2"><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger><TimeTrigger><Repetition><Interval>PT1H</Interval></Repetition><StartBoundary>2026-10-03T12:00:00</StartBoundary></TimeTrigger><EventTrigger><Subscription>&lt;QueryList /&gt;</Subscription></EventTrigger></Triggers><Principals><Principal id="Reconcile"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Actions Context="Reconcile"><Exec><Command>"C:\Program Files\Secblitz\secblitz.exe"</Command><Arguments>filter reconcile</Arguments><WorkingDirectory>C:\Program Files\Secblitz</WorkingDirectory></Exec></Actions></Task>'
@@ -89,8 +86,6 @@ $null = New-Item -ItemType Directory -Path $logs
 $journal = Join-Path $data 'journal-sentinel.json'
 $journalHash = ''
 function New-Journal {
-    # Stands in for the journals and app copies: a protected data folder, like the
-    # real one, that setup and upgrades must keep and removing Secblitz deletes.
     $null = New-Item -ItemType Directory -Path $data
     $acl = Get-Acl -LiteralPath $data
     $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
@@ -112,7 +107,6 @@ function Assert-Journal {
     if ((Get-FileHash -LiteralPath $journal).Hash -ne $journalHash) { throw 'Journal sentinel changed.' }
 }
 function Assert-Removed {
-    # Removing Secblitz leaves none of its background parts, data or settings.
     if (Get-Service SecblitzMonitor -ErrorAction SilentlyContinue) { throw 'Monitor service survived removal.' }
     if (Get-Service SecblitzFilter -ErrorAction SilentlyContinue) { throw 'Web protection service survived removal.' }
     if (Get-ScheduledTask -TaskName SecblitzFilterReconcile -TaskPath '\' -ErrorAction SilentlyContinue) { throw 'Reconcile task survived removal.' }
@@ -127,11 +121,9 @@ function Assert-LogHas([string]$Name, [string]$Text) {
     if (-not (Select-String -LiteralPath (Join-Path $logs $Name) -SimpleMatch $Text -Quiet)) { throw "$Name does not say: $Text" }
 }
 function Assert-NoPutBack([string]$Name) {
-    # A silent removal keeps the changes: it must never run the put-back.
     if (Select-String -LiteralPath (Join-Path $logs $Name) -SimpleMatch 'Secblitz put back' -Quiet) { throw "$Name ran the put-back." }
 }
 function Assert-Filter {
-    # Registered turned off, as LocalService; the reconcile task runs as SYSTEM.
     $service = Get-CimInstance Win32_Service -Filter "Name='SecblitzFilter'"
     if ($null -eq $service) { throw 'Web protection service was not registered.' }
     if ($service.StartName -ine 'NT AUTHORITY\LocalService' -or $service.ServiceType -ne 'Own Process' -or
@@ -144,7 +136,6 @@ function Assert-Filter {
         @($task.Triggers).Count -ne 3) { throw 'Unexpected web protection reconcile task.' }
 }
 function Assert-NoAppLaunch {
-    # Source checks also enforce skipifsilent; this runtime check catches a surviving UI process.
     $interactive = Get-CimInstance Win32_Process -Filter "Name='secblitz.exe'" |
         Where-Object { $_.CommandLine -cne ('"' + (Join-Path $app 'secblitz.exe') + '" service run') }
     if ($interactive) { throw 'Silent setup launched an unexpected application process.' }
@@ -181,7 +172,6 @@ function Assert-Updates([bool]$Enabled) {
         ($rights['S-1-5-32-545'] -band 0x1200a9) -ne 0x1200a9) { throw 'Missing required task ACL rights.' }
     $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($scheduler)
 }
-# No /TASKS override: desktop and hourly updater selected, monitor unchecked.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', "/LOG=`"$logs\default-install.log`"")
 if (-not (Test-Path -LiteralPath $desktopIcon)) { throw 'Default install omitted the desktop shortcut.' }
 $shell = New-Object -ComObject WScript.Shell
@@ -201,8 +191,6 @@ Assert-Filter
 $filterService = Get-CimInstance Win32_Service -Filter "Name='SecblitzFilter'"
 if ($filterService.StartMode -ne 'Disabled' -or $filterService.State -ne 'Stopped') { throw 'Web protection must be registered turned off.' }
 if ($null -eq [Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run', 'SecblitzTray', $null)) { throw 'The default install omitted the tray Run value.' }
-# An upgrade stops a running web protection service while files are replaced and
-# starts it again afterwards. (Started by hand: no switch is on, so it just idles.)
 & sc.exe config SecblitzFilter start= demand | Out-Null
 if ($LASTEXITCODE) { throw 'Cannot prepare the web protection upgrade fixture.' }
 $filterController = Get-Service SecblitzFilter
@@ -216,15 +204,12 @@ try {
     $filterController.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(30))
 } finally { $filterController.Dispose() }
 Assert-Filter
-# The verified worker's empty task list must retain the updater preference.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', '/SECBLITZUPDATE=1', "/LOG=`"$logs\automatic-upgrade.log`"")
 Assert-Updates $true
 Assert-NoAppLaunch
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', "/LOG=`"$logs\legacy-automatic-upgrade.log`"")
 Assert-Updates $true
 Assert-NoAppLaunch
-# Same-name tasks with different XML or ACLs are foreign. Neither setup nor
-# uninstall may alter them. Hourly triggers remain in the future during tests.
 $scheduler = New-Object -ComObject Schedule.Service
 $scheduler.Connect()
 $folder = $scheduler.GetFolder('\')
@@ -233,7 +218,6 @@ $ownedSddl = $folder.GetTask('SecblitzUpdate').GetSecurityDescriptor(7)
 foreach ($variant in @('command', 'arguments', 'directory', 'principal', 'extra-action', 'writable-acl', 'disabled', 'interval', 'extra-trigger', 'settings')) {
     $foreign = $scheduler.NewTask(0)
     $foreign.XmlText = $ownedXml
-    # Retain the hourly trigger so each fixture isolates its changed field.
     switch ($variant) {
         command { $foreign.Actions.Item(1).Path = '"' + (Join-Path $app 'foreign.exe') + '"' }
         arguments { $foreign.Actions.Item(1).Arguments = 'guide' }
@@ -258,35 +242,28 @@ foreach ($variant in @('command', 'arguments', 'directory', 'principal', 'extra-
 }
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($folder)
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($scheduler)
-# A silent removal without /SECBLITZDONE keeps the changes: no prompt, no put-back,
-# yet every background part, the data and the settings go.
 Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$logs\default-uninstall.log`"")
 Assert-LogHas 'default-uninstall.log' 'a silent uninstall keeps the changes'
 Assert-NoPutBack 'default-uninstall.log'
 Assert-Removed
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Uninstall retained the owned desktop shortcut.' }
 New-Journal
-# Start-Process joins arguments into a Windows command line: keep literal double
-# quotes for the empty list. PowerShell single quotes alone are not passed onward.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', "/LOG=`"$logs\no-tasks-install.log`"")
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Empty task list did not clear the default desktop task.' }
 if (Get-Service SecblitzMonitor -ErrorAction SilentlyContinue) { throw 'Empty task list installed the monitor.' }
 Assert-Updates $false
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', '/SECBLITZUPDATE=1', "/LOG=`"$logs\opted-out-automatic-upgrade.log`"")
 Assert-Updates $false
-# No task override must retain the saved updater opt-out.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', "/LOG=`"$logs\opted-out-default-upgrade.log`"")
 Assert-Updates $false
 Assert-NoAppLaunch
 Assert-Journal
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Default upgrade lost the saved desktop opt-out.' }
-# /SECBLITZDONE: the app already answered the question; nothing is asked or put back.
 Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SECBLITZDONE', "/LOG=`"$logs\no-tasks-uninstall.log`"")
 Assert-LogHas 'no-tasks-uninstall.log' 'already answered the question'
 Assert-NoPutBack 'no-tasks-uninstall.log'
 Assert-Removed
 New-Journal
-# Explicit task list opts out of desktopicon while opting into the monitor.
 Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=monitor', "/LOG=`"$logs\install.log`"")
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Desktop opt-out was ignored.' }
 Assert-NoAppLaunch
@@ -316,7 +293,6 @@ try {
     }
     if (-not $scanned) { throw 'Monitor did not produce a schema-1 report.' }
     $snapshot | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $logs 'monitor-report.json')
-    # Task is deliberately unchecked: an existing monitor must survive upgrade.
     Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', '/TASKS=""', "/LOG=`"$logs\upgrade.log`"")
     Assert-NoAppLaunch
     if (Test-Path -LiteralPath $desktopIcon) { throw 'Upgrade ignored desktop opt-out.' }
@@ -325,21 +301,18 @@ try {
     Assert-Journal
     if (-not (Test-Path -LiteralPath $report)) { throw 'Upgrade removed the monitor report.' }
 } finally { $service.Dispose() }
-# Dispose SCM handles before uninstall; held handles delay DeleteService completion.
 $lookalike = Join-Path $app 'unins001.dat'
 if (Test-Path -LiteralPath $lookalike) { throw 'Unexpected existing lookalike fixture.' }
 [IO.File]::WriteAllText($lookalike, 'Unrelated Inno-lookalike data must remain validated and preserved.')
 $lookalikeHash = (Get-FileHash -LiteralPath $lookalike).Hash
 $locked = [IO.File]::Open($lookalike, 'Open', 'ReadWrite', 'None')
 try {
-    # /VERYSILENT alone: no modal error and no broad unins*.dat bypass.
     Run-Setup (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/NORESTART', "/LOG=`"$logs\uninstall-rejected.log`"") 1 30000
     if (-not (Test-Path -LiteralPath (Join-Path $app 'secblitz.exe'))) { throw 'Rejected uninstall removed the app.' }
     $service = Get-Service SecblitzMonitor
     try {
         if ($service.Status -ne 'Running') { throw 'Rejected uninstall changed the running service.' }
     } finally { $service.Dispose() }
-    # A refused removal touches nothing else either.
     Assert-Filter
     Assert-Journal
 } finally { $locked.Dispose() }

@@ -29,8 +29,6 @@ function CopyTree($from,$to,$log) {
     if($LASTEXITCODE -ge 8){throw "Exact journal copy failed: $LASTEXITCODE"}
 }
 function Controls($path) {
-    # Reviewed existing helper: Capture-All only reads the 18 controls and
-    # service security descriptors. Its mutation methods are never invoked.
     if ($null -eq ('ServiceFixture' -as [type])) { . 'C:\Windows\Temp\secblitz-v020-native.ps1' }
     $null=Capture-All $path
 }
@@ -139,8 +137,6 @@ if($Phase -eq 'prepare') {
         $null=Run "$Candidate-diagnostics" "$bin\secblitz.exe" @('diagnostics','run','--profile','everyday','--json','--details') 300
         $null=Run "$Candidate-original-user-cli" "$bin\secblitz.exe" @('diagnostics','run','--original-user','--json','--details') 300
     } elseif($Phase -eq 'check-health') {
-        # Use the existing owner policy as-is: no soft/hard gate exceptions and
-        # no repairs, downloads, scan-health, SFC or Defender mutation selected.
         $null=Run "$Candidate-policy" "$bin\secblitz.exe" @('operations','policy','show','--json','--details')
         $code=Run "$Candidate-check-plan" "$bin\secblitz.exe" @('operations','plan','dism_check_health','--valid-for','600','--json','--details')
         if($code -eq 0) {
