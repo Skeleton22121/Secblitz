@@ -224,6 +224,37 @@ pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
     }
 }
 
+/// The older "Memory integrity" tip while the setting is already on but the PC
+/// has not started it yet (no restart since, so our own not-running note is not
+/// there either). The person must restart, not turn on something that is on.
+pub fn waits_for_restart(report: &Report, f: &secblitz::model::Finding) -> bool {
+    f.title == "Memory integrity"
+        && f.status == "attention"
+        && !finding_has_fix(report, f)
+        && report
+            .results
+            .iter()
+            .any(|r| r.id == secblitz::vbs::MEMORY_INTEGRITY && classify(r) == Class::Protected)
+}
+
+/// What a listed finding says, on Protection and Home alike. Same as
+/// [`advice::for_finding`], except a core protection that only waits for a
+/// restart says to restart (and has no steps or page to compete with that).
+pub fn finding_advice(report: &Report, f: &secblitz::model::Finding) -> advice::Advice {
+    let mut a = advice::for_finding(&f.title, &f.status, &f.detail);
+    if waits_for_restart(report, f) {
+        a.status = "Restart needed";
+        a.next = RESTART_TO_START;
+        a.step = advice::NextStep::Restart;
+        a.impact = "";
+    }
+    a
+}
+
+/// The line for a core protection that is on and waits for a restart.
+pub const RESTART_TO_START: &str =
+    "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down).";
+
 /// Not offered reasons that already say, on the control's own row, why the
 /// manual tip would only contradict it.
 const REASONS_THAT_REPLACE_THE_TIP: [&str; 2] = [
@@ -655,6 +686,20 @@ mod tests {
         assert_eq!(classify_in(&r, &r.results[0]), Class::Excluded);
         assert_eq!(Score::of(&r).protected, 0);
         assert_eq!(to_check_count(&r), 1);
+        // Before the restart it says to restart, never to turn it on again.
+        assert!(waits_for_restart(&r, &r.findings[0]));
+        let a = finding_advice(&r, &r.findings[0]);
+        assert_eq!(a.next, RESTART_TO_START);
+        assert_eq!(a.step, advice::NextStep::Restart);
+        assert_eq!(a.status, "Restart needed");
+        // Off, or no fix row: the usual words.
+        let mut off = rep(vec![out("vbs.memory_integrity", "attention")]);
+        off.findings.push(find("Memory integrity", "attention"));
+        assert!(!waits_for_restart(&off, &off.findings[0]));
+        let mut none = rep(vec![]);
+        none.findings.push(find("Memory integrity", "attention"));
+        assert!(!waits_for_restart(&none, &none.findings[0]));
+        assert_ne!(finding_advice(&none, &none.findings[0]).next, RESTART_TO_START);
         // Our own note replaces the old tip: one row, never two.
         r.findings
             .push(find("Memory integrity not running", "attention"));

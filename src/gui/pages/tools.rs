@@ -89,7 +89,6 @@ pub enum Msg {
     ScanDone(Result<(), String>),
     ThreatsDone(Result<actions::ThreatRemoval, String>),
     ClearThreats,
-    /// Look over the Protection fix that solves a health tip.
     DefenderDone(Result<(), String>),
     ClearScan,
     ClearDefender,
@@ -335,10 +334,11 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Ask(sheet) => {
-            // A restart would cut a running fix, repair or update short.
+            // A restart would cut a running fix, repair or update short, and
+            // a threat removal must not run alongside a fix or undo.
             let changes_pc = matches!(
                 sheet,
-                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart
+                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart | Sheet::RemoveThreats
             );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
             if !blocked {
@@ -364,6 +364,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::ThreatsDone(r) => {
+            ctx.busy = false;
             let changed = r
                 .as_ref()
                 .is_ok_and(|t| crate::app::tools::threats_result(t) != crate::app::tools::ThreatsResult::Stuck);
@@ -718,6 +719,12 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             )
         }
         Sheet::RemoveThreats => {
+            // Asked while free, but a fix may have started since.
+            if ctx.busy || !state.can_start_change() {
+                return Task::none();
+            }
+            // Holds off fixes, undo and closing the window until it ends.
+            ctx.busy = true;
             state.threats = Run::Working;
             Task::perform(
                 blocking(|| actions::remove_threats().map_err(plain)),

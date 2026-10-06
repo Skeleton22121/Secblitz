@@ -941,14 +941,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
     // A fix is only promised when the latest Protection check offers it. A
     // Not offered control says why on Protection; otherwise the manual steps.
     let fix = logic::tip_fix(tip, ctx.report.as_deref(), &ctx.catalog.available);
-    let (advice, guide) = match fix {
-        logic::TipFix::Offered(_) => (tip.fix_advice, None),
-        logic::TipFix::NotOffered { control, reason } => (
-            tip.advice,
-            crate::guide::guide_not_offered(control, reason),
-        ),
-        logic::TipFix::Manual => (tip.advice, tip.guide),
-    };
+    let (advice, guide) = logic::tip_words(tip, fix);
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
         TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(advice)),
@@ -957,41 +950,50 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
     // One compact action: the fix review, the usual scan (after its own
     // confirmation), or the Windows page that helps. Nothing starts without
     // the person's say-so.
-    let action: El<'a> = match (fix, tip.open) {
-        _ if tip.state != TipState::Look => space::horizontal().width(0).into(),
+    let action: El<'a> = match logic::tip_action(tip, fix, ctx.broker.is_some()) {
         // Opens the same review sheet as Protection; nothing changes until
-        // the person agrees there.
-        (logic::TipFix::Offered(id), _) => widgets::action(
+        // the person agrees there. Same conditions as Protection's button.
+        logic::TipAction::ReviewFix(id) => widgets::action(
             p,
             ButtonKind::Secondary,
             ctx.t("Review fix"),
             Some(Icon::ShieldCheck),
-            (!ctx.busy).then_some(Message::ReviewFixes(vec![id.to_owned()])),
+            (!ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none())
+                .then_some(Message::ReviewFixes(vec![id.to_owned()])),
         ),
-        (logic::TipFix::NotOffered { .. }, _) => widgets::action(
+        logic::TipAction::SeeWhy => widgets::action(
             p,
             ButtonKind::Secondary,
             ctx.t("See why"),
             None,
             Some(Message::Navigate(Page::Fixes)),
         ),
+        // No Protection check yet: run one; the tip then says what it found.
+        logic::TipAction::CheckNow => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Check now"),
+            Some(Icon::Refresh),
+            (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
+        ),
         // A restart that finishes updates, after its own confirmation.
-        _ if tip.restart => secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart))),
-        // The in-app scan stays reachable even when steps are shown below.
-        // Found threats go after their own confirmation sheet.
-        _ if tip.remove_threats => secondary(
+        logic::TipAction::RestartNow => {
+            secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart)))
+        }
+        // Found threats go after their own confirmation sheet, never while
+        // a fix or undo runs.
+        logic::TipAction::RemoveThreats => secondary(
             p,
             ctx.t("Remove"),
-            (!threats_busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
+            (!threats_busy && !ctx.busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
         ),
-        _ if tip.scan => secondary(
+        // The in-app scan stays reachable even when steps are shown below.
+        logic::TipAction::Scan => secondary(
             p,
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
-        // A guide shows its own button under the steps.
-        _ if guide.is_some() => space::horizontal().width(0).into(),
-        (_, Some(open)) if ctx.broker.is_some() => {
+        logic::TipAction::Open(open) => {
             // The button is named after the page it opens.
             let label = crate::guide::Page::from_action(open)
                 .map_or("Open", crate::guide::Page::button);
@@ -1003,7 +1005,8 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
                 Some(tools(Msg::OpenAction(open))),
             )
         }
-        _ => space::horizontal().width(0).into(),
+        // A guide shows its own button under the steps.
+        logic::TipAction::Steps | logic::TipAction::None => space::horizontal().width(0).into(),
     };
     let head = widgets::row_item_tinted(
         p,
