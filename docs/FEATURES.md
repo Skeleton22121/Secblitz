@@ -191,7 +191,7 @@ One compiled table drives the engine, wire validation and the PowerShell backend
 | `privacy.activity_history` | ask | Activity feed policies to 0; never counts against the score |
 | `privacy.advertising_id` | ask | DisabledByGroupPolicy=1; never counts against the score |
 
-Every control reuses the domain, MDM/enrollment, policy, RSOP and local-policy-artifact gates; preflight conditions (such as the LSA checks) apply to repairs only and never to undo. Not implemented because the value names are unconfirmed by official Microsoft documentation: `driver.vulnerable_blocklist`, `net.wpad`, `smartscreen.apps`, Nearby Sharing, KernelShadowStacks.
+Every control reuses the domain, MDM/enrollment, policy, RSOP and local-policy-artifact gates; preflight conditions (such as the LSA checks) apply to repairs only and never to undo. Not implemented because the value names are unconfirmed by official Microsoft documentation: `driver.vulnerable_blocklist`, `net.wpad`, `smartscreen.apps`, Nearby Sharing.
 
 ### 19 advisory findings
 
@@ -260,6 +260,8 @@ All journaled, gated and reversible like the table above; every one is a choice 
 | `update.store_autoupdate_policy` | Remove WindowsStore AutoDownload=2 |
 | `update.paused` | Remove the five Pause* values under WindowsUpdate\UX\Settings while a pause is in force; undo restores times to the minute |
 | `smartscreen.apps` | SmartScreenEnabled Off to Warn; remove local EnableSmartScreen=0 |
+| `vbs.memory_integrity` | Scenarios\HypervisorEnforcedCodeIntegrity Enabled=1 and WasEnabledBy=2 (Locked is never written). Offered only with hypervisor and Secure Boot support, virtualization on, no lock, no policy or MDM, and every configured or loaded driver passing the static scan (page-aligned sections, no writable and executable section, import table not executable). Restart needed; undo restores both values exactly |
+| `vbs.kernel_stack_protection` | Scenarios\KernelShadowStacks Enabled=1 and WasEnabledBy=2. Offered only while memory integrity runs and the processor reports shadow stacks (CPUID 7, ECX bit 7). Restart needed; undo restores exactly |
 | `privacy.recall` | WindowsAI DisableAIDataAnalysis=1, only where the Recall feature exists |
 | `privacy.diagnostic_data_level` | AllowTelemetry 1 only (never 0) |
 | `privacy.delivery_optimization` | DODownloadMode 0 |

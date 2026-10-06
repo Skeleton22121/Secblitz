@@ -1194,7 +1194,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::SecureBoot => "Turn on Secure Boot (startup protection) in your PC's start-up settings.",
         P::Tpm => "Your security chip is off or not ready. Check your PC's start-up settings.",
         P::BitLocker => "Turn on disk encryption so your files stay private if the PC is lost.",
-        P::Vbs => "Turn on Memory integrity (core system protection) in Windows Security.",
+        P::Vbs => "Memory integrity is off. If it is safe for this PC, you can turn it on in Protection.",
         P::WinRe => "Recovery tools are off. They help if Windows ever stops starting.",
         P::Accounts => "Use a normal account every day, and switch off the guest account.",
         P::RemoteAccess => "Switch off remote access if you don't use it.",
@@ -1249,7 +1249,8 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "accounts.daily_admin" => "You use an administrator account every day. Make a normal account for daily use.",
         "accounts.hello_configured" => "No PIN or Windows Hello is set up. Add one in Sign-in options.",
         "accounts.find_my_device" => "Find my device is off. Turn it on in Settings so you can find a lost laptop.",
-        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Look in Core isolation in Windows Security.",
+        "vbs.memory_integrity" => "Memory integrity is off. If it is safe for this PC, you can turn it on in Protection.",
+        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. If your PC supports it, you can turn it on in Protection.",
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         "persistence.run_and_tasks" => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
@@ -1267,15 +1268,19 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         | "update.reboot_overdue" => Some(Action::OpenWindowsUpdate),
         "defender.tamper_protection" => Some(Action::OpenTamperProtection),
         "defender.threats" | "defender.scan_age" => Some(Action::OpenProtectionHistory),
-        "defender.exclusions_risky" | "vbs.kernel_stack_protection" => {
-            Some(Action::OpenWindowsSecurity)
-        }
+        "defender.exclusions_risky" => Some(Action::OpenWindowsSecurity),
         id if id.starts_with("smartscreen.") => Some(Action::OpenAppBrowserControl),
         "ps.v2_engine" => Some(Action::OpenOptionalFeatures),
         "accounts.stale_enabled" => Some(Action::OpenAccounts),
         "accounts.hello_configured" => Some(Action::OpenSignInSettings),
         _ => None,
     }
+}
+
+/// Checks that Secblitz can fix itself. The tip then offers to go to the
+/// fix on the Protection page instead of sending the person to a Windows page.
+pub fn rule_fix(rule_id: &str) -> bool {
+    matches!(rule_id, "vbs.memory_integrity" | "vbs.kernel_stack_protection")
 }
 
 /// Checks where the Tools page can offer its existing "scan for viruses" job
@@ -1300,6 +1305,8 @@ pub struct Tip {
     pub open: Option<secblitz::actions::Action>,
     /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
+    /// A `Look` tip that Secblitz can fix: the row offers to go to the fix.
+    pub fix: bool,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1360,7 +1367,10 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .assessments
             .iter()
             .filter(|a| a.status == diag::Status::Attention)
-            .find_map(|a| rule_advice(&a.rule.id).map(|text| (text, rule_open(&a.rule.id))));
+            .find_map(|a| {
+                rule_advice(&a.rule.id)
+                    .map(|text| (text, rule_open(&a.rule.id), rule_fix(&a.rule.id)))
+            });
         let scan = probe
             .assessments
             .iter()
@@ -1380,10 +1390,10 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             state,
             advice: match (look, first) {
                 (false, _) => "",
-                (true, Some((text, _))) => text,
+                (true, Some((text, _, _))) => text,
                 (true, None) => tip_advice(id),
             },
-            open: match (look, first.and_then(|(_, open)| open), id) {
+            open: match (look, first.and_then(|(_, open, _)| open), id) {
                 (false, _, _) => None,
                 (true, Some(open), _) => Some(open),
                 (true, None, diag::ProbeId::UpdateCache | diag::ProbeId::UpdateHistory) => {
@@ -1392,6 +1402,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, None, _) => None,
             },
             scan: look && scan,
+            fix: look && first.is_some_and(|(_, _, fix)| fix),
         });
     }
     let rank = |s: TipState| match s {
@@ -1898,6 +1909,39 @@ mod tests {
     }
 
     #[test]
+    fn a_tip_for_something_secblitz_can_fix_goes_to_the_fix() {
+        let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::Vbs)
+            .unwrap();
+        probe.status = diag::Status::Attention;
+        probe.assessments = vec![diag::Assessment {
+            status: diag::Status::Attention,
+            detail: String::new(),
+            rule: diag::RuleReference {
+                id: "vbs.memory_integrity".into(),
+                revision: 1,
+                mapping_version: String::new(),
+                documentation: vec![],
+            },
+        }];
+        let tips = summarize_tips(TipProfile::Extra, &report);
+        let tip = tips
+            .tips
+            .iter()
+            .find(|t| t.title == tip_title(diag::ProbeId::Vbs))
+            .expect("the core protection tip is in the extra profile");
+        assert_eq!(tip.state, TipState::Look);
+        assert!(tip.fix);
+        assert_eq!(tip.open, None);
+        assert_eq!(tip.advice, rule_advice("vbs.memory_integrity").unwrap());
+        // Everything else keeps its Windows page and no fix button.
+        assert!(tips.tips.iter().filter(|t| t.fix).count() == 1);
+    }
+
+    #[test]
     fn every_profile_lists_known_probes_with_unique_titles() {
         for p in TipProfile::ALL {
             let ids = p.probes();
@@ -1931,6 +1975,7 @@ mod tests {
             "accounts.daily_admin",
             "accounts.hello_configured",
             "accounts.find_my_device",
+            "vbs.memory_integrity",
             "vbs.kernel_stack_protection",
             "net.dns_encryption",
             "net.wifi_security",
@@ -1941,6 +1986,13 @@ mod tests {
             assert!(text.len() <= 130, "{rule}: keep it to one short line");
         }
         assert_eq!(rule_advice("update.freshness"), None);
+        // A check Secblitz can fix sends the person to the fix, not to a Windows page.
+        for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
+            assert!(rule_fix(id), "{id}");
+            assert_eq!(rule_open(id), None, "{id}");
+            assert!(rule_advice(id).unwrap().contains("Protection"), "{id}");
+        }
+        assert!(!rule_fix("defender.exclusions_risky") && !rule_fix("net.hosts_file"));
         assert_eq!(
             rule_open("os.feature_release_support"),
             Some(secblitz::actions::Action::OpenWindowsUpdate)

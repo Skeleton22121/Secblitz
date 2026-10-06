@@ -866,6 +866,13 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
+        _ if tip.fix => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("See the fix"),
+            None,
+            Some(Message::Navigate(crate::gui::Page::Fixes)),
+        ),
         Some(open) if ctx.broker.is_some() => widgets::action(
             p,
             ButtonKind::Secondary,

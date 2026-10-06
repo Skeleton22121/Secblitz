@@ -156,6 +156,10 @@ pub fn control_impact(id: &str) -> &'static str {
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
+        "vbs.memory_integrity" => "Harmful drivers taking over the core of Windows",
+        "vbs.kernel_stack_protection" => {
+            "Attackers hijacking the core of Windows through a driver bug"
+        }
         _ => "",
     }
 }
@@ -172,7 +176,12 @@ pub fn finding_impact(title: &str) -> &'static str {
         "SMB1" => "Old file-sharing flaws that let malware spread between PCs",
         "SmartScreen" => "Scam websites and unrecognized apps you open by mistake",
         "Local accounts" => "Weak or shared sign-ins that are easier to guess or steal",
-        "Memory integrity" => "Harmful drivers taking over the core of Windows",
+        "Memory integrity" | "Memory integrity not running" => {
+            "Harmful drivers taking over the core of Windows"
+        }
+        "Kernel stack protection not running" => {
+            "Attackers hijacking the core of Windows through a driver bug"
+        }
         "Automatic logon" => "Anyone who turns on your PC getting straight into your account",
         _ => "",
     }
@@ -245,6 +254,8 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.delivery_optimization" => "Update sharing",
         "privacy.clipboard_sync" => "Clipboard sync",
         "defender.exclusions_risky" => "Antivirus skip list",
+        "vbs.memory_integrity" => "Core system protection",
+        "vbs.kernel_stack_protection" => "Extra core protection",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -305,6 +316,10 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         "update.paused" => ("Open Windows Update and resume updates.", OpenWindowsUpdate),
         "smartscreen.apps" | "defender.exclusions_risky" => (
             "Open Windows Security and check the app and file protection settings.",
+            OpenWindowsSecurity,
+        ),
+        "vbs.memory_integrity" | "vbs.kernel_stack_protection" => (
+            "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.",
             OpenWindowsSecurity,
         ),
         "ps.v2_engine" => (
@@ -460,6 +475,12 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "defender.exclusions_risky" => {
             "Skipped places are scanned again, so some games or work tools may scan slower."
         }
+        "vbs.memory_integrity" => {
+            "Some very old devices may stop working. Needs a restart. You can undo this in History."
+        }
+        "vbs.kernel_stack_protection" => {
+            "Some older drivers may not load. Needs a restart. You can undo this in History."
+        }
         _ => "",
     }
 }
@@ -467,7 +488,34 @@ pub fn choice_consequence(id: &str) -> &'static str {
 /// Exact backend reasons for "this protection is not offered on this PC right
 /// now". They are calm facts, not faults, so they never lower the score.
 fn not_offered(reason: &str) -> Option<&'static str> {
+    use secblitz::vbs as v;
+    // The driver reason also names the drivers after a colon; the names are
+    // shown in "More details", never matched here.
+    if reason
+        .strip_prefix(v::DRIVER)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(": "))
+    {
+        return Some(
+            "A driver on this PC may not work with it, so we leave this alone. You can look at Core isolation in Windows Security.",
+        );
+    }
     Some(match reason {
+        r if r == v::NOT_SUPPORTED => {
+            "This PC doesn't support it, or virtualization is off in its start-up settings, so we leave this alone."
+        }
+        r if r == v::LOCKED => {
+            "It is locked in your PC's start-up settings, so we leave this alone."
+        }
+        r if r == v::DRIVERS_UNREADABLE => "We couldn't check your drivers, so we leave this alone.",
+        r if r == v::ALREADY_ON => "This protection is already running on this PC. Nothing to change.",
+        r if r == v::NEEDS_MEMORY_INTEGRITY => "Turn on Memory integrity first, then check again.",
+        r if r == v::NEEDS_RESTART => {
+            "Restart your PC to finish turning on Memory integrity, then check again."
+        }
+        r if r == v::NO_SHADOW_STACKS => {
+            "This PC's processor doesn't support it, so there is nothing to turn on."
+        }
+        r if r == v::UNREADABLE => "We couldn't check this PC's support for it, so we leave it alone.",
         "Not offered: Secure Boot is off" => {
             "This protection needs Secure Boot, which is off on this PC. We leave it alone."
         }
@@ -793,6 +841,15 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
     a
 }
 
+/// A finding that a fix row replaces: the same thing, now with a fix. The
+/// finding is hidden whenever the control's own result is in the report.
+pub fn finding_replaced_by(title: &str) -> Option<&'static str> {
+    match title {
+        "Memory integrity" => Some("vbs.memory_integrity"),
+        _ => None,
+    }
+}
+
 pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
     use NextStep::*;
     let (label, next, step) = match title {
@@ -808,6 +865,8 @@ pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
         "SmartScreen" => ("Unsafe app and website warnings", "Open Windows Security and make sure warnings about risky apps and websites are on.", OpenWindowsSecurity),
         "Local accounts" => ("Account sign-in safety", "Check who can sign in to this PC. Give each account its own strong password.", OpenAccounts),
         "Memory integrity" => ("Core system protection", "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.", OpenWindowsSecurity),
+        "Memory integrity not running" => ("Core system protection", "Memory integrity is turned on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it in History.", ReviewUndo),
+        "Kernel stack protection not running" => ("Extra core protection", "This extra protection is turned on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it in History.", ReviewUndo),
         "Management and mutation eligibility" => ("Who manages this PC", "If you're not sure who manages this PC, look at work or school accounts in Settings.", ReviewWithAdministrator),
         "Automatic logon" => ("Automatic sign-in", "Your PC signs in by itself. Turn that off if other people can get to it.", OpenAccounts),
         "Service permissions: BITS" => ("Update download permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
@@ -972,6 +1031,16 @@ mod tests {
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
+            secblitz::vbs::NOT_SUPPORTED,
+            secblitz::vbs::LOCKED,
+            secblitz::vbs::DRIVER,
+            "Not offered: a driver on this PC may not work with it: old.sys, older.sys",
+            secblitz::vbs::DRIVERS_UNREADABLE,
+            secblitz::vbs::ALREADY_ON,
+            secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
+            secblitz::vbs::NEEDS_RESTART,
+            secblitz::vbs::NO_SHADOW_STACKS,
+            secblitz::vbs::UNREADABLE,
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -983,6 +1052,66 @@ mod tests {
             for_control("lsa.run_as_ppl", "skipped", "Not offered: anything").status,
             "Not offered"
         );
+    }
+
+    #[test]
+    fn core_protection_rows_read_well_when_offered_blocked_or_waiting_for_a_restart() {
+        for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
+            // Offered as a choice with its consequence, never pre-selected.
+            let a = for_control(id, "attention", "Eligible");
+            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
+            assert!(a.next.contains("restart") && a.next.contains("undo"), "{id}");
+            // Applied: restart needed, in plain words.
+            let applied = for_control(id, "applied", "Preference applied; restart required");
+            assert_eq!(applied.status, "Restart needed");
+            assert_eq!(applied.step, NextStep::Restart);
+            // Every reason it may be blocked is a calm "Not offered" line that
+            // never offers a fix and never counts against the score.
+            for reason in [
+                secblitz::vbs::NOT_SUPPORTED,
+                secblitz::vbs::LOCKED,
+                "Not offered: a driver on this PC may not work with it: a.sys",
+                secblitz::vbs::ALREADY_ON,
+                secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
+                secblitz::vbs::NO_SHADOW_STACKS,
+            ] {
+                let n = for_control(id, "skipped", reason);
+                assert_eq!(n.status, "Not offered", "{reason}");
+                assert_eq!(n.group, Group::Information);
+                assert_eq!(n.step, NextStep::None);
+                assert!(n.next.ends_with('.') && n.next.len() < 140, "{reason}");
+            }
+            // A managed PC stays assessment only.
+            let m = for_control(id, "skipped", "Relevant policy is configured: assessment only");
+            assert_eq!(m.status, "Managed elsewhere");
+        }
+        // The driver line points to Windows Security and names no one here.
+        let driver = for_control(
+            "vbs.memory_integrity",
+            "skipped",
+            "Not offered: a driver on this PC may not work with it: a.sys",
+        );
+        assert!(driver.next.contains("Core isolation"));
+        assert!(!driver.next.contains("a.sys"));
+    }
+
+    #[test]
+    fn a_core_protection_that_is_on_but_not_running_offers_a_restart_then_undo() {
+        for title in ["Memory integrity not running", "Kernel stack protection not running"] {
+            let a = for_finding(title, "attention", "");
+            assert_eq!(a.step, NextStep::ReviewUndo, "{title}");
+            assert_eq!(a.group, Group::Choice);
+            assert!(a.next.contains("Restart") && a.next.contains("History"), "{title}");
+            assert!(!a.impact.is_empty(), "{title}");
+            assert!(a.next.len() < 170);
+        }
+        // The old tip is replaced by the fix row, but only that one.
+        assert_eq!(
+            finding_replaced_by("Memory integrity"),
+            Some("vbs.memory_integrity")
+        );
+        assert_eq!(finding_replaced_by("Memory integrity not running"), None);
+        assert_eq!(finding_replaced_by("Secure Boot"), None);
     }
 
     #[test]

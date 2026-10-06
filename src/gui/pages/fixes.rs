@@ -171,6 +171,14 @@ enum Bucket {
     GoodToKnow,
 }
 
+/// Add the names of drivers, when there are any, to a "More details" line.
+fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) -> String {
+    match names {
+        Some(names) => format!("{tech} · {}", ctx.t(template).replace("{names}", &names)),
+        None => tech,
+    }
+}
+
 /// Plain-words "More details" text: what the status means and what to do.
 /// The raw backend detail is never shown.
 fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
@@ -251,10 +259,18 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&r.status, &a, lang),
+            with_names(
+                ctx,
+                tech_line(&r.status, &a, lang),
+                "Drivers we were unsure about: {names}",
+                secblitz::vbs::reason_names(&r.detail),
+            ),
         ));
     }
     for f in &report.findings {
+        if !score::finding_shown(report, f) {
+            continue;
+        }
         let a = advice::for_finding(&f.title, &f.status, &f.detail);
         if a.group == Group::Protected {
             continue;
@@ -274,7 +290,12 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&f.status, &a, lang),
+            with_names(
+                ctx,
+                tech_line(&f.status, &a, lang),
+                "Windows blocked: {names}",
+                secblitz::vbs::blocked_names(&f.detail),
+            ),
         ));
     }
     rows
@@ -613,6 +634,9 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             Message::Fixes(Msg::Open(request)),
             false,
         ));
+    }
+    if o.step == NextStep::ReviewUndo && !ctx.busy {
+        menu.push((Icon::Undo, ctx.t("Undo…"), Message::ReviewUndo, false));
     }
     if o.step == NextStep::CheckAgain && !ctx.busy && ctx.checking.is_none() {
         menu.push((

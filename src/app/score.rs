@@ -138,6 +138,13 @@ pub enum ToCheck<'a> {
     Finding(&'a secblitz::model::Finding),
 }
 
+/// A finding is hidden when a fix row for the same thing is in the report
+/// (the control says it better and can fix it).
+pub fn finding_shown(report: &Report, f: &secblitz::model::Finding) -> bool {
+    advice::finding_replaced_by(&f.title)
+        .is_none_or(|id| !report.results.iter().any(|r| r.id == id))
+}
+
 /// What the person should look at, in report order: control results that need
 /// a fix, a choice or a step, then findings that are actual tips. Protected,
 /// informational, owner-managed and unverifiable items are never included.
@@ -151,6 +158,7 @@ pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
     let findings = report
         .findings
         .iter()
+        .filter(|f| finding_shown(report, f))
         .filter(|f| matches!(classify_finding(f), Class::Fixable | Class::Review))
         .map(ToCheck::Finding);
     controls.chain(findings).collect()
@@ -367,6 +375,27 @@ mod tests {
             ..out("uac.enabled", "skipped")
         };
         assert_eq!(classify(&u), Class::Protected);
+    }
+
+    #[test]
+    fn a_fix_row_replaces_the_old_tip_for_the_same_thing() {
+        let find = |title: &str| secblitz::model::Finding {
+            title: title.into(),
+            status: "attention".into(),
+            detail: String::new(),
+        };
+        let mut r = rep(vec![out("vbs.memory_integrity", "attention")]);
+        r.findings.push(find("Memory integrity"));
+        r.findings.push(find("Memory integrity not running"));
+        assert!(!finding_shown(&r, &r.findings[0]));
+        assert!(finding_shown(&r, &r.findings[1]));
+        // One row for the fix, one for the not-running note: never a duplicate.
+        assert_eq!(to_check_count(&r), 2);
+        // Without a fix row (an older Windows), the tip stays.
+        let mut r = rep(vec![]);
+        r.findings.push(find("Memory integrity"));
+        assert!(finding_shown(&r, &r.findings[0]));
+        assert_eq!(to_check_count(&r), 1);
     }
 
     #[test]
