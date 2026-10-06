@@ -283,7 +283,7 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
         // Changing a Windows feature goes through DISM, which is slow and
         // works through its own DismHost.exe helper. Only that fixed, compiled
         // write may start helpers; every other script runs with no descendants.
-        let (limit, processes) = if id == "ps.v2_engine" && action == "write" {
+        let (limit, processes) = if matches!(id, "ps.v2_engine" | "smb1.disabled") && action == "write" {
             (900, DISM_PROCESSES)
         } else {
             (90, 1)

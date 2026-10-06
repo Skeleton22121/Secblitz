@@ -298,6 +298,8 @@ function HRead() {
         'UpdatePause' { return (HReadPause) }
         'SmartScreen' { return (HReadSmartScreen) }
         'DefenderExclusions' { return (HReadExclusions) }
+        'WinlogonAutoLogon' { return (HReadAutoLogon) }
+        'SmbFeature' { return (HReadSmb1) }
     }
     throw 'Unknown hardening source'
 }
@@ -471,6 +473,15 @@ function HPreflight() {
         'privacy.clipboard_sync' {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
             if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
+        }
+        'remote_desktop.disabled' {
+            $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
+            if ($edition -cmatch '^Core') { throw 'Not offered: this edition of Windows does not include it' }
+            if (HRemoteSessionActive) { throw 'Not offered: you are connected to this PC from another device right now' }
+        }
+        'smb1.disabled' {
+            if ($script:hSmb1Unreadable) { throw 'Not offered: the old file-sharing version could not be checked' }
+            if (HSmb1InUse) { throw 'Not offered: something is using the old file sharing right now' }
         }
         'session.lock_on_wake' {
             Load 'CimCmdlets'; Load 'Microsoft.PowerShell.LocalAccounts'
@@ -690,6 +701,8 @@ function HSet([string]$name, $v) {
         'UpdatePause' { HSetPause $def $v }
         'SmartScreen' { HSetSmartScreen $def $v }
         'DefenderExclusions' { HSetExclusion $name $v }
+        'WinlogonAutoLogon' { HSetAutoLogon $name $v }
+        'SmbFeature' { HSetSmb1 $name $v }
         default { throw 'Unknown hardening source' }
     }
 }
@@ -777,6 +790,110 @@ function HSetPowerShellV2($v) {
             $null = Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart -ErrorAction Stop
         }
     }
+}
+
+# ---- accounts.autologon
+# Only the AutoAdminLogon text value is read or written. The saved sign-in
+# name, saved password and sign-in count are never opened.
+function HReadAutoLogon() {
+    $def = @($spec.keys)[0]
+    $key = Get-Item -LiteralPath $def.path -ErrorAction Stop
+    if ($key.GetValueNames() -notcontains 'AutoAdminLogon') { return @{ AutoAdminLogon = $null } }
+    if ($key.GetValueKind('AutoAdminLogon') -ne [Microsoft.Win32.RegistryValueKind]::String) { throw 'AutoAdminLogon is not text' }
+    $flag = [string]$key.GetValue('AutoAdminLogon')
+    if ($flag -ceq '1') { return @{ AutoAdminLogon = 1 } }
+    if ($flag -ceq '0') { return @{ AutoAdminLogon = 0 } }
+    throw 'AutoAdminLogon has an unknown setting'
+}
+function HSetAutoLogon([string]$name, $v) {
+    if ($name -cne 'AutoAdminLogon') { throw 'Unknown hardening item' }
+    $def = @($spec.keys)[0]
+    if ($null -eq $v) { Remove-ItemProperty -LiteralPath $def.path -Name 'AutoAdminLogon' -ErrorAction Stop; return }
+    if ([int]$v -ne 0 -and [int]$v -ne 1) { throw 'Invalid automatic sign-in setting' }
+    New-ItemProperty -LiteralPath $def.path -Name 'AutoAdminLogon' -PropertyType String -Value ([string][int]$v) -Force -ErrorAction Stop | Out-Null
+}
+
+# ---- remote_desktop.disabled (preflight helper)
+function HRemoteSessionActive() {
+    # SM_REMOTESESSION (0x1000) through a Reflection.Emit P/Invoke stub: no
+    # Add-Type, so no csc.exe child process. Anything unclear counts as remote.
+    if ($env:SESSIONNAME -cmatch '^(RDP|ICA)-') { return $true }
+    if ($null -eq ('Secblitz.SessionInfo' -as [type])) {
+        $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('Secblitz.SessionInfo'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+        $module = $assembly.DefineDynamicModule('Secblitz.SessionInfo')
+        $type = $module.DefineType('Secblitz.SessionInfo', [Reflection.TypeAttributes]'Public, Abstract, Sealed')
+        $dll = [IO.Path]::Combine($env:SystemRoot, 'System32\user32.dll')
+        $method = $type.DefinePInvokeMethod('GetSystemMetrics', $dll, 'GetSystemMetrics', [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [int], [Type[]]@([int]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+        $method.SetImplementationFlags($method.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+        $null = $type.CreateType()
+    }
+    return ([Secblitz.SessionInfo]::GetSystemMetrics(4096) -ne 0)
+}
+
+# ---- smb1.disabled
+# Windows reports an optional feature as unchanged until the restart that
+# finishes the change. After a successful change that needs a restart, a small
+# note (one text value per feature, tied to this start of Windows) says what
+# was asked for, so the check reads the intended state until Windows restarts.
+$hSmbNoteKey = 'HKLM:\SOFTWARE\Secblitz\PendingFeatures'
+function HSmbBoot() {
+    Load 'CimCmdlets'
+    return ((Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 30).LastBootUpTime.ToUniversalTime().ToString('yyyyMMddHHmm'))
+}
+function HSmbNote([string]$name) {
+    if (!(Test-Path -LiteralPath $hSmbNoteKey)) { return $null }
+    $key = Get-Item -LiteralPath $hSmbNoteKey
+    if ($key.GetValueNames() -notcontains $name) { return $null }
+    $parts = ([string]$key.GetValue($name)).Split('|')
+    if ($parts.Count -ne 2 -or ($parts[0] -cne '0' -and $parts[0] -cne '1')) { return $null }
+    if ($parts[1] -cne (HSmbBoot)) { return $null }
+    return [int]$parts[0]
+}
+function HSmbSetNote([string]$name, $want) {
+    if ($null -eq $want) {
+        if ((Test-Path -LiteralPath $hSmbNoteKey) -and (Get-Item -LiteralPath $hSmbNoteKey).GetValueNames() -contains $name) { Remove-ItemProperty -LiteralPath $hSmbNoteKey -Name $name -ErrorAction Stop }
+        return
+    }
+    if (!(Test-Path -LiteralPath $hSmbNoteKey)) { $null = New-Item -Path $hSmbNoteKey -Force -ErrorAction Stop }
+    New-ItemProperty -LiteralPath $hSmbNoteKey -Name $name -PropertyType String -Value ("$([int]$want)|" + (HSmbBoot)) -Force -ErrorAction Stop | Out-Null
+}
+function HSmbState([string]$name) {
+    $note = HSmbNote $name
+    if ($null -ne $note) { return $note }
+    return (HV2Value (HFeatureState $name))
+}
+function HReadSmb1() {
+    $script:hSmb1Unreadable = $false
+    $out = @{}
+    foreach ($def in @($spec.keys)) {
+        # A part that cannot be read counts as "on" here so nothing looks safe;
+        # the preflight then says the old file sharing could not be checked.
+        try { $out[$def.name] = HSmbState $def.name } catch { $script:hSmb1Unreadable = $true; $out[$def.name] = 1 }
+    }
+    return $out
+}
+function HSmb1InUse() {
+    # Best effort: a live connection that speaks the old version blocks the change.
+    try {
+        Load 'SmbShare'
+        foreach ($c in @(Get-SmbConnection -ErrorAction Stop)) { if ([string]$c.Dialect -cmatch '^1\.') { return $true } }
+    } catch { }
+    try {
+        foreach ($c in @(Get-SmbSession -ErrorAction Stop)) { if ([string]$c.Dialect -cmatch '^1\.') { return $true } }
+    } catch { }
+    return $false
+}
+function HSetSmb1([string]$name, $v) {
+    if (@('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server') -cnotcontains $name) { throw 'Unknown hardening item' }
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid feature state' }
+    # DISM needs DismHost.exe: the engine runs only this write with a job that allows it.
+    Load 'Dism'
+    $state = HSmbState $name
+    if ($state -eq [int]$v) { return }
+    # Never -Remove: the files stay, so undo can turn the same part back on offline.
+    if ([int]$v -eq 0) { $r = Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop }
+    else { $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop }
+    if ($null -ne $r -and $r.RestartNeeded -eq $true) { HSmbSetNote $name $v } else { HSmbSetNote $name $null }
 }
 
 # ---- services.legacy_remote (value = start type 2/3/4, 5 = automatic delayed, +8 when running)
@@ -1050,6 +1167,7 @@ function HWrite($inputValue) {
     $script:hWanted = $wanted
     HGate
     $current = HRead
+    if ($spec.source -ceq 'SmbFeature' -and $script:hSmb1Unreadable) { throw 'Not offered: the old file-sharing version could not be checked' }
     $steps = @()
     $repairing = $false
     foreach ($name in @($wanted.Keys | Sort-Object)) {
@@ -1063,6 +1181,8 @@ function HWrite($inputValue) {
         $steps += @{ name = $name; from = $cur; to = $want }
     }
     if ($repairing) { HPreflight }
+    # Turning old file sharing off goes children first; turning it back on, parent first.
+    if ($spec.source -ceq 'SmbFeature' -and $repairing) { $steps = @($steps | Sort-Object { $_.name } -Descending) }
     $done = @()
     try {
         foreach ($s in $steps) { HSet $s.name $s.to; $done += $s }
