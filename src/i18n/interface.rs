@@ -171,7 +171,6 @@ pub(super) const ROWS: &[[&str; 6]] = &[
     ["May", "may", "mai", "Mai", "mai", "mag"],
     ["Memory protection", "Protección de memoria", "Protection de la mémoire", "Speicherschutz", "Proteção de memória", "Protezione della memoria"],
     ["Messaging", "Mensajería", "Messagerie", "Nachrichten", "Mensagens", "Messaggi"],
-    ["Microsoft 365 offers", "Ofertas de Microsoft 365", "Offres Microsoft 365", "Microsoft-365-Angebote", "Ofertas do Microsoft 365", "Offerte di Microsoft 365"],
     ["Microsoft extras", "Extras de Microsoft", "Extras Microsoft", "Microsoft-Extras", "Extras da Microsoft", "Extra Microsoft"],
     ["Needs a restart first", "Primero necesita reiniciar", "Nécessite d’abord un redémarrage", "Braucht zuerst einen Neustart", "Precisa reiniciar primeiro", "Prima serve un riavvio"],
     ["Needs restart", "Necesita reinicio", "Redémarrage nécessaire", "Neustart nötig", "Precisa reiniciar", "Serve un riavvio"],

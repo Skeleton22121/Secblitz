@@ -10,12 +10,16 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [Unreleased]
 
 ### Added
+- **More apps in Clean up apps.** Old Microsoft apps such as Finance, Sports, Travel, Food and Drink, Health and Fitness, Translator, Microsoft News, PC Manager, 3D Viewer, Paint 3D, Mobile Plans, Sway, Power BI, OneNote for Windows 10, Microsoft 365 Companions, Widgets engine, Mail and Calendar (older version) and Family Safety can now be removed when they are on your PC. Nothing is ticked for you, and each one can be brought back from the Removed apps tab. Apps with something to know first, like Widgets, Mail and Calendar and Family Safety, say so in a short line.
+- **Ads and tips tab in Clean up apps.** Five switches hide tips and offers on the lock screen, suggestions in Start and Settings, ads in File Explorer, web results in Start search, and Game Bar pop-ups. All start off, each explains itself, and each can be switched back to exactly what it was before. They also come back when you put Secblitz's changes back at uninstall.
 - **Search on Protection and Clean up apps.** Type a word, or press Ctrl+F, to show only the matching settings or apps. It forgives small typing mistakes and accents, and the choices you already made stay in place while you search.
 - **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
 - **Privacy policy.** A plain privacy page says exactly when Secblitz uses the internet and what it keeps on your PC. The installer shows a short summary, and Settings links to the full page.
 - Web protection credits the block lists it uses, from AdGuard, EasyList and HaGeZi.
 
 ### Changed
+- The Clean up apps row that was called "Microsoft 365 offers" now uses the app's current name, Microsoft 365 Copilot app, and says that removing it may change what the Copilot key opens.
+- The Duolingo row now matches Duolingo's real package name, so the app is found when it is on your PC.
 - **Checks before it starts.** Fixes, app clean-up, repairs, updates and per-account settings now check what they need before showing any progress. If something is missing, you see why and what to do instead of a progress bar that fails at the end.
 - **"Run as administrator" asks the usual way.** Opening Secblitz with "Run as administrator" now reopens it normally and asks for permission once, so every feature works.
 - Fix details show only what the row above does not already say.

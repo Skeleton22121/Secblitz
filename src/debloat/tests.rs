@@ -510,3 +510,101 @@ fn restore_all_sorts_outcomes() {
     assert_eq!(classify(None, true), Bucket::NeedsStore);
     assert_eq!(classify(None, false), Bucket::Failed);
 }
+
+#[test]
+fn the_catalog_only_grows_at_the_end() {
+    for (i, family) in [
+        (0, "Microsoft.BingNews"),
+        (6, "Microsoft.MicrosoftOfficeHub"),
+        (55, "Microsoft.XboxApp"),
+        (56, "Microsoft.BingFinance"),
+    ] {
+        assert_eq!(catalog()[i].family, family);
+    }
+}
+
+#[test]
+fn newer_apps_are_exact_names_never_patterns() {
+    for app in &catalog()[56..] {
+        assert!(!app.family.contains('*'), "{}", app.family);
+        assert_eq!(catalog::owner(app.family), Some(idx(app.family)));
+        assert!(!is_protected(app.family), "{}", app.family);
+        assert!(matches!(
+            app.group,
+            Group::Recommended | Group::Promotions | Group::Utilities
+        ));
+    }
+}
+
+#[test]
+fn paint_3d_is_not_the_normal_paint_app() {
+    assert_eq!(catalog::owner("Microsoft.Paint"), None);
+    assert_eq!(
+        catalog::owner("Microsoft.MSPaint"),
+        Some(idx("Microsoft.MSPaint"))
+    );
+    assert_eq!(catalog()[idx("Microsoft.MSPaint") as usize].name, "Paint 3D");
+}
+
+#[test]
+fn the_duolingo_row_matches_its_real_package_and_nothing_wider() {
+    let duolingo = catalog::owner("D5EA27B7.Duolingo-LearnLanguagesforFree").unwrap();
+    assert_eq!(catalog()[duolingo as usize].name, "Duolingo");
+    assert_eq!(catalog::owner("Duolingo-Other"), None);
+    assert_eq!(catalog::owner("D5EA27B7.SomethingElse"), None);
+}
+
+#[test]
+fn the_office_hub_row_uses_its_current_name_and_warns_about_the_copilot_key() {
+    let hub = &catalog()[idx("Microsoft.MicrosoftOfficeHub") as usize];
+    assert_eq!(hub.name, "Microsoft 365 Copilot app");
+    assert!(catalog::note(hub.family).unwrap().contains("Copilot key"));
+}
+
+#[test]
+fn widgets_and_their_engine_say_they_stop_everywhere() {
+    for family in [
+        "MicrosoftWindows.Client.WebExperience",
+        "Microsoft.WidgetsPlatformRuntime",
+    ] {
+        assert_eq!(catalog()[idx(family) as usize].group, Group::Promotions);
+        let note = catalog::note(family).unwrap();
+        assert!(note.contains("everywhere"), "{note}");
+    }
+}
+
+#[test]
+fn mail_and_calendar_and_family_carry_their_plain_warnings() {
+    let mail = catalog::note("microsoft.windowscommunicationsapps").unwrap();
+    assert!(mail.contains("end of 2024"), "{mail}");
+    assert_eq!(
+        catalog()[idx("microsoft.windowscommunicationsapps") as usize].group,
+        Group::Promotions
+    );
+    let family = "MicrosoftCorporationII.MicrosoftFamily";
+    assert_eq!(catalog()[idx(family) as usize].group, Group::Utilities);
+    assert!(catalog::note(family).unwrap().contains("Parents"));
+}
+
+#[test]
+fn notes_belong_to_catalog_apps_and_stay_plain() {
+    let with_notes = catalog()
+        .iter()
+        .filter(|a| catalog::note(a.family).is_some())
+        .count();
+    assert_eq!(with_notes, 14);
+    for app in catalog() {
+        if let Some(note) = catalog::note(app.family) {
+            assert!(note.ends_with('.'), "{note}");
+            assert!(!note.contains('\u{2014}') && !note.contains('!'), "{note}");
+            assert!(note.chars().count() <= 130, "{note}");
+        }
+    }
+    assert_eq!(catalog::note("Not.InTheCatalog"), None);
+}
+
+#[test]
+fn a_name_that_starts_like_a_protected_prefix_is_left_out() {
+    assert!(is_protected("Microsoft.NetworkSpeedTest"));
+    assert_eq!(catalog::owner("Microsoft.NetworkSpeedTest"), None);
+}
