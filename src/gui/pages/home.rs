@@ -142,7 +142,7 @@ pub fn subscription(state: &State, ctx: &Ctx) -> Subscription<Message> {
 }
 
 pub fn fills_window(ctx: &Ctx) -> bool {
-    ctx.engine_error.is_none() && ctx.report.is_none() && ctx.checking.is_some()
+    ctx.engine_error.is_none() && ctx.full_check().is_some()
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
@@ -150,10 +150,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if let Some(error) = &ctx.engine_error {
         return error_card(state, ctx, "We couldn't start Secblitz", error, false);
     }
+    if let Some(progress) = ctx.full_check() {
+        return scanning(state, ctx, progress);
+    }
     let Some(report) = ctx.report.as_deref() else {
-        if let Some(progress) = &ctx.checking {
-            return scanning(state, ctx, progress);
-        }
         if let Some(error) = &ctx.check_error {
             return error_card(state, ctx, "We couldn't check your PC", error, true);
         }

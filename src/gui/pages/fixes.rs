@@ -970,8 +970,7 @@ pub fn subscription(ctx: &Ctx) -> Subscription<Message> {
 
 pub fn fills_window(ctx: &Ctx) -> bool {
     ctx.engine_error.is_none()
-        && ctx.report.is_none()
-        && (ctx.checking.is_some() || ctx.check_error.is_none())
+        && (ctx.full_check().is_some() || (ctx.report.is_none() && ctx.check_error.is_none()))
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
@@ -1008,10 +1007,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         )));
     }
 
+    if fills_window(ctx) {
+        return page(column![first_check(state, ctx)].height(Length::Fill));
+    }
     let Some(report) = ctx.report.as_ref() else {
-        if fills_window(ctx) {
-            return page(column![first_check(state, ctx)].height(Length::Fill));
-        }
         if let Some(error) = &ctx.check_error {
             return page(body.push(check_failed(state, ctx, error)));
         }

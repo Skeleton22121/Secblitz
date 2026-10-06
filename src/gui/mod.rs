@@ -133,7 +133,7 @@ pub struct Ctx {
     pub check_error: Option<String>,
     pub checked_at: Option<u64>,
     pub checking: Option<CheckProgress>,
-    /// The first check has ended and its screen is settling before the result shows.
+    /// A check has ended and its screen is settling before the result shows.
     pub finishing: bool,
     pub busy: bool,
     pub broker: Option<Arc<crate::broker::Client>>,
@@ -153,6 +153,13 @@ impl Ctx {
     /// instead of showing the saved check.
     pub fn forget_check(&self) {
         forget_check(self.state_dir.clone());
+    }
+    /// A check the person started, not the one that ends a fix or undo.
+    /// Home and Protection give it the whole page.
+    pub fn full_check(&self) -> Option<&CheckProgress> {
+        self.checking
+            .as_ref()
+            .filter(|c| c.phase != Some(worker::Phase::Verifying))
     }
     pub fn score(&self) -> Option<Score> {
         self.report.as_deref().map(Score::of)
@@ -266,7 +273,7 @@ impl Recheck {
     }
 }
 
-/// A finished first check whose result waits for the checking screen to settle.
+/// A finished check whose result waits for the checking screen to settle.
 struct Handoff {
     start: std::time::Instant,
     leaving: Option<std::time::Instant>,
@@ -555,13 +562,12 @@ impl App {
     }
 
     fn on_worker(&mut self, event: worker::Event) -> Task<Message> {
-        let first_result = matches!(&event, worker::Event::Checked(Ok(_)))
-            && self.ctx.report.is_none()
-            && self.ctx.checking.is_some()
+        let hand_off = matches!(&event, worker::Event::Checked(Ok(_)))
+            && self.ctx.full_check().is_some()
             && self.handoff.is_none()
             && matches!(self.page, Page::Home | Page::Fixes)
             && !widgets::anim::reduced();
-        if first_result {
+        if hand_off {
             let start = std::time::Instant::now();
             self.ctx.finishing = true;
             self.handoff = Some(Handoff {

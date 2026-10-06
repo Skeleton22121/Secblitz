@@ -76,6 +76,29 @@ fn the_toast_leaves_four_seconds_after_the_latest_one() {
 }
 
 #[test]
+fn checking_again_shows_the_whole_checking_screen_then_hands_off() {
+    let _motion = widgets::anim::forced::set(false);
+    let mut app = app();
+    drop(app.update(Message::CheckNow));
+    assert!(home::fills_window(&app.ctx) && fixes::fills_window(&app.ctx));
+    let done = Ok(app.ctx.report.clone().expect("a report"));
+    drop(app.update(Message::Worker(worker::Event::Checked(done))));
+    assert!(app.ctx.finishing && app.handoff.is_some(), "the result waits for the screen to settle");
+    drop(app.update(Message::Navigate(Page::Tools)));
+    assert!(!app.ctx.finishing && app.ctx.checking.is_none());
+}
+
+#[test]
+fn the_check_after_a_fix_keeps_the_results_on_screen() {
+    let mut app = app();
+    app.ctx.checking = Some(CheckProgress {
+        phase: Some(worker::Phase::Verifying),
+        items: Vec::new(),
+    });
+    assert!(!home::fills_window(&app.ctx) && !fixes::fills_window(&app.ctx));
+}
+
+#[test]
 #[ignore]
 fn bench_pages() {
     let mut renderer = iced::futures::executor::block_on(
