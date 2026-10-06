@@ -78,7 +78,6 @@ pub struct State {
     scan: Scan,
     installed: Vec<Installed>,
     selected: BTreeSet<u16>,
-    initialised: bool,
     block_again: bool,
     sheet: Sheet,
     details: bool,
@@ -113,7 +112,6 @@ impl Default for State {
             scan: Scan::Loading,
             installed: Vec::new(),
             selected: BTreeSet::new(),
-            initialised: false,
             block_again: false,
             sheet: Sheet::None,
             details: false,
@@ -486,16 +484,7 @@ fn on_scanned(
     state.installed = found;
     let icons = icons_task(state.installed.clone());
     let present: BTreeSet<u16> = installed_indices(state).into_iter().collect();
-    if state.initialised {
-        state.selected.retain(|i| present.contains(i));
-    } else {
-        state.selected = present
-            .iter()
-            .copied()
-            .filter(|i| app_of(*i).group.selected_by_default())
-            .collect();
-        state.initialised = true;
-    }
+    state.selected.retain(|i| present.contains(i));
     state.groups = Group::ALL
         .iter()
         .filter_map(|g| {
@@ -818,6 +807,27 @@ fn flip(list: &mut Vec<Group>, g: Group) {
 
 fn pal(ctx: &Ctx) -> Palette {
     Palette::of(ctx.palette.mode)
+}
+
+#[cfg(test)]
+mod default_selection_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_ticked_after_the_first_scan() {
+        let mut state = State::default();
+        let found: Vec<Installed> = (0..debloat::catalog().len() as u16)
+            .map(|index| Installed {
+                index,
+                package: format!("pkg{index}"),
+                version: "1".into(),
+            })
+            .collect();
+        let generation = state.scan_gen;
+        let _ = on_scanned(&mut state, generation, Ok(found));
+        assert!(!state.installed.is_empty());
+        assert!(state.selected.is_empty());
+    }
 }
 
 fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
