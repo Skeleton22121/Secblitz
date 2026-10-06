@@ -10,6 +10,7 @@ pub(super) struct State {
     pub plans: Vec<PlanRecord>,
 }
 
+/// Unlike patching's `Storage`, this has no cross-engine idle check.
 pub(super) trait Storage {
     fn load(&mut self) -> Result<Option<Vec<u8>>>;
     fn save(&mut self, bytes: &[u8]) -> Result<()>;
@@ -46,6 +47,7 @@ pub(super) struct LaunchPermit {
     pub not_before: u64,
     pub expires_at: u64,
 }
+/// Operations backend: machine facts, then one supervised execute/verify per step.
 pub(super) trait Backend {
     fn machine(&self) -> Result<String>;
     fn time(&self) -> Result<u64> {

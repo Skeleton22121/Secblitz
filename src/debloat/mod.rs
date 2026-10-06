@@ -393,7 +393,9 @@ pub fn set_consumer_features_policy() -> Result<()> {
 }
 
 pub fn finish_restore(index: u16) {
-    let _ = journal::mark_restored(index);
+    if let Err(error) = journal::mark_restored(index) {
+        eprintln!("Could not record restore of item {index}: {error:#}");
+    }
     offline::forget(index);
 }
 
