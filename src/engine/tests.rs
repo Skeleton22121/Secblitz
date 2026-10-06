@@ -2190,6 +2190,37 @@ fn symlinks_and_hardlinks_are_rejected_for_lock_and_journals() {
     assert!(e.history().is_err());
 }
 
+#[test]
+fn skipping_a_batch_keeps_computed_outcomes_and_reports_each_control_once() {
+    let ids = [DEFENDER, FIREWALL];
+    let controls: Vec<Control> = ids
+        .iter()
+        .map(|id| Control {
+            id: (*id).into(),
+            title: (*id).into(),
+            description: String::new(),
+            target: json!(false),
+            reboot: false,
+        })
+        .collect();
+    let mut owned = vec![Engine::outcome(&controls[1], "conflict", "kept")];
+    let mut seen = Vec::new();
+    let mut report = Report::default();
+    report.skip_all(&controls, &mut owned, "why", &mut |id, status| {
+        seen.push(format!("{id}:{status}"))
+    });
+    assert!(owned.is_empty());
+    assert_eq!(
+        seen,
+        [
+            format!("{DEFENDER}:skipped"),
+            format!("{FIREWALL}:conflict")
+        ]
+    );
+    assert_eq!(report.results[0].detail, "why");
+    assert_eq!(report.results[1].detail, "kept");
+}
+
 include!("recovery_tests.rs");
 include!("hardening_tests.rs");
 include!("revert_all_tests.rs");
