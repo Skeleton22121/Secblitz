@@ -675,15 +675,13 @@ fn couldnt_bring_back(ctx: &Ctx, name: &str) -> Task<Message> {
     )
 }
 
-pub const NEEDS_REOPEN: &str = "Close Secblitz and open it again from its Start menu shortcut to do this.";
 const NOT_ON_ACCOUNT_STORE: &str = "Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off. Get the app from the Microsoft Store instead.";
-pub const NOT_ON_ACCOUNT: &str = "Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off.";
 
 /// Why a Store reinstall cannot be offered, or nothing when it can.
 pub fn store_blocker(helper: Helper) -> Option<&'static str> {
     match helper {
         Helper::Ready => None,
-        Helper::Reopen => Some(NEEDS_REOPEN),
+        Helper::Reopen => Some(crate::gui::REOPEN_TO_DO_THIS),
         Helper::NotOnThisAccount => Some(NOT_ON_ACCOUNT_STORE),
     }
 }

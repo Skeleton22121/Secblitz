@@ -106,6 +106,21 @@ pub enum Helper {
     NotOnThisAccount,
 }
 
+pub const REOPEN_TO_DO_THIS: &str =
+    "Close Secblitz and open it again from its Start menu shortcut to do this.";
+pub const NOT_ON_THIS_ACCOUNT: &str = "Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off.";
+
+impl Helper {
+    /// Why per-account work can't run on this start, or nothing when it can.
+    pub fn blocker(self) -> Option<&'static str> {
+        match self {
+            Helper::Ready => None,
+            Helper::Reopen => Some(REOPEN_TO_DO_THIS),
+            Helper::NotOnThisAccount => Some(NOT_ON_THIS_ACCOUNT),
+        }
+    }
+}
+
 pub struct Ctx {
     pub lang: Lang,
     pub palette: Palette,

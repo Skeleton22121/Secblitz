@@ -761,10 +761,7 @@ fn menu_model(
 }
 
 fn suggested_blocker(helper: Helper) -> &'static str {
-    match helper {
-        Helper::NotOnThisAccount => super::NOT_ON_ACCOUNT,
-        _ => super::NEEDS_REOPEN,
-    }
+    helper.blocker().unwrap_or(crate::gui::REOPEN_TO_DO_THIS)
 }
 
 fn kept_text(kept: &Kept) -> &'static str {
@@ -1216,7 +1213,7 @@ mod tests {
             .iter()
             .any(|m| format!("{:?}", m.2).contains("RestoreStore")));
         assert!(super::store_blocker(Helper::Ready).is_none());
-        assert_eq!(super::store_blocker(Helper::Reopen), Some(super::NEEDS_REOPEN));
+        assert_eq!(super::store_blocker(Helper::Reopen), Some(crate::gui::REOPEN_TO_DO_THIS));
     }
 
     #[test]

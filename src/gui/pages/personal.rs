@@ -305,10 +305,7 @@ fn updating(state: &State) -> bool {
 }
 
 fn helper_text(ctx: &Ctx) -> String {
-    match ctx.helper {
-        Helper::NotOnThisAccount => ctx.t("Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off. Sign in to your normal account and open Secblitz there."),
-        _ => ctx.t("Close Secblitz and open it again from its Start menu shortcut to do this."),
-    }
+    ctx.t(ctx.helper.blocker().unwrap_or(crate::gui::REOPEN_TO_DO_THIS))
 }
 
 

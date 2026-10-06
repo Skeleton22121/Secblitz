@@ -720,7 +720,13 @@ fn review_view<'a>(
         } else {
             ButtonKind::Primary
         },
-        ctx.t(if undo { "Undo fixes" } else { "Fix now" }),
+        ctx.t(if state.checking {
+            "Checking…"
+        } else if undo {
+            "Undo fixes"
+        } else {
+            "Fix now"
+        }),
         None,
         (!state.checking).then_some(Message::Fix(Msg::Confirm)),
     );

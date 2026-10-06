@@ -239,10 +239,7 @@ fn open_security_entry(ctx: &Ctx) -> Option<MenuEntry> {
 }
 
 fn helper_hint(ctx: &Ctx) -> String {
-    match ctx.helper {
-        Helper::NotOnThisAccount => ctx.t("Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off."),
-        _ => ctx.t("Close Secblitz and open it again from its Start menu shortcut to do this."),
-    }
+    ctx.t(ctx.helper.blocker().unwrap_or(crate::gui::REOPEN_TO_DO_THIS))
 }
 
 fn busy_hint(ctx: &Ctx) -> String {
