@@ -462,6 +462,7 @@ function HPreflight() {
         'smb.shares_exposed' { HSharesPreflight }
         'accounts.builtin_administrator' {
             Load 'Microsoft.PowerShell.LocalAccounts'
+            HBuiltinAdminIdle
             $other = $false
             try {
                 foreach ($m in @(Get-LocalGroupMember -SID 'S-1-5-32-544')) {
@@ -660,9 +661,15 @@ function HSetLockout($def, $v) {
         if ($status -ne 0) { throw "Lockout threshold could not be set (status $status)" }
     } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer) }
 }
+function HBuiltinAdminIdle() {
+    # Switching off the account someone is signed in with locks them out at
+    # their next sign-in, and autologon setups never get back in.
+    try { $inUse = HAccountsInUse } catch { throw 'Not offered: Secblitz cannot tell who is signed in' }
+    if ($inUse.ContainsKey([string](HBuiltinAdmin).SID.Value)) { throw 'Not offered: you are signed in with the built-in Administrator account' }
+}
 function HSetBuiltinAdmin($def, $v) {
     $a = HBuiltinAdmin
-    if ([int]$v -eq 1) { Enable-LocalUser -SID $a.SID } else { Disable-LocalUser -SID $a.SID }
+    if ([int]$v -eq 1) { Enable-LocalUser -SID $a.SID } else { HBuiltinAdminIdle; Disable-LocalUser -SID $a.SID }
 }
 function HSetFirewall($name, $v) {
     Load 'NetSecurity'
