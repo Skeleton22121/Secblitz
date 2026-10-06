@@ -171,6 +171,10 @@ impl Clock {
     pub fn restart(&mut self) {
         self.start = Instant::now();
     }
+    /// When it started.
+    pub fn start(&self) -> Instant {
+        self.start
+    }
     pub fn elapsed(&self) -> Duration {
         self.start.elapsed()
     }

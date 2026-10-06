@@ -297,6 +297,8 @@ const TIP_RADIUS: f32 = 6.0;
 const TIP_GAP: f32 = 6.0;
 /// Closest the tooltip comes to the canvas edge, px.
 const TIP_MARGIN: f32 = 2.0;
+/// Room a tooltip needs above its anchor, px: with less, it goes below.
+pub const TIP_ROOM: f32 = TIP_MARGIN + TIP_GAP + TIP_SIZE + 2.0 * TIP_PAD_Y;
 
 /// Width in pixels of `label` at the tooltip's size and weight. The last
 /// label measured is remembered, so a hovered name is shaped once, not every
