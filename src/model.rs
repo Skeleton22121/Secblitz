@@ -46,6 +46,59 @@ pub struct Observation {
     pub effective: Option<EffectiveFirewall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
+    /// Plain names of the exact items a fix would change (display only, never
+    /// mutation authority). Dynamic controls fill it; everything else leaves it empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<ItemLabel>,
+}
+
+/// One item a fix would change, e.g. a service, firewall rule or startup entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ItemLabel {
+    /// One of [`ItemLabel::KINDS`].
+    pub kind: String,
+    pub name: String,
+}
+
+impl ItemLabel {
+    pub const KINDS: [&'static str; 8] = [
+        "service",
+        "rule",
+        "startup",
+        "task",
+        "hosts",
+        // Items a fix leaves alone (named in the details), and how many more
+        // items exist than are listed.
+        "skip_missing",
+        "skip_shadow",
+        "more",
+    ];
+    pub const MAX_ITEMS: usize = 64;
+    pub const MAX_NAME: usize = 120;
+
+    /// Backend text is untrusted display data: keep only known kinds, strip
+    /// control characters, bound the length and the number of items.
+    pub fn clean(labels: &[ItemLabel]) -> Vec<ItemLabel> {
+        labels
+            .iter()
+            .filter(|l| Self::KINDS.contains(&l.kind.as_str()))
+            .filter_map(|l| {
+                let name: String = l
+                    .name
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(Self::MAX_NAME)
+                    .collect();
+                let name = name.trim().to_owned();
+                (!name.is_empty()).then(|| ItemLabel {
+                    kind: l.kind.clone(),
+                    name,
+                })
+            })
+            .take(Self::MAX_ITEMS)
+            .collect()
+    }
 }
 
 /// Validate typed evidence at both native decoding and the engine boundary.

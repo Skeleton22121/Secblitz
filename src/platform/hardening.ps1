@@ -24,6 +24,14 @@ function HNameOk([string]$name) {
     if ($spec.source -ceq 'NetbiosAdapters') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
     if ($spec.source -ceq 'LegacyServices') { return ((HServiceNames) -ccontains $name) }
     if ($spec.source -ceq 'DefenderExclusions') { return (HExclusionNameOk $name) }
+    if ($spec.source -ceq 'UnquotedServices') { return ($name.Length -ge 1 -and $name.Length -le 256 -and $name -cnotmatch '[\x00-\x1f\x7f-\x9f"\\/*?\[\]]' -and $name.Trim() -ceq $name) }
+    if ($spec.source -ceq 'UserDirFirewall') { return ($name.Length -ge 1 -and $name.Length -le 200 -and $name -cnotmatch '[\x00-\x1f\x7f"*?\[\]]' -and $name.Trim() -ceq $name) }
+    if ($spec.source -ceq 'HostsFile') { return ($name -ceq 'hosts') }
+    if ($spec.source -ceq 'StartupItems') {
+        if ($name.Length -gt 260 -or $name -cnotmatch '^(run-machine|run-machine32|run-user|folder-machine|folder-user|task):[^\x00-\x1f\x7f"*?\[\]]+$' -or $name.Trim() -cne $name) { return $false }
+        if ($name.StartsWith('task:') -and !$name.StartsWith('task:\')) { return $false }
+        return !$name.EndsWith('\')
+    }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -300,6 +308,10 @@ function HRead() {
         'DefenderExclusions' { return (HReadExclusions) }
         'WinlogonAutoLogon' { return (HReadAutoLogon) }
         'SmbFeature' { return (HReadSmb1) }
+        'UnquotedServices' { return (HReadUnquoted) }
+        'UserDirFirewall' { return (HReadUserDirFirewall) }
+        'HostsFile' { return (HReadHosts) }
+        'StartupItems' { return (HReadStartup) }
     }
     throw 'Unknown hardening source'
 }
@@ -397,7 +409,7 @@ function HGate() {
     HGateCommon
     HGatePolicy
     HRsop
-    if ($spec.source -ceq 'FirewallExposure' -or $spec.source -ceq 'FirewallOutbound') { HGateFirewall }
+    if ($spec.source -ceq 'FirewallExposure' -or $spec.source -ceq 'FirewallOutbound' -or $spec.source -ceq 'UserDirFirewall') { HGateFirewall }
     if ($spec.source -ceq 'WifiProfiles') { HGateWifi }
 }
 
@@ -497,6 +509,8 @@ function HPreflight() {
             if ($script:hSmb1Unreadable) { throw 'Not offered: the old file-sharing version could not be checked' }
             if (HSmb1InUse) { throw 'Not offered: something is using the old file sharing right now' }
         }
+        'net.hosts_file' { HHostsPreflight }
+        'persistence.run_and_tasks' { HStartupPreflight }
         'session.lock_on_wake' {
             Load 'CimCmdlets'; Load 'Microsoft.PowerShell.LocalAccounts'
             $who = [string](Get-CimInstance Win32_ComputerSystem).UserName
@@ -573,11 +587,18 @@ function HNetbiosPreflight() {
 
 # --------------------------------------------------------------- observe
 function HObserve() {
+    $script:hLabels = @{}
+    $script:hLeft = @()
     $slice = HRead
     $o = @{ value = @{ items = $slice }; eligible = $true; reason = 'Eligible unmanaged local preference' }
     try {
         HGate
-        if (HAnyUnsafe $slice) { HPreflight }
+        if (HAnyUnsafe $slice) {
+            HPreflight
+            # The exact items a fix would change, for the details of the row.
+            $labels = @(HLabelList $slice)
+            if ($labels.Count -gt 0) { $o.labels = $labels }
+        }
     } catch {
         $o.eligible = $false
         $o.reason = $_.Exception.Message
@@ -717,6 +738,10 @@ function HSet([string]$name, $v) {
         'DefenderExclusions' { HSetExclusion $name $v }
         'WinlogonAutoLogon' { HSetAutoLogon $name $v }
         'SmbFeature' { HSetSmb1 $name $v }
+        'UnquotedServices' { HSetUnquoted $name $v }
+        'UserDirFirewall' { HSetUserDirFirewall $name $v }
+        'HostsFile' { HSetHosts $name $v }
+        'StartupItems' { HSetStartup $name $v }
         default { throw 'Unknown hardening source' }
     }
 }
@@ -740,7 +765,9 @@ function HWantedNames() {
 # Is anything waiting to print (or can that not be told)? Unreadable counts as busy.
 function HPrintBusy() {
     try {
-        $dir = [string](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers' -Name 'DefaultSpoolDirectory' -ErrorAction SilentlyContinue).DefaultSpoolDirectory
+        # Strict mode: a missing value returns nothing, so read the property only when it is there.
+        $p = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers' -Name 'DefaultSpoolDirectory' -ErrorAction SilentlyContinue
+        $dir = if ($null -ne $p -and $p.PSObject.Properties['DefaultSpoolDirectory']) { [string]$p.DefaultSpoolDirectory } else { '' }
         if ([string]::IsNullOrWhiteSpace($dir)) { $dir = [IO.Path]::Combine($env:SystemRoot, 'System32\spool\PRINTERS') }
         return (@(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop).Count -gt 0)
     } catch { return $true }
