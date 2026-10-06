@@ -151,7 +151,7 @@ pub(super) fn repair_help(id: &str) -> &'static str {
             "We can fix this. It keeps Windows updates from being tampered with."
         }
         "wdigest.use_logon_credential" => {
-            "We can fix this. Your password will no longer be kept where it can be stolen."
+            "We can fix this. Your password will no longer be kept where other programs can read it."
         }
         "uac.enabled" => "We can fix this. Windows will ask before big changes are made.",
         "uac.consent" => "We can fix this. Windows will ask for approval before big changes.",
@@ -159,7 +159,7 @@ pub(super) fn repair_help(id: &str) -> &'static str {
             "We can fix this. App installers will no longer get full control of your PC."
         }
         "lsa.restrict_anonymous_sam" => {
-            "We can fix this. Strangers on the network will no longer see your account names."
+            "We can fix this. Other devices on the network will no longer see your account names."
         }
         "lsa.limit_blank_password_use" => {
             "We can fix this. Accounts without a password can no longer be used over the network."
@@ -167,7 +167,7 @@ pub(super) fn repair_help(id: &str) -> &'static str {
         "defender.pua" => "We can fix this. Junk apps bundled with downloads will be blocked.",
         "defender.script_nis" => "We can fix this. It turns scanning for harmful scripts back on.",
         "defender.asr.standard" => {
-            "We can fix this. It blocks common tricks used to steal passwords."
+            "We can fix this. It blocks common ways harmful programs read passwords."
         }
         "net.public_sharing_exposure" => {
             "We can fix this. Your shared files and printers stay hidden on public Wi-Fi."
@@ -175,7 +175,7 @@ pub(super) fn repair_help(id: &str) -> &'static str {
         "printer.point_and_print" => {
             "We can fix this. Printer drivers will only be installed with your permission."
         }
-        "net.llmnr" => "We can fix this. Fake name-lookup answers will be ignored.",
+        "net.llmnr" => "We can fix this. Wrong name-lookup answers will be ignored.",
         "accounts.lockout_policy" => {
             "We can fix this. Too many wrong passwords will lock sign-in for a few minutes."
         }

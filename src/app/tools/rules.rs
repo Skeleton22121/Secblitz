@@ -11,7 +11,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Ask whoever set up this PC.",
         "update.paused" => "Updates are paused. Resume them in Windows Update.",
         "update.reboot_overdue" => "Restart your PC to finish installing updates. Save your work first.",
-        "ps.v2_engine" => "An old Windows tool that attackers like to use is still installed. Remove it in Windows Features.",
+        "ps.v2_engine" => "A very old Windows tool is still installed. Remove it in Windows Features.",
         "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
         "persistence.wmi_subscriptions" => "Something is set to run quietly in the background. Ask someone you trust to look at it.",
         "services.unquoted_paths" => "A background program has a risky setup. Run a virus scan from this page, then ask someone you trust to look at it.",

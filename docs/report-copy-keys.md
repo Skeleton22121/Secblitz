@@ -155,20 +155,18 @@ Uninvited incoming connections on public networks like cafes or airports
 Apps silently making system-wide changes without asking you
 Apps making administrator changes without asking for approval
 Any app installer quietly getting full control of your PC
-Strangers on the network listing your account names to guess passwords
+Someone on the network listing your account names to guess passwords
 Someone signing in over the network to an account with no password
-Attackers stealing your Windows password from memory
-Tampered or fake Windows updates reaching your PC
+Altered Windows updates reaching your PC
 ```
 
 ### Finding impact phrases
 
 ```text
 Running Windows that no longer gets security fixes
-Strangers reading your files if your PC is lost or stolen
+Someone who finds your PC reading your files if it is lost or stolen
 Hidden malware loading before Windows starts
 Known security holes staying open on your PC
-Attackers trying to sign in to your PC remotely
 Old file-sharing flaws used by worms like WannaCry
 Scam websites and unrecognized apps you open by mistake
 Malicious drivers taking over the core of Windows
