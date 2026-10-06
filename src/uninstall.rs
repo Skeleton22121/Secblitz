@@ -153,6 +153,11 @@ fn fold_user(results: Vec<(Setting, UserOutcome)>) -> Summary {
     for (setting, outcome) in results {
         if outcome == UserOutcome::Done {
             summary.restored += 1;
+        } else if outcome == UserOutcome::ChangedSince {
+            summary.left.push(Left::Setting {
+                title: personal_title(setting.id()).to_owned(),
+                reason: LeftReason::ChangedSince,
+            });
         } else {
             summary.left.push(Left::Personal { id: setting.id() });
         }
@@ -599,6 +604,7 @@ mod tests {
             (Setting::ShowExtensions, UserOutcome::Done),
             (Setting::NearbySharing, UserOutcome::Failed),
             (Setting::OfficeMacros, UserOutcome::Blocked),
+            (Setting::TailoredExperiences, UserOutcome::ChangedSince),
         ]);
         assert_eq!(s.restored, 1);
         assert_eq!(
@@ -609,6 +615,10 @@ mod tests {
                 },
                 Left::Personal {
                     id: "office.internet_macros"
+                },
+                Left::Setting {
+                    title: "Tailored tips and ads".into(),
+                    reason: LeftReason::ChangedSince
                 }
             ]
         );
