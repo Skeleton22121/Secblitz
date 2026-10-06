@@ -138,6 +138,7 @@ mod sys {
         let path = wide(KEY);
         let mut handle: HKEY = null_mut();
         let status =
+            // SAFETY: `path` is NUL-terminated and `handle` is a valid out-pointer.
             unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.as_ptr(), 0, access, &mut handle) };
         match status {
             0 => Ok(Some(handle)),
@@ -155,6 +156,7 @@ mod sys {
             let mut kind = 0u32;
             let mut data = [0u8; 4];
             let mut size = 4u32;
+            // SAFETY: `handle` is open and `data`, `size` describe the same 4-byte buffer.
             let status = unsafe {
                 RegQueryValueExW(
                     handle,
@@ -165,6 +167,7 @@ mod sys {
                     &mut size,
                 )
             };
+            // SAFETY: `handle` was opened above and is closed once.
             unsafe { RegCloseKey(handle) };
             match status {
                 0 if kind == REG_DWORD && size == 4 => {
@@ -179,6 +182,7 @@ mod sys {
         fn set(&mut self, value: u32) -> Result<()> {
             let path = wide(KEY);
             let mut handle: HKEY = null_mut();
+            // SAFETY: `path` is NUL-terminated and the out-pointers are valid.
             let status = unsafe {
                 RegCreateKeyExW(
                     HKEY_LOCAL_MACHINE,
@@ -198,7 +202,9 @@ mod sys {
             let name = wide(NAME);
             let bytes = value.to_le_bytes();
             let status =
+                // SAFETY: `handle` is open and `bytes` holds the 4 bytes passed.
                 unsafe { RegSetValueExW(handle, name.as_ptr(), 0, REG_DWORD, bytes.as_ptr(), 4) };
+            // SAFETY: `handle` was opened above and is closed once.
             unsafe { RegCloseKey(handle) };
             if status != 0 {
                 bail!("cannot write the value ({status})");
@@ -211,7 +217,9 @@ mod sys {
                 return Ok(());
             };
             let name = wide(NAME);
+            // SAFETY: `handle` is open and `name` is NUL-terminated.
             let status = unsafe { RegDeleteValueW(handle, name.as_ptr()) };
+            // SAFETY: `handle` was opened above and is closed once.
             unsafe { RegCloseKey(handle) };
             match status {
                 0 | NOT_FOUND | PATH_NOT_FOUND => Ok(()),

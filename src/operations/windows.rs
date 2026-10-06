@@ -7,7 +7,7 @@ use std::{
     ffi::c_void,
     fs::File,
     io::{Read, Write},
-    mem::{size_of, zeroed},
+    mem::size_of,
     os::windows::io::AsRawHandle,
     path::{Path, PathBuf},
     process::Command,
@@ -77,6 +77,7 @@ struct ProcessEntry {
 struct Handle(HANDLE);
 impl Drop for Handle {
     fn drop(&mut self) {
+        // SAFETY: the handle is owned by this wrapper and closed once.
         unsafe {
             CloseHandle(self.0);
         }
@@ -92,11 +93,13 @@ impl Backend {
     pub fn new(root: &Path) -> Result<Self> {
         ensure!(cfg!(target_arch = "x86_64"), "Native Windows x64 required");
         let mut buffer = vec![0u16; 32768];
+        // SAFETY: `buffer` is writable for the length passed.
         let n = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
         ensure!(n > 0 && n < buffer.len(), "Windows directory unavailable");
         let win = PathBuf::from(String::from_utf16(&buffer[..n])?);
         let mut raw = [0u16; 256];
         let mut bytes = size_of_val(&raw) as u32;
+        // SAFETY: both names are NUL-terminated and `raw` and `bytes` describe the same writable buffer.
         let result = unsafe {
             RegGetValueW(
                 HKEY_LOCAL_MACHINE,
@@ -380,9 +383,13 @@ impl core::Backend for Backend {
 }
 
 fn identity(handle: HANDLE, pid: u32) -> Result<ProcessIdentity> {
-    let (mut created, mut exit, mut kernel, mut user): (FILETIME, FILETIME, FILETIME, FILETIME) =
-        unsafe { zeroed() };
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
     ensure!(
+        // SAFETY: `handle` is a live process handle and all four out-pointers are valid.
         unsafe { GetProcessTimes(handle, &mut created, &mut exit, &mut kernel, &mut user) } != 0,
         "Cannot identify maintenance process"
     );
@@ -392,6 +399,7 @@ fn identity(handle: HANDLE, pid: u32) -> Result<ProcessIdentity> {
     })
 }
 fn process_alive(expected: &ProcessIdentity) -> Result<bool> {
+    // SAFETY: OpenProcess has no pointer arguments.
     let handle = unsafe {
         OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION | 0x0010_0000,
@@ -401,6 +409,7 @@ fn process_alive(expected: &ProcessIdentity) -> Result<bool> {
     }; // SYNCHRONIZE
     if handle.is_null() {
         ensure!(
+            // SAFETY: GetLastError has no preconditions.
             unsafe { GetLastError() } == ERROR_INVALID_PARAMETER,
             "Cannot establish previous process exit"
         );
@@ -410,6 +419,7 @@ fn process_alive(expected: &ProcessIdentity) -> Result<bool> {
     if identity(handle.0, expected.pid)? != *expected {
         return Ok(false);
     }
+    // SAFETY: `handle` is a live process handle.
     let status = unsafe { WaitForSingleObject(handle.0, 0) };
     ensure!(
         matches!(status, WAIT_OBJECT_0 | WAIT_TIMEOUT),
@@ -418,15 +428,27 @@ fn process_alive(expected: &ProcessIdentity) -> Result<bool> {
     Ok(status == WAIT_TIMEOUT)
 }
 fn busy_processes() -> Result<bool> {
+    // SAFETY: the snapshot call has no pointer arguments.
     let snapshot = unsafe { CreateToolhelp32Snapshot(2, 0) };
     ensure!(
         snapshot != INVALID_HANDLE_VALUE,
         "Cannot enumerate servicing processes"
     );
     let snapshot = Handle(snapshot);
-    let mut entry: ProcessEntry = unsafe { zeroed() };
-    entry.size = size_of::<ProcessEntry>() as u32;
+    let mut entry = ProcessEntry {
+        size: size_of::<ProcessEntry>() as u32,
+        usage: 0,
+        pid: 0,
+        heap: 0,
+        module: 0,
+        threads: 0,
+        parent: 0,
+        priority: 0,
+        flags: 0,
+        exe: [0; 260],
+    };
     ensure!(
+        // SAFETY: `snapshot` is valid and `entry.size` is set.
         unsafe { Process32FirstW(snapshot.0, &mut entry) } != 0,
         "Cannot inspect servicing processes"
     );
@@ -455,8 +477,10 @@ fn busy_processes() -> Result<bool> {
         ) {
             return Ok(true);
         }
+        // SAFETY: `snapshot` is valid and `entry.size` is set.
         if unsafe { Process32NextW(snapshot.0, &mut entry) } == 0 {
             ensure!(
+                // SAFETY: GetLastError has no preconditions.
                 unsafe { GetLastError() } == ERROR_NO_MORE_FILES,
                 "Servicing process enumeration failed"
             );
@@ -475,19 +499,23 @@ pub(super) fn ensure_no_servicing_processes() -> Result<()> {
 
 fn idle_seconds() -> Option<u32> {
     let mut current = 0;
+    // SAFETY: the out-pointer is valid.
     if unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut current) } == 0
         || current == 0
+        // SAFETY: GetShellWindow has no preconditions.
         || unsafe { GetShellWindow() }.is_null()
     {
         return None;
     }
     let (mut sessions, mut count) = (null_mut(), 0);
+    // SAFETY: the out-pointers are valid; the returned buffer is released by `Sessions`.
     if unsafe { WTSEnumerateSessionsW(null_mut(), 0, 1, &mut sessions, &mut count) } == 0 {
         return None;
     }
     struct Sessions(*mut Session);
     impl Drop for Sessions {
         fn drop(&mut self) {
+            // SAFETY: `self.0` came from WTSEnumerateSessionsW and is freed once.
             unsafe {
                 WTSFreeMemory(self.0.cast());
             }
@@ -497,6 +525,7 @@ fn idle_seconds() -> Option<u32> {
     if count == 0 || count > 1024 || sessions.0.is_null() {
         return None;
     }
+    // SAFETY: `sessions.0` is non-null and holds `count` entries, checked above.
     let active: Vec<_> = unsafe { std::slice::from_raw_parts(sessions.0, count as usize) }
         .iter()
         .filter(|s| s.state == 0)
@@ -509,9 +538,11 @@ fn idle_seconds() -> Option<u32> {
         size: size_of::<LastInput>() as u32,
         tick: 0,
     };
+    // SAFETY: `input.size` is set and the pointer is valid.
     if unsafe { GetLastInputInfo(&mut input) } == 0 {
         return None;
     }
+    // SAFETY: GetTickCount has no preconditions.
     Some(unsafe { GetTickCount() }.wrapping_sub(input.tick) / 1000)
 }
 
@@ -530,6 +561,7 @@ fn drain(
 ) -> Result<()> {
     for _ in 0..16 {
         let mut available = 0;
+        // SAFETY: the handle is a live pipe and every out-pointer is valid or null as the call allows.
         if unsafe {
             PeekNamedPipe(
                 reader.as_raw_handle(),
@@ -542,6 +574,7 @@ fn drain(
         } == 0
         {
             ensure!(
+                // SAFETY: GetLastError has no preconditions.
                 unsafe { GetLastError() } == ERROR_BROKEN_PIPE,
                 "Maintenance output pipe failed"
             );
