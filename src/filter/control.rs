@@ -139,7 +139,7 @@ pub fn run_all(steps: Vec<Box<dyn FnOnce() -> anyhow::Result<()> + '_>>) -> anyh
 mod glue {
     use super::*;
     use crate::filter::{adapters, config, routing, scm};
-    use anyhow::{ensure, Context, Result};
+    use anyhow::{Context, Result};
     use std::time::Instant;
 
     fn unix_now() -> u64 {
@@ -148,16 +148,10 @@ mod glue {
             .map_or(0, |d| d.as_secs())
     }
 
-    fn require_admin() -> Result<()> {
-        ensure!(
-            crate::platform::is_elevated()?,
-            "Changing web protection needs administrator rights"
-        );
-        Ok(())
-    }
+    const NEEDS_ADMIN: &str = "Changing web protection needs administrator rights";
 
     pub fn reconcile() -> Result<()> {
-        require_admin()?;
+        crate::platform::require_admin(NEEDS_ADMIN)?;
         let config = config::load_config(&config::config_path()?);
         let service = scm::state()?;
         let status = config::load_status(&config::status_path()?);
@@ -192,7 +186,7 @@ mod glue {
     /// Saves the switches and starts or stops the filter to match. Turning
     /// off removes the rule first, so lookups never point at a stopped filter.
     pub fn apply_switches(new: Config) -> Result<()> {
-        require_admin()?;
+        crate::platform::require_admin(NEEDS_ADMIN)?;
         scm::ensure_dirs()?;
         if new.any_on() && scm::state()? == ServiceState::NotInstalled {
             scm::install()?;
@@ -211,7 +205,7 @@ mod glue {
     }
 
     fn rewrite(edit: impl FnOnce(Config) -> Config) -> Result<()> {
-        require_admin()?;
+        crate::platform::require_admin(NEEDS_ADMIN)?;
         let path = config::config_path()?;
         config::save_config(&path, &edit(config::load_config(&path)))
     }
@@ -227,7 +221,7 @@ mod glue {
     /// Rule first, then the service, then the files. The reconcile task
     /// belongs to `maintenance.ps1` (installer), which deletes it after this.
     pub fn remove_everything() -> Result<()> {
-        require_admin()?;
+        crate::platform::require_admin(NEEDS_ADMIN)?;
         // A failed rule removal still deletes the service and folder; the
         // rule's Quad9 fallback servers keep lookups working.
         super::run_all(vec![
@@ -238,7 +232,7 @@ mod glue {
     }
 
     pub fn install_all() -> Result<()> {
-        require_admin()?;
+        crate::platform::require_admin(NEEDS_ADMIN)?;
         scm::ensure_dirs()?;
         scm::install()
     }

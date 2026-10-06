@@ -312,10 +312,7 @@ pub fn support_action(id: &str) -> Result<()> {
         cfg!(target_arch = "x86_64"),
         "Secblitz supports Windows x64 only"
     );
-    ensure!(
-        is_elevated()?,
-        "Defender support actions require Administrator elevation"
-    );
+    crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let timeout = match id {
         "defender_update" => Duration::from_secs(120),
         "defender_quickscan" => Duration::from_secs(15 * 60),
@@ -336,10 +333,7 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
         cfg!(target_arch = "x86_64"),
         "Secblitz supports Windows x64 only"
     );
-    ensure!(
-        is_elevated()?,
-        "Defender support actions require Administrator elevation"
-    );
+    crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let reply: Value = run_script(script, Duration::from_secs(10 * 60)).context(
         "Windows Security could not finish removing them. Nothing else was changed",
     )?;
@@ -572,7 +566,7 @@ impl Backend for WindowsBackend {
     }
     fn write(&mut self, id: &str, value: &Value) -> Result<()> {
         validate_value(id, value)?;
-        ensure!(is_elevated()?, "Administrator elevation is required");
+        crate::platform::require_admin("Administrator elevation is required")?;
         let reply: Value = run("write", Some(id), Some(value))?;
         ensure!(
             reply == serde_json::json!({"ok":true}),

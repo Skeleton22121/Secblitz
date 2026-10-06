@@ -514,7 +514,7 @@ fn trusted_image(path: &Path, system_image: bool) -> Result<Vec<File>> {
     Ok(held)
 }
 fn require_admin() -> Result<()> {
-    ensure!(crate::platform::is_elevated()?, "Updates require elevation");
+    crate::platform::require_admin("Updates require elevation")?;
     let admin = sid("S-1-5-32-544")?;
     let mut member = 0;
     ensure!(

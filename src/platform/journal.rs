@@ -271,10 +271,7 @@ pub fn state_dir() -> Result<PathBuf> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| anyhow::anyhow!("Journal lock poisoned"))?;
-    ensure!(
-        is_elevated()?,
-        "Protected journal access requires Administrator elevation"
-    );
+    crate::platform::require_admin("Protected journal access requires Administrator elevation")?;
     let base = program_data()?;
     let mut components = base.components();
     ensure!(

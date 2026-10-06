@@ -8,6 +8,9 @@ use std::path::PathBuf;
 #[path = "platform/windows.rs"]
 mod windows;
 
+#[cfg(windows)]
+pub(crate) mod security;
+
 /// Explicitly selected support operation, never a reversible hardening control.
 /// No scripts, paths, sources, scan arguments, or arbitrary IDs are accepted.
 pub fn support_action(id: &str) -> Result<()> {
@@ -215,6 +218,14 @@ pub fn is_elevated() -> Result<bool> {
     {
         bail!("Elevation is only supported on Windows")
     }
+}
+
+/// Fails unless this process is elevated; an elevation query that itself fails counts as not elevated.
+pub fn require_admin(what: &str) -> Result<()> {
+    if !is_elevated()? {
+        bail!("{what}");
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
