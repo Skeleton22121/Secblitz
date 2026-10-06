@@ -315,7 +315,6 @@ pub fn row_item_lead<'a>(
         Some(m) => arrow(
             super::press::button(inner)
                 .scale(false)
-                .focus_color(p.focus_ring)
                 .padding(0)
                 .width(Length::Fill)
                 .on_press(m)
@@ -522,7 +521,6 @@ pub fn collapsible<'a>(
                 .width(Length::Fill),
         )
         .scale(false)
-        .focus_color(p.focus_ring)
         .padding(0)
         .width(Length::Fill)
         .on_press(on_toggle)
