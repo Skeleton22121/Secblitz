@@ -270,6 +270,7 @@ pub(crate) fn validate_indices(indices: &[u16]) -> Result<Vec<u16>> {
 
 /// Core of `remove`, with the PowerShell call injected so it is testable.
 /// `installed` is a fresh inventory; every package is re-validated here.
+#[cfg(test)]
 pub(crate) fn remove_with(
     indices: &[u16],
     installed: &[Installed],
