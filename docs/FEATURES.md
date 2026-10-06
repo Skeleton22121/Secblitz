@@ -266,4 +266,9 @@ All journaled, gated and reversible like the table above; every one is a choice 
 | `privacy.diagnostic_data_level` | AllowTelemetry 1 only (never 0) |
 | `privacy.delivery_optimization` | DODownloadMode 0 |
 | `privacy.clipboard_sync` | AllowCrossDeviceClipboard 0; not offered on Home |
+| `ai.click_to_do` | WindowsAI DisableClickToDo=1; not offered before Windows build 26100; shares the WindowsAI key with `privacy.recall` without blocking it |
+| `ai.paint` | Paint policy DisableCocreator, DisableGenerativeFill and DisableImageCreator = 1; not offered when the Paint app is not installed |
+| `ai.notepad` | WindowsNotepad DisableAIFeatures=1; not offered when the Notepad app is not installed |
+| `debloat.widgets_policy` | Dsh AllowNewsAndInterests=0; not offered on Home |
+| `debloat.device_companion_apps` | Device Metadata PreventDeviceMetadataFromNetwork=1 |
 | `defender.exclusions_risky` | Remove only risky exclusions (drive roots, Windows, user folders, exe/dll/ps1/bat/js/vbs/scr, script engines); each is journaled and re-added on undo |

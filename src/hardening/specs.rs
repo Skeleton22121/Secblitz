@@ -8,6 +8,7 @@ const NO_GATE: Gate = Gate {
     tamper_exempt: false,
     secedit: false,
     own_policy_key: "",
+    shared_values: &[],
     policy_values: &[],
 };
 
@@ -63,6 +64,12 @@ pub(super) const WU_UX: &str = r"HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Setti
 pub(super) const EXPLORER_MACHINE: &str =
     r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer";
 pub(super) const WINDOWS_AI_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
+const DSH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Dsh";
+const DEVICE_METADATA_POLICY: &str =
+    r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata";
+const PAINT_POLICY: &str =
+    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint";
+const NOTEPAD_POLICY: &str = r"HKLM:\SOFTWARE\Policies\WindowsNotepad";
 pub(super) const DATA_COLLECTION_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection";
 pub(super) const DELIVERY_POLICY: &str =
@@ -895,6 +902,87 @@ pub(super) static SPECS: &[Spec] = &[
         gate: Gate {
             areas: &["WindowsAI"],
             own_policy_key: WINDOWS_AI_POLICY,
+            shared_values: &["DisableClickToDo"],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "ai.click_to_do",
+        title: "Click to Do",
+        description: "Stop Windows offering actions on what is on your screen with Click to Do (DisableClickToDo=1). Only offered on versions of Windows that have it; undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("DisableClickToDo", WINDOWS_AI_POLICY, &[1], false, Some(1), 1)],
+        gate: Gate {
+            areas: &["WindowsAI"],
+            own_policy_key: WINDOWS_AI_POLICY,
+            shared_values: &["DisableAIDataAnalysis"],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "ai.paint",
+        title: "AI tools in Paint",
+        description: "Turn off the AI tools in Paint: Cocreator, Generative fill and Image Creator (DisableCocreator, DisableGenerativeFill, DisableImageCreator = 1). Only offered where Paint is installed; undo restores the earlier values.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            set("DisableCocreator", PAINT_POLICY, &[1], false, Some(1), 1),
+            set("DisableGenerativeFill", PAINT_POLICY, &[1], false, Some(1), 1),
+            set("DisableImageCreator", PAINT_POLICY, &[1], false, Some(1), 1),
+        ],
+        gate: Gate {
+            own_policy_key: PAINT_POLICY,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "ai.notepad",
+        title: "AI tools in Notepad",
+        description: "Turn off the AI writing tools in Notepad (DisableAIFeatures=1). Only offered where the Notepad app from the Microsoft Store is installed; undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("DisableAIFeatures", NOTEPAD_POLICY, &[1], false, Some(1), 1)],
+        gate: Gate {
+            own_policy_key: NOTEPAD_POLICY,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "debloat.widgets_policy",
+        title: "Widgets button and news board",
+        description: "Turn off the Widgets button and its news board for everyone on this PC (AllowNewsAndInterests=0). Not offered on Windows Home, which ignores it; undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("AllowNewsAndInterests", DSH_POLICY, &[0], false, Some(0), 1)],
+        gate: Gate {
+            areas: &["NewsAndInterests"],
+            pattern: "^AllowNewsAndInterests",
+            own_policy_key: DSH_POLICY,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "debloat.device_companion_apps",
+        title: "Extra apps for new devices",
+        description: "Stop Windows downloading device pictures and details from the internet, which stops the extra apps it suggests for new mice, keyboards and monitors (PreventDeviceMetadataFromNetwork=1). Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set(
+            "PreventDeviceMetadataFromNetwork",
+            DEVICE_METADATA_POLICY,
+            &[1],
+            false,
+            Some(1),
+            1,
+        )],
+        gate: Gate {
+            own_policy_key: DEVICE_METADATA_POLICY,
             ..NO_GATE
         },
     },
