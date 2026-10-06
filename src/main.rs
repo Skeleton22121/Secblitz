@@ -1,4 +1,3 @@
-// GUI program: no console window is ever created.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 pub(crate) mod advice;
 mod app;
@@ -20,8 +19,6 @@ use secblitz::{platform, service, updater};
 use std::io::{self, IsTerminal, Write};
 
 fn command(lang: Lang) -> Command {
-    // Clap without the `string` feature accepts static text. The catalog owns
-    // static translations; these few process-lifetime help strings are bounded.
     fn text(s: String) -> &'static str {
         Box::leak(s.into_boxed_str())
     }
@@ -78,7 +75,6 @@ fn command(lang: Lang) -> Command {
                 .subcommand(sub("status", "Query service status"))
                 .subcommand(sub("run", "Run the service dispatcher")),
         )
-        // Hidden: only the uninstaller calls these.
         .subcommand(
             Command::new("uninstall-revert")
                 .hide(true)
@@ -93,8 +89,6 @@ fn command(lang: Lang) -> Command {
             ),
         )
         .subcommand(
-            // Web protection plumbing for the installer, the scheduled task
-            // and the service manager. Hidden, never elevates.
             Command::new("filter")
                 .hide(true)
                 .subcommand_required(true)
@@ -179,8 +173,6 @@ fn selected_language(args: &[std::ffi::OsString]) -> Lang {
     lang
 }
 
-/// Reconstruct the child command solely from parsed enum-like choices. No user
-/// paths, arbitrary command strings, or unparsed arguments cross the UAC boundary.
 fn elevated_args(matches: &ArgMatches, lang: Lang) -> Vec<String> {
     let mut args = vec!["--lang".into(), lang.code().into()];
     for flag in ["no-animation", "json", "details"] {
@@ -212,18 +204,13 @@ fn elevated_args(matches: &ArgMatches, lang: Lang) -> Vec<String> {
 }
 
 fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
-    // Installer health is deliberately before all UI, UAC, locks and wrappers.
     if update_command(matches) == Some(UpdateCommand::Health) {
         anyhow::ensure!(matches.get_flag("json"), "update-health-requires-json");
         return write_health(updater::health()?, &mut io::stdout().lock());
     }
-    // The uninstaller's commands decide about privileges themselves and never
-    // elevate, so they come before every UAC path.
     if let Some(command) = uninstall_command(matches) {
         return execute_uninstall(command, matches.get_flag("json"), lang);
     }
-    // The web protection service: started by the service manager, never
-    // elevated or interactive.
     if let Some(filter) = matches.subcommand_matches("filter") {
         return match filter.subcommand_name() {
             Some("run") => {
@@ -231,7 +218,6 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
                 Ok(0)
             }
             _ => match filter_command(matches) {
-                // Web protection plumbing: no UI, no UAC prompt, no wrappers.
                 Some(action) => run_filter_request(action, platform::is_elevated, run_filter),
                 None => unreachable!(),
             },
@@ -243,7 +229,6 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
             "JSON is available only for report commands, not interactive guides or desktop tools."
         ));
     }
-    // The scheduled task and protected worker never enter UI paths.
     if let Some(action) = update_command(matches) {
         return execute_update(matches, lang, action);
     }
@@ -251,7 +236,6 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
         .subcommand_matches("service")
         .and_then(ArgMatches::subcommand_name)
     else {
-        // No command: the normal way into Secblitz.
         return launcher::run(lang);
     };
     if service_action == "run" {
@@ -299,7 +283,6 @@ fn filter_command(matches: &ArgMatches) -> Option<FilterCommand> {
         "reconcile" => Some(FilterCommand::Reconcile),
         "install" => Some(FilterCommand::Install),
         "uninstall" => Some(FilterCommand::Uninstall),
-        // `run` is the service itself, handled before this.
         "run" => None,
         _ => unreachable!(),
     }
@@ -331,7 +314,6 @@ fn run_filter(action: FilterCommand) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        // Only Windows has web protection; reuse the platform's own refusal.
         let _ = action;
         platform::backend().map(|_| ())
     }
@@ -357,9 +339,7 @@ fn update_command(matches: &ArgMatches) -> Option<UpdateCommand> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UninstallCommand {
-    /// Machine part, must already be elevated.
     Revert,
-    /// Personal part, as the person.
     RevertUser,
     CleanupUser,
 }
@@ -374,7 +354,6 @@ fn uninstall_command(matches: &ArgMatches) -> Option<UninstallCommand> {
     }
 }
 
-/// Exit code for "not allowed to run here": no UAC, nothing changed.
 #[cfg(windows)]
 const UNINSTALL_REFUSED: i32 = 2;
 #[cfg(windows)]
@@ -401,9 +380,6 @@ fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Resul
             Ok(0)
         }
         UninstallCommand::RevertUser => {
-            // Elevated or not, it only ever changes the running account's own
-            // settings (people who sign in as the built-in Administrator, or
-            // with UAC off, are always elevated). Exit code: settings left.
             let summary = uninstall::revert_user();
             print(&summary, json, lang);
             Ok(summary.left.len().min(6) as i32)
@@ -414,7 +390,6 @@ fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Resul
 
 #[cfg(not(windows))]
 fn execute_uninstall(_: UninstallCommand, _: bool, _: Lang) -> Result<i32> {
-    // Only Windows has anything to put back.
     Ok(1)
 }
 
@@ -509,8 +484,6 @@ fn execute_update(matches: &ArgMatches, lang: Lang, action: UpdateCommand) -> Re
             UpdateCommand::Health => unreachable!(),
         },
     );
-    // Do not wait for a spawned worker, start a menu or keep this executable
-    // open with a pause. The worker persists its status in protected storage.
     write_update_result(
         result,
         lang,
@@ -542,8 +515,6 @@ fn write_update_result(
         Ok(UpdateRun::Report(report)) => (report, None),
         Err(error) => (
             UpdateReport::Outcome(updater::UpdateOutcome::Failed {
-                // Keep native causes, URLs and operational metadata out of JSON
-                // errors. Explicit interactive --details is the evidence path.
                 reason: "The update could not be completed.".into(),
             }),
             Some(error),
@@ -574,7 +545,6 @@ fn elevate_and_wait(args: &[String]) -> Result<i32> {
     launcher::elevate_and_wait(args)
 }
 
-/// First command word, skipping `--lang <code>` and other options.
 fn first_word(args: &[std::ffi::OsString]) -> Option<&str> {
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
@@ -590,20 +560,17 @@ fn first_word(args: &[std::ffi::OsString]) -> Option<&str> {
     None
 }
 
-/// Value following `flag` in the argument list.
 fn flag_value<'a>(args: &'a [std::ffi::OsString], flag: &str) -> Option<&'a str> {
     let at = args.iter().position(|a| a == flag)?;
     args.get(at + 1)?.to_str()
 }
 
-/// The dashboard: elevated, one window, optional broker to the launcher.
 fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
     let result = (|| -> Result<i32> {
         let broker = flag_value(args, "--broker")
             .filter(|id| broker::valid_id(id))
             .map(str::to_owned);
         let start = flag_value(args, "--self-test").and_then(gui::Page::parse);
-        // Never run the dashboard unelevated: go through the launcher.
         if !platform::is_elevated().unwrap_or(false) {
             return launcher::run(lang);
         }
@@ -624,7 +591,6 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
     })
 }
 
-/// GUI-era entry points, dispatched before the hidden service/update parser.
 fn dispatch_gui(args: &[std::ffi::OsString], lang: Lang) -> Option<i32> {
     match first_word(args)? {
         "gui" => Some(run_gui(args, lang)),
@@ -634,9 +600,6 @@ fn dispatch_gui(args: &[std::ffi::OsString], lang: Lang) -> Option<i32> {
 }
 
 fn main() {
-    // Before anything loads a DLL by bare name (wgpu looks for vulkan-1.dll):
-    // search only this program's folder and System32, never the current
-    // directory or PATH, which a standard user may control.
     #[cfg(windows)]
     unsafe {
         use windows_sys::Win32::System::LibraryLoader::{
@@ -704,11 +667,8 @@ fn main() {
                     serde_json::json!({"error":{"code":"operation_failed", "message":lang.t("Operation failed")}})
                 );
             } else if plumbing {
-                // Run by the installer or a scheduled task, never seen by a
-                // person: the full reason goes to the log that captures stderr.
                 eprintln!("{}: {error:#}", lang.t("Operation failed"));
             } else if !update {
-                // Hidden service commands run unattended (installer): no dialogs.
                 eprintln!("{}", lang.t("Operation failed"));
             }
             1
@@ -794,7 +754,6 @@ mod tests {
                 .unwrap();
             assert_eq!(filter_command(&matches), Some(expected));
             assert!(!json_allowed(&matches));
-            // Not elevated: exit code 2, nothing runs, no UAC.
             let code = run_filter_request(
                 expected,
                 || Ok(false),
@@ -820,7 +779,6 @@ mod tests {
         assert!(command(Lang::En)
             .try_get_matches_from(["secblitz", "filter", "unknown"])
             .is_err());
-        // Hidden from the help listing.
         let help = command(Lang::En).render_help().to_string();
         assert!(!help.contains("filter"), "{help}");
     }
@@ -1151,7 +1109,6 @@ mod tests {
         assert_eq!(flag_value(&args, "--broker"), Some("abc"));
         assert_eq!(flag_value(&args, "--self-test"), Some("home"));
         assert_eq!(flag_value(&args, "--missing"), None);
-        // No arguments never parse as a subcommand: the launcher handles it.
         let m = command(Lang::En)
             .try_get_matches_from(["secblitz"])
             .unwrap();
@@ -1176,7 +1133,6 @@ mod tests {
                 .try_get_matches_from(["secblitz", word])
                 .is_err());
         }
-        // The only new words are the hidden uninstaller commands.
         for words in [
             vec!["secblitz", "uninstall-revert"],
             vec!["secblitz", "uninstall-cleanup", "--user"],
@@ -1216,7 +1172,6 @@ mod tests {
             ),
         ] {
             let m = command(Lang::En).try_get_matches_from(words).unwrap();
-            // Recognised by the handler that runs before every elevation path.
             assert_eq!(uninstall_command(&m), Some(expected));
         }
         let m = command(Lang::En)

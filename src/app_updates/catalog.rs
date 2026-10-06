@@ -5,15 +5,12 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_CATALOG_AGE_SECONDS: u64 = 30 * 24 * 60 * 60;
-/// A short-lived publisher observation is independently required. A review can
-/// remain valid for 30 days while a newer stable release supersedes its target.
 pub const MAX_STABLE_OBSERVATION_AGE_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogReview {
     pub reviewed_at: u64,
-    /// Exclusive UTC expiry, fixed by the review; never extended by a build.
     pub expires_at: u64,
     pub stable_observed_at: u64,
     pub stable_version_observed: String,

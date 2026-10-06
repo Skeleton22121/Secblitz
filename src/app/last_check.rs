@@ -1,17 +1,10 @@
-//! The last full check, kept so reopening Secblitz soon after shows it instead
-//! of checking everything again. "Check again" always runs a new check.
-//!
-//! A saved check is used only when it is under an hour old, was made by this
-//! version for the same Windows account, and Windows has not restarted since
-//! (changes that wait for a restart would otherwise look unfinished). Anything
-//! that changes the PC from Secblitz forgets it, so the next opening checks.
+//! The last full check, reused when Secblitz reopens soon after.
 use secblitz::engine::Report;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 
 const FILE: &str = "last-check.json";
-/// How long a saved check is shown instead of a new one.
 pub const FRESH_SECONDS: u64 = 3600;
 
 #[derive(Serialize, Deserialize)]
@@ -22,13 +15,10 @@ struct Saved {
     report: Report,
 }
 
-/// True when a check saved at `at` may be shown now. `boot` is when Windows
-/// last started, in the same clock as `at` and `now`.
 fn fresh(at: u64, now: u64, boot: u64) -> bool {
     at >= boot && at <= now && now - at < FRESH_SECONDS
 }
 
-/// Save a finished check, replacing the previous one.
 pub fn save(dir: &Path, user: &str, at: u64, report: &Report) -> anyhow::Result<()> {
     #[derive(Serialize)]
     struct SavedRef<'a> {
@@ -57,7 +47,6 @@ pub fn save(dir: &Path, user: &str, at: u64, report: &Report) -> anyhow::Result<
     Ok(())
 }
 
-/// The saved check and when it ran, if it may be shown now.
 pub fn load(dir: &Path, user: &str, now: u64, boot: u64) -> Option<(Report, u64)> {
     let data = std::fs::read(dir.join(FILE)).ok()?;
     let saved: Saved = serde_json::from_slice(&data).ok()?;
@@ -67,12 +56,10 @@ pub fn load(dir: &Path, user: &str, now: u64, boot: u64) -> Option<(Report, u64)
     .then_some((saved.report, saved.at))
 }
 
-/// Drop the saved check, so the next opening checks again.
 pub fn forget(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(FILE));
 }
 
-/// When Windows last started, in Unix seconds.
 pub fn boot_time(now: u64) -> Option<u64> {
     #[cfg(windows)]
     {

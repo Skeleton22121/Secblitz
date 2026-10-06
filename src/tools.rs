@@ -1,14 +1,5 @@
 //! Optional, explicitly requested desktop software installation.
-//!
-//! Caller contract: call only for `tools bitwarden --yes`, before elevation.
-//! Explain that --yes authorizes the download, installation, Bitwarden package
-//! license/agreements, and WinGet source agreements. A different password manager
-//! is a valid choice; recommending one must never call this function implicitly.
 
-/// Ensure Bitwarden desktop is installed for the original desktop user.
-///
-/// Does not print or localize messages. Errors preserve native error codes for
-/// the UI. This is not a startup check: WinGet may contact its repository here.
 pub fn install_bitwarden() -> anyhow::Result<()> {
     #[cfg(windows)]
     {
@@ -18,8 +9,6 @@ pub fn install_bitwarden() -> anyhow::Result<()> {
     anyhow::bail!("Bitwarden installation is supported only on Windows")
 }
 
-/// Is Bitwarden already installed (for this user or machine-wide)? Only
-/// looks for its files; never starts anything.
 pub fn bitwarden_installed() -> anyhow::Result<bool> {
     #[cfg(windows)]
     {
@@ -29,12 +18,6 @@ pub fn bitwarden_installed() -> anyhow::Result<bool> {
     Ok(false)
 }
 
-/// Check whether Bitwarden installation is possible from the current account,
-/// without installing anything. Returns `Ok(())` when it would proceed;
-/// returns `Err` with `NotHere` as the cause when it cannot (elevated token,
-/// no desktop shell, wrong account, or App Installer not available for this user).
-///
-/// Call from the same process and token context that would call `install_bitwarden`.
 pub fn bitwarden_installable() -> anyhow::Result<()> {
     #[cfg(windows)]
     {
@@ -44,16 +27,11 @@ pub fn bitwarden_installable() -> anyhow::Result<()> {
     Err(NotHere.into())
 }
 
-/// The signed-in user's registered App Installer `winget.exe`, found through
-/// the package manager. Never searches PATH: the user's WindowsApps alias
-/// folder is writable by any program the user runs.
 #[cfg(windows)]
 pub fn winget_path() -> anyhow::Result<std::path::PathBuf> {
     windows::winget()
 }
 
-/// The PC could not reach the internet (DNS or connection failure). Distinct
-/// from every other installer failure so the UI can say "you're offline".
 #[derive(Debug)]
 pub struct Offline;
 
@@ -65,8 +43,6 @@ impl std::fmt::Display for Offline {
 
 impl std::error::Error for Offline {}
 
-/// Secblitz may not install apps from this account (an administrator or
-/// background account, or no App Installer). Retrying cannot help.
 #[derive(Debug)]
 pub struct NotHere;
 
@@ -78,19 +54,14 @@ impl std::fmt::Display for NotHere {
 
 impl std::error::Error for NotHere {}
 
-/// True when an error from this module means "not from this account".
 pub fn is_not_here_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<NotHere>().is_some()
 }
 
-/// True when an error from this module (or its context chain) means offline.
 pub fn is_offline_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<Offline>())
 }
 
-/// Exit codes WinGet passes through from WinHTTP/WinInet when there is no
-/// connection: name not resolved, timeout, cannot connect, connection
-/// error/reset, and the generic internet-disconnected code.
 pub fn is_offline_code(code: u32) -> bool {
     matches!(
         code,
@@ -98,8 +69,6 @@ pub fn is_offline_code(code: u32) -> bool {
     )
 }
 
-/// Name resolution for the WinGet CDN only (no data is sent). A failure after
-/// an installer failed is strong evidence the PC is offline.
 pub fn dns_offline() -> bool {
     use std::net::ToSocketAddrs;
     match ("cdn.winget.microsoft.com", 443).to_socket_addrs() {
@@ -118,7 +87,6 @@ enum Operation {
 
 #[cfg(any(windows, test))]
 impl Operation {
-    // No caller-supplied arguments, installer overrides, hash bypasses, or shell.
     fn args(self) -> &'static [&'static str] {
         match self {
             Self::Source => &[
@@ -161,7 +129,6 @@ impl Operation {
 fn list_found(code: u32) -> anyhow::Result<bool> {
     match code {
         0 => Ok(true),
-        // APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND, not a generic failure.
         0x8A15_0014 => Ok(false),
         _ => anyhow::bail!("WinGet Bitwarden detection failed (exit 0x{code:08X})"),
     }
@@ -173,7 +140,6 @@ fn verify_source(output: &[u8]) -> anyhow::Result<()> {
     let output = output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(output);
     let source: serde_json::Value = serde_json::from_slice(output)
         .context("WinGet source export did not return a single JSON source")?;
-    // A source named "winget" can have been replaced; do not trust the name alone.
     for (key, expected) in [
         ("Name", "winget"),
         ("Arg", "https://cdn.winget.microsoft.com/cache"),
@@ -254,8 +220,6 @@ mod windows {
         },
     };
 
-    // Small native ABI declarations for APIs outside the existing windows-sys
-    // feature set. No Cargo changes or additional Rust dependencies are needed.
     #[link(name = "ole32")]
     extern "system" {
         fn CoTaskMemFree(memory: *const c_void);
@@ -363,7 +327,6 @@ mod windows {
             bytes >= size_of::<TOKEN_USER>() as u32 && bytes <= 65536,
             "Invalid TokenUser buffer size: {bytes}"
         );
-        // usize storage provides the alignment required by TOKEN_USER.
         let mut buffer = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
         check(
             unsafe {
@@ -449,9 +412,6 @@ mod windows {
     }
 
     pub(super) fn known_install() -> Result<bool> {
-        // These are existence checks only; never execute an application found here.
-        // WinGet below also checks ARP registrations in user/machine, 32/64-bit
-        // scopes, covering custom install directories and non-WinGet installers.
         for (id, relative) in [
             (&FOLDERID_LocalAppData, "Programs\\Bitwarden\\Bitwarden.exe"),
             (&FOLDERID_LocalAppData, "Bitwarden\\Bitwarden.exe"),
@@ -473,8 +433,6 @@ mod windows {
     }
 
     fn require_packaged_registration(name: *const u16) -> Result<()> {
-        // Developer-mode loose registrations are not a trusted installed package,
-        // even if their manifest claims the expected publisher-qualified family.
         struct PackageInfo(*mut c_void);
         impl Drop for PackageInfo {
             fn drop(&mut self) {
@@ -519,16 +477,12 @@ mod windows {
             status == 0 && count == 1 && bytes >= 8,
             "GetPackageInfo failed (Win32 {status}, count {count})"
         );
-        // PACKAGE_INFO begins with UINT32 reserved; UINT32 flags on both ABIs.
         let flags = unsafe { *buffer.as_ptr().cast::<u32>().add(1) };
         ensure!(flags & 0x10000 == 0, "App Installer is a developer-mode registration; use the packaged Microsoft Store installation");
         Ok(())
     }
 
     pub(super) fn winget() -> Result<PathBuf> {
-        // The package manager resolves the CURRENT user's registered, publisher-
-        // qualified App Installer family, including packages on another volume.
-        // Never search PATH, CWD, environment-derived folders, or wildcard packages.
         let family: Vec<u16> = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\0"
             .encode_utf16()
             .collect();
@@ -559,8 +513,6 @@ mod windows {
             status == 0,
             "GetPackagesByPackageFamily failed (Win32 {status})"
         );
-        // Fail closed on ambiguous registrations rather than picking a version
-        // by lexicographic directory sorting or guessing an architecture.
         let mut candidates = Vec::new();
         for name in names.into_iter().take(count as usize) {
             require_packaged_registration(name)?;
@@ -692,7 +644,6 @@ mod windows {
         )?;
         let process = Handle(info.hProcess);
         let thread = Handle(info.hThread);
-        // Suspend before assignment so no installer child can escape the job.
         if let Err(error) = check(
             unsafe { AssignProcessToJobObject(job.0, process.0) },
             "Assign WinGet to timeout job",
@@ -727,8 +678,6 @@ mod windows {
                 let count = reader
                     .read(&mut chunk[..take])
                     .context("Read WinGet output")?;
-                // Bound memory while continuing to drain so a verbose installer
-                // cannot deadlock on a full output pipe. Only source JSON is used.
                 let keep = count.min(65536usize.saturating_sub(output.len()));
                 output.extend_from_slice(&chunk[..keep]);
                 continue;
@@ -741,7 +690,6 @@ mod windows {
                         unsafe { GetExitCodeProcess(process.0, &mut code) },
                         "GetExitCodeProcess(WinGet)",
                     )?;
-                    // Capture bytes written just before process exit on next pass.
                     let mut remaining = 0;
                     unsafe {
                         PeekNamedPipe(read, null_mut(), 0, null_mut(), &mut remaining, null_mut());
@@ -757,12 +705,8 @@ mod windows {
                 }
             }
         }
-        // Closing the job on every return also terminates remaining descendants.
     }
 
-    /// Same prerequisite checks as the first phase of `install`, without
-    /// actually downloading or installing anything. Used by the GUI to show
-    /// the "can't install from this account" state upfront.
     pub(super) fn install_check() -> Result<()> {
         require_desktop_user().context(super::NotHere)?;
         winget().context(super::NotHere)?;

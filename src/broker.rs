@@ -1,8 +1,4 @@
 //! Launcher <-> elevated GUI broker: a closed set of user-context actions.
-//!
-//! Protocol (spec 3.1): request `[kind, arg_lo, arg_hi]`, response `[status]`.
-//! No strings cross the boundary. The launcher (standard user) serves the
-//! pipe; the elevated GUI is the only client.
 
 use crate::user_apps;
 use crate::user_settings::{Op, Setting};
@@ -15,58 +11,33 @@ pub enum Request {
     OpenEncryption,
     OpenSignIn,
     InstallBitwarden,
-    /// Turn off silent sponsored-app installs for the signed-in user (HKCU).
     BlockSuggestedApps,
-    /// Reinstall a removed app; arg = index into `secblitz::debloat::catalog()`.
     ReinstallStoreApp(u16),
-    /// Start a Store download for "put everything back" and answer at once.
     StartStoreApp(u16),
-    /// How that download is doing: `Working`, `Done`, `Failed` or `Offline`.
     StoreAppStatus(u16),
     OpenTamperProtection,
     OpenProtectionHistory,
-    /// Windows Security > Virus and threat protection > Protection history.
     OpenProtectionHistoryList,
-    /// Settings > Network and internet.
     OpenNetwork,
     OpenAppBrowserControl,
     OpenOptionalFeatures,
     OpenAccounts,
-    /// Windows Security > Device security > Core isolation.
     OpenCoreIsolation,
-    /// Windows Security > Firewall and network protection.
     OpenFirewall,
-    /// Windows Security > Device security.
     OpenDeviceSecurity,
-    /// Settings > Accounts > Access work or school.
     OpenWorkAccounts,
-    /// Settings > System > Recovery (Advanced startup).
     OpenRecovery,
-    /// Settings > System > Remote Desktop.
     OpenRemoteDesktop,
-    /// Settings > Privacy and security > Find my device.
     OpenFindMyDevice,
-    /// The classic BitLocker page (editions without device encryption).
     OpenBitLocker,
-    /// Settings > Network and internet > Wi-Fi.
     OpenWifi,
-    /// Settings > Accounts > Windows backup.
     OpenBackup,
-    /// Settings > System > Storage.
     OpenStorage,
-    /// Settings > Apps > Installed apps.
     OpenInstalledApps,
-    /// Read, apply or undo one per-user (HKCU) setting; see `user_settings`.
     UserSetting(Setting, Op),
-    /// Run `winget upgrade` once as the signed-in user and remember which
-    /// allowlisted programs have a newer version.
     AppUpdatesScan,
-    /// Ask about one allowlisted program (index into `user_apps::APPS`) from
-    /// the last scan.
     AppUpdateQuery(u16),
-    /// Upgrade one allowlisted program (index into `user_apps::APPS`).
     AppUpdate(u16),
-    /// Is Bitwarden already installed for the signed-in user? Read-only.
     BitwardenStatus,
 }
 
@@ -75,32 +46,21 @@ pub enum Request {
 pub enum Reply {
     Done,
     Failed,
-    /// Restore fell back to opening the Store page for the user.
     OpenedStore,
     Unavailable,
-    /// No internet connection (install could not download). Nothing was opened.
     Offline,
-    /// A per-user setting is already in its safer state.
     Safe,
-    /// ... and Secblitz made it so: undo is available.
     SafeByUs,
-    /// A per-user setting is in its weaker state.
     NeedsAttention,
-    /// Nothing to do on this PC (not installed, not applicable).
     NotApplicable,
-    /// Could not be read, or the answer was not trustworthy.
     Unknown,
-    /// A newer version of the program is available.
     UpdateAvailable,
-    /// Still running (a Store download).
     Working,
-    /// Undo found the value changed since Secblitz set it, and left it alone.
     ChangedSince,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Reply {
-    /// The GUI's answer for a per-user setting request.
     pub fn from_result(result: crate::user_settings::HandleResult) -> Self {
         use crate::user_settings::{HandleResult, Outcome, Report};
         match result {
@@ -155,9 +115,6 @@ impl Reply {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Request {
-    /// Requests that open a Windows page or window for the person to look at.
-    /// Only reads, so whatever a check found still holds afterwards. Opening a
-    /// Windows page is not read only: the person may change things there.
     pub fn is_read_only(self) -> bool {
         match self {
             Request::StoreAppStatus(_)
@@ -254,7 +211,6 @@ impl Request {
             Request::OpenBackup => (31, 0),
             Request::OpenStorage => (32, 0),
             Request::OpenInstalledApps => (33, 0),
-            // One byte for the setting, one for the operation.
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -270,13 +226,10 @@ impl Request {
         [kind, lo, hi]
     }
 
-    /// Strict decode against the compiled debloat catalog.
     pub fn decode(bytes: [u8; 3]) -> Option<Self> {
         Self::decode_with(bytes, secblitz::debloat::catalog().len())
     }
 
-    /// Strict decode: unknown kinds, a non-zero argument on argument-less
-    /// kinds and catalog indices out of range are all rejected.
     pub fn decode_with(bytes: [u8; 3], catalog_len: usize) -> Option<Self> {
         let [kind, lo, hi] = bytes;
         let arg = u16::from_le_bytes([lo, hi]);
@@ -322,14 +275,11 @@ impl Request {
         })
     }
 
-    /// How long the GUI waits for the launcher's answer.
     pub fn timeout(self) -> Duration {
         match self {
-            // winget can take minutes (download + install).
             Request::ReinstallStoreApp(_) | Request::InstallBitwarden | Request::AppUpdate(_) => {
                 Duration::from_secs(15 * 60)
             }
-            // WinGet may refresh its sources first.
             Request::AppUpdatesScan => Duration::from_secs(4 * 60),
             _ => Duration::from_secs(30),
         }
@@ -339,7 +289,6 @@ impl Request {
 #[cfg_attr(not(windows), allow(dead_code))]
 const PREFIX: &str = r"\\.\pipe\secblitz-broker-";
 
-/// The id is a 128-bit random value written as 32 lowercase hex digits.
 pub fn valid_id(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
@@ -357,7 +306,6 @@ pub fn pipe_name(id: &str) -> String {
     format!("{PREFIX}{id}")
 }
 
-/// Elevated-GUI side. Thread-safe: one request at a time.
 pub struct Client {
     #[cfg(windows)]
     inner: std::sync::Mutex<imp::Pipe>,
@@ -372,7 +320,6 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
-    /// Connect to `\\.\pipe\secblitz-broker-<id>`; `id` must be 32 lowercase hex.
     pub fn connect(id: &str) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_id(id), "invalid broker id");
         #[cfg(windows)]
@@ -387,7 +334,6 @@ impl Client {
         }
     }
 
-    /// Blocking round trip. Call from a background task, never the UI thread.
     pub fn send(&self, request: Request) -> anyhow::Result<Reply> {
         #[cfg(windows)]
         {
@@ -433,17 +379,13 @@ mod imp {
 
     const GENERIC_READ: u32 = 0x8000_0000;
     const GENERIC_WRITE: u32 = 0x4000_0000;
-    // SECURITY_SQOS_PRESENT with SECURITY_ANONYMOUS (0): the server never
-    // gets to impersonate us.
     const SECURITY_SQOS_PRESENT: u32 = 0x0010_0000;
 
     pub struct Pipe {
         handle: HANDLE,
         event: HANDLE,
-        /// A timeout or I/O error desynchronises the stream; stop using it.
         broken: bool,
     }
-    // The raw handles are only used under the owning Mutex.
     unsafe impl Send for Pipe {}
 
     impl Drop for Pipe {
@@ -523,8 +465,6 @@ mod imp {
                 event,
                 broken: false,
             };
-            // The pipe name is secret and created with FIRST_PIPE_INSTANCE;
-            // additionally require that the server is our launcher.
             let mut server = 0u32;
             anyhow::ensure!(
                 unsafe { GetNamedPipeServerProcessId(pipe.handle, &mut server) } != 0,
@@ -702,14 +642,12 @@ mod tests {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
-        // User settings: unknown setting or operation bytes are rejected.
         assert!(Request::decode_with([13, 0, 0], 100).is_some());
         assert_eq!(
             Request::decode_with([13, Setting::ALL.len() as u8, 0], 100),
             None
         );
         assert_eq!(Request::decode_with([13, 0, 3], 100), None);
-        // Wire byte 5 is the suggested-apps setting; the next one is unknown.
         assert_eq!(
             Request::decode_with([13, 5, 2], 100),
             Some(Request::UserSetting(Setting::SuggestedApps, Op::Undo))
@@ -717,10 +655,8 @@ mod tests {
         assert_eq!(Request::decode_with([13, 6, 0], 100), None);
         assert_eq!(Request::decode_with([13, 255, 255], 100), None);
         assert!(Request::decode_with([13, 0, 0], 0).is_some());
-        // Scan takes no argument.
         assert_eq!(Request::decode_with([14, 1, 0], 100), None);
         assert_eq!(Request::decode_with([14, 0, 1], 100), None);
-        // App indices stay inside the allowlist.
         let n = user_apps::APPS.len() as u8;
         for kind in [15u8, 16] {
             assert!(Request::decode_with([kind, n - 1, 0], 100).is_some());
@@ -736,7 +672,6 @@ mod tests {
         );
         assert_eq!(Request::decode_with([7, 255, 255], 100), None);
         assert_eq!(Request::decode([7, 255, 255]), None);
-        // Store downloads for "put everything back": catalog indices only.
         for kind in [18u8, 19] {
             assert!(Request::decode_with([kind, 4, 0], 5).is_some());
             assert_eq!(Request::decode_with([kind, 5, 0], 5), None);

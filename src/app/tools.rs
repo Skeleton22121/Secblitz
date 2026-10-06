@@ -1,13 +1,4 @@
-//! Background wrappers for the Tools page: Windows repair (operations),
-//! Windows updates (patching), PC health tips (diagnostics) and the password
-//! generator.
-//!
-//! OWNER: tools agent. Nothing here draws pixels. The `run_*` / `discover_*`
-//! functions are BLOCKING and must be called from `crate::gui::blocking` or
-//! `crate::gui::blocking_stream`. Every user-visible string is an English
-//! translation source key (the page passes it through `ctx.t`); raw technical
-//! evidence is only ever returned in `technical` fields for the collapsed
-//! "Technical details" expander.
+//! Background wrappers for the Tools page: repair, Windows updates, PC health tips and the password generator.
 use anyhow::{bail, ensure, Context as _, Result};
 use secblitz::diagnostics as diag;
 use secblitz::operations::{self as ops, OperationKind as Op};
@@ -16,9 +7,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// ---------------------------------------------------------------------------
-// Password generator (ported from the former terminal UI)
-// ---------------------------------------------------------------------------
 
 pub const PASSWORD_LENGTH: usize = 24;
 
@@ -36,7 +24,6 @@ fn wipe(bytes: &mut [u8]) {
     }
 }
 
-/// A generated password. Never printed by `Debug`, wiped when dropped.
 pub struct Secret([u8; PASSWORD_LENGTH]);
 
 impl Secret {
@@ -51,7 +38,6 @@ impl Secret {
         filled.context("Password generation failed")?;
         Ok(Self(encoded))
     }
-    /// The password text (always printable ASCII).
     pub fn reveal(&self) -> &str {
         std::str::from_utf8(&self.0).unwrap_or("")
     }
@@ -69,9 +55,6 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Friendly errors
-// ---------------------------------------------------------------------------
 
 /// Map a raw engine error to one calm sentence (translation key).
 ///
@@ -99,8 +82,6 @@ pub const ERR_EARLIER: &str =
 pub const ERR_NETWORK: &str =
     "We couldn't reach Windows Update. Check your internet connection and try again.";
 pub const ERR_GENERAL: &str = "We couldn't finish this. Try again in a few minutes. If it keeps happening, restart your PC and check for a Secblitz update.";
-/// This copy of Secblitz can't do it (wrong account or started by another
-/// program); a fresh start from the shortcut can.
 pub const ERR_REOPEN: &str = "Reopen Secblitz from its shortcut and try again.";
 
 /// False when trying again cannot help (the GUI should show a different next
@@ -114,7 +95,6 @@ pub fn is_retryable(note: &str) -> bool {
     )
 }
 
-/// True when the friendly note says to finish in Windows Update itself.
 #[allow(dead_code)] // consumed by the GUI integration
 pub fn suggests_windows_update(note: &str) -> bool {
     note == ERR_USE_WINDOWS_UPDATE
@@ -186,8 +166,6 @@ pub fn friendly_error(raw: &str) -> &'static str {
     }
 }
 
-/// A longer, plain explanation for the "More details" pane, keyed by the
-/// friendly note. Never contains raw engine text.
 pub fn why_for_note(note: &str) -> &'static str {
     match note {
         ERR_USE_WINDOWS_UPDATE => "Windows only lets Secblitz install updates from a standard administrator account, and this account can't. Sign in with a different administrator account, or ask the person who manages this PC, then open Secblitz again.",
@@ -207,14 +185,10 @@ pub fn why_for_note(note: &str) -> &'static str {
     }
 }
 
-/// "More details" for Bitwarden when the account can't install apps.
 pub const WHY_BITWARDEN_UNAVAILABLE: &str = "Windows only lets Secblitz install apps from a standard administrator account, and this account can't. Get Bitwarden from bitwarden.com instead.";
-/// "More details" for Bitwarden when there is no internet.
 pub const WHY_BITWARDEN_OFFLINE: &str =
     "Secblitz couldn't connect to the internet. Check your connection, then press Retry.";
 
-/// "More details" for an unexpected Bitwarden failure. Connection problems get
-/// Bitwarden wording (not the Windows Update wording).
 pub fn bitwarden_why(raw: &str) -> &'static str {
     if friendly_error(raw) == ERR_NETWORK {
         WHY_BITWARDEN_OFFLINE
@@ -223,12 +197,10 @@ pub fn bitwarden_why(raw: &str) -> &'static str {
     }
 }
 
-/// Plain explanation for a failure whose only evidence is raw text.
 pub fn friendly_why(raw: &str) -> &'static str {
     why_for_note(friendly_error(raw))
 }
 
-/// Plain "More details" text for a finished repair.
 pub fn repair_why(result: RepairResult, note: Option<&'static str>) -> &'static str {
     if let Some(n) = note {
         return why_for_note(n);
@@ -243,7 +215,6 @@ pub fn repair_why(result: RepairResult, note: Option<&'static str>) -> &'static 
     }
 }
 
-/// Plain "More details" text for a finished update install.
 pub fn install_why(result: InstallResult, note: Option<&'static str>) -> &'static str {
     if let Some(n) = note {
         return why_for_note(n);
@@ -261,22 +232,15 @@ fn unix_now() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
-// ---------------------------------------------------------------------------
-// Repair Windows (operations)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairKind {
-    /// Look for problems; changes nothing.
     Check,
-    /// Repair Windows system files.
     Repair,
 }
 
-/// Plan lifetime (seconds). Approval has its own 15 minute maximum.
 pub const PLAN_SECONDS: u64 = 3600;
 pub const APPROVAL_SECONDS: u64 = 900;
-/// How long the short permission granted from the review sheet lasts.
 pub const GRANT_SECONDS: u64 = 2 * 3600;
 
 impl RepairKind {
@@ -289,7 +253,6 @@ impl RepairKind {
             Self::Repair => vec![vec![Op::DismRestoreHealth], vec![Op::SfcRepair]],
         }
     }
-    /// Every operation the job may run, including automatic prerequisites.
     pub fn all_operations(self) -> Vec<Op> {
         let mut all = Vec::new();
         for chunk in self.chunks() {
@@ -303,7 +266,6 @@ impl RepairKind {
     }
 }
 
-/// The engine adds prerequisites to a plan; mirror its exact ordered result.
 pub fn expand(requested: &[Op]) -> Vec<Op> {
     let mut selected = requested.to_vec();
     if selected.contains(&Op::DismRestoreHealth) && !selected.contains(&Op::DismScanHealth) {
@@ -332,12 +294,6 @@ pub fn plan_request(chunk: &[Op]) -> ops::PlanRequest {
     }
 }
 
-/// The owner policy to use while a job the user just confirmed is running.
-///
-/// The review sheet is the owner's explicit consent. Defaults are respected:
-/// existing entries stay, only what the job needs is added, the opt-in and the
-/// scoped "this PC is in use" exceptions expire after `GRANT_SECONDS`, and the
-/// caller restores the previous policy afterwards.
 pub fn policy_for(current: &ops::OwnerPolicy, needed: &[Op], now: u64) -> ops::OwnerPolicy {
     use ops::{ExceptionScope, PolicyException, Risk};
     let mut policy = current.clone();
@@ -370,7 +326,6 @@ pub fn policy_for(current: &ops::OwnerPolicy, needed: &[Op], now: u64) -> ops::O
     policy
 }
 
-/// Plain name for the part currently running (translation key).
 pub fn step_label(kind: Op) -> &'static str {
     match kind {
         Op::DismCheckHealth => "Taking a quick look at Windows",
@@ -424,7 +379,6 @@ fn step_unresolved(step: &ops::StepRecord) -> bool {
         && matches!(step.evidence, None | Some(ops::Evidence::Inconclusive)))
 }
 
-/// Turn the finished plan records into one plain outcome.
 pub fn classify(kind: RepairKind, records: &[ops::PlanRecord], stopped: bool) -> RepairResult {
     use ops::StepState as S;
     let steps: Vec<(Op, &ops::StepRecord)> = records
@@ -470,8 +424,6 @@ pub fn classify(kind: RepairKind, records: &[ops::PlanRecord], stopped: bool) ->
             }
         }
         RepairKind::Repair => {
-            // The engine cannot prove a system-file repair by itself, so a
-            // finished (not failed) repair always ends with a restart prompt.
             let only_unproven_files = steps.iter().all(|(op, s)| {
                 s.state == S::Succeeded
                     || (*op == Op::SfcRepair
@@ -489,7 +441,6 @@ pub fn classify(kind: RepairKind, records: &[ops::PlanRecord], stopped: bool) ->
     }
 }
 
-/// Raw evidence for the collapsed "Technical details" expander.
 pub fn technical_lines(records: &[ops::PlanRecord]) -> String {
     let mut out = String::new();
     for record in records {
@@ -508,30 +459,24 @@ pub fn technical_lines(records: &[ops::PlanRecord]) -> String {
 
 #[derive(Debug, Clone)]
 pub struct RepairProgress {
-    /// Translation key describing the part now running.
     pub label: &'static str,
-    /// 1-based position and total, for a calm "Step 2 of 4".
     pub step: usize,
     pub total: usize,
     pub elapsed: u64,
-    /// Seconds since this step started.
     pub step_elapsed: u64,
 }
 
 #[derive(Debug, Clone)]
 pub enum RepairEvent {
-    /// Getting everything ready (before the first part starts).
     Preparing,
     Progress(RepairProgress),
     Done {
         result: RepairResult,
-        /// Friendly reason when the job could not run at all.
         note: Option<&'static str>,
         technical: String,
     },
 }
 
-/// Run a whole repair job. Blocking; emits events; always ends with `Done`.
 pub fn run_repair(kind: RepairKind, cancel: Arc<AtomicBool>, emit: &dyn Fn(RepairEvent)) {
     emit(RepairEvent::Preparing);
     let mut records = Vec::new();
@@ -574,8 +519,6 @@ fn repair_flow(
     }
     let result = repair_steps(kind, cancel, emit, records, all.len());
     if changed {
-        // Back to the owner's own settings. Best effort: the short grant
-        // expires by itself anyway.
         let _ = ops::set_policy(original);
     }
     result
@@ -588,7 +531,6 @@ fn repair_steps(
     records: &mut Vec<ops::PlanRecord>,
     total: usize,
 ) -> Result<()> {
-    // An earlier repair or update that was cut short must be verified before a new one.
     for old in ops::list()? {
         if old.consumed && old.steps.iter().any(step_unresolved) {
             let kinds: Vec<Op> = old.plan.steps.iter().map(|s| s.operation.kind).collect();
@@ -683,14 +625,10 @@ fn supervise_operation(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Windows updates (patching)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub identity: patch::UpdateIdentity,
-    /// Title as published by Microsoft (shown in the review sheet).
     pub title: String,
     pub size_bytes: u64,
     pub license: String,
@@ -712,7 +650,6 @@ impl Found {
     }
 }
 
-/// Reduce a discovered catalog to what the page shows.
 pub fn summarize_catalog(catalog: &patch::Catalog) -> Found {
     let mut technical = format!("Source: {}\n", catalog.source);
     let updates = catalog
@@ -742,7 +679,6 @@ pub fn summarize_catalog(catalog: &patch::Catalog) -> Found {
     Found { updates, technical }
 }
 
-/// "230 MB" style size in plain words.
 pub fn size_phrase(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
     if bytes == 0 {
@@ -754,10 +690,8 @@ pub fn size_phrase(bytes: u64) -> String {
     }
 }
 
-/// How long a search waits for Windows' own servicing work to finish.
 const SERVICING_WAIT: Duration = Duration::from_secs(90);
 
-/// Blocking: look for important Windows updates (reads from Windows Update).
 pub fn discover_updates() -> Result<Found, (String, &'static str)> {
     // Windows starts its own servicing workers (update orchestrator, Defender
     // maintenance) at any time and they usually finish within a minute. The
@@ -820,7 +754,6 @@ impl InstallResult {
     }
 }
 
-/// The plan must contain exactly the updates the person reviewed.
 pub fn plan_matches(reviewed: &[patch::UpdateIdentity], plan: &patch::Plan) -> bool {
     let mut a: Vec<_> = reviewed.to_vec();
     let mut b: Vec<_> = plan.updates.iter().map(|u| u.identity.clone()).collect();
@@ -862,8 +795,6 @@ fn install_in_flight(status: patch::Status) -> bool {
 }
 
 pub fn consent_for_sheet() -> patch::Consent {
-    // Granted only after the person confirms the review sheet, which states
-    // the source, the license terms and that updates cannot be undone.
     patch::Consent {
         owner_opt_in: true,
         accept_windows_update_source: true,
@@ -946,7 +877,6 @@ fn install_flow(
         "Select between 1 and 32 updates"
     );
     secblitz::platform::ensure_own_process_tree()?;
-    // Verify anything an earlier, interrupted job left behind (read-only).
     for old in patch::list()? {
         if install_in_flight(old.status) {
             let task = patch::verify(old.plan.id)?;
@@ -1004,9 +934,6 @@ fn wait_patch<T>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// PC health tips (diagnostics)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TipProfile {
@@ -1135,7 +1062,6 @@ impl TipProfile {
     }
 }
 
-/// Plain title of one thing that was looked at (translation key).
 pub fn tip_title(id: diag::ProbeId) -> &'static str {
     use diag::ProbeId as P;
     match id {
@@ -1181,8 +1107,6 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
     }
 }
 
-/// The Windows page that helps with a whole area, for a tip whose checks
-/// have no page of their own. None only where Windows has no such page.
 pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
     use crate::guide::Page;
     use diag::ProbeId as P;
@@ -1208,10 +1132,6 @@ pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
         P::LegacyFeatures => Page::OptionalFeatures,
         P::FirewallRules => Page::Firewall,
         P::WindowsHello => Page::SignIn,
-        // Settings has no page for these: browser add-ons live in the
-        // browser, recovery tools have no switch in Settings (their check
-        // has a Protection fix instead), and the rest are fixes or steps on
-        // their own checks.
         P::BrowserExtensions
         | P::WinRe
         | P::Permissions
@@ -1222,8 +1142,6 @@ pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
     })
 }
 
-/// The same steps Protection shows for an area, for a tip whose checks have
-/// none of their own.
 pub fn probe_guide(id: diag::ProbeId) -> Option<&'static crate::guide::Guide> {
     use diag::ProbeId as P;
     crate::guide::guide(match id {
@@ -1236,7 +1154,6 @@ pub fn probe_guide(id: diag::ProbeId) -> Option<&'static crate::guide::Guide> {
     })
 }
 
-/// One friendly suggestion shown when something needs a look.
 pub fn tip_advice(id: diag::ProbeId) -> &'static str {
     use diag::ProbeId as P;
     match id {
@@ -1280,8 +1197,6 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
     }
 }
 
-/// A more exact one-line next step for a single check, when one exists.
-/// Short, calm and jargon-free; the probe-level line is the fallback.
 pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
     Some(match rule_id {
         "os.feature_release_support" => "Your version of Windows is running out of safety updates. Install the newest version in Windows Update.",
@@ -1316,10 +1231,8 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
     })
 }
 
-/// Which Settings page helps with this check (a fixed, allowlisted page).
 pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     use secblitz::actions::Action;
-    // A step-by-step guide names the exact page it starts from.
     if let Some(g) = crate::guide::guide(rule_id) {
         return Some(g.page.action());
     }
@@ -1339,9 +1252,6 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     }
 }
 
-/// The Protection control that fixes what this check reports, when there is
-/// one. A check and its fix share one id, except three older checks that have
-/// their own. A fix added to the catalog is picked up here by itself.
 pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
     let id = match rule_id {
         "remote.rdp" => "remote_desktop.disabled",
@@ -1352,8 +1262,6 @@ pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
     secblitz::hardening::spec(id).map(|spec| spec.id)
 }
 
-/// What a tip about a fixable check says while the latest Protection check
-/// offers that fix. Only ever shown then: `rule_advice` stays the manual text.
 pub fn rule_fix_advice(rule_id: &str) -> &'static str {
     match rule_id {
         "remote.rdp" => "Remote access is on. If you don't use it, Secblitz can turn it off for you.",
@@ -1370,32 +1278,19 @@ pub fn rule_fix_advice(rule_id: &str) -> &'static str {
     }
 }
 
-/// How a tip about a check that is also a Protection control reads right now.
-/// A fix is only promised when the latest Protection check really offers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TipFix<'r> {
-    /// The latest check offers the fix: "Review fix" opens its review.
     Offered(&'static str),
-    /// The control row says Not offered, with this reason: "See why" goes to
-    /// it, and steps show only for a reason the person can act on.
     NotOffered {
         control: &'static str,
         reason: &'r str,
     },
-    /// The control is set but waits for a restart to start working: this
-    /// line says so, and nothing else competes with it.
     Restart(&'static str),
-    /// No Protection check has looked at this control yet: "Check now", so
-    /// the tip can then say whether a fix is offered.
     Unchecked,
-    /// This PC has no such fix at all: the manual steps only.
     NoFix,
-    /// Managed elsewhere, could not be checked, already set or not a fix:
-    /// the manual steps (guide and page button) or the manual advice.
     Manual,
 }
 
-/// Decide [`TipFix`] for a tip from the latest Protection report.
 pub fn tip_fix<'r>(
     tip: &Tip,
     report: Option<&'r secblitz::engine::Report>,
@@ -1408,8 +1303,6 @@ pub fn tip_fix<'r>(
         return TipFix::Unchecked;
     };
     let Some(row) = report.results.iter().find(|r| r.id == control) else {
-        // A check older than this fix looks again; a fix this PC doesn't
-        // have stays manual.
         return if available.iter().any(|id| id == control) {
             TipFix::Unchecked
         } else {
@@ -1431,14 +1324,12 @@ pub fn tip_fix<'r>(
     } else if a.step == crate::advice::NextStep::Restart {
         TipFix::Restart(a.next)
     } else if secblitz::vbs::is_vbs(control) && row.status == "compliant" {
-        // Set, while this check says it is not running: only a restart helps.
         TipFix::Restart(core_restart_advice(control))
     } else {
         TipFix::Manual
     }
 }
 
-/// The line for a core protection that is on but not running yet.
 pub fn core_restart_advice(control: &str) -> &'static str {
     if control == secblitz::vbs::STACK_PROTECTION {
         "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down)."
@@ -1447,13 +1338,7 @@ pub fn core_restart_advice(control: &str) -> &'static str {
     }
 }
 
-/// The words and the steps a tip shows for this [`TipFix`]: the fix line only
-/// while the fix is offered, the steps for a Not offered reason only when the
-/// person can act on it, nothing extra while a restart is the one thing to do,
-/// and otherwise the manual line and steps.
 pub fn tip_words(tip: &Tip, fix: TipFix<'_>) -> (&'static str, Option<&'static crate::guide::Guide>) {
-    // Steps for another check on the same tip (not the manual way to do this
-    // fix) stay whatever the fix says.
     let other = tip
         .guide
         .filter(|g| tip.fix.and_then(crate::guide::guide) != Some(*g));
@@ -1468,31 +1353,19 @@ pub fn tip_words(tip: &Tip, fix: TipFix<'_>) -> (&'static str, Option<&'static c
     }
 }
 
-/// The one compact button a tip that needs a look shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TipAction {
-    /// Open the same review sheet as Protection for this fix.
     ReviewFix(&'static str),
-    /// Go to the Protection row that says why (Not offered, managed, ...).
     SeeWhy,
-    /// Run a Protection check so the tip can say whether a fix is offered.
     CheckNow,
-    /// "Restart now", after its own confirmation.
     RestartNow,
-    /// Remove found threats, after their own confirmation.
     RemoveThreats,
-    /// The usual quick scan, after its own confirmation.
     Scan,
-    /// The steps below carry their own button.
     Steps,
-    /// The Windows page that helps, named after the page.
     Open(secblitz::actions::Action),
-    /// The words say it all (a restart to finish turning something on).
     None,
 }
 
-/// Pick a tip's button. `can_open` is false when Windows pages can't be
-/// opened from here (no helper), so the page button is left out.
 pub fn tip_action(tip: &Tip, fix: TipFix<'_>, can_open: bool) -> TipAction {
     let (_, guide) = tip_words(tip, fix);
     match (fix, tip.open) {
@@ -1506,44 +1379,31 @@ pub fn tip_action(tip: &Tip, fix: TipFix<'_>, can_open: bool) -> TipAction {
         _ if guide.is_some() => TipAction::Steps,
         (_, Some(open)) if can_open => TipAction::Open(open),
         (TipFix::Unchecked, _) => TipAction::CheckNow,
-        // A fix that is not offered for another reason (managed elsewhere,
-        // couldn't check, ...): its Protection row says why.
         (TipFix::Manual, _) if tip.fix.is_some() => TipAction::SeeWhy,
         _ => TipAction::None,
     }
 }
 
-/// The one check whose tip offers "Restart now" (after its own confirmation).
 pub fn rule_restart(rule_id: &str) -> bool {
     rule_id == "update.reboot_overdue"
 }
 
-/// Checks where the Tools page can offer its existing "scan for viruses" job
-/// right in the tip. Nothing new is started: the person confirms the usual sheet.
 pub fn rule_scan(rule_id: &str) -> bool {
     rule_id == "defender.scan_age"
 }
 
-/// Checks where the Tools page can ask Windows Security to remove the threats
-/// it found, after the person confirms a sheet that says what happens.
 pub fn rule_remove_threats(rule_id: &str) -> bool {
     rule_id == "defender.threats"
 }
 
-/// How a threat removal ended, in the person's terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreatsResult {
-    /// Windows Security reported nothing active.
     Nothing,
-    /// Everything it reported is gone.
     Removed,
-    /// Some are gone and some are still active.
     Partly,
-    /// None could be removed.
     Stuck,
 }
 
-/// Judge the removal only by the counts Windows Security itself reported.
 pub fn threats_result(r: &secblitz::actions::ThreatRemoval) -> ThreatsResult {
     match (r.found, r.removed, r.left) {
         (0, _, 0) => ThreatsResult::Nothing,
@@ -1564,26 +1424,14 @@ pub enum TipState {
 pub struct Tip {
     pub title: &'static str,
     pub state: TipState,
-    /// The manual line: what the person can do by hand. Never a promise of a
-    /// fix (see `fix_advice`).
     pub advice: &'static str,
-    /// Windows page that helps with a `Look` tip by hand, shown as a button.
     pub open: Option<secblitz::actions::Action>,
-    /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
-    /// Numbered plain steps and the page they start from, for doing it by hand.
     pub guide: Option<&'static crate::guide::Guide>,
-    /// A `Look` tip whose check is also a Protection control: its id. What the
-    /// row says then depends on the latest Protection check ([`tip_fix`]).
     pub fix: Option<&'static str>,
-    /// The line shown instead of `advice` while that fix is offered.
     pub fix_advice: &'static str,
-    /// A `Look` tip that a restart finishes: "Restart now" asks first.
     pub restart: bool,
-    /// A `Look` tip whose found threats the Tools page can remove (after a sheet).
     pub remove_threats: bool,
-    /// Check id whose plain-language explanation the row can open: the first
-    /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
 }
 
@@ -1609,7 +1457,6 @@ fn tip_state(status: diag::Status) -> TipState {
     }
 }
 
-/// Reduce a diagnostics report to a plain checklist; things to look at first.
 pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport {
     let mut tips = Vec::new();
     let mut technical = String::new();
@@ -1619,8 +1466,6 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         };
         let mut state = tip_state(probe.status);
         if id == diag::ProbeId::UpdateCache && probe.status != diag::Status::Attention {
-            // The offline cache can only add problems; whether updates are
-            // current comes from the install history.
             if let Some(h) = report
                 .probes
                 .iter()
@@ -1636,8 +1481,6 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         for a in &probe.assessments {
             technical.push_str(&format!("  {:?}: {}\n", a.status, a.detail));
         }
-        // A check Secblitz can fix leads; otherwise the first check that needs
-        // a look decides the exact next step.
         let attention: Vec<&str> = probe
             .assessments
             .iter()
@@ -1673,7 +1516,6 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .find(|rule| crate::explain::for_check(rule).is_some())
             .map(str::to_owned);
         let lead = lead.filter(|_| look);
-        // A restart is offered right here, so no page or steps compete with it.
         let restart = lead.is_some_and(rule_restart);
         tips.push(Tip {
             explain,
@@ -1725,7 +1567,6 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
     }
 }
 
-/// Blocking: read-only collection (no changes, nothing leaves the PC).
 pub fn run_tips(profile: TipProfile) -> TipsReport {
     let report = diag::collect(profile.profile(), &diag::Context::default());
     summarize_tips(profile, &report)
@@ -1819,7 +1660,6 @@ mod tests {
         assert!(repair.allowed.len() <= 6);
         assert_eq!(repair.window, current.window);
         assert_eq!(repair.idle_seconds, current.idle_seconds);
-        // Every exception is for an allowed operation and short lived.
         assert!(repair
             .exceptions
             .iter()
@@ -1836,7 +1676,6 @@ mod tests {
                 .all(|(i, s)| !scopes[..i].contains(s)),
             "no duplicate scoped exceptions"
         );
-        // Running again does not stack duplicates.
         let again = policy_for(&repair, &RepairKind::Repair.all_operations(), now + 5);
         assert_eq!(again.exceptions.len(), repair.exceptions.len());
     }
@@ -1861,7 +1700,6 @@ mod tests {
         kind: RepairKind,
         states: &[(ops::StepState, Option<ops::Evidence>)],
     ) -> Vec<ops::PlanRecord> {
-        // One record per chunk, in order.
         let mut next = states.iter();
         let mut out = Vec::new();
         for chunk in kind.chunks() {
@@ -1961,7 +1799,6 @@ mod tests {
                 (S::NeedsReview, Some(E::DiagnosticCompleted)),
             ],
         );
-        // Unproven system-file repair always asks for a restart.
         assert_eq!(
             classify(RepairKind::Repair, &finished, false),
             RepairResult::NeedsRestart
@@ -2050,8 +1887,6 @@ mod tests {
             friendly_error("Owner-initiated reboot has not occurred"),
             ERR_RESTART
         );
-        // Whole-word matching and policy first: no busy or network advice.
-        // Built-in Administrator: explain, and do not offer a useless Retry.
         let raw = "Interactive split-token administrator required; service/over-the-shoulder elevation unsupported";
         assert_eq!(friendly_error(raw), ERR_USE_WINDOWS_UPDATE);
         assert_no_dev_terms(friendly_error(raw));
@@ -2064,7 +1899,6 @@ mod tests {
             friendly_error("Request blocked by policy"),
             ERR_SETTINGS_BLOCK
         );
-        // Each readiness deferral names the step that actually helps.
         for (raw, text) in [
             ("Deferred: Windows is waiting for a restart", ERR_RESTART),
             ("Deferred: Windows servicing is busy", ERR_BUSY),
@@ -2075,7 +1909,6 @@ mod tests {
         ] {
             assert_eq!(friendly_error(raw), text);
         }
-        // Started inside another program's job: only a fresh start helps.
         let raw = "Started inside another program's process job; reopen Secblitz interactively";
         assert_eq!(friendly_error(raw), ERR_REOPEN);
         assert!(!is_retryable(ERR_REOPEN));
@@ -2117,9 +1950,6 @@ mod tests {
             why_for_note(ERR_GENERAL)
         );
         assert_eq!(friendly_error("The updates changed since they were reviewed; look again"), ERR_CHANGED);
-        // Per call site: Bitwarden reasons get Bitwarden text, never the
-        // Windows Update or "unexpected" wording.
-        // The Offline and Unavailable replies use fixed sentences in the view.
         for why in [bitwarden_why("Offline"), WHY_BITWARDEN_OFFLINE, WHY_BITWARDEN_UNAVAILABLE] {
             assert!(!why.contains("Windows Update"));
             assert!(!why.contains("unexpected"));
@@ -2128,7 +1958,6 @@ mod tests {
         assert_eq!(bitwarden_why("WinGet timed out"), WHY_BITWARDEN_OFFLINE);
         assert_eq!(bitwarden_why("something odd"), why_for_note(ERR_GENERAL));
         assert!(WHY_BITWARDEN_UNAVAILABLE.contains("bitwarden.com"));
-        // Scan and Defender errors map to cause-specific text.
         assert_eq!(friendly_why("Scan failed: network unreachable"), why_for_note(ERR_NETWORK));
         assert_eq!(friendly_why("scan blocked by policy"), why_for_note(ERR_SETTINGS_BLOCK));
         assert_eq!(friendly_why("Defender update: restart required"), why_for_note(ERR_RESTART));
@@ -2209,7 +2038,6 @@ mod tests {
         }
     }
 
-    /// A report whose one probe needs a look for exactly these checks.
     fn report_with(probe_id: diag::ProbeId, rules: &[&str]) -> diag::Report {
         let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
         let probe = report
@@ -2244,7 +2072,6 @@ mod tests {
 
     #[test]
     fn checks_with_a_protection_fix_point_to_it_instead_of_manual_steps() {
-        // A check and its fix share one id; checks without a fix have none.
         for id in [
             "accounts.stale_enabled",
             "smb.shares_exposed",
@@ -2273,12 +2100,10 @@ mod tests {
             assert_eq!(tip.state, TipState::Look, "{rule}");
             assert_eq!(tip.fix, Some(rule), "{rule}");
             assert_eq!(tip.fix_advice, rule_fix_advice(rule), "{rule}");
-            // When the latest check does not offer the fix, the manual way remains.
             assert_eq!(tip.advice, rule_advice(rule).unwrap(), "{rule}");
             assert_eq!(tip.open, rule_open(rule), "{rule}");
             assert!(!tip.scan && !tip.remove_threats, "{rule}");
         }
-        // A tip with nothing to look at never offers a fix.
         let mut report = report_with(diag::ProbeId::AccountHygiene, &["accounts.stale_enabled"]);
         let probe = report
             .probes
@@ -2291,7 +2116,6 @@ mod tests {
         }
         let tip = tip_in(&report, diag::ProbeId::AccountHygiene);
         assert_eq!((tip.fix, tip.remove_threats, tip.open), (None, false, None));
-        // A check without a fix keeps its manual step.
         let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
         assert_eq!(tip.fix, None);
         assert_eq!(tip.advice, rule_advice("persistence.wmi_subscriptions").unwrap());
@@ -2323,7 +2147,6 @@ mod tests {
         assert_eq!(judge(2, 2, 0), ThreatsResult::Removed);
         assert_eq!(judge(3, 1, 2), ThreatsResult::Partly);
         assert_eq!(judge(2, 0, 2), ThreatsResult::Stuck);
-        // Never a success without a removed item or with something left over.
         assert_eq!(judge(1, 0, 0), ThreatsResult::Stuck);
         assert_eq!(judge(0, 0, 1), ThreatsResult::Stuck);
     }
@@ -2355,11 +2178,9 @@ mod tests {
             .expect("the core protection tip is in the extra profile");
         assert_eq!(tip.state, TipState::Look);
         assert_eq!(tip.fix, Some("vbs.memory_integrity"));
-        // The manual way stays on the tip for when the fix is not offered.
         assert_eq!(tip.advice, rule_advice("vbs.memory_integrity").unwrap());
         assert_eq!(tip.guide, crate::guide::guide("vbs.memory_integrity"));
         assert!(!tip.fix_advice.is_empty());
-        // Everything else keeps its Windows page and no fix button.
         assert!(tips.tips.iter().filter(|t| t.fix.is_some()).count() == 1);
     }
 
@@ -2393,20 +2214,14 @@ mod tests {
         }
     }
 
-    /// One rule for every tip about a fixable check: a fix only when the
-    /// latest Protection check offers it, "See why" for a Not offered row,
-    /// otherwise the manual steps.
     #[test]
     fn a_tip_promises_a_fix_only_when_protection_offers_it() {
         let mi = "vbs.memory_integrity";
         let tip = look_tip(mi);
         let all = vec![mi.to_owned()];
-        // Offered: the review.
         let r = protection(mi, "attention", "Eligible");
         assert_eq!(tip_fix(&tip, Some(&r), &all), TipFix::Offered(mi));
-        // Offered by the PC but not in this build's catalog: manual.
         assert_eq!(tip_fix(&tip, Some(&r), &[]), TipFix::Manual);
-        // Not offered: the reason, and the steps only for a driver.
         let reason = format!("{}: a.sys", secblitz::vbs::DRIVER);
         let r = protection(mi, "skipped", &reason);
         assert_eq!(
@@ -2420,13 +2235,10 @@ mod tests {
         let r = protection(mi, "skipped", secblitz::vbs::NOT_SUPPORTED);
         assert!(matches!(tip_fix(&tip, Some(&r), &all), TipFix::NotOffered { .. }));
         assert!(crate::guide::guide_not_offered(mi, secblitz::vbs::NOT_SUPPORTED).is_none());
-        // No check yet: check now. A check from before this fix existed
-        // looks again; a PC without this fix stays manual.
         assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
         let other = protection("uac.enabled", "attention", "");
         assert_eq!(tip_fix(&tip, Some(&other), &all), TipFix::Unchecked);
         assert_eq!(tip_fix(&tip, Some(&other), &[]), TipFix::NoFix);
-        // Set (or just applied) but waiting for a restart: only the restart.
         let r = protection(mi, "compliant", "");
         assert_eq!(
             tip_fix(&tip, Some(&r), &all),
@@ -2440,7 +2252,6 @@ mod tests {
             tip_fix(&stack, Some(&r), &["vbs.kernel_stack_protection".to_owned()]),
             TipFix::Restart(core_restart_advice("vbs.kernel_stack_protection"))
         );
-        // Managed, unchecked or already running: manual.
         for (status, detail) in [
             ("skipped", "Relevant policy is configured: assessment only"),
             ("unknown", ""),
@@ -2449,12 +2260,10 @@ mod tests {
             let r = protection(mi, status, detail);
             assert_eq!(tip_fix(&tip, Some(&r), &all), TipFix::Manual, "{status} {detail}");
         }
-        // A tip that is not about a fix is always manual.
         let manual = look_tip("defender.tamper_protection");
         assert_eq!(manual.fix, None);
         let r = protection("defender.tamper_protection", "attention", "");
         assert_eq!(tip_fix(&manual, Some(&r), &all), TipFix::Manual);
-        // Two older checks have their own ids for the same fix.
         assert_eq!(rule_fix("remote.rdp"), Some("remote_desktop.disabled"));
         assert_eq!(rule_fix("smb.v1"), Some("smb1.disabled"));
         let rdp = look_tip("remote.rdp");
@@ -2463,8 +2272,6 @@ mod tests {
             tip_fix(&rdp, Some(&r), &["remote_desktop.disabled".to_owned()]),
             TipFix::Offered("remote_desktop.disabled")
         );
-        // Recovery tools: the older check has its own id too, and its tip
-        // offers the fix only while the latest Protection check does.
         assert_eq!(rule_fix("winre.enabled"), Some("recovery.winre_enabled"));
         let winre = tip_for(diag::ProbeId::WinRe, &["winre.enabled"]);
         assert_eq!(winre.fix, Some("recovery.winre_enabled"));
@@ -2490,7 +2297,6 @@ mod tests {
         let r = protection("recovery.winre_enabled", "compliant", "");
         assert_eq!(tip_fix(&winre, Some(&r), &fixes), TipFix::Manual);
         assert_eq!(tip_action(&winre, TipFix::Manual, true), TipAction::SeeWhy);
-        // The manual text never promises a fix; only `fix_advice` may.
         assert!(!rule_advice("winre.enabled").unwrap().contains("Secblitz can"));
         for rule in ["remote.rdp", "smb.v1", mi, "vbs.kernel_stack_protection"] {
             let text = rule_advice(rule).unwrap();
@@ -2551,16 +2357,13 @@ mod tests {
             "persistence.run_and_tasks",
         ] {
             assert_eq!(rule_fix(id), Some(id), "{id} must be a real fix on the Protection page");
-            // The fix line is only shown while the fix is offered.
             let fix = rule_fix_advice(id);
             assert!(fix.contains("We can"), "{id}: {fix}");
-            // The manual line is what the person can do by hand, never a promise.
             let manual = rule_advice(id).unwrap();
             assert!(!manual.contains("We can") && !manual.contains("Secblitz can"), "{id}: {manual}");
             assert!(!manual.contains('\u{2014}'), "{id}");
         }
         assert!(rule_advice("persistence.run_and_tasks").unwrap().contains("Task Manager"));
-        // With a manual-only problem listed first, the fixable one still leads.
         let tip = tip_for(
             diag::ProbeId::Persistence,
             &["persistence.wmi_subscriptions", "services.unquoted_paths"],
@@ -2570,7 +2373,6 @@ mod tests {
         assert_eq!(tip.advice, rule_advice("services.unquoted_paths").unwrap());
         assert_eq!(tip.fix_advice, rule_fix_advice("services.unquoted_paths"));
         assert_eq!(tip.explain.as_deref(), Some("services.unquoted_paths"));
-        // A manual-only problem keeps its manual advice and steps, and offers no fix.
         let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
         assert!(tip.fix.is_none() && !tip.restart);
         assert_eq!(tip.guide, crate::guide::guide("persistence.wmi_subscriptions"));
@@ -2582,20 +2384,17 @@ mod tests {
         let tip = tip_for(diag::ProbeId::HostsFile, &[id]);
         let all = vec![id.to_owned()];
         assert_eq!(tip_fix(&tip, Some(&protection(id, "attention", "Eligible")), &all), TipFix::Offered(id));
-        // Managed, conflict, already protected or no check yet: no promise of a fix.
         for status in ["ok", "conflict", "compliant", "unknown"] {
             assert_eq!(tip_fix(&tip, Some(&protection(id, status, "")), &all), TipFix::Manual, "{status}");
         }
         let managed = protection(id, "skipped", "Domain-managed machine: assessment only");
         assert_eq!(tip_fix(&tip, Some(&managed), &all), TipFix::Manual);
         assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
-        // A Not offered row: "See why", with no steps for this reason.
         let reason = "Not offered: the hosts file uses a format we cannot keep exactly";
         assert_eq!(
             tip_fix(&tip, Some(&protection(id, "skipped", reason)), &all),
             TipFix::NotOffered { control: id, reason }
         );
-        // While a fix is waiting for a restart nothing new is offered.
         let mut pending = protection(id, "attention", "Eligible");
         pending.findings.push(secblitz::model::Finding {
             title: "x".into(),
@@ -2603,8 +2402,6 @@ mod tests {
             detail: String::new(),
         });
         assert_eq!(tip_fix(&tip, Some(&pending), &all), TipFix::Manual);
-        // Another check's fix row never counts for this tip: no row for
-        // this one yet, so it looks again.
         assert_eq!(
             tip_fix(&tip, Some(&protection("services.unquoted_paths", "attention", "")), &all),
             TipFix::Unchecked
@@ -2617,10 +2414,8 @@ mod tests {
         let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue"]);
         assert!(tip.restart && tip.fix.is_none() && tip.open.is_none() && tip.guide.is_none());
         assert!(tip.advice.contains("Save your work"));
-        // A fix on the same tip still leads; the restart then waits its turn.
         let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue", "update.paused"]);
         assert_eq!((tip.fix, tip.restart), (Some("update.paused"), false));
-        // Healthy tips never show either button.
         let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
         for probe in &mut report.probes {
             probe.status = diag::Status::Healthy;
@@ -2629,13 +2424,9 @@ mod tests {
         assert!(tips.tips.iter().all(|t| t.fix.is_none() && !t.restart));
     }
 
-    /// A tip that still needs the person never ends at a bare sentence: it
-    /// has a Protection fix, an in-app action, or a guide with real steps.
     #[test]
     fn every_area_tip_without_its_own_check_opens_a_page_or_shows_steps() {
         use diag::ProbeId as P;
-        // No Windows page exists for these; their checks bring their own fix,
-        // steps or plain instruction (see probe_page).
         let none = [
             P::BrowserExtensions,
             P::WinRe,
@@ -2661,7 +2452,6 @@ mod tests {
             };
             let action = tip_action(&tip, TipFix::Manual, true);
             assert_eq!(action == TipAction::None, none.contains(&id), "{id:?}: {action:?}");
-            // Steps always start from the page the tip would open.
             if let (Some(g), Some(page)) = (probe_guide(id), probe_page(id)) {
                 assert_eq!(g.page, page, "{id:?}");
             }
@@ -2704,7 +2494,6 @@ mod tests {
             tip.scan = rule_scan(rule);
             tip.remove_threats = rule_remove_threats(rule);
             tip.restart = rule_restart(rule);
-            // Every state the tip can be in, not only "the fix is offered".
             let mut states = vec![TipFix::Manual];
             if let Some(control) = tip.fix {
                 states.extend([
@@ -2724,32 +2513,25 @@ mod tests {
                 );
             }
         }
-        // A restart that finishes turning something on: the line says it all.
         let tip = look_tip("vbs.memory_integrity");
         let fix = TipFix::Restart(crate::app::score::RESTART_TO_START);
         assert_eq!(tip_action(&tip, fix, true), TipAction::None);
         assert_eq!(tip_words(&tip, fix), (crate::app::score::RESTART_TO_START, None));
-        // No Protection check yet, nothing else to do: check now. A fix that
-        // is not offered for another reason: Protection says why.
         let tip = look_tip("net.hosts_file");
         assert_eq!(tip_action(&tip, TipFix::Unchecked, true), TipAction::CheckNow);
         assert_eq!(tip_action(&tip, TipFix::Manual, true), TipAction::SeeWhy);
         assert_eq!(tip_action(&tip, TipFix::Offered("net.hosts_file"), true), TipAction::ReviewFix("net.hosts_file"));
-        // Firewall rules in your folders: the firewall page.
         let tip = look_tip("firewall.user_dir_inbound_allow");
         assert_eq!(
             tip_action(&tip, TipFix::Unchecked, true),
             TipAction::Open(secblitz::actions::Action::OpenFirewall)
         );
-        // Hidden background tasks stay with the person: steps, never a fix.
         let wmi = "persistence.wmi_subscriptions";
         assert!(rule_fix(wmi).is_none());
         let guide = crate::guide::guide(wmi).expect("hidden tasks have steps");
         assert!(guide.steps[0].contains("Don't remove anything yourself"));
         let tip = tip_for(diag::ProbeId::Persistence, &[wmi]);
         assert_eq!(tip.guide, Some(guide));
-        // Sharing its tip with a fixable check: the fix leads, and the hidden
-        // task steps stay in every state.
         let tip = tip_for(diag::ProbeId::Persistence, &["services.unquoted_paths", wmi]);
         assert_eq!(tip.fix, Some("services.unquoted_paths"));
         assert_eq!(tip.guide, Some(guide));
@@ -2764,7 +2546,6 @@ mod tests {
         ] {
             assert_eq!(tip_words(&tip, fix).1, Some(guide), "{fix:?}");
         }
-        // A fix's own manual steps still give way to the fix.
         let rdp = look_tip("remote.rdp");
         assert_eq!(tip_words(&rdp, TipFix::Offered("remote_desktop.disabled")).1, None);
     }
@@ -2804,8 +2585,6 @@ mod tests {
             assert!(text.len() <= 130, "{rule}: keep it to one short line");
         }
         assert_eq!(rule_advice("update.freshness"), None);
-        // A check Secblitz can fix sends the person to the fix, not to a Windows page.
-        // Its manual way (used when the fix is not offered) is Core isolation.
         for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
             assert_eq!(rule_fix(id), Some(id), "{id}");
             assert_eq!(rule_open(id), Some(secblitz::actions::Action::OpenCoreIsolation), "{id}");
@@ -2842,7 +2621,6 @@ mod tests {
         assert_eq!(rule_open("ps.v2_engine"), Some(A::OpenOptionalFeatures));
         assert_eq!(rule_open("accounts.stale_enabled"), Some(A::OpenAccounts));
 
-        // A probe with two problems shows the first one that has an exact step.
         let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
         let probe = report
             .probes
@@ -2908,12 +2686,10 @@ mod tests {
         let guide = tip.guide.expect("guide");
         assert_eq!(guide.page.action(), tip.open.unwrap());
         assert_eq!(tip.fix, None);
-        // Every rule with a guide opens the page the guide starts from.
         for rule in ["accounts.find_my_device", "net.wifi_security", "vbs.kernel_stack_protection"] {
             let g = crate::guide::guide(rule).expect(rule);
             assert_eq!(rule_open(rule), Some(g.page.action()), "{rule}");
         }
-        // A check that is also a fix points to Protection, not to manual advice.
         assert_eq!(rule_fix("update.paused"), Some("update.paused"));
         assert_eq!(rule_fix("defender.tamper_protection"), None);
     }
@@ -2937,12 +2713,10 @@ mod tests {
 
     #[test]
     fn tips_report_puts_problems_first() {
-        // Off Windows every probe is "unsupported", which must read as unknown.
         let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
         let plain = summarize_tips(TipProfile::Everyday, &report);
         assert!(!plain.tips.is_empty());
         assert!(plain.tips.iter().all(|t| t.state == TipState::Unknown));
-        // Make the last listed probe healthy and the first one need attention.
         let ids = TipProfile::Everyday.probes();
         for probe in &mut report.probes {
             if probe.id == ids[ids.len() - 1] {

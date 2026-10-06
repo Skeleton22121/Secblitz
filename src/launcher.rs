@@ -1,10 +1,6 @@
-//! Unelevated entry point (no arguments): create the broker pipe, request UAC
-//! for `gui --broker <id>` every time, serve broker requests until the GUI
-//! exits. Also provides the GUI single-instance guard and native message boxes.
+//! Unelevated entry point: serves the broker pipe and launches the elevated GUI.
 use crate::i18n::Lang;
 
-/// Native, plain-text message box (never console output). Windows only; on
-/// other hosts the text goes to stderr so tests and tooling still see it.
 pub fn message_box(title: &str, text: &str) {
     #[cfg(windows)]
     {
@@ -26,8 +22,6 @@ pub fn message_box(title: &str, text: &str) {
     eprintln!("{title}: {text}");
 }
 
-/// Plain words and a next step for a start-up or check problem. The raw
-/// reason never reaches the screen; unknown reasons get the general message.
 pub fn friendly_problem(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
@@ -50,8 +44,6 @@ pub fn friendly_problem(raw: &str) -> &'static str {
     }
 }
 
-/// Plain words for a check that did not finish. The window is already open,
-/// so the next step is to check again, never to open Secblitz again.
 pub fn friendly_check_problem(raw: &str) -> &'static str {
     let found = friendly_problem(raw);
     if found.starts_with("Secblitz works on Windows 10") {
@@ -61,8 +53,6 @@ pub fn friendly_check_problem(raw: &str) -> &'static str {
     }
 }
 
-/// Show a start-up problem in calm words with a next step. The technical
-/// reason goes to stderr (for support), never into the dialog.
 pub fn show_failure(lang: Lang, error: &anyhow::Error) {
     eprintln!("{error:#}");
     let text = format!(
@@ -73,7 +63,6 @@ pub fn show_failure(lang: Lang, error: &anyhow::Error) {
     message_box("Secblitz", &text);
 }
 
-/// Arguments may only be plain words, options and hex ids.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn args_are_plain(args: &[String]) -> bool {
     args.iter()
@@ -92,8 +81,6 @@ pub fn run(lang: Lang) -> anyhow::Result<i32> {
     }
 }
 
-/// Run `secblitz.exe <args>` elevated and wait for it. A declined UAC prompt
-/// is an error.
 pub fn elevate_and_wait(args: &[String]) -> anyhow::Result<i32> {
     #[cfg(windows)]
     {
@@ -109,11 +96,8 @@ pub fn elevate_and_wait(args: &[String]) -> anyhow::Result<i32> {
     }
 }
 
-/// Only one dashboard window per user session.
 pub enum Instance {
-    /// This process owns the guard; keep it alive until exit.
     First(#[allow(dead_code)] Guard),
-    /// Another Secblitz window exists (and was asked to come forward).
     #[cfg_attr(not(windows), allow(dead_code))]
     Existing,
 }
@@ -121,7 +105,6 @@ pub enum Instance {
 pub struct Guard {
     #[cfg(windows)]
     _handle: imp::Owned,
-    /// Declared after the mutex so it closes last.
     #[cfg(windows)]
     _namespace: Option<imp::Namespace>,
 }
@@ -137,7 +120,6 @@ pub fn single_instance() -> anyhow::Result<Instance> {
     }
 }
 
-/// The signed-in Windows account's SID, or None when it can't be read.
 pub fn user_sid() -> Option<String> {
     #[cfg(windows)]
     {
@@ -232,10 +214,7 @@ mod imp {
         s.encode_utf16().chain(Some(0)).collect()
     }
 
-    /// UAC prompt for `secblitz.exe <args>`. `Ok(None)` when the user said no.
     pub fn elevate(args: &[String]) -> Result<Option<Elevated>> {
-        // All arguments are fixed ASCII words/options or hex ids, so no
-        // quoting is needed. The executable uses a separate field.
         ensure!(args_are_plain(args), "Invalid elevation arguments");
         let exe: Vec<u16> = std::env::current_exe()?
             .as_os_str()
@@ -244,8 +223,6 @@ mod imp {
             .collect();
         let params = wide(&args.join(" "));
         let verb = wide("runas");
-        // Start in System32, never in the launcher's current directory, which
-        // a standard user chooses.
         let mut dir = vec![0u16; 32768];
         let n = unsafe { GetSystemDirectoryW(dir.as_mut_ptr(), dir.len() as u32) } as usize;
         ensure!(
@@ -285,7 +262,6 @@ mod imp {
             let mut needed = 0u32;
             GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut needed);
             ensure!(needed > 0 && needed < 4096, "token information unavailable");
-            // u64 storage keeps the TOKEN_USER view aligned.
             let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
             if GetTokenInformation(
                 token.0,
@@ -321,7 +297,6 @@ mod imp {
         secblitz::actions::split_token_elevated()
     }
 
-    /// Single instance, current user + Administrators only, no remote clients.
     fn create_pipe(id: &str) -> Result<Owned> {
         let sddl = wide(&format!("D:P(A;;GA;;;{})(A;;GA;;;BA)", user_sid_string()?));
         let mut descriptor: *mut c_void = null_mut();
@@ -367,7 +342,6 @@ mod imp {
         Child,
     }
 
-    /// Wait for the pending overlapped operation or the child's exit.
     fn wait_io(event: HANDLE, child: HANDLE) -> Wake {
         let handles = [event, child];
         match unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, u32::MAX) } {
@@ -443,7 +417,6 @@ mod imp {
         unsafe { GetOverlappedResult(pipe, &overlapped, &mut n, 0) != 0 && n == 1 }
     }
 
-    /// Accept the elevated GUI (and only it) and serve until it exits.
     fn serve(pipe: &Owned, child: &Elevated) {
         let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
         if event.is_null() {
@@ -473,7 +446,6 @@ mod imp {
                     _ => return,
                 }
             }
-            // Only the elevated process we started may talk to us.
             let mut client = 0u32;
             let verified = unsafe { GetNamedPipeClientProcessId(pipe.0, &mut client) } != 0
                 && client == child_pid;
@@ -501,7 +473,6 @@ mod imp {
                 }
             }
             unsafe { DisconnectNamedPipe(pipe.0) };
-            // The GUI is gone or misbehaving; stop when the process is gone.
             if unsafe { WaitForSingleObject(child_handle, 0) } == WAIT_OBJECT_0 {
                 return;
             }
@@ -509,7 +480,6 @@ mod imp {
     }
 
     pub fn run(lang: Lang) -> Result<i32> {
-        // Fail closed if the token can't be read: that is not a normal start.
         if split_token_elevated()? {
             super::message_box(
                 "Secblitz",
@@ -524,7 +494,6 @@ mod imp {
             .map(|s| s.to_string())
             .collect();
         let Some(child) = elevate(&args)? else {
-            // The user chose not to continue; that is not an error.
             return Ok(0);
         };
         serve(&pipe, &child);
@@ -532,7 +501,6 @@ mod imp {
         child.wait()
     }
 
-    // ----- fixed user-context actions -----
 
     fn handle(request: Request) -> Reply {
         use secblitz::actions::{run, Action};
@@ -571,13 +539,10 @@ mod imp {
                 Err(_) => Reply::Failed,
             },
             Request::BitwardenStatus => {
-                // Installed wins regardless of installability.
                 match secblitz::tools::bitwarden_installed() {
                     Ok(true) => Reply::Done,
                     Err(_) => Reply::Unknown,
                     Ok(false) => {
-                        // Check upfront whether installing would even be possible
-                        // from this account (same token, same process as Install).
                         match secblitz::tools::bitwarden_installable() {
                             Ok(()) => Reply::NotApplicable,
                             Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
@@ -586,7 +551,6 @@ mod imp {
                     }
                 }
             }
-            // Journaled like every personal setting, so it can be undone.
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
             Request::StartStoreApp(index) => start_store_app(index),
@@ -611,7 +575,6 @@ mod imp {
         }
     }
 
-    // ----- per-user settings (HKCU of the signed-in person) -----
 
     fn user_setting(setting: Setting, op: Op) -> Reply {
         let mut registry = SystemRegistry;
@@ -623,16 +586,13 @@ mod imp {
         }
     }
 
-    // ----- app updates (WinGet, unelevated) -----
 
-    /// One `winget upgrade` listing, read defensively.
     fn scan_apps() -> Result<[AppState; user_apps::APPS.len()], Reply> {
         let run = user_apps::run_winget(&user_apps::list_args(), Duration::from_secs(150));
         if run.code.is_some_and(secblitz::tools::is_offline_code) {
             return Err(Reply::Offline);
         }
         if run.code.is_none() && run.output.trim().is_empty() {
-            // WinGet is missing or never answered.
             return Err(Reply::Unavailable);
         }
         match user_apps::parse_upgrades(&run.output, run.code) {
@@ -653,8 +613,6 @@ mod imp {
         if run.code.is_none() {
             return Reply::Failed;
         }
-        // Read again: only a program that no longer lists a newer version
-        // counts as updated.
         match scan_apps() {
             Ok(states) => {
                 let reply = match states[index] {
@@ -682,7 +640,6 @@ mod imp {
         }
     }
 
-    /// Store product ids are short alphanumeric strings (e.g. 9NBLGGH4NNS1).
     fn valid_store_id(id: &str) -> bool {
         (1..=32).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric())
     }
@@ -694,7 +651,6 @@ mod imp {
             .filter(|id| valid_store_id(id))
     }
 
-    /// A silent, windowless winget install of one Store app, for this account.
     fn store_install(store_id: &str) -> Option<std::process::Child> {
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
@@ -721,9 +677,6 @@ mod imp {
             .ok()
     }
 
-    /// Store downloads started for "put everything back", by catalog index.
-    /// They run side by side; the GUI asks how each one is doing. A download
-    /// still going when Secblitz closes carries on by itself.
     fn store_jobs() -> &'static std::sync::Mutex<std::collections::HashMap<u16, std::process::Child>>
     {
         static JOBS: std::sync::OnceLock<
@@ -780,7 +733,6 @@ mod imp {
         };
         let exit = store_install(store_id)
             .and_then(|mut child| {
-                // Give the install a generous but finite time.
                 let deadline = std::time::Instant::now() + Duration::from_secs(14 * 60);
                 loop {
                     match child.try_wait() {
@@ -796,17 +748,13 @@ mod imp {
                     }
                 }
             });
-        // `Some(Some(0))` = installed; `Some(Some(code))` = winget failed with
-        // that code; `Some(None)`/`None` = no usable code or timed out.
         if exit == Some(Some(0)) {
             return Reply::Done;
         }
-        // No connection: opening the Store would only show another error.
         let code = exit.flatten();
         if code.is_some_and(secblitz::tools::is_offline_code) || secblitz::tools::dns_offline() {
             return Reply::Offline;
         }
-        // Fall back to the Store page so the person can install it there.
         let uri = wide(&format!("ms-windows-store://pdp/?ProductId={store_id}"));
         let verb = wide("open");
         let result = unsafe {
@@ -826,11 +774,7 @@ mod imp {
         }
     }
 
-    // ----- single instance -----
 
-    /// A private object namespace that only elevated administrators can
-    /// create or open, so an ordinary program can't squat the window guard
-    /// and make Secblitz close as if it were already open.
     pub struct Namespace(HANDLE);
     impl Drop for Namespace {
         fn drop(&mut self) {
@@ -868,7 +812,6 @@ mod imp {
         let raw = unsafe { CreateBoundaryDescriptorW(wide("Secblitz").as_ptr(), 0) };
         ensure!(!raw.is_null(), "boundary descriptor unavailable");
         let mut boundary = Boundary(raw);
-        // Administrators, at high integrity: a UAC-elevated or built-in admin.
         let admins = sid("S-1-5-32-544")?;
         let high = sid("S-1-16-12288")?;
         unsafe {
@@ -911,13 +854,11 @@ mod imp {
     }
 
     pub fn single_instance() -> Result<Instance> {
-        // One window per signed-in session, as with a Local\ name.
         let mut session = 0u32;
         unsafe { ProcessIdToSessionId(std::process::id(), &mut session) };
         let namespace = private_namespace().ok();
         let name = match namespace {
             Some(_) => wide(&format!("Secblitz\\Gui-{session}")),
-            // Should never happen; keep a guard rather than none.
             None => wide("Local\\SecblitzGui"),
         };
         let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
@@ -937,8 +878,6 @@ mod imp {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        // Another Secblitz holds it but shows no window yet (still starting):
-        // still do not start twice.
         Ok(Instance::Existing)
     }
 
