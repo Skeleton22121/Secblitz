@@ -13,7 +13,6 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 FILES = ["Cargo.toml", "Cargo.lock", "assets/secblitz.rc", "assets/secblitz.manifest",
          "CHANGELOG.md", "README.md", "website/index.html", "scripts/stage-pages.py"]
-# Written by setUp: structured data with a version, and the signed feed that must never be touched.
 EXTRA = ["website/structured.json", "website/releases/stable.json"]
 
 
@@ -46,7 +45,6 @@ class BumpTests(unittest.TestCase):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / rel, self.root / rel)
         self.old = bump.current_version(self.root)
-        # A fixed changelog, so the tests do not depend on the real release notes.
         (self.root / "CHANGELOG.md").write_text(
             "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- A test entry.\n\n"
             f"## [{self.old}] - Unreleased\n\n### Added\n- Work in progress.\n\n"
@@ -82,13 +80,11 @@ class BumpTests(unittest.TestCase):
         self.assertIn('VALUE "ProductVersion", "9.8.7"', rc)
         self.assertIn('assemblyIdentity version="9.8.7.0"', after["assets/secblitz.manifest"].decode())
         self.assertNotIn(self.old, rc)
-        # Other lines are untouched.
         for rel in ("Cargo.toml", "Cargo.lock", "assets/secblitz.rc", "assets/secblitz.manifest"):
             a = before[rel].decode().splitlines()
             b = after[rel].decode().splitlines()
             self.assertEqual(len(a), len(b))
             self.assertLessEqual(sum(x != y for x, y in zip(a, b)), 4)
-        # The website moves with the version too, but the signed feed never does.
         page = after["website/index.html"].decode()
         self.assertIn("downloads/secblitz-9.8.7-windows-x64-setup.exe", page)
         self.assertNotIn(f"secblitz-{self.shown}-windows", page + after["README.md"].decode())
@@ -115,7 +111,6 @@ class BumpTests(unittest.TestCase):
     def test_refuses_same_older_and_malformed_versions(self):
         before = self.snapshot()
         major, minor, patch = (int(x) for x in self.old.split("."))
-        # The current version is only accepted while its changelog section says Unreleased.
         path = self.root / "CHANGELOG.md"
         path.write_text(path.read_text().replace(f"## [{self.old}] - Unreleased", f"## [{self.old}] - 2026-10-07"))
         before = self.snapshot()
@@ -127,7 +122,6 @@ class BumpTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
 
     def test_numeric_comparison_not_text(self):
-        # 0.10.0 is greater than 0.9.0 even though "0.10.0" < "0.9.0" as text.
         self.assertEqual(self.bump("0.9.0")[0], 0)
         path = self.root / "CHANGELOG.md"
         path.write_text(path.read_text().replace("## [Unreleased]\n", "## [Unreleased]\n\n- Another entry.\n", 1))
@@ -172,16 +166,13 @@ class BumpTests(unittest.TestCase):
         self.assertIn("Version 9.8.7", page)
         self.assertNotIn(f"secblitz-{self.shown}-windows", readme + page)
         self.assertIn('"softwareVersion": "9.8.7"', (self.root / "website/structured.json").read_text())
-        # The checksum on the page is reset: the real one is written at deploy time.
         self.assertIn('<code id="sha">' + "0" * 64 + "</code>", page)
-        # The replaced version stays downloadable.
         stage = (self.root / "scripts/stage-pages.py").read_text()
         self.assertIn(f'"secblitz-{self.shown}-windows-x64-setup.exe", "secblitz-{self.shown}-windows-x64.exe",', stage)
         self.assertEqual(stage.count(f"secblitz-{self.shown}-windows-x64-setup.exe"), 1)
 
     def test_site_only_changes_just_the_site_files(self):
         if self.shown == self.old:
-            # Right after a release the site already shows the Cargo version: step it back.
             for rel in ("README.md", "website/index.html", "website/structured.json"):
                 path = self.root / rel
                 path.write_text(path.read_text(encoding="utf-8").replace(self.shown, "0.0.1"), encoding="utf-8")
@@ -211,7 +202,6 @@ class BumpTests(unittest.TestCase):
         page.write_text(original)
         (self.root / "website/structured.json").write_text('{"softwareVersion": "0.0.1"}')
         self.assertTrue(any("structured.json" in p for p in bump.check_site(self.root, self.shown)))
-        # The signed feed is data for the updater and is not scanned.
         (self.root / "website/structured.json").write_text("{}")
         (self.root / "website/releases/stable.json").write_text('{"softwareVersion": "0.0.1"}')
         self.assertEqual(bump.check_site(self.root, self.shown), [])
@@ -227,7 +217,6 @@ class BumpTests(unittest.TestCase):
         page = (site / "index.html").read_text()
         self.assertIn('<code id="sha">' + hashlib.sha256(setup.read_bytes()).hexdigest() + "</code>", page)
         self.assertIn(f"<p>Version {self.shown} \u00b7 8.1 MB installer</p>", page)
-        # Wrong name, wrong version and a page without the elements are all refused.
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(finalize.main(["--site", str(site), "--version", "9.9.9", "--setup", str(setup)]), 1)
             other = self.root / "setup.exe"
@@ -251,11 +240,9 @@ class BumpTests(unittest.TestCase):
         dest = self.root / "dl"
         self.assertEqual(historical.fetch(dest, base, lambda url: served[url.rsplit("/", 1)[1]], stage, pinned), len(names))
         self.assertEqual(sorted(p.name for p in dest.iterdir()), sorted(names))
-        # A changed file on the live site is refused, and nothing is deployed from it.
         served[names[1]] = pe + b"tampered"
         with self.assertRaises(historical.HistoryError):
             historical.fetch(self.root / "dl2", base, lambda url: served[url.rsplit("/", 1)[1]], stage, pinned)
-        # Recording never changes an existing pin.
         path = self.root / "pins.sha256"
         historical.record("0.7.0", base, lambda url: pe, stage, path)
         self.assertEqual(len(historical.read_manifest(path)), 2)
@@ -263,13 +250,11 @@ class BumpTests(unittest.TestCase):
             historical.record("0.7.0", base, lambda url: pe + b"x", stage, path)
         with self.assertRaises(historical.HistoryError):
             historical.download("http://insecure.test/x")
-        # record-missing pins only what is listed but not yet pinned.
         partial = self.root / "partial.sha256"
         keep = {n: h for n, h in manifest.items() if not n.startswith("secblitz-0.6.1-")}
         historical.write_manifest(keep, partial)
         self.assertEqual(historical.record_missing(base, lambda url: pe, stage, partial), ["0.6.1"])
         self.assertEqual(historical.record_missing(base, lambda url: self.fail("nothing is missing"), stage, partial), [])
-        # With an independent verified copy, a live file that differs is never pinned.
         ref = self.root / "verified"
         ref.mkdir()
         for n in ("secblitz-0.6.1-windows-x64-setup.exe", "secblitz-0.6.1-windows-x64.exe"):
@@ -285,7 +270,6 @@ class BumpTests(unittest.TestCase):
             historical.record_missing(base, lambda url: pe, stage, partial, empty)
 
     def test_publish_workflow_does_not_clash_with_repo_folders(self):
-        # The workflow runs from the repo root: its download folder must not be a tracked path.
         text = (Path(__file__).resolve().parents[1] / ".github/workflows/publish-website.yml").read_text()
         for line in text.splitlines():
             line = line.strip()
@@ -333,7 +317,6 @@ class AssembleTests(unittest.TestCase):
             shutil.copytree(REPO / folder, self.root / folder, ignore=shutil.ignore_patterns("__pycache__", "*.mp4", "*.webm"))
         for rel in ("README.md", "Cargo.toml", "Cargo.lock", "CHANGELOG.md"):
             shutil.copyfile(REPO / rel, self.root / rel)
-        # The page lists media that is not needed here; keep the real files so the allowlist passes.
         for rel in ("website/assets/intro-6bb434a9c067.mp4", "website/assets/secblitz-demo.mp4"):
             (self.root / rel).write_bytes(b"\0\0\0\x18ftypmp42")
         key = Ed25519PrivateKey.generate()
@@ -351,7 +334,6 @@ class AssembleTests(unittest.TestCase):
         self.version = "9.9.9"
         code, out, err = run(self.version, "--root", str(self.root), "--date", "2030-01-02")
         self.assertEqual(code, 0, err)
-        # What release.yml would have attached, signed with the throwaway key.
         self.assets = base / "assets"
         self.assets.mkdir()
         self.setup = self.assets / f"secblitz-{self.version}-windows-x64-setup.exe"
@@ -413,12 +395,10 @@ class AssembleTests(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             self.assertEqual(live.main(args, lambda url: served[url], sleeps.append), 0)
-            # One stale file at the edge: retried, then a loud failure naming it.
             setup_url = f"https://secblitz.test/downloads/secblitz-{self.version}-windows-x64-setup.exe"
             served[setup_url] = b"old"
             self.assertEqual(live.main(args, lambda url: served[url], sleeps.append), 1)
             self.assertEqual(len(sleeps), 2)
-            # A feed that arrives on the second try is accepted.
             calls = []
             def flaky(url):
                 calls.append(url)

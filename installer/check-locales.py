@@ -4,7 +4,6 @@ import re
 
 
 INSTALL_KEYS = ("Monitor", "Failed", "FixedFolder", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon")
-# The keep-or-put-back question and its results, shown by the uninstaller.
 REMOVE_KEYS = ("RemoveTitle", "RemoveQuestion", "KeepChoice", "KeepDetail", "PutBackChoice",
                "PutBackDetail", "RemoveNote", "WebStops", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft", "RemoveFailed")
 
@@ -121,25 +120,20 @@ def check(source):
 
 def uninstall_contract(code):
     """Removing Secblitz: the question, the silent default and the order of the steps."""
-    # Inno always asks its own "Are you sure" right after InitializeUninstall, so
     # the question lives in usAppMutexCheck (after it) instead of before it.
     assert 'function InitializeUninstall' not in code, "Ask after Inno's own confirmation, not before"
     prepare = re.search(r'procedure PrepareRemoval;.*?\nend;', code, re.DOTALL)
     assert prepare, 'PrepareRemoval is missing'
     body = prepare[0]
-    # /SECBLITZDONE and any silent uninstall keep the changes and never ask.
     assert "HasSwitch('/SECBLITZDONE')" in body
     assert body.index("HasSwitch('/SECBLITZDONE')") < body.index('UninstallSilent') < body.index('AskRemoveChoice(UninstallPutBack)')
     assert re.search(r'else if not AskRemoveChoice\(UninstallPutBack\) then begin\s*Log\([^;]*\);\s*Abort;\s*end;', body), \
         'Cancel must stop the uninstall before anything is touched'
-    # Cancel comes before the first thing that changes anything, and a failure stops it.
     assert body.index('AskRemoveChoice(UninstallPutBack)') < body.index("Maintain('RemoveMonitor')")
     assert re.search(r'if not Ready then begin.*?Abort;\s*end;', body, re.DOTALL)
-    # The uninstaller cannot run anything as the original person; Inno raises.
     assert 'ExecAsOriginalUser' not in code, 'ExecAsOriginalUser only works in Setup'
     put_back = re.search(r'procedure PutEverythingBack;.*?\nend;', code, re.DOTALL)
     assert put_back, 'PutEverythingBack is missing'
-    # Personal part first (hidden), then the machine part with its report.
     assert re.search(r"Exec\(SecblitzExe, 'uninstall-revert --user', [^;]*SW_HIDE", put_back[0])
     assert "uninstall-revert > " in put_back[0] and "uninstall-revert --user >" not in put_back[0]
     assert put_back[0].index("'uninstall-revert --user'") < put_back[0].index('uninstall-revert > ')
@@ -150,9 +144,7 @@ def uninstall_contract(code):
         < text.index('if UninstallPutBack then') < text.index('PutEverythingBack;') \
         < text.index("Maintain('RemoveFilter')") < text.index('CleanUserData;') < text.index('usPostUninstall') \
         < text.index("Maintain('Purge')") < text.index("RemoveDir(ExpandConstant('{app}'))")
-    # Only an empty program folder is removed; never anything a person put there.
     assert 'DelTree' not in code
-    # Each part has its own guard, so one failure never skips the rest.
     removal = text[text.index('usUninstall'):text.index('usPostUninstall')]
     for part in ('PutEverythingBack;', "if not Maintain('RemoveFilter')", 'CleanUserData;'):
         assert re.search(r'try\s*' + re.escape(part), removal), part

@@ -1,10 +1,8 @@
-# Invoked only by elevated Setup/Uninstall. Never invokes apply or a bare exe.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('Validate', 'Prepare', 'Secure', 'InstallMonitor', 'RemoveMonitor', 'ResumeMonitor', 'InstallFilter', 'ResumeFilter', 'RemoveFilter', 'Purge', 'EnableUpdates', 'DisableUpdates', 'PreserveUpdates')][string]$Action,
     [string]$UninstallerDataPath = ''
 )
-# Only inbox modules; inherited user module search paths must never run elevated.
 $env:PSModulePath = [IO.Path]::Combine([Environment]::SystemDirectory, 'WindowsPowerShell\v1.0\Modules')
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module ([IO.Path]::Combine($env:PSModulePath, 'Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1')) -ErrorAction Stop
@@ -27,7 +25,6 @@ try {
     $root = Join-Path $programFiles 'Secblitz'
     $exe = Join-Path $root 'secblitz.exe'
     if ($UninstallerDataPath) {
-        # Only Inno's active, direct-child data file can use metadata-only access.
         # The app directory is pinned and validated first; its ACL prevents an
         # unprivileged caller replacing this file while Inno holds it exclusively.
         if ($Action -notin @('RemoveMonitor', 'RemoveFilter', 'Purge') -or
@@ -59,7 +56,6 @@ public static class SecblitzPaths {
         return Open(path, 0x20080);
     }
     static SafeFileHandle Open(string path, uint access) {
-        // Include read-data/list-directory: metadata-only handles do NOT enforce
         // share-delete restrictions. Share write for the live monitor report.
         var h = CreateFile(path, access, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
         if (h.IsInvalid) { h.Dispose(); throw new Win32Exception(); }
@@ -76,7 +72,6 @@ public static class SecblitzPaths {
 
     function Assert-SafeItem([string]$Path, [bool]$Ancestor = $false, [bool]$ProgramDataDir = $false) {
         if ($UninstallerDataPath -and $Path -ieq $UninstallerDataPath) {
-            # Do NOT skip metadata, link-count, owner or DACL validation.
             $pins.Add([SecblitzPaths]::Metadata($Path))
         } else {
             $pins.Add([SecblitzPaths]::Pin($Path))
@@ -88,7 +83,6 @@ public static class SecblitzPaths {
         $statusDirOwner = Join-Path $root 'Status'
         $inStatus = ($Path -ieq $statusDirOwner -or $Path.StartsWith($statusDirOwner + '\', [StringComparison]::OrdinalIgnoreCase))
         $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-        # Files the monitor (LocalService) creates in the Status directory are owned by S-1-5-19.
         if ($ownerSid -notin $trusted -and -not ($inStatus -and $ownerSid -eq 'S-1-5-19')) {
             throw "Untrusted owner: $Path"
         }
@@ -98,19 +92,16 @@ public static class SecblitzPaths {
             if ($Ancestor -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
             $allowed = 0x1200a9 # Read/execute, never write/delete/change owner or ACL.
             if ($Ancestor) { $allowed = $allowed -bor 6 } # Windows root/Program Files create-child ACEs.
-            # Stock C:\ProgramData grants Users (CI)(WD,AD,WEA,WA): create-child plus EA/attribute writes only.
             if ($Ancestor -and $ProgramDataDir) { $allowed = $allowed -bor 0x110 }
             if ($Path -eq (Join-Path $root 'Monitor\latest.json') -and $rule.IdentityReference.Value -eq 'S-1-5-19') {
                 $allowed = 0x12019f # Existing service-owned report only.
             }
-            # The tray status directory: the monitor (LocalService) writes status.json there.
             $statusDir = Join-Path $root 'Status'
             if (($Path -ieq $statusDir -or $Path.StartsWith($statusDir + '\', [StringComparison]::OrdinalIgnoreCase)) -and $rule.IdentityReference.Value -eq 'S-1-5-19') {
                 $allowed = 0x1301bf # Status files only: no delete-child, no ACL or owner change.
             }
             if (([int]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw "Writable object refused: $Path" }
         }
-        # Empty/null DACL distinctions must fail closed; require administrator access.
         $sddl = $acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
         if ($sddl -match 'NO_ACCESS_CONTROL' -or $sddl -notmatch '\(A;[^)]*;;;(BA|SY)\)') { throw "Missing privileged ACL: $Path" }
     }
@@ -144,8 +135,6 @@ public static class SecblitzPaths {
         return $service
     }
 
-    # COM registration supplies the task DACL atomically (ScheduledTasks does not
-    # expose that parameter). No shell, task command line, or module-path lookup.
     $scheduler = New-Object -ComObject Schedule.Service
     $scheduler.Connect()
     $taskFolder = $scheduler.GetFolder('\')
@@ -186,8 +175,6 @@ public static class SecblitzPaths {
         Assert-Children $xml.DocumentElement @('RegistrationInfo', 'Triggers', 'Principals', 'Settings', 'Actions')
         $actions = $xml.SelectSingleNode('/t:Task/t:Actions', $ns)
         $principals = $xml.SelectSingleNode('/t:Task/t:Principals', $ns)
-        # Accept only the scheduler's optional outer quotes, never trim arguments,
-        # expand environment variables, resolve another path, or accept a prefix.
         $commandNode = $xml.SelectSingleNode('/t:Task/t:Actions/t:Exec/t:Command', $ns)
         if ($null -ne $commandNode -and $commandNode.InnerText -ceq $ExePath) {
             $commandNode.InnerText = '"' + $ExePath + '"'
@@ -195,7 +182,6 @@ public static class SecblitzPaths {
         $command = [Security.SecurityElement]::Escape('"' + $ExePath + '"')
         $directory = [Security.SecurityElement]::Escape($AppRoot)
         $expected = [xml]('<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Principals><Principal id="Updater"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Actions Context="Updater"><Exec><Command>' + $command + '</Command><Arguments>update check</Arguments><WorkingDirectory>' + $directory + '</WorkingDirectory></Exec></Actions></Task>')
-        # SYSTEM implies ServiceAccount when Task Scheduler omits that XML field.
         if ($null -eq $xml.SelectSingleNode('/t:Task/t:Principals/t:Principal/t:LogonType', $ns)) {
             $null = $expected.DocumentElement.Principals.Principal.RemoveChild($expected.SelectSingleNode('/t:Task/t:Principals/t:Principal/t:LogonType', $ns))
         }
@@ -251,8 +237,6 @@ public static class SecblitzPaths {
             throw
         }
         [xml]$xml = $task.Xml
-        # A matching path alone is not ownership: the installed executable must
-        # already exist inside the pinned, privileged-owned application tree.
         # Authenticode is optional for local builds; filesystem trust is required.
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Updater task has no protected installed executable.' }
         if ($task.Path -cne '\SecblitzUpdate' -or -not $task.Enabled) {
@@ -317,8 +301,6 @@ public static class SecblitzPaths {
         $exec.Path = '"' + $exe + '"'
         $exec.Arguments = 'update check'
         $exec.WorkingDirectory = $root
-        # Create-only prevents a concurrent same-name registration being clobbered.
-        # Updates require ownership validation immediately before registration.
         $flags = 2
         if ($null -ne $existing) { $null = Get-OwnedUpdate; $flags = 4 }
         $null = $taskFolder.RegisterTaskDefinition($taskName, $definition, ($flags -bor 16), 'S-1-5-18', $null, 5, $taskSddl)
@@ -333,8 +315,6 @@ public static class SecblitzPaths {
     }
 
     function Invoke-MonitorCommand([ValidateSet('install', 'uninstall')][string]$Verb) {
-        # Explicit CreateProcess-style dispatch: no shell/PATHEXT lookup and no
-        # ambient LASTEXITCODE (which can be unset when PowerShell shell-launches).
         $exitCode = -1
         $start = [Diagnostics.ProcessStartInfo]::new()
         $start.FileName = $exe
@@ -363,8 +343,6 @@ public static class SecblitzPaths {
             $controller = Get-Service -Name SecblitzMonitor
             try {
                 if ($controller.Status -ne 'Stopped') {
-                    # ServiceController.Stop returns after sending the control;
-                    # unlike Stop-Service, it does not wait without our timeout.
                     foreach ($dependent in $controller.DependentServices) {
                         try {
                             if ($dependent.Status -ne 'Stopped') { throw 'An active dependent service prevents monitor removal.' }
@@ -387,7 +365,6 @@ public static class SecblitzPaths {
         }
     }
 
-    # ---- Web protection: the SecblitzFilter service and its reconcile task -------
     $reconcileName = 'SecblitzFilterReconcile'
 
     function Get-OwnedFilter {
@@ -421,8 +398,6 @@ public static class SecblitzPaths {
         $null = Get-OwnedFilter
     }
 
-    # Same explicit CreateProcess-style dispatch as the monitor command: no shell,
-    # no PATHEXT lookup, no console window. Only two fixed argument strings exist.
     function Invoke-ExeCommand([ValidateSet('filter install', 'filter uninstall')][string]$Arguments) {
         $start = [Diagnostics.ProcessStartInfo]::new()
         $start.FileName = $exe
@@ -451,8 +426,6 @@ public static class SecblitzPaths {
         $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
         if ($xml.DocumentElement.LocalName -cne 'Task' -or
             $xml.DocumentElement.NamespaceURI -cne $ns.LookupNamespace('t')) { throw 'Unexpected task XML root.' }
-        # Ownership is the account and the one action: SYSTEM running our own
-        # executable with the fixed arguments. The triggers only decide when.
         $principals = @($xml.SelectNodes('/t:Task/t:Principals/t:Principal', $ns))
         if ($principals.Count -ne 1) { throw 'Unexpected reconcile principal.' }
         $user = $principals[0].SelectSingleNode('t:UserId', $ns)
@@ -523,7 +496,6 @@ public static class SecblitzPaths {
         $hourly = $definition.Triggers.Create(1) # Time; indefinite hourly repetition
         $hourly.StartBoundary = [DateTime]::Now.AddMinutes(5).ToString('yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
         $hourly.Repetition.Interval = 'PT1H'
-        # The PC joined a network (NetworkProfile event 10000).
         $network = $definition.Triggers.Create(0)
         $network.Subscription = '<QueryList><Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"><Select Path="Microsoft-Windows-NetworkProfile/Operational">*[System[Provider[@Name=''Microsoft-Windows-NetworkProfile''] and EventID=10000]]</Select></Query></QueryList>'
         $network.Enabled = $true
@@ -543,10 +515,6 @@ public static class SecblitzPaths {
         if ($null -ne (Get-OwnedReconcile)) { $taskFolder.DeleteTask($reconcileName, 0) }
     }
 
-    # ---- Full cleanup (uninstall) -------------------------------------------------
-    # Delete only after the whole tree passed the checks: pinned (no reparse point,
-    # no hard link), trusted owner, and nobody untrusted able to write. The web
-    # protection service (LocalService) owns and writes some of its own files.
     function Assert-PurgeItem([string]$Path) {
         $pins.Add([SecblitzPaths]::Pin($Path))
         $item = Get-Item -LiteralPath $Path -Force
@@ -557,7 +525,6 @@ public static class SecblitzPaths {
         foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
             if ($rule.AccessControlType -ne 'Allow') { continue }
             if ($rule.IdentityReference.Value -in $trusted) { continue }
-            # Inherit-only entries describe children, which are checked themselves.
             if ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
             $allowed = 0x1200a9 # Read/execute only.
             if ($rule.IdentityReference.Value -eq 'S-1-5-19') { $allowed = 0x1301bf }
@@ -579,7 +546,6 @@ public static class SecblitzPaths {
     function Remove-OwnedTree([string]$Path) {
         if ($null -eq (Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) { return }
         Assert-PurgeTree $Path
-        # Pins forbid deletion: release them only now that everything passed.
         foreach ($pin in $pins) { $pin.Dispose() }
         $pins.Clear()
         if ((Get-Item -LiteralPath $Path -Force).PSIsContainer) {
@@ -589,7 +555,6 @@ public static class SecblitzPaths {
         }
     }
 
-    # Remove a logon Run value only when it starts our own executable.
     function Remove-OwnedRunValue([Microsoft.Win32.RegistryKey]$Hive, [string]$SubKey, [string]$Name, [string]$ExePath) {
         $key = $Hive.OpenSubKey($SubKey, $true)
         if ($null -eq $key) { return }
@@ -603,7 +568,6 @@ public static class SecblitzPaths {
 
     $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($root))
     if ($drive.DriveType -ne 'Fixed' -or $drive.DriveFormat -ne 'NTFS') { throw 'A fixed NTFS installation volume is required.' }
-    # Pin and validate from the volume root down before following any child path.
     $path = [IO.Path]::GetPathRoot($programFiles)
     Assert-SafeItem $path $true
     foreach ($part in $programFiles.Substring($path.Length).Split('\')) {
@@ -624,14 +588,11 @@ public static class SecblitzPaths {
                 $acl = [Security.AccessControl.DirectorySecurity]::new()
                 $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;LS)(A;OICI;0x1200a9;;;BU)')
                 $null = [IO.Directory]::CreateDirectory($root, $acl)
-                # CreateDirectory can return an existing directory after a race.
                 Assert-Tree $root
             }
             Protect-Item $root $true
             Stop-OwnedMonitor
             Stop-OwnedFilter
-            # Exit 10: the monitor was running, 11: the web protection service
-            # was, 12: both. Setup starts them again once the files are replaced.
             $monitorRan = $null -ne $monitor -and $monitor.State -in @('Running', 'Start Pending')
             $filterRan = $null -ne $filterService -and $filterService.State -in @('Running', 'Start Pending')
             if ($monitorRan -and $filterRan) { exit 12 }
@@ -666,7 +627,6 @@ public static class SecblitzPaths {
             }
         }
         InstallFilter {
-            # Registers the service disabled; it starts only when a switch goes on.
             Invoke-ExeCommand 'filter install'
             if ($null -eq (Get-OwnedFilter)) { throw 'Filter command succeeded without registering the service.' }
             Enable-Reconcile
@@ -681,9 +641,6 @@ public static class SecblitzPaths {
             }
         }
         RemoveFilter {
-            # The task goes first so it cannot put the routing rule back while the
-            # service is being removed. A failing step must not leave the others
-            # undone; the first failure is reported after all of them ran.
             $failure = $null
             try { Remove-Reconcile } catch { $failure = $_ }
             if (Test-Path -LiteralPath $exe -PathType Leaf) {

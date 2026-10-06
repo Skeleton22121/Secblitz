@@ -37,7 +37,6 @@ RESULTS = []
 
 
 def emit(**data):
-    # Freeze mutable browser event lists at the time of the observation.
     RESULTS.append(json.loads(json.dumps(data)))
     print(json.dumps(data, sort_keys=True), flush=True)
 
@@ -50,7 +49,6 @@ def request(host, path, method="GET", headers=None, cap=131072, tls=True):
                                            "Accept-Encoding": "identity", **(headers or {})})
         response = conn.getresponse()
         fields = {k: response.getheader(k) for k in HEADERS if response.getheader(k) is not None}
-        # HEAD is deliberately used for config/key-like paths, never GET.
         body = b"" if method == "HEAD" else response.read(cap + 1)
         assert len(body) <= cap, "Public response exceeded read cap"
         emit(kind="http", host=host, path=path, method=method, tls=tls,
@@ -82,7 +80,6 @@ def http_checks():
         status, _, body = request(HOSTS[0], path)
         emit(kind="public_classification", path=path, status=status,
              same_as_index=body == home, marker_reflected=b"SECURITY_REVIEW_" in body)
-    # Header-only probes. A matching HTML response is evidence of fallback, not
     # proof of its body. Stop the run if a config/key-like route looks exposed.
     for path in ("/.git/config", "/.env", "/wrangler.jsonc", "/_headers",
                  "/assets/update-public-key.hex", "/release-signing-key.pem",
@@ -136,7 +133,6 @@ def browser_checks(executable=None, frame_only=False):
     from playwright.sync_api import sync_playwright
 
     def wait(page, expression):
-        # Poll via DevTools evaluation, not Playwright's in-page eval-based
         # wait_for_function, which correctly meets the live unsafe-eval ban.
         for _ in range(100):
             if page.evaluate("() => (" + expression + ")"):
@@ -193,7 +189,6 @@ def browser_checks(executable=None, frame_only=False):
         emit(kind="browser_behavior", reduced_poster=True,
              clipboard_exact=True, errors=errors, blocked_external_requests=remote,
              requests=requests)
-        # A local renderer crash must not erase independent security evidence.
         # Record incomplete playback and still attempt framing in a fresh browser.
         playback_error = None
         try:
@@ -219,7 +214,6 @@ def framing_checks(pw, executable):
     browser = pw.chromium.launch(channel="chromium", executable_path=executable,
                                  args=["--disable-gpu"])
     context = browser.new_context(service_workers="block")
-    # A local synthetic parent at an owned URL. Only the child fetches live HTML.
     context.route("**/*", lambda r: r.continue_() if r.request.url == "https://secblitz.lol/" else r.abort())
     parent = context.new_page()
     parent.route("https://www.secblitz.lol/security-review-frame", lambda r: r.fulfill(
@@ -258,7 +252,6 @@ if __name__ == "__main__":
              error=str(error).splitlines()[0][:300] if str(error) else "Assertion failed")
         raise
     finally:
-        # Fixed external evidence path, never the published website directory.
         mode = "http" if args.http else "frame" if args.frame else "browser"
         output = Path("/tmp/opencode") / f"secblitz-security-{mode}.json"
         output.write_text(json.dumps(RESULTS, indent=2) + "\n")

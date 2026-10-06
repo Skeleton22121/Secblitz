@@ -31,7 +31,6 @@ try {
         $mark=$s.Mark();Keys $esc;WaitPage 'Your next step' $mark;Keys $down 4;Keys "`r"
     } elseif($Mode -eq 'real') {
         WaitPage 'Your next step' 0 120;Capture 'home'
-        # Exercise each of the five real routes; never consent to a change.
         $mark=$s.Mark();Keys "`r"
         $next=$s.WaitAny([string[]]@('Confirm selected fixes','There are no recommended'),$mark,30)
         Capture 'recommended'
