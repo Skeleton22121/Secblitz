@@ -1,8 +1,4 @@
 //! Remove Secblitz: the put-back logic behind the hidden uninstaller commands.
-//!
-//! Nothing here panics or stops early: every step that cannot finish becomes a
-//! [`Left`] line in plain words, and the next step still runs. The lines are
-//! only for the uninstaller (UTF-8 on stdout), never a console window.
 #![allow(dead_code)] // the GUI part of Remove Secblitz uses the rest
 use crate::i18n::Lang;
 use crate::user_settings::{Outcome as UserOutcome, Setting};
@@ -12,26 +8,21 @@ use secblitz::debloat::RestoreAll;
 use secblitz::engine::Outcome as SettingOutcome;
 use serde::Serialize;
 
-/// What "put everything back" would do, for the sheet. Personal counts come
-/// from the broker; the CLI `--user` part counts its own.
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
 pub struct Plan {
     pub settings: usize,
     pub apps_with_copy: usize,
     pub apps_store_only: usize,
     pub suggested: bool,
-    /// A web protection switch is on. It stops with Secblitz whatever the choice.
     pub web_on: bool,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeftReason {
-    /// The person (or Windows) changed it after Secblitz did.
     ChangedSince,
     NotPossible,
 }
 
-/// Something that was not put back.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub enum Left {
     Setting { title: String, reason: LeftReason },
@@ -55,7 +46,6 @@ pub enum Step {
     Suggested,
 }
 
-// ---- translation sources (rows live in i18n-pending/a4.tsv until merged) ----
 
 const SETTING_CHANGED: &str = "{title}: it has changed since Secblitz set it, so it was left as it is. No action is needed.";
 const SETTING_MACHINE_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is. Restart your PC and try again. If it still does not work, you can leave it as it is.";
@@ -69,7 +59,6 @@ const SUGGESTED_CHANGED: &str =
     "Suggested apps were left as they are, because they changed since Secblitz set them or could not be checked. You can change them yourself in Windows Settings.";
 const WINDOWS_SETTINGS: &str = "Windows settings";
 
-/// The plain name of a personal setting (never a registry or technical word).
 pub(crate) fn personal_title(id: &str) -> &'static str {
     match id {
         "smartscreen.store_apps" => "Web check for Store apps",
@@ -82,7 +71,6 @@ pub(crate) fn personal_title(id: &str) -> &'static str {
     }
 }
 
-/// One plain, translated line for the uninstaller's summary.
 pub fn left_line(left: &Left, lang: Lang) -> String {
     match left {
         Left::Setting { title, reason } => {
@@ -102,9 +90,7 @@ pub fn left_line(left: &Left, lang: Lang) -> String {
     }
 }
 
-// ---- pure folding of results into a Summary (testable on any host) ----
 
-/// `conflict` means it changed since; every other non-success is "not possible".
 pub fn left_reason_from_status(status: &str) -> LeftReason {
     if status == "conflict" {
         LeftReason::ChangedSince
@@ -117,7 +103,6 @@ fn fold_settings(results: &[SettingOutcome], summary: &mut Summary) {
     for r in results {
         match r.status.as_str() {
             "restored" => summary.restored += 1,
-            // Already as it was before: nothing to put back, nothing left.
             "unchanged" => {}
             other => summary.left.push(Left::Setting {
                 title: r.title.clone(),
@@ -165,7 +150,6 @@ fn fold_user(results: Vec<(Setting, UserOutcome)>) -> Summary {
     summary
 }
 
-// ---- machine part (elevated) ----
 
 #[cfg(windows)]
 fn open_engine() -> Result<secblitz::engine::Engine> {
@@ -175,7 +159,6 @@ fn open_engine() -> Result<secblitz::engine::Engine> {
     )
 }
 
-/// Counts for the sheet. Elevated; opens the engine like the dashboard does.
 #[cfg(windows)]
 pub fn plan() -> Result<Plan> {
     use secblitz::debloat::{self, journal, offline, suggested};
@@ -200,8 +183,6 @@ pub fn plan() -> Result<Plan> {
     })
 }
 
-/// Put back settings, removed apps and suggested-apps blocking. Blocking.
-/// `progress(step, done_ok)` runs after each step.
 #[cfg(windows)]
 pub fn revert_machine(progress: &dyn Fn(Step, bool)) -> Summary {
     use secblitz::debloat::{self, suggested};
@@ -244,9 +225,7 @@ pub fn revert_machine(progress: &dyn Fn(Step, bool)) -> Summary {
     summary
 }
 
-// ---- personal part (as the person) ----
 
-/// Put back this person's own settings from their journal.
 #[cfg(windows)]
 pub fn revert_user() -> Summary {
     use crate::user_settings::{journal_path, undo_all, SystemRegistry};
@@ -256,9 +235,6 @@ pub fn revert_user() -> Summary {
     }
 }
 
-/// Delete `%LOCALAPPDATA%\Secblitz` after checking it is a plain directory
-/// (not a link) owned by the current person, or by the Administrators group
-/// (what an administrator's programs create). A missing folder is fine.
 #[cfg(windows)]
 pub fn cleanup_user() -> Result<()> {
     use anyhow::{bail, ensure};
@@ -311,7 +287,6 @@ fn owned_by_person_or_admins(path: &std::path::Path) -> Result<bool> {
         );
         let mut bytes = 0u32;
         GetTokenInformation(token, TokenUser, null_mut(), 0, &mut bytes);
-        // u64 backing keeps the TOKEN_USER buffer aligned.
         let mut buf = vec![0u64; (bytes as usize).div_ceil(8).max(1)];
         let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), bytes, &mut bytes);
         CloseHandle(token);
@@ -456,7 +431,6 @@ mod tests {
         let app = left_line(&Left::App { name: "Clipchamp".into() }, Lang::En);
         assert!(app.contains("Microsoft Store"), "{app}");
         assert!(!app.contains("internet"), "{app}");
-        // An unknown personal setting gets the general name, never raw text.
         let unknown = left_line(&Left::Personal { id: "x.unknown" }, Lang::En);
         assert!(unknown.starts_with("Windows settings:"), "{unknown}");
         assert!(!unknown.contains("x.unknown"), "{unknown}");
@@ -474,8 +448,6 @@ mod tests {
         }
     }
 
-    /// Each source string has six filled columns in the pending file, or (once
-    /// merged into the catalog) a real translation in every other language.
     #[test]
     fn every_line_has_all_six_translations() {
         let sources = [

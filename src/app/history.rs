@@ -1,10 +1,4 @@
 //! Score log (`checks.jsonl`) and the merged History timeline.
-//! OWNER: app-core agent.
-//!
-//! Contract:
-//! - `record(dir, entry)` appends one line, keeps at most 500 lines.
-//! - `load(dir)` returns entries oldest→newest, skipping malformed lines.
-//! - `timeline(entries)` merges for display (newest first, grouped by day).
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
@@ -24,12 +18,10 @@ pub enum Kind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
-    /// Unix seconds.
     pub t: u64,
     pub kind: Kind,
     pub protected: usize,
     pub total: usize,
-    /// Items changed by this event (fixes applied, apps removed, …).
     #[serde(default)]
     pub n: usize,
 }
@@ -67,8 +59,6 @@ pub fn record(dir: &Path, entry: &Entry) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Entries oldest→newest. Missing file, unreadable file and malformed lines
-/// all degrade to "fewer entries", never an error.
 pub fn load(dir: &Path) -> Vec<Entry> {
     let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
         return Vec::new();
@@ -85,12 +75,10 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Days since 1970-01-01 of the moment `t` (Unix seconds) on this PC's clock.
 pub fn local_day(t: u64) -> u64 {
     local_seconds(t) / 86_400
 }
 
-/// `t` shifted to local wall-clock time (still counted from the Unix epoch).
 #[cfg(windows)]
 pub fn local_seconds(t: u64) -> u64 {
     use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
@@ -125,7 +113,6 @@ pub fn local_seconds(t: u64) -> u64 {
     t
 }
 
-/// One row of the timeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub t: u64,
@@ -133,21 +120,15 @@ pub struct Item {
     pub n: usize,
     pub protected: usize,
     pub total: usize,
-    /// How many identical back-to-back checks this row stands for (>= 1).
     pub repeats: usize,
 }
 
-/// All items of one calendar day (local time), newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Day {
-    /// Days since 1970-01-01.
     pub day: u64,
     pub items: Vec<Item>,
 }
 
-/// Merge log entries for display: newest first, grouped by day. Back-to-back
-/// checks with the same result on the same day collapse into one row so a
-/// background check every few hours never floods the list.
 pub fn timeline(entries: &[Entry]) -> Vec<Day> {
     let mut sorted: Vec<&Entry> = entries.iter().collect();
     sorted.sort_by(|a, b| b.t.cmp(&a.t));
@@ -183,8 +164,6 @@ pub fn timeline(entries: &[Entry]) -> Vec<Day> {
     days
 }
 
-/// Plain English label (translation source key). `{n}` is replaced by the
-/// view after translating.
 pub fn label(kind: Kind, n: usize) -> &'static str {
     match (kind, n) {
         (Kind::Check, _) => "Checked your PC",
@@ -198,8 +177,6 @@ pub fn label(kind: Kind, n: usize) -> &'static str {
     }
 }
 
-/// Protected ratios (0..=1) of the newest `max` entries, oldest first, for the
-/// trend line. Entries without any checks are skipped.
 pub fn trend(entries: &[Entry], max: usize) -> Vec<f32> {
     let mut v: Vec<(u64, f32)> = entries
         .iter()
@@ -211,7 +188,6 @@ pub fn trend(entries: &[Entry], max: usize) -> Vec<f32> {
     v.into_iter().skip(skip).map(|(_, r)| r).collect()
 }
 
-/// (year, month 1..=12, day 1..=31) for days since the Unix epoch.
 pub fn civil(days: u64) -> (i64, u32, u32) {
     let z = days as i64 + 719_468;
     let era = z.div_euclid(146_097);
@@ -275,7 +251,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(dir.path()), vec![e(5, Kind::Undo, 1, 2, 0)]);
-        // Recording after damage keeps only valid-looking data readable.
         record(dir.path(), &e(6, Kind::Check, 2, 2, 0)).unwrap();
         assert_eq!(load(dir.path()).len(), 2);
     }

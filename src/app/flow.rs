@@ -1,16 +1,6 @@
-//! Fix-flow rules ported from the former terminal guide.
-//!
-//! OWNER: app-core agent. Contract (do not change signatures without updating
-//! all callers):
-//! - `candidates(report, available)` — ids a user may select as fixes.
-//! - `recommended(report, available)` — the default-ticked subset.
-//! - `payoff(attempted, applied, verified)` — (protected now, after restart)
-//!   translation keys, only for fixes confirmed by the fresh post-check.
-//! - `summarize(...)` — the plain-language result card model.
 use crate::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 
-/// Ids that can be offered as fixes. Empty while anything is still pending.
 pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
     if report.findings.iter().any(|f| f.status == "pending")
         || report.results.iter().any(|r| r.status == "pending")
@@ -30,8 +20,6 @@ pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
     ids
 }
 
-/// The default-ticked set: every fixable id except choices the person has to
-/// make themselves (those are shown unticked with their consequence).
 pub fn recommended(report: &Report, available: &[String]) -> Vec<String> {
     candidates(report, available)
         .into_iter()
@@ -39,8 +27,6 @@ pub fn recommended(report: &Report, available: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Impact source keys earned by this batch: (protected now, protected after restart).
-/// Evidence only: applied in this batch AND confirmed Protected by the post-check.
 pub fn payoff(
     attempted: &[String],
     applied: &Report,
@@ -77,23 +63,14 @@ pub fn payoff(
     (now, after_restart)
 }
 
-/// Plain-language outcome of an apply or undo, ready for the result card.
-/// All strings are English translation source keys or control ids; the view
-/// translates them with `Lang::t` / `Lang::control`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
     pub kind: SummaryKind,
-    /// Impact keys: "You're now protected from: ..."
     pub protected_now: Vec<String>,
-    /// Impact keys: "After you restart, you'll be protected from: ..."
     pub after_restart: Vec<String>,
-    /// Control ids that were changed successfully (apply) or restored (undo).
     pub done: Vec<String>,
-    /// Control ids that could not be completed, with a plain reason key.
     pub not_done: Vec<(String, String)>,
-    /// True when the post-check failed; current protection is unverified.
     pub unverified: bool,
-    /// At least one completed change only takes effect after a restart.
     pub restart: bool,
 }
 
@@ -117,14 +94,10 @@ pub const REASON_STILL_OPEN: &str =
     "This still needs attention after the fix. Restart your PC and check again.";
 pub const REASON_KEPT: &str = "We kept your current setting to stay safe. Nothing needs doing.";
 
-/// Shown when something fails in a way we do not recognise. Never echoes raw text.
 pub const FAILURE_GENERAL: &str = "Something went wrong and nothing was changed. Close Secblitz and open it again. If it keeps happening, restart your PC or check for a Secblitz update.";
 pub const COULDNT_READ: &str = "We couldn't read this from Windows. Check again in a moment. If it keeps happening, restart your PC.";
 pub const NOT_DONE: &str = "This change did not go through. Restart your PC, then try again.";
 
-/// Plain-words explanation for a whole-operation failure (the engine could not
-/// start, a check or a fix stopped). The raw text only ever picks the message;
-/// it is never shown.
 pub fn plain_failure(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     if r.contains("holds the journal lock") || r.contains("another secblitz") {
@@ -146,8 +119,6 @@ pub fn plain_failure(raw: &str) -> &'static str {
     }
 }
 
-/// Plain (status, next step) pair for a "More details" line. Raw backend text
-/// is never part of the answer.
 pub fn plain_detail(status: &str, a: &advice::Advice) -> (&'static str, &'static str) {
     match status {
         "unknown" | "error" => ("Couldn't check", COULDNT_READ),
@@ -158,7 +129,6 @@ pub fn plain_detail(status: &str, a: &advice::Advice) -> (&'static str, &'static
     }
 }
 
-/// Plain reason key for an outcome that did not complete.
 fn reason(status: &str, detail: &str, id: &str) -> &'static str {
     let advice = advice::for_control(id, status, detail);
     if advice.status == "Managed elsewhere" {
@@ -180,9 +150,6 @@ fn restart_needed(r: &secblitz::engine::Outcome) -> bool {
     advice::for_control(&r.id, &r.status, &r.detail).step == NextStep::Restart
 }
 
-/// Build the result card. `attempted` is `Some(ids)` for apply, `None` for undo.
-/// `result` is the operation outcome; `verify` the fresh post-check.
-/// Protection is only ever claimed for fixes the fresh post-check confirms.
 pub fn summarize(
     attempted: Option<&[String]>,
     result: Result<&Report, &str>,
@@ -575,7 +542,6 @@ mod tests {
         );
         assert!(plain_failure("Another Secblitz operation holds the journal lock")
             .contains("Close it"));
-        // A plain file permission problem is not an administrator problem.
         assert_eq!(plain_failure("Access is denied. (os error 5)"), FAILURE_GENERAL);
         assert_eq!(plain_failure("permission denied"), FAILURE_GENERAL);
     }

@@ -1,5 +1,4 @@
-//! Portable tray logic: which icon/tooltip a status maps to, when to alert, and
-//! the software renderer for the shield icons (so it is testable on any host).
+//! Portable tray logic (icon, tooltip, alerts) and the shield icon renderer.
 use crate::i18n::Lang;
 use secblitz::status::{State, Status};
 
@@ -18,7 +17,6 @@ pub const ALL: [Icon; 4] = [
     Icon::Unknown,
 ];
 
-/// More than half of the checks failing is shown as a problem (red).
 pub fn icon_for(status: Option<&Status>) -> Icon {
     match status {
         None => Icon::Unknown,
@@ -31,7 +29,6 @@ pub fn icon_for(status: Option<&Status>) -> Icon {
     }
 }
 
-/// Number of things shown to the user as needing attention.
 pub fn attention_count(s: &Status) -> usize {
     s.attention.len().max(1)
 }
@@ -48,7 +45,6 @@ pub fn tooltip(lang: Lang, status: Option<&Status>) -> String {
         _ => lang.t("Not checked yet"),
     };
     let text = format!("Secblitz \u{2014} {body}");
-    // NOTIFYICONDATA tooltips hold 127 UTF-16 units.
     let mut out = String::new();
     let mut units = 0;
     for c in text.chars() {
@@ -61,8 +57,6 @@ pub fn tooltip(lang: Lang, status: Option<&Status>) -> String {
     out
 }
 
-/// True when protection got worse since the last status we saw: fewer protected
-/// checks, or an id needing attention that was not before.
 pub fn worsened(previous: &Status, now: &Status) -> bool {
     now.protected < previous.protected
         || now
@@ -86,7 +80,6 @@ fn in_shield(x: f32, y: f32) -> bool {
         return false;
     }
     let w = if y <= mid {
-        // Slightly rounded shoulders.
         let r = ((mid - y) / (mid - top)).powi(6);
         half * (1.0 - 0.18 * r)
     } else {
@@ -122,7 +115,6 @@ fn in_glyph(icon: Icon, x: f32, y: f32) -> bool {
     }
 }
 
-/// Render a shield icon as `size`x`size` top-down BGRA with straight alpha.
 pub fn render(icon: Icon, size: usize) -> Vec<u8> {
     const SS: usize = 4;
     let base = colour(icon);

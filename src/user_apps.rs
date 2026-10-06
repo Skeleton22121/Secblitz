@@ -1,24 +1,14 @@
-//! App updates through WinGet, run by the unelevated launcher as the signed-in
-//! person (never elevated). Only a short allowlist of well-known, often
-//! attacked programs is looked at; the broker carries an index into that list,
-//! never a package name.
-//!
-//! `winget upgrade` output is localised and laid out for people, so it is read
-//! defensively: anything that does not look like the expected table means
-//! "unknown", never "up to date".
+//! WinGet app updates, run by the unelevated launcher for a short allowlist of apps.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::sync::Mutex;
 
-/// One allowlisted program: the exact WinGet package id and its display name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct App {
     pub id: &'static str,
     pub name: &'static str,
 }
 
-/// The closed list. Order is the wire index and never changes; new entries go
-/// at the end.
 pub const APPS: [App; 13] = [
     App {
         id: "Google.Chrome",
@@ -74,45 +64,34 @@ pub const APPS: [App; 13] = [
     },
 ];
 
-/// What a scan found for one allowlisted program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
-    /// WinGet lists a newer version.
     Available,
-    /// Not listed: not installed, or already current.
     NothingToDo,
-    /// The output was cut off or odd for this program.
     Unknown,
 }
 
-/// A `winget upgrade` result, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scan {
     Apps([AppState; APPS.len()]),
-    /// The output did not look like anything we know.
     Unreadable,
 }
 
-/// Is this line the "-----" rule WinGet prints under the table header?
 fn is_rule(line: &str) -> bool {
     let t = line.trim();
     t.len() >= 8 && t.bytes().all(|b| b == b'-')
 }
 
-/// Spinner frames and blank lines WinGet prints while it works.
 fn is_noise(line: &str) -> bool {
     line.trim()
         .chars()
         .all(|c| matches!(c, '-' | '\\' | '|' | '/' | ' ' | '█' | '▒'))
 }
 
-/// Read the text of `winget upgrade`. `exit` is WinGet's exit code.
 pub fn parse_upgrades(output: &str, exit: Option<u32>) -> Scan {
     let normalised = output.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = normalised.lines().collect();
     let Some(rule) = lines.iter().position(|l| is_rule(l)) else {
-        // No table. WinGet prints one short sentence when nothing needs
-        // updating; any longer text is something else (an error, a prompt).
         let words = lines.iter().filter(|l| !is_noise(l)).count();
         return if exit == Some(0) && (1..=3).contains(&words) {
             Scan::Apps([AppState::NothingToDo; APPS.len()])
@@ -120,7 +99,6 @@ pub fn parse_upgrades(output: &str, exit: Option<u32>) -> Scan {
             Scan::Unreadable
         };
     };
-    // The table needs its header right above the rule.
     if rule == 0 || is_noise(lines[rule - 1]) {
         return Scan::Unreadable;
     }
@@ -131,7 +109,6 @@ pub fn parse_upgrades(output: &str, exit: Option<u32>) -> Scan {
                 if token.eq_ignore_ascii_case(app.id) {
                     states[i] = AppState::Available;
                 } else if states[i] != AppState::Available {
-                    // A long id cut short as "Oracle.JavaRuntimeEnv…".
                     let cut = token
                         .strip_suffix('…')
                         .or_else(|| token.strip_suffix("..."));
@@ -152,8 +129,6 @@ pub fn parse_upgrades(output: &str, exit: Option<u32>) -> Scan {
     Scan::Apps(states)
 }
 
-/// Last scan, kept by the launcher so the GUI can ask about each program
-/// with one tiny request instead of running WinGet again.
 static LAST: Mutex<Option<[AppState; APPS.len()]>> = Mutex::new(None);
 
 pub fn remember(states: [AppState; APPS.len()]) {
@@ -164,7 +139,6 @@ pub fn forget() {
     *LAST.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-/// `None` when no readable scan has happened.
 pub fn remembered(index: usize) -> Option<AppState> {
     LAST.lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -172,7 +146,6 @@ pub fn remembered(index: usize) -> Option<AppState> {
         .and_then(|s| s.get(index).copied())
 }
 
-/// The fixed WinGet arguments for listing upgrades.
 pub fn list_args() -> Vec<String> {
     [
         "upgrade",
@@ -186,7 +159,6 @@ pub fn list_args() -> Vec<String> {
     .collect()
 }
 
-/// The fixed WinGet arguments to upgrade one allowlisted program.
 pub fn upgrade_args(index: usize) -> Option<Vec<String>> {
     let app = APPS.get(index)?;
     Some(
@@ -219,13 +191,10 @@ mod run {
     use std::time::{Duration, Instant};
 
     pub struct WingetRun {
-        /// WinGet's exit code; `None` when it could not start or timed out.
         pub code: Option<u32>,
         pub output: String,
     }
 
-    /// Run `winget <args>` as the current (unelevated) user with no window,
-    /// capped output and a hard deadline.
     pub fn run_winget(args: &[String], limit: Duration) -> WingetRun {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let Ok(winget) = secblitz::tools::winget_path() else {
@@ -251,7 +220,6 @@ mod run {
             std::thread::spawn(move || {
                 let mut kept = Vec::new();
                 let mut chunk = [0u8; 8192];
-                // Keep draining so WinGet never blocks on a full pipe.
                 while let Ok(n) = out.read(&mut chunk) {
                     if n == 0 {
                         break;
@@ -357,7 +325,6 @@ Some Other App        Vendor.Other               1.0       2.0       winget\r\n\
         let ascii =
             "Name Id Version Available Source\n-----------\nJava Oracle.Java... 1 2 winget\n";
         assert_eq!(states(parse_upgrades(ascii, Some(0)))[5], AppState::Unknown);
-        // Too short a stub says nothing.
         let stub = "Name Id Version Available Source\n-----------\nX G… 1 2 winget\n";
         assert_eq!(
             states(parse_upgrades(stub, Some(0)))[0],
@@ -397,7 +364,6 @@ Some Other App        Vendor.Other               1.0       2.0       winget\r\n\
                 None,
             ),
             ("one\ntwo\nthree\nfour\n", Some(0)),
-            // A rule with no header above it.
             ("-----------\nGoogle.Chrome\n", Some(0)),
             ("   -\n-----------\nGoogle.Chrome\n", Some(0)),
         ] {
