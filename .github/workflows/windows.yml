@@ -9,13 +9,19 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-audit:
+    name: RustSec audit of Cargo.lock
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -28,9 +34,12 @@ jobs:
         run: '"$RUNNER_TEMP/cargo-audit/bin/cargo-audit" audit --file Cargo.lock'
 
   windows:
+    name: Build and installer harness tests (Windows)
     needs: dependency-audit
     runs-on: windows-2022
     timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
