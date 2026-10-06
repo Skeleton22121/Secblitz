@@ -56,7 +56,7 @@ function MdmRegistered { if ($script:unknownMdm) { throw 'Unavailable registrati
 function Test-Path { $false }
 function CheckScopedPolicy([string]$id) {}
 function CheckRsop([string]$id) {}
-function HasValues([string]$path) {
+function ServicingSourcePolicyConfigured([string]$path) {
     if ($script:unknownSource) { throw 'Unreadable policy' }
     return ($script:sourcePolicy -and $path -ceq 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Servicing')
 }
