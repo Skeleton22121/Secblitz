@@ -626,6 +626,7 @@ mod imp {
 
 
     fn handle(request: Request) -> Reply {
+        use secblitz::tools::ToolError;
         let open = |action| match secblitz::actions::run(action) {
             Ok(_) => Reply::Done,
             Err(_) => Reply::Failed,
@@ -633,9 +634,11 @@ mod imp {
         match request {
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,
-                Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,
-                Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
-                Err(_) => Reply::Failed,
+                Err(e) => match ToolError::of(&e) {
+                    Some(ToolError::Offline) => Reply::Offline,
+                    Some(ToolError::NotHere) => Reply::Unavailable,
+                    None => Reply::Failed,
+                },
             },
             Request::BitwardenStatus => {
                 match secblitz::tools::bitwarden_installed() {
@@ -644,7 +647,7 @@ mod imp {
                     Ok(false) => {
                         match secblitz::tools::bitwarden_installable() {
                             Ok(()) => Reply::NotApplicable,
-                            Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                            Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
                             Err(_) => Reply::Unknown,
                         }
                     }
@@ -652,7 +655,7 @@ mod imp {
             }
             Request::AppInstallerStatus => match secblitz::tools::bitwarden_installable() {
                 Ok(()) => Reply::Done,
-                Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
                 Err(_) => Reply::Unknown,
             },
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
