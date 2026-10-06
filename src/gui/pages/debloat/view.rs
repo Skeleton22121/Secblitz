@@ -915,16 +915,16 @@ fn batch_report<'a>(
     };
     let head = result_head(p, menu, outcome, title);
     let mut body: Vec<Element<'a, Message>> = Vec::new();
-    let mut block = |icon: Icon, tone: Tone, title: &str, list: Vec<(u16, String)>| {
+    let mut block = |icon: Icon, tone: Tone, title: String, list: Vec<(u16, String)>| {
         if !list.is_empty() {
-            body.push(result_block(p, state, icon, tone, ctx.t(title), list));
+            body.push(result_block(p, state, icon, tone, title, list));
         }
     };
-    block(Icon::CheckCircle, Tone::Good, "Removed", removed);
+    block(Icon::CheckCircle, Tone::Good, ctx.t("Removed"), removed);
     block(
         Icon::Info,
         Tone::Neutral,
-        "Windows protects these apps",
+        ctx.t("Windows protects these apps"),
         protected,
     );
     for reason in [Kept::NoSpace, Kept::NoCopy(String::new())] {
@@ -935,10 +935,10 @@ fn batch_report<'a>(
                 .filter(|(_, k)| std::mem::discriminant(k) == std::mem::discriminant(&reason))
                 .map(|(i, _)| *i),
         );
-        block(Icon::Info, Tone::Neutral, kept_text(&reason), list);
+        block(Icon::Info, Tone::Neutral, ctx.t(kept_text(&reason)), list);
     }
     let any_failed = !failed.is_empty();
-    block(Icon::AlertTriangle, Tone::Bad, "Couldn't remove", failed);
+    block(Icon::AlertTriangle, Tone::Bad, ctx.t("Couldn't remove"), failed);
     if any_failed {
         body.push(widgets::small(
             p,
