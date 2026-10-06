@@ -680,8 +680,15 @@ function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, [s
 HSetService 'WinRM' 4
 Assert ((CallLog) -ceq 'stop:WinRM,type:WinRM:Disabled') "service stop and disable: $(CallLog)"
 $script:calls = @(); $script:svcStatus = 'Stopped'
+# No delayed flag was ever there: restoring plain automatic must not create one.
+$script:delayedFlag = $null
+function Get-ItemProperty { param($LiteralPath, $Name, $ErrorAction); if ($null -eq $script:delayedFlag) { return $null }; return [pscustomobject]@{ DelayedAutostart = $script:delayedFlag } }
 HSetService 'WinRM' 10
-Assert ((CallLog) -ceq 'type:WinRM:Automatic,reg:DelayedAutostart:0,start:WinRM') "service restore automatic running: $(CallLog)"
+Assert ((CallLog) -ceq 'type:WinRM:Automatic,start:WinRM') "service restore automatic running leaves an absent flag absent: $(CallLog)"
+$script:calls = @(); $script:svcStatus = 'Stopped'; $script:delayedFlag = 1
+HSetService 'WinRM' 10
+Assert ((CallLog) -ceq 'type:WinRM:Automatic,reg:DelayedAutostart:0,start:WinRM') "service restore automatic running clears a set flag: $(CallLog)"
+Remove-Item -LiteralPath function:Get-ItemProperty
 $script:calls = @(); $script:svcStatus = 'Stopped'
 HSetService 'sshd' 13
 Assert ((CallLog) -ceq 'type:sshd:Automatic,reg:DelayedAutostart:1,start:sshd') "service restore delayed running: $(CallLog)"
