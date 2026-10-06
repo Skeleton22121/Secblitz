@@ -1,4 +1,4 @@
-//! Optional, explicitly requested desktop software installation.
+//! The Windows tool actions library: explicitly requested desktop software installation and its failure kinds.
 
 pub fn install_bitwarden() -> anyhow::Result<()> {
     #[cfg(windows)]
@@ -24,7 +24,7 @@ pub fn bitwarden_installable() -> anyhow::Result<()> {
         windows::install_check()
     }
     #[cfg(not(windows))]
-    Err(NotHere.into())
+    Err(ToolError::NotHere.into())
 }
 
 #[cfg(windows)]
@@ -32,34 +32,37 @@ pub fn winget_path() -> anyhow::Result<std::path::PathBuf> {
     windows::winget()
 }
 
-#[derive(Debug)]
-pub struct Offline;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolError {
+    Offline,
+    NotHere,
+}
 
-impl std::fmt::Display for Offline {
+impl std::fmt::Display for ToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("network_unreachable")
+        f.write_str(match self {
+            Self::Offline => "network_unreachable",
+            Self::NotHere => "not_available_for_this_account",
+        })
     }
 }
 
-impl std::error::Error for Offline {}
+impl std::error::Error for ToolError {}
 
-#[derive(Debug)]
-pub struct NotHere;
-
-impl std::fmt::Display for NotHere {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("not_available_for_this_account")
-    }
+/// True when `kind` is the error itself, a wrapped cause, or attached as context.
+fn has_kind(error: &anyhow::Error, kind: ToolError) -> bool {
+    error.downcast_ref::<ToolError>() == Some(&kind)
+        || error
+            .chain()
+            .any(|cause| cause.downcast_ref::<ToolError>() == Some(&kind))
 }
-
-impl std::error::Error for NotHere {}
 
 pub fn is_not_here_error(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<NotHere>().is_some()
+    has_kind(error, ToolError::NotHere)
 }
 
 pub fn is_offline_error(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| cause.is::<Offline>())
+    has_kind(error, ToolError::Offline)
 }
 
 pub fn is_offline_code(code: u32) -> bool {
@@ -272,6 +275,7 @@ mod windows {
     }
 
     #[repr(C)]
+    #[derive(Default)]
     struct BasicLimits {
         process_time: i64,
         job_time: i64,
@@ -292,10 +296,30 @@ mod windows {
         peak_process_memory: usize,
         peak_job_memory: usize,
     }
+    impl Default for ExtendedLimits {
+        fn default() -> Self {
+            Self {
+                basic: BasicLimits::default(),
+                io: IO_COUNTERS {
+                    ReadOperationCount: 0,
+                    WriteOperationCount: 0,
+                    OtherOperationCount: 0,
+                    ReadTransferCount: 0,
+                    WriteTransferCount: 0,
+                    OtherTransferCount: 0,
+                },
+                process_memory: 0,
+                job_memory: 0,
+                peak_process_memory: 0,
+                peak_job_memory: 0,
+            }
+        }
+    }
 
     struct Handle(HANDLE);
     impl Drop for Handle {
         fn drop(&mut self) {
+            // SAFETY: the wrapper owns the handle and closes it once.
             unsafe {
                 CloseHandle(self.0);
             }
@@ -311,6 +335,7 @@ mod windows {
 
     fn token(process: HANDLE) -> Result<Handle> {
         let mut value = null_mut();
+        // SAFETY: `value` is a valid out pointer for the new token handle.
         check(
             unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut value) },
             "OpenProcessToken",
@@ -320,6 +345,7 @@ mod windows {
 
     fn token_user(token: &Handle) -> Result<Vec<usize>> {
         let mut bytes = 0;
+        // SAFETY: a null buffer of length 0 only asks for the required size.
         unsafe {
             GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut bytes);
         }
@@ -328,6 +354,7 @@ mod windows {
             "Invalid TokenUser buffer size: {bytes}"
         );
         let mut buffer = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
+        // SAFETY: the buffer is at least `bytes` long and pointer-aligned.
         check(
             unsafe {
                 GetTokenInformation(
@@ -344,9 +371,11 @@ mod windows {
     }
 
     fn require_desktop_user() -> Result<()> {
+        // SAFETY: the current-process pseudo handle needs no cleanup.
         let current = token(unsafe { GetCurrentProcess() })?;
-        let mut elevation: TOKEN_ELEVATION = unsafe { zeroed() };
+        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
         let mut bytes = 0;
+        // SAFETY: the buffer is exactly one TOKEN_ELEVATION.
         check(
             unsafe {
                 GetTokenInformation(
@@ -361,13 +390,16 @@ mod windows {
         )?;
         ensure!(elevation.TokenIsElevated == 0,
             "Run tools bitwarden --yes from the original user's non-elevated desktop, not an administrator terminal");
+        // SAFETY: no arguments; a null result is checked below.
         let shell = unsafe { GetShellWindow() };
         ensure!(!shell.is_null(), "No desktop shell: Bitwarden installation cannot run as a service or background account");
         let mut pid = 0;
+        // SAFETY: `shell` is non-null and `pid` is a valid out pointer.
         ensure!(
             unsafe { GetWindowThreadProcessId(shell, &mut pid) } != 0 && pid != 0,
             "Cannot identify desktop shell user"
         );
+        // SAFETY: plain value arguments; a null result is checked below.
         let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if process.is_null() {
             return Err(std::io::Error::last_os_error()).context("Open desktop shell process");
@@ -376,6 +408,7 @@ mod windows {
         let shell_token = token(process.0)?;
         let current_user = token_user(&current)?;
         let shell_user = token_user(&shell_token)?;
+        // SAFETY: both buffers were filled by GetTokenInformation(TokenUser) and are pointer-aligned.
         let same = unsafe {
             EqualSid(
                 (*(current_user.as_ptr().cast::<TOKEN_USER>())).User.Sid,
@@ -386,8 +419,11 @@ mod windows {
         Ok(())
     }
 
+    const KNOWN_FOLDER_LIMIT: usize = 32768;
+
     fn known_folder(id: &GUID) -> Result<PathBuf> {
         let mut value = null_mut();
+        // SAFETY: `value` is a valid out pointer; the result is freed below.
         let hr = unsafe { SHGetKnownFolderPath(id, 0, null_mut(), &mut value) };
         if hr < 0 {
             bail!("SHGetKnownFolderPath failed (HRESULT 0x{:08X})", hr as u32);
@@ -396,10 +432,15 @@ mod windows {
             !value.is_null(),
             "SHGetKnownFolderPath returned a null path"
         );
+        // SAFETY: `value` is a NUL-terminated string from the shell, read within MAX_PATH-scale bounds and freed once.
         let path = unsafe {
             let mut length = 0;
-            while *value.add(length) != 0 {
+            while length < KNOWN_FOLDER_LIMIT && *value.add(length) != 0 {
                 length += 1;
+            }
+            if length == KNOWN_FOLDER_LIMIT {
+                CoTaskMemFree(value.cast());
+                bail!("Known folder is not an absolute path");
             }
             let result = PathBuf::from(OsString::from_wide(std::slice::from_raw_parts(
                 value, length,
@@ -436,12 +477,14 @@ mod windows {
         struct PackageInfo(*mut c_void);
         impl Drop for PackageInfo {
             fn drop(&mut self) {
+                // SAFETY: the reference came from OpenPackageInfoByFullName and is closed once.
                 unsafe {
                     ClosePackageInfo(self.0);
                 }
             }
         }
         let mut reference = null_mut();
+        // SAFETY: `name` is a NUL-terminated package name from the system; `reference` is a valid out pointer.
         let status = unsafe { OpenPackageInfoByFullName(name, 0, &mut reference) };
         ensure!(
             status == 0 && !reference.is_null(),
@@ -450,6 +493,7 @@ mod windows {
         let reference = PackageInfo(reference);
         let (mut bytes, mut count) = (0, 0);
         const PACKAGE_FILTER_HEAD: u32 = 0x10;
+        // SAFETY: a null buffer only asks for the required size.
         let status = unsafe {
             GetPackageInfo(
                 reference.0,
@@ -464,6 +508,7 @@ mod windows {
             "GetPackageInfo sizing failed (Win32 {status})"
         );
         let mut buffer = vec![0u64; (bytes as usize).div_ceil(size_of::<u64>())];
+        // SAFETY: the buffer is at least `bytes` long and 8-byte aligned.
         let status = unsafe {
             GetPackageInfo(
                 reference.0,
@@ -477,6 +522,7 @@ mod windows {
             status == 0 && count == 1 && bytes >= 8,
             "GetPackageInfo failed (Win32 {status}, count {count})"
         );
+        // SAFETY: `bytes >= 8` was checked, so the second u32 is inside the buffer.
         let flags = unsafe { *buffer.as_ptr().cast::<u32>().add(1) };
         ensure!(flags & 0x10000 == 0, "App Installer is a developer-mode registration; use the packaged Microsoft Store installation");
         Ok(())
@@ -487,6 +533,7 @@ mod windows {
             .encode_utf16()
             .collect();
         let (mut count, mut length) = (0, 0);
+        // SAFETY: `family` is NUL-terminated; null buffers only ask for the sizes.
         let status = unsafe {
             GetPackagesByPackageFamily(
                 family.as_ptr(),
@@ -500,6 +547,7 @@ mod windows {
             "Microsoft App Installer is not available for this user (GetPackagesByPackageFamily Win32 {status}, count {count}); install or repair App Installer through Microsoft Store");
         let mut names = vec![null_mut(); count as usize];
         let mut buffer = vec![0u16; length as usize];
+        // SAFETY: `names` holds `count` slots and `buffer` holds `length` units, as sized above.
         let status = unsafe {
             GetPackagesByPackageFamily(
                 family.as_ptr(),
@@ -517,12 +565,14 @@ mod windows {
         for name in names.into_iter().take(count as usize) {
             require_packaged_registration(name)?;
             let mut length = 0;
+            // SAFETY: `name` points into `buffer`, which outlives this loop; a null path only asks for the size.
             let status = unsafe { GetPackagePathByFullName(name, &mut length, null_mut()) };
             ensure!(
                 status == 122 && length > 1 && length <= 32768,
                 "GetPackagePathByFullName sizing failed (Win32 {status})"
             );
             let mut path = vec![0u16; length as usize];
+            // SAFETY: `path` holds `length` units, as sized above.
             let status = unsafe { GetPackagePathByFullName(name, &mut length, path.as_mut_ptr()) };
             ensure!(
                 status == 0,
@@ -572,13 +622,15 @@ mod windows {
             .chain(Some(0))
             .collect();
 
+        // SAFETY: null attributes and name are allowed; a null result is checked below.
         let job = unsafe { CreateJobObjectW(null(), null()) };
         if job.is_null() {
             return Err(std::io::Error::last_os_error()).context("CreateJobObjectW");
         }
         let job = Handle(job);
-        let mut limits: ExtendedLimits = unsafe { zeroed() };
+        let mut limits = ExtendedLimits::default();
         limits.basic.flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no breakaway.
+        // SAFETY: `limits` is a live ExtendedLimits and the length matches it.
         check(
             unsafe {
                 SetInformationJobObject(
@@ -597,17 +649,21 @@ mod windows {
             bInheritHandle: 1,
         };
         let (mut read, mut write) = (null_mut(), null_mut());
+        // SAFETY: both handles are valid out pointers and `attributes` outlives the call.
         check(
             unsafe { CreatePipe(&mut read, &mut write, &attributes, 0) },
             "CreatePipe",
         )?;
+        // SAFETY: `read` is a fresh pipe handle that nothing else owns.
         let mut reader = unsafe { File::from_raw_handle(read) };
         let writer = Handle(write);
+        // SAFETY: `read` is a valid handle owned by `reader`.
         check(
             unsafe { SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0) },
             "Protect pipe reader from inheritance",
         )?;
         let input = File::open("NUL").context("Open null input")?;
+        // SAFETY: the handle belongs to `input`, which stays open.
         check(
             unsafe {
                 SetHandleInformation(
@@ -618,13 +674,20 @@ mod windows {
             },
             "Set null input inheritance",
         )?;
+        // SAFETY: STARTUPINFOW is plain data for which all-zero bytes (null handles, zero sizes) are valid.
         let mut startup: STARTUPINFOW = unsafe { zeroed() };
         startup.cb = size_of::<STARTUPINFOW>() as u32;
         startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdInput = input.as_raw_handle();
         startup.hStdOutput = writer.0;
         startup.hStdError = writer.0;
-        let mut info: PROCESS_INFORMATION = unsafe { zeroed() };
+        let mut info = PROCESS_INFORMATION {
+            hProcess: null_mut(),
+            hThread: null_mut(),
+            dwProcessId: 0,
+            dwThreadId: 0,
+        };
+        // SAFETY: the command line is a mutable NUL-terminated buffer, the other strings are NUL-terminated, and `startup` and `info` outlive the call.
         check(
             unsafe {
                 CreateProcessW(
@@ -644,15 +707,18 @@ mod windows {
         )?;
         let process = Handle(info.hProcess);
         let thread = Handle(info.hThread);
+        // SAFETY: both handles are valid and owned here.
         if let Err(error) = check(
             unsafe { AssignProcessToJobObject(job.0, process.0) },
             "Assign WinGet to timeout job",
         ) {
+            // SAFETY: `process` is a valid handle owned here.
             unsafe {
                 TerminateProcess(process.0, 1);
             }
             return Err(error);
         }
+        // SAFETY: `thread` is the valid suspended primary thread.
         ensure!(
             unsafe { ResumeThread(thread.0) } != u32::MAX,
             "Resume WinGet failed: {}",
@@ -664,6 +730,7 @@ mod windows {
         loop {
             ensure!(Instant::now() < deadline, "WinGet {operation:?} exceeded the ten-minute deadline; its job was terminated; check installation state before retrying");
             let mut available = 0;
+            // SAFETY: `read` is a valid pipe handle; unused outputs are null.
             if unsafe { PeekNamedPipe(read, null_mut(), 0, null_mut(), &mut available, null_mut()) }
                 == 0
             {
@@ -682,15 +749,18 @@ mod windows {
                 output.extend_from_slice(&chunk[..keep]);
                 continue;
             }
+            // SAFETY: `process` is a valid handle owned here.
             match unsafe { WaitForSingleObject(process.0, 50) } {
                 WAIT_TIMEOUT => {}
                 WAIT_OBJECT_0 => {
                     let mut code = 0;
+                    // SAFETY: `process` is valid and `code` is a valid out pointer.
                     check(
                         unsafe { GetExitCodeProcess(process.0, &mut code) },
                         "GetExitCodeProcess(WinGet)",
                     )?;
                     let mut remaining = 0;
+                    // SAFETY: `read` is a valid pipe handle; unused outputs are null.
                     unsafe {
                         PeekNamedPipe(read, null_mut(), 0, null_mut(), &mut remaining, null_mut());
                     }
@@ -708,27 +778,27 @@ mod windows {
     }
 
     pub(super) fn install_check() -> Result<()> {
-        require_desktop_user().context(super::NotHere)?;
-        winget().context(super::NotHere)?;
+        require_desktop_user().context(super::ToolError::NotHere)?;
+        winget().context(super::ToolError::NotHere)?;
         Ok(())
     }
 
     pub(super) fn install() -> Result<()> {
-        require_desktop_user().context(super::NotHere)?;
+        require_desktop_user().context(super::ToolError::NotHere)?;
         if known_install()? {
             return Ok(());
         }
-        let exe = winget().context(super::NotHere)?;
+        let exe = winget().context(super::ToolError::NotHere)?;
         let deadline = Instant::now() + Duration::from_secs(600);
         let (code, source) = run(&exe, Operation::Source, deadline)?;
         if super::is_offline_code(code) {
-            return Err(super::Offline.into());
+            return Err(super::ToolError::Offline.into());
         }
         ensure!(code == 0, "WinGet source export failed (exit 0x{code:08X})");
         verify_source(&source)?;
         let (code, _) = run(&exe, Operation::List, deadline)?;
         if super::is_offline_code(code) {
-            return Err(super::Offline.into());
+            return Err(super::ToolError::Offline.into());
         }
         if list_found(code).context("Determine existing installation; no install was attempted")? {
             return Ok(());
@@ -737,7 +807,7 @@ mod windows {
         // Hash/security errors propagate; there is no bypass or download fallback.
         let (code, _) = run(&exe, Operation::Install, deadline)?;
         if super::is_offline_code(code) || (code != 0 && super::dns_offline()) {
-            return Err(super::Offline.into());
+            return Err(super::ToolError::Offline.into());
         }
         ensure!(code == 0, "WinGet Bitwarden installation failed (exit 0x{code:08X}); installer hash verification was not bypassed");
         let (code, _) = run(&exe, Operation::List, deadline)?;
@@ -760,7 +830,7 @@ mod tests {
         for code in [0, 1, 0x8A15_0014, 0x8A15_0008, 0x8007_0005, 0xFFFF_FFFF] {
             assert!(!is_offline_code(code), "{code:#x}");
         }
-        let error = anyhow::Error::new(Offline).context("Install Bitwarden");
+        let error = anyhow::Error::new(ToolError::Offline).context("Install Bitwarden");
         assert!(is_offline_error(&error));
         assert!(!is_offline_error(&anyhow::anyhow!("hash mismatch")));
         assert!(!is_not_here_error(&error));
@@ -769,11 +839,30 @@ mod tests {
     #[test]
     fn account_refusals_are_told_apart_from_other_failures() {
         use anyhow::Context;
-        let refused = Err::<(), _>(anyhow::anyhow!("not the desktop user")).context(NotHere);
+        let refused = Err::<(), _>(anyhow::anyhow!("not the desktop user")).context(ToolError::NotHere);
         let refused = refused.unwrap_err();
         assert!(is_not_here_error(&refused));
         assert!(!is_offline_error(&refused));
         assert!(!is_not_here_error(&anyhow::anyhow!("hash mismatch")));
+    }
+
+    #[test]
+    fn failure_kinds_are_found_anywhere_in_the_chain() {
+        use anyhow::Context;
+        let as_context = Err::<(), _>(anyhow::anyhow!("no shell"))
+            .context(ToolError::NotHere)
+            .context("Install Bitwarden")
+            .unwrap_err();
+        assert!(is_not_here_error(&as_context));
+        let as_cause = anyhow::Error::new(ToolError::NotHere).context("Check Bitwarden");
+        assert!(is_not_here_error(&as_cause));
+        assert!(!is_offline_error(&as_cause));
+        let offline_context = Err::<(), _>(anyhow::anyhow!("dns"))
+            .context(ToolError::Offline)
+            .unwrap_err();
+        assert!(is_offline_error(&offline_context));
+        assert_eq!(ToolError::Offline.to_string(), "network_unreachable");
+        assert_eq!(ToolError::NotHere.to_string(), "not_available_for_this_account");
     }
 
     #[test]
