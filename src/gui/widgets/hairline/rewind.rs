@@ -30,8 +30,10 @@ use std::time::Instant;
 pub const UNITS: Size = Size::new(176.0, 176.0);
 /// Logical pixels per unit at the size pages show it (as the shield).
 pub const SCALE: f32 = 0.75;
-/// The canvas size pages give it.
-pub const SIZE: Size = Size::new(UNITS.width * SCALE, UNITS.height * SCALE);
+/// The canvas size pages give it: the drawing's height, and wide enough
+/// that the hover name (up to about 330 px in German) fits beside it. The
+/// drawing sits centred in it.
+pub const SIZE: Size = Size::new(360.0, UNITS.height * SCALE);
 
 /// Centre of the clock.
 const C: Point = pt(88.0, 88.0);
@@ -69,6 +71,8 @@ const SHAKE_END: f32 = 1.6;
 pub const BADGE_END: f32 = 1.4;
 /// A click while working adds this much speed, which dies away.
 const KICK: f32 = 14.0;
+/// The hover area round the face.
+const HOVER_R: f32 = 50.0;
 /// The badge: where and how big.
 const BADGE: Point = pt(C.x + 42.0, C.y + 42.0);
 const BADGE_R: f32 = 13.0;
@@ -137,10 +141,11 @@ impl Rewind {
     }
 }
 
-/// The hover areas, one function for `update` and `draw`: the clock and
-/// its back arrow.
+/// The hover areas, one function for `update` and `draw`: the clock face.
+/// (Grabbing works out to the back arrow, see [`on_clock`]; the name sits
+/// above the face, where there is room for it.)
 pub fn spots() -> Hotspots<Part> {
-    Hotspots::new().circle(Part::Clock, C, RA, Layer::Fixed)
+    Hotspots::new().circle(Part::Clock, C, HOVER_R, Layer::Fixed)
 }
 
 /// Angle a in (-pi, pi].
@@ -557,7 +562,8 @@ impl<M> canvas::Program<M> for Rewind {
     ) -> mouse::Interaction {
         if st.grab.is_some() && st.live.pointer.pressed {
             mouse::Interaction::Grabbing
-        } else if cursor.is_over(bounds) && st.live.hover.is_some() {
+        } else if cursor.is_over(bounds) && st.live.pointer.inside && on_clock(st.live.pointer.at)
+        {
             mouse::Interaction::Grab
         } else {
             mouse::Interaction::None
@@ -711,12 +717,18 @@ mod tests {
     }
 
     #[test]
-    fn hover_covers_the_clock_and_its_arrow() {
+    fn hover_names_the_face_and_grabbing_reaches_the_arrow() {
         let tilt = Parallax::off();
         let s = spots();
         assert_eq!(s.hit(C, &tilt), Some(Part::Clock));
-        assert_eq!(s.hit(polar(A_HEAD, RA - 2.0), &tilt), Some(Part::Clock));
+        assert_eq!(s.hit(polar(0.7, R - 8.0), &tilt), Some(Part::Clock));
+        assert_eq!(s.hit(polar(A_HEAD, RA), &tilt), None);
         assert_eq!(s.hit(pt(2.0, 2.0), &tilt), None);
+        assert!(on_clock(polar(A_HEAD, RA)));
+        // The name fits above the face at the size pages use.
+        let anchor = s.anchor(Part::Clock, &tilt).unwrap();
+        let stage = Stage::fit(UNITS, SIZE);
+        assert!(stage.point(anchor).y >= 6.0 + 24.0, "{anchor:?}");
         assert!(on_clock(polar(1.0, RA + 8.0)) && !on_clock(pt(2.0, 2.0)));
         // Everything fits the box: the arrow head and the badge.
         for a in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
@@ -724,7 +736,7 @@ mod tests {
             assert!(b.x >= 0.0 && b.y >= 0.0, "{b:?}");
             assert!(b.x + b.width <= UNITS.width && b.y + b.height <= UNITS.height);
         }
-        assert!(BADGE.x + BADGE_R + 4.0 <= UNITS.width);
+        const { assert!(BADGE.x + BADGE_R + 4.0 <= UNITS.width) };
     }
 
     #[test]
