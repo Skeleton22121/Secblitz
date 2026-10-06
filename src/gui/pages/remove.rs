@@ -515,10 +515,10 @@ fn still_removed_names() -> Vec<String> {
 }
 
 /// How long "put everything back" waits for Store downloads. Quick failures
-/// (an app the Store no longer offers, no internet) show within seconds; a
-/// download still going after this carries on in the Store by itself.
+/// (an app the Store does not offer here, no internet) show within a second
+/// or two; a download still going after this carries on in the Store by itself.
 #[cfg(windows)]
-const STORE_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+const STORE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Apps without a usable saved copy come back from the Store (when online),
 /// all at once rather than one after another. Returns the names of the apps
