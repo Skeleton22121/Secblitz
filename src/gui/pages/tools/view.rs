@@ -868,13 +868,14 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
             None,
             Some(Message::Navigate(crate::gui::Page::Fixes)),
         ),
-        // A guide shows its own button under the steps.
-        _ if tip.guide.is_some() => space::horizontal().width(0).into(),
+        // The in-app scan stays reachable even when steps are shown below.
         _ if tip.scan => secondary(
             p,
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
+        // A guide shows its own button under the steps.
+        _ if tip.guide.is_some() => space::horizontal().width(0).into(),
         Some(open) if ctx.broker.is_some() => {
             // The button is named after the page it opens.
             let label = crate::guide::Page::from_action(open)
@@ -898,10 +899,16 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
         action,
         None,
     );
-    let head = match (tip.guide, tip.state, ctx.broker.is_some()) {
-        (Some(g), TipState::Look, true) => column![
+    // The steps need no launcher; only the buttons that open pages do.
+    let head = match (tip.guide, tip.state) {
+        (Some(g), TipState::Look) => column![
             head,
-            crate::gui::pages::fixes::guide_block(ctx, g, widgets::explain::INDENT)
+            crate::gui::pages::fixes::guide_block(
+                ctx,
+                g,
+                widgets::explain::INDENT,
+                ctx.broker.is_some()
+            )
         ]
         .spacing(theme::S1)
         .into(),

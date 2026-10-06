@@ -14,6 +14,7 @@ pub enum Action {
     OpenEncryptionSettings,
     OpenTamperProtection,
     OpenProtectionHistory,
+    OpenProtectionHistoryList,
     OpenAppBrowserControl,
     OpenOptionalFeatures,
     OpenAccounts,
@@ -26,6 +27,7 @@ pub enum Action {
     OpenFindMyDevice,
     OpenBitLocker,
     OpenWifi,
+    OpenNetwork,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -37,6 +39,13 @@ pub struct ActionResult {
 #[cfg(windows)]
 #[path = "actions/windows.rs"]
 mod windows;
+
+/// True only for the elevated half of a split (UAC) administrator token.
+/// Shared by the launcher's start-up check and the page-opening check.
+#[cfg(windows)]
+pub fn split_token_elevated() -> Result<bool> {
+    windows::split_token_elevated()
+}
 
 /// The classic Control Panel item for BitLocker, for Windows editions that
 /// have no device-encryption page. Opened through the system's own
@@ -65,6 +74,7 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenEncryptionSettings => Uri("ms-settings:deviceencryption"),
         Action::OpenTamperProtection => Uri("windowsdefender://threatsettings"),
         Action::OpenProtectionHistory => Uri("windowsdefender://threat"),
+        Action::OpenProtectionHistoryList => Uri("windowsdefender://history"),
         Action::OpenAppBrowserControl => Uri("windowsdefender://appbrowser"),
         Action::OpenOptionalFeatures => Uri("ms-settings:optionalfeatures"),
         Action::OpenAccounts => Uri("ms-settings:otherusers"),
@@ -76,6 +86,7 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenRemoteDesktop => Uri("ms-settings:remotedesktop"),
         Action::OpenFindMyDevice => Uri("ms-settings:findmydevice"),
         Action::OpenWifi => Uri("ms-settings:network-wifi"),
+        Action::OpenNetwork => Uri("ms-settings:network"),
         Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
         _ => return None,
     })
@@ -107,6 +118,7 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | "ms-settings:deviceencryption"
                 | "windowsdefender://threatsettings"
                 | "windowsdefender://threat"
+                | "windowsdefender://history"
                 | "windowsdefender://appbrowser"
                 | "ms-settings:optionalfeatures"
                 | "ms-settings:otherusers"
@@ -118,6 +130,7 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | "ms-settings:remotedesktop"
                 | "ms-settings:findmydevice"
                 | "ms-settings:network-wifi"
+                | "ms-settings:network"
         ),
         "Unknown settings URI"
     );
@@ -201,6 +214,7 @@ mod tests {
                 "windowsdefender://threatsettings",
             ),
             (Action::OpenProtectionHistory, "windowsdefender://threat"),
+            (Action::OpenProtectionHistoryList, "windowsdefender://history"),
             (
                 Action::OpenAppBrowserControl,
                 "windowsdefender://appbrowser",
@@ -215,6 +229,7 @@ mod tests {
             (Action::OpenRemoteDesktop, "ms-settings:remotedesktop"),
             (Action::OpenFindMyDevice, "ms-settings:findmydevice"),
             (Action::OpenWifi, "ms-settings:network-wifi"),
+            (Action::OpenNetwork, "ms-settings:network"),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
@@ -258,6 +273,8 @@ mod tests {
             "ms-settings:windowsupdate & calc.exe",
             "windowsdefender://",
             "windowsdefender://threat/",
+            "windowsdefender://history/",
+            "WINDOWSDEFENDER://history",
             "WINDOWSDEFENDER://threat",
             "windowsdefender://threat&calc.exe",
             "ms-settings:otherusers ",
@@ -265,6 +282,8 @@ mod tests {
             "ms-settings:remotedesktop?x",
             "ms-settings:recovery ",
             "WINDOWSDEFENDER://network",
+            "ms-settings:network/",
+            "ms-settings:Network",
         ] {
             for elevated in [false, true] {
                 assert!(validate_settings_request(uri, elevated).is_err());
@@ -285,6 +304,7 @@ mod tests {
             Action::OpenEncryptionSettings,
             Action::OpenTamperProtection,
             Action::OpenProtectionHistory,
+            Action::OpenProtectionHistoryList,
             Action::OpenAppBrowserControl,
             Action::OpenOptionalFeatures,
             Action::OpenAccounts,
@@ -297,6 +317,7 @@ mod tests {
             Action::OpenFindMyDevice,
             Action::OpenBitLocker,
             Action::OpenWifi,
+            Action::OpenNetwork,
         ] {
             assert!(run(action).is_err());
         }

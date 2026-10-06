@@ -3,8 +3,9 @@ use anyhow::{ensure, Result};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::Security::{
-    GetTokenInformation, TokenElevationType, TokenElevationTypeFull, TOKEN_ELEVATION_TYPE,
-    TOKEN_QUERY,
+    GetTokenInformation, IsWellKnownSid, TokenElevationType, TokenElevationTypeFull, TokenUser,
+    WinLocalServiceSid, WinLocalSystemSid, WinNetworkServiceSid, TOKEN_ELEVATION_TYPE,
+    TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -13,7 +14,7 @@ use windows_sys::Win32::UI::Shell::ShellExecuteW;
 /// True only for the elevated half of a split (UAC) administrator token.
 /// A full-token administrator (built-in Administrator, or UAC off) reports
 /// `TokenElevationTypeDefault` even though it is elevated, and may open pages.
-fn split_token_elevated() -> Result<bool> {
+pub fn split_token_elevated() -> Result<bool> {
     unsafe {
         let mut token: HANDLE = null_mut();
         ensure!(
@@ -35,6 +36,35 @@ fn split_token_elevated() -> Result<bool> {
     }
 }
 
+/// True when this process runs as LocalSystem, LocalService or NetworkService.
+/// Those tokens also report `TokenElevationTypeDefault`, but opening pages is
+/// for a signed-in person, never a service.
+fn service_account() -> Result<bool> {
+    unsafe {
+        let mut token: HANDLE = null_mut();
+        ensure!(
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0,
+            "Windows could not open settings"
+        );
+        let mut needed = 0u32;
+        GetTokenInformation(token, TokenUser, null_mut(), 0, &mut needed);
+        // 8-byte aligned buffer for the TOKEN_USER the call fills in.
+        let mut buf = vec![0u64; (needed as usize).div_ceil(8).max(1)];
+        let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), needed, &mut needed);
+        let result = if ok != 0 {
+            let user = &*(buf.as_ptr() as *const TOKEN_USER);
+            let sid = user.User.Sid;
+            Ok([WinLocalSystemSid, WinLocalServiceSid, WinNetworkServiceSid]
+                .into_iter()
+                .any(|kind| IsWellKnownSid(sid, kind) != 0))
+        } else {
+            Err(anyhow::anyhow!("Windows could not open settings"))
+        };
+        CloseHandle(token);
+        result
+    }
+}
+
 /// Control Panel's switch for opening one item by its canonical name.
 const CONTROL_SWITCH: &str = "/name";
 
@@ -44,6 +74,10 @@ fn wide(s: &str) -> Vec<u16> {
 
 pub(super) fn open(target: Target) -> Result<()> {
     // Check the actual token here, even when a caller bypasses the UI routing.
+    ensure!(
+        !service_account()?,
+        "Open Settings from the non-elevated interactive application"
+    );
     let split = split_token_elevated()?;
     match target {
         Target::Uri(uri) => {

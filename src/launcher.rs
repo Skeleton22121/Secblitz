@@ -156,8 +156,8 @@ mod imp {
                 ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
                 ConvertStringSidToSidW, SDDL_REVISION_1,
             },
-            GetTokenInformation, TokenElevationType, TokenElevationTypeFull, TokenUser, PSID,
-            SECURITY_ATTRIBUTES, TOKEN_ELEVATION_TYPE, TOKEN_QUERY, TOKEN_USER,
+            GetTokenInformation, TokenUser, PSID,
+            SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
@@ -306,26 +306,7 @@ mod imp {
     /// admin token while the same user's unelevated programs can steer them.
     /// Built-in Administrator and UAC-off accounts have no split token.
     fn split_token_elevated() -> Result<bool> {
-        unsafe {
-            let mut token: HANDLE = null_mut();
-            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            let token = Owned(token);
-            let mut kind: TOKEN_ELEVATION_TYPE = 0;
-            let mut len = 0u32;
-            if GetTokenInformation(
-                token.0,
-                TokenElevationType,
-                (&mut kind as *mut TOKEN_ELEVATION_TYPE).cast(),
-                std::mem::size_of::<TOKEN_ELEVATION_TYPE>() as u32,
-                &mut len,
-            ) == 0
-            {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            Ok(kind == TokenElevationTypeFull)
-        }
+        secblitz::actions::split_token_elevated()
     }
 
     /// Single instance, current user + Administrators only, no remote clients.
@@ -566,6 +547,8 @@ mod imp {
             Request::OpenFindMyDevice => open(Action::OpenFindMyDevice),
             Request::OpenBitLocker => open(Action::OpenBitLocker),
             Request::OpenWifi => open(Action::OpenWifi),
+            Request::OpenNetwork => open(Action::OpenNetwork),
+            Request::OpenProtectionHistoryList => open(Action::OpenProtectionHistoryList),
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,
                 Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,

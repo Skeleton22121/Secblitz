@@ -15,6 +15,7 @@ pub enum Page {
     WindowsSecurity,
     VirusSettings,
     ProtectionHistory,
+    ProtectionHistoryList,
     AppBrowser,
     Encryption,
     BitLocker,
@@ -27,16 +28,18 @@ pub enum Page {
     WindowsUpdate,
     OptionalFeatures,
     Wifi,
+    Network,
 }
 
 impl Page {
-    pub const ALL: [Page; 18] = [
+    pub const ALL: [Page; 20] = [
         Page::CoreIsolation,
         Page::Firewall,
         Page::DeviceSecurity,
         Page::WindowsSecurity,
         Page::VirusSettings,
         Page::ProtectionHistory,
+        Page::ProtectionHistoryList,
         Page::AppBrowser,
         Page::Encryption,
         Page::BitLocker,
@@ -49,6 +52,7 @@ impl Page {
         Page::WindowsUpdate,
         Page::OptionalFeatures,
         Page::Wifi,
+        Page::Network,
     ];
 
     /// The page's name as Windows shows it. Also what to type in Start.
@@ -60,6 +64,7 @@ impl Page {
             Page::WindowsSecurity => "Windows Security",
             Page::VirusSettings => "Virus and threat protection settings",
             Page::ProtectionHistory => "Virus and threat protection",
+            Page::ProtectionHistoryList => "Protection history",
             Page::AppBrowser => "App and browser control",
             Page::Encryption => "Device encryption",
             Page::BitLocker => "BitLocker",
@@ -72,6 +77,7 @@ impl Page {
             Page::WindowsUpdate => "Windows Update",
             Page::OptionalFeatures => "Optional features",
             Page::Wifi => "Wi-Fi settings",
+            Page::Network => "Network and internet",
         }
     }
 
@@ -84,6 +90,7 @@ impl Page {
             Page::WindowsSecurity => "Open Windows Security",
             Page::VirusSettings => "Open virus protection settings",
             Page::ProtectionHistory => "Open virus protection",
+            Page::ProtectionHistoryList => "Open Protection history",
             Page::AppBrowser => "Open App and browser control",
             Page::Encryption => "Open Device encryption",
             Page::BitLocker => "Open BitLocker",
@@ -96,6 +103,7 @@ impl Page {
             Page::WindowsUpdate => "Open Windows Update",
             Page::OptionalFeatures => "Open Optional features",
             Page::Wifi => "Open Wi-Fi settings",
+            Page::Network => "Open Network and internet",
         }
     }
 
@@ -107,6 +115,7 @@ impl Page {
             Page::WindowsSecurity => Action::OpenWindowsSecurity,
             Page::VirusSettings => Action::OpenTamperProtection,
             Page::ProtectionHistory => Action::OpenProtectionHistory,
+            Page::ProtectionHistoryList => Action::OpenProtectionHistoryList,
             Page::AppBrowser => Action::OpenAppBrowserControl,
             Page::Encryption => Action::OpenEncryptionSettings,
             Page::BitLocker => Action::OpenBitLocker,
@@ -119,6 +128,7 @@ impl Page {
             Page::WindowsUpdate => Action::OpenWindowsUpdate,
             Page::OptionalFeatures => Action::OpenOptionalFeatures,
             Page::Wifi => Action::OpenWifi,
+            Page::Network => Action::OpenNetwork,
         }
     }
 
@@ -131,6 +141,7 @@ impl Page {
             Page::WindowsSecurity => Request::OpenWindowsSecurity,
             Page::VirusSettings => Request::OpenTamperProtection,
             Page::ProtectionHistory => Request::OpenProtectionHistory,
+            Page::ProtectionHistoryList => Request::OpenProtectionHistoryList,
             Page::AppBrowser => Request::OpenAppBrowserControl,
             Page::Encryption => Request::OpenEncryption,
             Page::BitLocker => Request::OpenBitLocker,
@@ -143,6 +154,7 @@ impl Page {
             Page::WindowsUpdate => Request::OpenWindowsUpdate,
             Page::OptionalFeatures => Request::OpenOptionalFeatures,
             Page::Wifi => Request::OpenWifi,
+            Page::Network => Request::OpenNetwork,
         }
     }
 
@@ -155,6 +167,15 @@ impl Page {
     /// The page for an `actions::Action`.
     pub fn from_action(action: Action) -> Option<Page> {
         Page::ALL.into_iter().find(|p| p.action() == action)
+    }
+
+    /// The page for an older finding that has no step-by-step guide.
+    pub fn for_finding(title: &str) -> Option<Page> {
+        Some(match title {
+            "Windows Firewall" => Page::Firewall,
+            "SmartScreen" => Page::AppBrowser,
+            _ => return None,
+        })
     }
 
     /// The page the older "next step" kinds point to.
@@ -219,17 +240,17 @@ static ENCRYPTION: Guide = Guide {
 static SECURE_BOOT: Guide = g(
     Page::Recovery,
     &[
+        "Encrypted PC? Find your recovery key first at aka.ms/myrecoverykey, as Windows may ask for it after this.",
         "Save your work, then select Restart now next to Advanced startup.",
-        "After the restart choose Troubleshoot, Advanced options, UEFI Firmware Settings, then Restart.",
-        "Find Secure Boot, often under Boot or Security, and turn it on. Menus differ by PC maker.",
-        "Save and exit. If you're unsure, check your PC maker's guide first.",
+        "Choose Troubleshoot, Advanced options, UEFI Firmware Settings, then Restart. No such option? Stop here.",
+        "Turn on Secure Boot, often under Boot or Security. Menus differ by PC maker. Save and exit.",
     ],
 );
 static ACCOUNTS: Guide = Guide {
     page: Page::OtherUsers,
     alt: Some(Page::SignIn),
     steps: &[
-        "Look at each account listed and remove the ones nobody uses.",
+        "Look at each account listed. Before removing one, copy any files its owner needs, as removing it deletes its files.",
         "Open Sign-in options, choose Password, then Change, and set a strong password.",
         "Give every account its own password.",
     ],
@@ -239,21 +260,21 @@ static AUTOLOGON: Guide = g(
     &[
         "Press the Windows key and R together, type netplwiz and press Enter.",
         "Tick Users must enter a user name and password to use this computer, then select OK.",
-        "Enter your password when asked.",
-        "No such box? Turn off the Windows Hello only sign-in option in Sign-in options, then try again.",
+        "No such box? Open Sign-in options, turn off the option that only allows Windows Hello sign-in, then try again.",
     ],
 );
 static REMOTE_DESKTOP: Guide = g(
     Page::RemoteDesktop,
     &[
+        "Using this PC from another device right now? Stop here. Turning this off ends that connection.",
         "Turn off Remote Desktop.",
         "Select Confirm if Windows asks.",
-        "Skip this if you connect to this PC from elsewhere on purpose.",
     ],
 );
 static SMB1: Guide = g(
     Page::OptionalFeatures,
     &[
+        "If an old printer or shared drive needs it, leave it on.",
         "Scroll down and select More Windows features.",
         "Untick SMB 1.0/CIFS File Sharing Support, then select OK.",
         "Restart your PC when Windows asks.",
@@ -264,7 +285,7 @@ static LIFECYCLE: Guide = g(
     &[
         "Select Check for updates.",
         "If a newer version of Windows is offered, choose Download and install.",
-        "If none is offered, ask your PC maker how long it will get safety updates.",
+        "If none is offered, look on this page for Extended Security Updates (Enroll now), or plan for a PC that runs Windows 11.",
     ],
 );
 static SECURE_BOOT_CERTS: Guide = g(
@@ -294,7 +315,7 @@ static WORK: Guide = g(
     Page::WorkAccounts,
     &[
         "Look at the accounts listed. A work or school account means someone else may manage this PC.",
-        "If one is yours to remove, select it and choose Disconnect. If you're not sure, leave it.",
+        "If you don't recognise one, ask the person or company named there. Don't disconnect an account you use to sign in to Windows.",
     ],
 );
 static HELLO: Guide = g(
@@ -316,8 +337,8 @@ static DAILY_ADMIN: Guide = Guide {
     page: Page::OtherUsers,
     alt: None,
     steps: &[
-        "Choose Add account and make one for admin tasks only, with a strong password.",
-        "Select it, choose Change account type, then Administrator.",
+        "Choose Add account, then I don't have this person's sign-in information, then Add a user without a Microsoft account.",
+        "Give it a strong password. Select it, choose Change account type, then Administrator.",
         "Sign in to it and set your everyday account to Standard user the same way.",
         "Use your everyday account from now on. Windows asks for the admin password when needed.",
     ],
@@ -332,24 +353,24 @@ static TAMPER: Guide = g(
 static WIFI: Guide = g(
     Page::Wifi,
     &[
+        "Not your own network, such as a café? Don't change anything. Avoid private sign-ins on it.",
         "Select your network, then its properties, to see its security type.",
         "Open your router's settings page. The address and password are often on a sticker on the router.",
         "Set the Wi-Fi security to WPA3, or WPA2 if WPA3 isn't listed, and save.",
     ],
 );
 static DNS: Guide = g(
-    Page::Wifi,
+    Page::Network,
     &[
-        "Select your connection, then open its properties.",
-        "Next to DNS server assignment select Edit, then choose Manual.",
-        "Enter a provider that supports encrypted lookups, such as 1.1.1.1 or 8.8.8.8, and set DNS encryption to Encrypted preferred.",
         "If Secblitz Web protection is on, skip this. It already manages your lookups.",
+        "Choose Wi-Fi or Ethernet, open your connection's properties, then select Edit next to DNS server assignment.",
+        "Keep the addresses shown, set DNS over HTTPS to On (automatic template), then select Save.",
+        "Windows 10 has no such setting, so leave it as it is.",
     ],
 );
 static THREATS: Guide = g(
-    Page::ProtectionHistory,
+    Page::ProtectionHistoryList,
     &[
-        "Select Protection history.",
         "Open each item Windows found and choose Actions.",
         "Choose Remove or Quarantine, then run a quick scan.",
     ],
@@ -382,16 +403,22 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
     })
 }
 
-/// Finding titles that now have their own fix. When the check result for the
-/// control exists, the fix row replaces the older manual row.
-pub fn finding_control(title: &str) -> Option<&'static str> {
-    Some(match title {
-        "Memory integrity" => "vbs.memory_integrity",
-        "Automatic logon" => "accounts.autologon",
-        "Remote Desktop" => "remote_desktop.disabled",
-        "SMB1" => "smb1.disabled",
-        _ => return None,
-    })
+/// The guide for a control that is "Not offered", only when the reason is one
+/// the person can act on. Reasons such as unsupported hardware, a firmware
+/// lock, a restart already pending, an edition without the feature, a remote
+/// session in use or a feature still in use get no steps: following them would
+/// do nothing, or do harm.
+pub fn guide_not_offered(key: &str, detail: &str) -> Option<&'static Guide> {
+    let d = detail.to_lowercase();
+    match key {
+        "vbs.memory_integrity" if d.contains("driver") => Some(&MEMORY_INTEGRITY),
+        "vbs.kernel_stack_protection"
+            if d.contains("driver") || d.contains("needs memory integrity") =>
+        {
+            Some(&KERNEL_STACK)
+        }
+        _ => None,
+    }
 }
 
 /// One short sentence for a page that would not open: what it is called and
@@ -494,8 +521,39 @@ mod tests {
     }
 
     #[test]
-    fn replaced_findings_point_to_their_control() {
-        assert_eq!(finding_control("SMB1"), Some("smb1.disabled"));
-        assert_eq!(finding_control("Secure Boot"), None);
+    fn not_offered_gets_steps_only_for_reasons_a_person_can_act_on() {
+        let mi = "vbs.memory_integrity";
+        assert!(guide_not_offered(mi, "A driver on this PC blocks it").is_some());
+        for no in [
+            "Your hardware or firmware does not support it",
+            "locked in your PC's firmware",
+            "it is already running",
+            "restart your PC to finish",
+            "this edition of Windows does not include it",
+        ] {
+            assert!(guide_not_offered(mi, no).is_none(), "{no}");
+        }
+        let ks = "vbs.kernel_stack_protection";
+        assert!(guide_not_offered(ks, "needs memory integrity first").is_some());
+        assert!(guide_not_offered(ks, "your processor does not support it").is_none());
+        for key in ["remote_desktop.disabled", "smb1.disabled", "accounts.autologon"] {
+            assert!(guide_not_offered(key, "in use, driver").is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn risky_guides_warn_before_the_action() {
+        assert!(guide("remote_desktop.disabled").unwrap().steps[0].contains("Stop here"));
+        assert!(guide("smb1.disabled").unwrap().steps[0].contains("leave it on"));
+        assert!(guide("Secure Boot").unwrap().steps[0].contains("recovery key"));
+        assert!(guide("Local accounts").unwrap().steps[0].contains("deletes its files"));
+        assert!(guide("net.wifi_security").unwrap().steps[0].contains("Not your own network"));
+    }
+
+    #[test]
+    fn older_findings_without_a_guide_still_get_their_page() {
+        assert_eq!(Page::for_finding("Windows Firewall"), Some(Page::Firewall));
+        assert_eq!(Page::for_finding("SmartScreen"), Some(Page::AppBrowser));
+        assert_eq!(Page::for_finding("Defender"), None);
     }
 }
