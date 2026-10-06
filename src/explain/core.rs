@@ -145,7 +145,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "update.reboot_overdue" => e("A restart is waiting to finish installing updates.", "Until you restart, the fixes are only half installed and the holes may stay open.", "Choose Restart now when it suits you. Save your work first. Secblitz only restarts when you ask."),
         "vbs.running" => e("A protected area inside Windows that guards its core, and whether it is switched on.", "Without it, harmful code that reaches the core of Windows finds it easier to hide.", "Open Windows Security and turn on Core isolation. Some older devices and drivers don't work with it."),
         "vpn.machine_connections" => e("VPN connections set up on this PC.", "A forgotten or unexpected VPN could send your traffic through a company you don't know.", "Nothing to do here. Remove a VPN you don't recognize."),
-        "winre.enabled" => e("Recovery tools that help fix Windows if it stops starting.", "If Windows won't start, you'd have fewer ways to repair it without reinstalling.", "Ask someone you trust to turn it on. Secblitz doesn't change this."),
+        "winre.enabled" => e("Recovery tools that help fix Windows if it stops starting.", "If Windows won't start, you'd have fewer ways to repair it without reinstalling.", "Secblitz can turn them back on for you when Windows still has their files. You can undo it."),
         _ => return None,
     })
 }

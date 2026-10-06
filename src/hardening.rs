@@ -108,6 +108,12 @@ pub enum Source {
     /// Dynamic: one broad grant (Everyone, Anonymous or Guests) on a shared
     /// folder's permission list (1 present, 0 removed).
     ShareGrants,
+    /// The Windows recovery tools (Windows RE): 1 on, 0 off. Read from the
+    /// `InstallState` of `%windir%\System32\Recovery\ReAgent.xml`, the file
+    /// REAgentC itself keeps, so the reading never depends on the display
+    /// language and needs no helper program. Changed only with the inbox
+    /// `ReAgentc.exe /enable` and `/disable`.
+    RecoveryTools,
 }
 
 /// Value of an item a fix switched off: the state Secblitz left behind.
@@ -1237,6 +1243,16 @@ static SPECS: &[Spec] = &[
             ],
             ..NO_GATE
         },
+    },
+    Spec {
+        id: "recovery.winre_enabled",
+        title: "Windows recovery tools",
+        description: "Turn the Windows recovery tools back on with the inbox ReAgentc.exe /enable, only when they are off and their image is still in Windows\\System32\\Recovery. Partitions, BitLocker and start-up settings are never edited by Secblitz. Undo runs ReAgentc.exe /disable, which puts the image back where it was.",
+        source: Source::RecoveryTools,
+        reboot: false,
+        ask: false,
+        keys: &[set("Enabled", "", &[1], false, Some(1), 1)],
+        gate: NO_GATE,
     },
 ];
 
@@ -2547,6 +2563,55 @@ mod tests {
         );
         assert!(!s.any_unsafe(&items(s, &[Some(0), Some(0), Some(0), Some(0)])));
         assert!(s.validate(&json!({"items": {"SMB1Protocol": 1}})).is_err());
+    }
+
+    #[test]
+    fn recovery_tools_are_a_plain_fix_that_only_turns_them_back_on() {
+        let r = spec("recovery.winre_enabled").unwrap();
+        assert_eq!(r.source, Source::RecoveryTools);
+        // A normal fix: no trade-off to choose, no restart, one fixed key.
+        assert!(!r.ask && !r.reboot && !r.dynamic());
+        assert_eq!(r.keys.len(), 1);
+        assert_eq!((r.keys[0].name, r.keys[0].path), ("Enabled", ""));
+        // Off is the only state to repair, and it is repaired to on.
+        let off = items(r, &[Some(0)]);
+        assert!(r.any_unsafe(&off));
+        assert_eq!(r.derive_target(&off).unwrap(), items(r, &[Some(1)]));
+        assert!(!r.any_unsafe(&items(r, &[Some(1)])));
+        // The state is always read as on or off, never "not set".
+        assert!(r.any_unsafe(&items(r, &[None])));
+        assert!(r.validate(&items(r, &[Some(2)])).is_err());
+        assert!(r.validate(&json!({"items": {"Enabled": 1, "Other": 0}})).is_err());
+        assert!(r.validate(&json!({"items": {}})).is_err());
+        // Nothing but the switch itself is described to the backend.
+        let json = r.script_json();
+        assert!(json.contains("\"source\":\"RecoveryTools\""), "{json}");
+        for never in ["bcdedit", "BitLocker", "manage-bde", "diskpart"] {
+            assert!(!json.contains(never), "{never}");
+        }
+        // The backend starts exactly one program, ReAgentc.exe, for exactly
+        // two changes, hidden and with every output captured. Nothing else in
+        // the hardening scripts starts a program or edits start-up settings.
+        let script = include_str!("platform/hardening.ps1");
+        let start = script.find("function HRunReagent(").unwrap();
+        let body = &script[start..start + script[start..].find("\n}\n").unwrap()];
+        for must in [
+            "@('/enable', '/disable') -cnotcontains $verb",
+            "$start.UseShellExecute = $false",
+            "$start.CreateNoWindow = $true",
+            "$start.RedirectStandardInput = $true",
+            "$start.RedirectStandardOutput = $true",
+            "$start.RedirectStandardError = $true",
+        ] {
+            assert!(body.contains(must), "{must}");
+        }
+        assert!(script.contains("'System32\\ReAgentc.exe'"));
+        assert_eq!(script.matches("[Diagnostics.Process]::Start(").count(), 1);
+        for script in [script, include_str!("platform/hardening.handled.ps1")] {
+            for never in ["bcdedit", "manage-bde", "diskpart", "Start-Process", "/boottore", "/setreimage"] {
+                assert!(!script.to_lowercase().contains(&never.to_lowercase()), "{never}");
+            }
+        }
     }
 
     #[test]

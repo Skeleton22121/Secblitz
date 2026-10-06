@@ -6,7 +6,9 @@
 #
 # Writes can only move a key between its recorded unsafe original and the fixed
 # value (HFixOf); anything else means the setting changed behind us and stops.
-# No native child processes are started (the launcher job forbids them).
+# No native child processes are started (the launcher job forbids them), except
+# by the few writes whose job allows exactly that: Windows feature changes
+# (DISM) and turning the recovery tools on or off (ReAgentc.exe).
 $spec = ConvertFrom-Json -InputObject $hardeningSpecJson
 
 function HEq($a, $b) {
@@ -316,6 +318,7 @@ function HRead() {
         'StartupItems' { return (HReadStartup) }
         'StaleAccounts' { return (HReadStale) }
         'ShareGrants' { return (HReadShares) }
+        'RecoveryTools' { return (HReadRecovery) }
     }
     throw 'Unknown hardening source'
 }
@@ -526,6 +529,11 @@ function HPreflight() {
             if (HSmb1InUse) { throw 'Not offered: something is using the old file sharing right now' }
         }
         'net.hosts_file' { HHostsPreflight }
+        'recovery.winre_enabled' {
+            # Windows can only turn the tools back on from the image it keeps
+            # while they are off, with its own ReAgentc.exe.
+            if (!(HRecoveryImageReady) -or ![IO.File]::Exists((HReagentPath))) { throw 'Not offered: the recovery tools are missing from this PC' }
+        }
         'persistence.run_and_tasks' { HStartupPreflight }
         'session.lock_on_wake' {
             Load 'CimCmdlets'; Load 'Microsoft.PowerShell.LocalAccounts'
@@ -760,6 +768,7 @@ function HSet([string]$name, $v) {
         'StartupItems' { HSetStartup $name $v }
         'StaleAccounts' { HSetStale $name $v }
         'ShareGrants' { HSetShare $name $v }
+        'RecoveryTools' { HSetRecovery $name $v }
         default { throw 'Unknown hardening source' }
     }
 }
@@ -1534,6 +1543,72 @@ function HItemGone([string]$name) {
     if ($null -eq $p) { return $false }
     Load 'SmbShare'
     return (@(HFindShare $p.share).Count -eq 0)
+}
+
+# ---- recovery.winre_enabled (1 = the Windows recovery tools are on, 0 = off)
+# The state is read from ReAgent.xml, the file in which ReAgentc.exe keeps its
+# own settings: InstallState is 1 while the tools are on. Unlike the text that
+# ReAgentc /info prints, the file reads the same in every display language,
+# and reading it starts no program. Only ReAgentc.exe /enable and /disable
+# change anything: partitions, BitLocker and start-up settings are never
+# edited here, and Windows moves the recovery image itself.
+function HRecoveryDir() { return [IO.Path]::Combine($env:SystemRoot, 'System32\Recovery') }
+function HReagentPath() { return [IO.Path]::Combine($env:SystemRoot, 'System32\ReAgentc.exe') }
+function HReadRecovery() {
+    $file = [IO.Path]::Combine((HRecoveryDir), 'ReAgent.xml')
+    if (![IO.File]::Exists($file)) { throw 'The recovery tools setting is not readable' }
+    $doc = HLoadXml $file
+    $nodes = @($doc.SelectNodes("/*[local-name()='WindowsRE']/*[local-name()='InstallState']"))
+    if ($nodes.Count -ne 1) { throw 'The recovery tools setting is not readable' }
+    $state = [string]$nodes[0].GetAttribute('state')
+    if ($state -ceq '1') { return @{ Enabled = 1 } }
+    if ($state -ceq '0') { return @{ Enabled = 0 } }
+    throw 'The recovery tools setting is not readable'
+}
+function HRecoveryImageReady() {
+    # While the tools are off, Windows keeps their image here; /enable moves it into place.
+    $image = [IO.FileInfo]::new([IO.Path]::Combine((HRecoveryDir), 'Winre.wim'))
+    return ($image.Exists -and $image.Length -gt 0)
+}
+function HRunReagent([string]$verb) {
+    if (@('/enable', '/disable') -cnotcontains $verb) { throw 'Unknown recovery tools change' }
+    $exe = HReagentPath
+    if (![IO.File]::Exists($exe)) { throw 'The recovery tools are missing from this PC' }
+    $start = [Diagnostics.ProcessStartInfo]::new($exe, $verb)
+    $start.UseShellExecute = $false
+    # A hidden console of its own: no window ever appears.
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.WorkingDirectory = [IO.Path]::Combine($env:SystemRoot, 'System32')
+    # The launcher clears the environment; give the tool a working folder for its own files.
+    $temp = [IO.Path]::Combine($env:SystemRoot, 'Temp')
+    $start.EnvironmentVariables['TEMP'] = $temp
+    $start.EnvironmentVariables['TMP'] = $temp
+    $drive = [IO.Path]::GetPathRoot($env:SystemRoot).TrimEnd([char]92)
+    if ($drive -cmatch '^[A-Za-z]:$') { $start.EnvironmentVariables['SystemDrive'] = $drive }
+    $p = [Diagnostics.Process]::Start($start)
+    try {
+        $p.StandardInput.Close()
+        # Both outputs are drained so a full pipe can never stall the tool. The
+        # text is in the display language, so it is never parsed: the exit code
+        # and a fresh read of ReAgent.xml decide.
+        $out = $p.StandardOutput.ReadToEndAsync()
+        $err = $p.StandardError.ReadToEndAsync()
+        $p.WaitForExit()
+        $null = $out.Result
+        $null = $err.Result
+        return [int]$p.ExitCode
+    } finally { $p.Dispose() }
+}
+function HSetRecovery([string]$name, $v) {
+    if ($name -cne 'Enabled') { throw 'Unknown hardening item' }
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid recovery tools state' }
+    if ((HReadRecovery).Enabled -eq [int]$v) { return }
+    $verb = if ([int]$v -eq 1) { '/enable' } else { '/disable' }
+    $code = HRunReagent $verb
+    if ($code -ne 0) { throw "Windows could not change the recovery tools (code $code)" }
 }
 
 function HParseInput($inputValue) {
