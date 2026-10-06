@@ -1,4 +1,7 @@
 //! Application-upgrade API: deliberately unsupported in production.
+//!
+//! The catalog is empty on purpose: no reviewed installer has yet passed
+//! payload-identity and process-supervision checks, so nothing may be offered.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
