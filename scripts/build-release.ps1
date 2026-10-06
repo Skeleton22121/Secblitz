@@ -147,7 +147,8 @@ try {
     } else {
         Copy-Item -LiteralPath (Join-Path $root "target\$target\release\secblitz.exe") -Destination $exe -Force
     }
-    $binaryVersion = & $exe '--version'
+    # A GUI-subsystem program is only waited for when its output is piped.
+    $binaryVersion = & $exe '--version' | Out-String
     if ($LASTEXITCODE -ne 0 -or ($binaryVersion -join "`n").Trim() -cne "secblitz $version") {
         throw "Executable version does not match Cargo package version $version."
     }
