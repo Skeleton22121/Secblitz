@@ -137,7 +137,7 @@ try {
     Expect-Rejected { Assert-SafeItem $pdLike }
     Release-Pins
     $acl = Get-Acl -LiteralPath $pdLike
-    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;0x1200bf;;;BU)')
+    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;0x1200ff;;;BU)')
     Set-Acl -LiteralPath $pdLike -AclObject $acl
     Expect-Rejected { Assert-SafeItem $pdLike $true $true }
     Release-Pins
