@@ -165,10 +165,90 @@ impl Readiness {
     }
 }
 
+/// Outcome and finding status. Unrecognised text from disk or the backend is kept as `Other` so saved reports still load.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CheckStatus {
+    Ok,
+    Info,
+    Attention,
+    Review,
+    #[default]
+    Unknown,
+    Compliant,
+    Pending,
+    Applied,
+    Restored,
+    Unchanged,
+    Skipped,
+    Error,
+    Conflict,
+    Other(String),
+}
+
+impl CheckStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Ok => "ok",
+            Self::Info => "info",
+            Self::Attention => "attention",
+            Self::Review => "review",
+            Self::Unknown => "unknown",
+            Self::Compliant => "compliant",
+            Self::Pending => "pending",
+            Self::Applied => "applied",
+            Self::Restored => "restored",
+            Self::Unchanged => "unchanged",
+            Self::Skipped => "skipped",
+            Self::Error => "error",
+            Self::Conflict => "conflict",
+            Self::Other(s) => s,
+        }
+    }
+}
+
+impl From<&str> for CheckStatus {
+    fn from(s: &str) -> Self {
+        match s {
+            "ok" => Self::Ok,
+            "info" => Self::Info,
+            "attention" => Self::Attention,
+            "review" => Self::Review,
+            "unknown" => Self::Unknown,
+            "compliant" => Self::Compliant,
+            "pending" => Self::Pending,
+            "applied" => Self::Applied,
+            "restored" => Self::Restored,
+            "unchanged" => Self::Unchanged,
+            "skipped" => Self::Skipped,
+            "error" => Self::Error,
+            "conflict" => Self::Conflict,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+}
+
+impl std::fmt::Display for CheckStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for CheckStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CheckStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|s| Self::from(s.as_str()))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub title: String,
-    pub status: String,
+    pub status: CheckStatus,
     pub detail: String,
 }
 
@@ -190,6 +270,25 @@ pub trait Backend {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn check_status_round_trips_every_value_and_keeps_unknown_text() {
+        for s in [
+            "ok", "info", "attention", "review", "unknown", "compliant", "pending", "applied",
+            "restored", "unchanged", "skipped", "error", "conflict",
+        ] {
+            let v: CheckStatus = serde_json::from_value(json!(s)).unwrap();
+            assert!(!matches!(v, CheckStatus::Other(_)), "{s}");
+            assert_eq!(v.as_str(), s);
+            assert_eq!(serde_json::to_value(&v).unwrap(), json!(s));
+        }
+        let v: CheckStatus = serde_json::from_value(json!("from_the_future")).unwrap();
+        assert_eq!(v, CheckStatus::Other("from_the_future".into()));
+        assert_eq!(serde_json::to_value(&v).unwrap(), json!("from_the_future"));
+        let f: Finding =
+            serde_json::from_value(json!({"title":"t","status":"review","detail":"d"})).unwrap();
+        assert_eq!(f.status, CheckStatus::Review);
+    }
 
     #[test]
     fn firewall_evidence_is_typed_control_scoped_and_never_grants_eligibility() {

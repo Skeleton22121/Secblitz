@@ -1,5 +1,5 @@
 //! Fixed-service exact-state DACL repair and bounded advisory auditing.
-use crate::model::{Backend, Control, Finding, Observation, Readiness};
+use crate::model::{Backend, CheckStatus, Control, Finding, Observation, Readiness};
 use anyhow::Result;
 use serde_json::Value;
 
@@ -172,7 +172,7 @@ impl Backend for AuditedBackend {
             Ok(extra) => findings.extend(extra),
             Err(error) => findings.push(Finding {
                 title: "Service permission audit".into(),
-                status: "unknown".into(),
+                status: CheckStatus::Unknown,
                 detail: error.to_string(),
             }),
         }
@@ -240,7 +240,7 @@ mod tests {
         fn findings(&mut self) -> Result<Vec<Finding>> {
             Ok(vec![Finding {
                 title: "delegate evidence".into(),
-                status: "info".into(),
+                status: CheckStatus::Info,
                 detail: "retained".into(),
             }])
         }
@@ -269,7 +269,7 @@ mod tests {
         let findings = backend.findings().unwrap();
         assert_eq!(findings.len(), 2);
         assert_eq!(findings[0].title, "delegate evidence");
-        assert_eq!(findings[1].status, "unknown");
+        assert_eq!(findings[1].status, CheckStatus::Unknown);
     }
 
     #[test]

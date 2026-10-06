@@ -1,6 +1,7 @@
 // Engine-only crash/fault tests; included inside engine::tests to reuse its stateful backend and fixtures.
 mod recovery {
     use super::*;
+    use crate::model::CheckStatus;
 
     const NAME: &str = "00000000000000000001-00000000-0000-4000-8000-000000000001";
 
@@ -789,7 +790,7 @@ mod recovery {
                 .unwrap()
                 .results[0]
                 .status,
-            "pending"
+            CheckStatus::Pending
         );
         assert_eq!(state.borrow().observe_count, observations);
         assert_eq!(state.borrow().writes.len(), 1);

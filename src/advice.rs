@@ -10,6 +10,7 @@ pub use impact::{control_impact, finding_impact};
 pub use labels::control_label;
 use labels::control_help;
 use reasons::{managed, not_offered, repair_help};
+use secblitz::model::CheckStatus;
 
 pub fn control_for_finding(title: &str) -> Option<&'static str> {
     Some(match title {
@@ -71,7 +72,7 @@ impl Advice {
 }
 
 
-fn base(label: &'static str, status: &str, help: (&'static str, NextStep)) -> Advice {
+fn base(label: &'static str, status: &CheckStatus, help: (&'static str, NextStep)) -> Advice {
     let mut a = Advice {
         label,
         status: "Needs your choice",
@@ -82,13 +83,13 @@ fn base(label: &'static str, status: &str, help: (&'static str, NextStep)) -> Ad
         ask: false,
     };
     match status {
-        "compliant" | "ok" => {
+        CheckStatus::Compliant | CheckStatus::Ok => {
             a.status = "Good to go";
             a.next = "Nothing to do here.";
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
-        "unknown" | "error" => {
+        CheckStatus::Unknown | CheckStatus::Error => {
             a.status = "Couldn't check";
         }
         _ => {}
@@ -96,10 +97,10 @@ fn base(label: &'static str, status: &str, help: (&'static str, NextStep)) -> Ad
     a
 }
 
-pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
+pub fn for_control(id: &str, status: &CheckStatus, detail: &str) -> Advice {
     let mut a = base(control_label(id), status, control_help(id));
     match status {
-        "attention" if a.label != "Protection check" && id != "findings" => {
+        CheckStatus::Attention if a.label != "Protection check" && id != "findings" => {
             a.status = "Can fix";
             a.next = repair_help(id);
             a.step = NextStep::Repair;
@@ -115,13 +116,13 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
                 };
             }
         }
-        "applied" => {
+        CheckStatus::Applied => {
             a.status = "Fixed";
             a.next = "This setting was updated and checked.";
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
-        "unchanged"
+        CheckStatus::Unchanged
             if matches!(
                 detail,
                 "Target preference already present"
@@ -133,36 +134,36 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
-        "restored" => {
+        CheckStatus::Restored => {
             a.next = "Your earlier setting was restored.";
             a.step = NextStep::CheckAgain;
         }
-        "pending" => {
+        &CheckStatus::Pending => {
             a.next = "Undo your last fixes before making new ones.";
             a.step = NextStep::ReviewUndo;
         }
-        "conflict" => {
+        &CheckStatus::Conflict => {
             a.next = "This setting changed again after our fix, so we left it alone.";
             a.step = NextStep::ReviewUndo;
         }
-        "skipped" if managed(detail) => {
+        CheckStatus::Skipped if managed(detail) => {
             a.status = "Managed elsewhere";
             a.next = "This PC's owner controls this setting, so we leave it as it is.";
             a.step = NextStep::ReviewWithAdministrator;
         }
-        "skipped" if detail == secblitz::vbs::ALREADY_ON => {
+        CheckStatus::Skipped if detail == secblitz::vbs::ALREADY_ON => {
             a.status = "Good to go";
             a.next = "This protection is already running on this PC. Nothing to change.";
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
-        "skipped" if not_offered(detail).is_some() => {
+        CheckStatus::Skipped if not_offered(detail).is_some() => {
             a.status = "Not offered";
             a.next = not_offered(detail).unwrap_or_default();
             a.step = NextStep::None;
             a.group = Group::Information;
         }
-        "skipped"
+        CheckStatus::Skipped
             if matches!(
                 detail,
                 "Preserving absent or nonzero UAC preference"
@@ -176,7 +177,7 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.step = NextStep::None;
             a.group = Group::Protected;
         }
-        "skipped"
+        CheckStatus::Skipped
             if matches!(
                 detail,
                 "Revert the active transaction before starting another apply"
@@ -186,7 +187,7 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.next = "Undo your last fixes before making new ones.";
             a.step = NextStep::ReviewUndo;
         }
-        "skipped" if id.starts_with("permissions.service.") && !detail.is_empty() => {
+        CheckStatus::Skipped if id.starts_with("permissions.service.") && !detail.is_empty() => {
             // The permission list could not be proven safe to edit (unusual
             // layout, owner or device rules). We never claim it is protected.
             a.status = "Left as it is";
@@ -194,8 +195,8 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
         }
         _ => {}
     }
-    if (status == "applied" && detail == "Preference applied; restart required")
-        || (status == "restored" && detail == "Original preference restored; restart required")
+    if (*status == CheckStatus::Applied && detail == "Preference applied; restart required")
+        || (*status == CheckStatus::Restored && detail == "Original preference restored; restart required")
     {
         a.status = "Restart needed";
         a.group = Group::Choice;
@@ -233,8 +234,8 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
         || matches!(outcome.effective, Some(EffectiveFirewall::Inbound(_))) && inbound;
     if outcome.authority != Some(Authority::Local) || !verified {
         if matches!(
-            outcome.status.as_str(),
-            "attention" | "compliant" | "ok" | "unchanged" | "applied"
+            outcome.status,
+            CheckStatus::Attention | CheckStatus::Compliant | CheckStatus::Ok | CheckStatus::Unchanged | CheckStatus::Applied
         ) {
             a.status = "Couldn't check";
             a.next =
@@ -245,8 +246,8 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
         return a;
     }
     if matches!(
-        outcome.status.as_str(),
-        "compliant" | "ok" | "unchanged" | "applied"
+        outcome.status,
+        CheckStatus::Compliant | CheckStatus::Ok | CheckStatus::Unchanged | CheckStatus::Applied
     ) {
         let protected = matches!(
             outcome.effective,
@@ -254,7 +255,7 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
                 EffectiveFirewall::Enabled(true) | EffectiveFirewall::Inbound(InboundAction::Block)
             )
         );
-        if protected && outcome.status != "applied" {
+        if protected && outcome.status != CheckStatus::Applied {
             a.status = "Protected by Windows";
             a.next = "Windows is already blocking these connections. Nothing to do.";
             a.step = NextStep::None;
@@ -274,7 +275,7 @@ fn undo_ready(detail: &str) -> bool {
     detail.starts_with(secblitz::vbs::UNDO_READY)
 }
 
-pub fn for_finding(title: &str, status: &str, detail: &str) -> Advice {
+pub fn for_finding(title: &str, status: &CheckStatus, detail: &str) -> Advice {
     use NextStep::*;
     let (label, next, step) = match title {
         "Security providers" => ("Your security apps", "Open Windows Security to make sure your antivirus is on and working.", OpenWindowsSecurity),
@@ -306,7 +307,7 @@ pub fn for_finding(title: &str, status: &str, detail: &str) -> Advice {
         _ => ("Protection check", "Check again in a moment. Nothing has been changed.", CheckAgain),
     };
     let mut a = base(label, status, (next, step));
-    if status == "info" {
+    if *status == CheckStatus::Info {
         a.group = Group::Information;
         a.status = "For your information";
     }
@@ -340,16 +341,16 @@ mod tests {
             "permissions.service.bits",
             "permissions.service.wuauserv",
         ] {
-            let a = for_control(id, "attention", "");
+            let a = for_control(id, &CheckStatus::Attention, "");
             assert!(!a.impact.is_empty(), "missing impact for control: {id}");
-            let a_ok = for_control(id, "compliant", "");
+            let a_ok = for_control(id, &CheckStatus::Compliant, "");
             assert!(
                 !a_ok.impact.is_empty(),
                 "missing impact for compliant control: {id}"
             );
         }
-        assert!(for_control("unknown.id", "attention", "").impact.is_empty());
-        assert!(for_control("findings", "attention", "").impact.is_empty());
+        assert!(for_control("unknown.id", &CheckStatus::Attention, "").impact.is_empty());
+        assert!(for_control("findings", &CheckStatus::Attention, "").impact.is_empty());
 
         for title in [
             "Windows lifecycle",
@@ -362,7 +363,7 @@ mod tests {
             "Memory integrity",
             "Automatic logon",
         ] {
-            let a = for_finding(title, "attention", "");
+            let a = for_finding(title, &CheckStatus::Attention, "");
             assert!(!a.impact.is_empty(), "missing impact for finding: {title}");
         }
         for title in [
@@ -373,7 +374,7 @@ mod tests {
             "Assessment unavailable",
         ] {
             assert!(
-                for_finding(title, "attention", "").impact.is_empty(),
+                for_finding(title, &CheckStatus::Attention, "").impact.is_empty(),
                 "unexpected impact for finding: {title}"
             );
         }
@@ -386,10 +387,10 @@ mod tests {
             assert_ne!(control_label(id), "Protection check", "{id}");
             assert!(!control_impact(id).is_empty(), "{id}");
             assert_eq!(is_choice_check_id(id), spec.ask, "{id}");
-            let ok = for_control(id, "compliant", "");
+            let ok = for_control(id, &CheckStatus::Compliant, "");
             assert_eq!(ok.group, Group::Protected, "{id}");
             assert!(!ok.ask);
-            let a = for_control(id, "attention", "Eligible");
+            let a = for_control(id, &CheckStatus::Attention, "Eligible");
             assert_eq!(a.step, NextStep::Repair, "{id}");
             assert_eq!(a.ask, spec.ask, "{id}");
             if spec.ask {
@@ -415,12 +416,12 @@ mod tests {
             }
             let managed = for_control(
                 id,
-                "skipped",
+                &CheckStatus::Skipped,
                 "Applied computer Group Policy: assessment only",
             );
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
             assert_ne!(managed.step, NextStep::Repair);
-            let applied = for_control(id, "applied", "Preference applied; restart required");
+            let applied = for_control(id, &CheckStatus::Applied, "Preference applied; restart required");
             assert_eq!(applied.status, "Restart needed", "{id}");
         }
         assert!(!is_choice_check_id("uac.enabled") && !is_choice_check_id("unknown.id"));
@@ -475,13 +476,13 @@ mod tests {
             "Not offered: a shared folder has permissions that could not be put back exactly",
             "Not offered: the recovery tools are missing from this PC",
         ] {
-            let a = for_control("lsa.run_as_ppl", "skipped", reason);
+            let a = for_control("lsa.run_as_ppl", &CheckStatus::Skipped, reason);
             assert_eq!(a.status, "Not offered", "{reason}");
             assert_eq!(a.group, Group::Information);
             assert_ne!(a.step, NextStep::Repair);
         }
         assert_ne!(
-            for_control("lsa.run_as_ppl", "skipped", "Not offered: anything").status,
+            for_control("lsa.run_as_ppl", &CheckStatus::Skipped, "Not offered: anything").status,
             "Not offered"
         );
     }
@@ -495,8 +496,8 @@ mod tests {
         ] {
             assert_eq!(control_for_finding(title), Some(id));
             assert!(secblitz::hardening::is_hardening_check_id(id));
-            assert_eq!(for_finding(title, "attention", "").label, control_label(id));
-            assert_eq!(for_finding(title, "attention", "").impact, control_impact(id));
+            assert_eq!(for_finding(title, &CheckStatus::Attention, "").label, control_label(id));
+            assert_eq!(for_finding(title, &CheckStatus::Attention, "").impact, control_impact(id));
         }
         assert_eq!(control_for_finding("Secure Boot"), None);
         assert!(choice_consequence("accounts.autologon").contains("password or PIN"));
@@ -506,10 +507,10 @@ mod tests {
     #[test]
     fn core_protection_rows_read_well_when_offered_blocked_or_waiting_for_a_restart() {
         for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
-            let a = for_control(id, "attention", "Eligible");
+            let a = for_control(id, &CheckStatus::Attention, "Eligible");
             assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
             assert!(a.next.contains("restart") && a.next.contains("undo"), "{id}");
-            let applied = for_control(id, "applied", "Preference applied; restart required");
+            let applied = for_control(id, &CheckStatus::Applied, "Preference applied; restart required");
             assert_eq!(applied.status, "Restart needed");
             assert_eq!(applied.step, NextStep::Restart);
             for reason in [
@@ -521,21 +522,21 @@ mod tests {
                 secblitz::vbs::SET_BY_HAND,
                 secblitz::vbs::OLD_WINDOWS,
             ] {
-                let n = for_control(id, "skipped", reason);
+                let n = for_control(id, &CheckStatus::Skipped, reason);
                 assert_eq!(n.status, "Not offered", "{reason}");
                 assert_eq!(n.group, Group::Information);
                 assert_eq!(n.step, NextStep::None);
                 assert!(n.next.ends_with('.') && n.next.len() < 170, "{reason}");
                 assert!(!n.next.contains("Memory integrity"), "{reason}");
             }
-            let on = for_control(id, "skipped", secblitz::vbs::ALREADY_ON);
+            let on = for_control(id, &CheckStatus::Skipped, secblitz::vbs::ALREADY_ON);
             assert_eq!((on.status, on.group), ("Good to go", Group::Protected));
-            let m = for_control(id, "skipped", "Relevant policy is configured: assessment only");
+            let m = for_control(id, &CheckStatus::Skipped, "Relevant policy is configured: assessment only");
             assert_eq!(m.status, "Managed elsewhere");
         }
         let driver = for_control(
             "vbs.memory_integrity",
-            "skipped",
+            &CheckStatus::Skipped,
             "Not offered: a driver on this PC may not work with it: a.sys",
         );
         assert!(driver.next.contains("Device security, then Core isolation details"));
@@ -550,13 +551,13 @@ mod tests {
             "Kernel stack protection not running",
             "A device may not be working",
         ] {
-            let a = for_finding(title, "attention", &ready);
+            let a = for_finding(title, &CheckStatus::Attention, &ready);
             assert_eq!(a.step, NextStep::ReviewUndo, "{title}");
             assert_eq!(a.group, Group::Choice);
             assert!(a.next.contains("undo"), "{title}");
             assert!(!a.impact.is_empty(), "{title}");
             assert!(a.next.len() < 170);
-            let h = for_finding(title, "attention", "boot: 1.");
+            let h = for_finding(title, &CheckStatus::Attention, "boot: 1.");
             assert_eq!(h.step, NextStep::OpenHistory, "{title}");
             assert!(h.next.contains("History") && h.next.len() < 190, "{title}");
         }
@@ -587,12 +588,12 @@ mod tests {
     #[test]
     fn recovery_tools_row_is_a_normal_fix_with_a_plain_reason_when_not_offered() {
         let id = "recovery.winre_enabled";
-        let a = for_control(id, "attention", "Eligible");
+        let a = for_control(id, &CheckStatus::Attention, "Eligible");
         assert_eq!((a.status, a.step, a.ask, a.group), ("Can fix", NextStep::Repair, false, Group::Recommended));
         assert!(a.next.contains("recovery tools") && a.next.len() < 130, "{}", a.next);
         assert_eq!(a.impact_prefix(), "Turning it on protects you from:");
         assert!(!a.impact.is_empty() && !a.impact.ends_with('.'));
-        let ok = for_control(id, "compliant", "");
+        let ok = for_control(id, &CheckStatus::Compliant, "");
         assert_eq!((ok.status, ok.group), ("Good to go", Group::Protected));
         let script = include_str!("platform/hardening.ps1");
         let start = script.find("'recovery.winre_enabled' {").unwrap();
@@ -600,14 +601,14 @@ mod tests {
         let reasons: Vec<&str> = body.split('\'').filter(|p| p.starts_with("Not offered: ")).collect();
         assert!(!reasons.is_empty());
         for reason in reasons {
-            let a = for_control(id, "skipped", reason);
+            let a = for_control(id, &CheckStatus::Skipped, reason);
             assert_eq!((a.status, a.group), ("Not offered", Group::Information), "{reason}");
             assert_ne!(a.step, NextStep::Repair);
             assert!(a.next.ends_with('.') && !a.next.contains('\u{2014}'), "{reason}");
         }
-        let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
+        let managed = for_control(id, &CheckStatus::Skipped, "Domain-managed machine: assessment only");
         assert_eq!(managed.status, "Managed elsewhere");
-        assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
+        assert_eq!(for_control(id, &CheckStatus::Conflict, "").step, NextStep::ReviewUndo);
     }
 
     #[test]
@@ -619,38 +620,38 @@ mod tests {
             "persistence.run_and_tasks",
         ] {
             assert!(is_choice_check_id(id), "{id}");
-            let a = for_control(id, "attention", "Eligible");
+            let a = for_control(id, &CheckStatus::Attention, "Eligible");
             assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
             assert!(!a.impact.is_empty() && a.next == choice_consequence(id));
-            let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
+            let managed = for_control(id, &CheckStatus::Skipped, "Domain-managed machine: assessment only");
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
-            assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
+            assert_eq!(for_control(id, &CheckStatus::Conflict, "").step, NextStep::ReviewUndo);
         }
     }
 
     #[test]
     fn impact_prefix_follows_group_and_is_empty_when_impact_is_empty() {
-        let a = for_control("uac.enabled", "compliant", "");
+        let a = for_control("uac.enabled", &CheckStatus::Compliant, "");
         assert_eq!(a.group, Group::Protected);
         assert_eq!(a.impact_prefix(), "Protects you from:");
 
-        let a = for_control("uac.enabled", "attention", "");
+        let a = for_control("uac.enabled", &CheckStatus::Attention, "");
         assert_eq!(a.group, Group::Recommended);
         assert_eq!(a.impact_prefix(), "Turning it on protects you from:");
 
-        let a = for_control("uac.enabled", "unknown", "");
+        let a = for_control("uac.enabled", &CheckStatus::Unknown, "");
         assert_eq!(a.group, Group::Choice);
         assert_eq!(a.impact_prefix(), "Why it matters:");
 
         let a = for_control(
             "uac.enabled",
-            "applied",
+            &CheckStatus::Applied,
             "Preference applied; restart required",
         );
         assert_eq!(a.group, Group::Choice);
         assert_eq!(a.impact_prefix(), "Why it matters:");
 
-        let a = for_control("unknown.id", "compliant", "");
+        let a = for_control("unknown.id", &CheckStatus::Compliant, "");
         assert!(a.impact.is_empty());
         assert_eq!(a.impact_prefix(), "");
     }
@@ -670,7 +671,7 @@ mod tests {
         ] {
             let outcome = Outcome {
                 id: id.into(),
-                status: "applied".into(),
+                status: CheckStatus::Applied,
                 effective: Some(effective),
                 authority: Some(Authority::Local),
                 ..Default::default()
@@ -683,7 +684,7 @@ mod tests {
         assert_eq!(
             for_control(
                 "uac.enabled",
-                "skipped",
+                &CheckStatus::Skipped,
                 "Relevant policy is configured: assessment only"
             )
             .status,
@@ -699,7 +700,7 @@ mod tests {
         };
         let mut outcome = Outcome {
             id: "firewall.public.inbound".into(),
-            status: "compliant".into(),
+            status: CheckStatus::Compliant,
             detail: "untrusted prose saying defaults are safe".into(),
             effective: Some(EffectiveFirewall::Inbound(InboundAction::Block)),
             authority: Some(Authority::Local),
@@ -723,17 +724,17 @@ mod tests {
             outcome.effective = evidence;
             assert_ne!(for_outcome(&outcome).group, Group::Protected);
         }
-        outcome.status = "attention".into();
+        outcome.status = CheckStatus::Attention;
         assert_eq!(for_outcome(&outcome).step, NextStep::Repair);
-        outcome.status = "skipped".into();
+        outcome.status = CheckStatus::Skipped;
         assert_ne!(for_outcome(&outcome).step, NextStep::Repair);
     }
 
     #[test]
     fn informational_findings_do_not_count_as_problems_or_protection() {
         for title in ["Windows updates", "Journal recovery"] {
-            assert_eq!(for_finding(title, "info", "").group, Group::Information);
-            assert_eq!(for_finding(title, "pending", "").group, Group::Choice);
+            assert_eq!(for_finding(title, &CheckStatus::Info, "").group, Group::Information);
+            assert_eq!(for_finding(title, &CheckStatus::Pending, "").group, Group::Choice);
         }
     }
 
@@ -745,8 +746,8 @@ mod tests {
             "Service permissions: BITS",
             "Windows updates",
         ] {
-            for status in ["attention", "review", "info", "unknown"] {
-                let a = for_finding(title, status, "Everything is fine; eligible");
+            for status in [CheckStatus::Attention, CheckStatus::Review, CheckStatus::Info, CheckStatus::Unknown] {
+                let a = for_finding(title, &status, "Everything is fine; eligible");
                 assert_ne!(a.step, NextStep::Repair);
                 assert_ne!(a.group, Group::Protected);
                 assert!(!a.next.contains("Secblitz can fix"));
@@ -758,7 +759,7 @@ mod tests {
     fn skips_restores_and_restart_do_not_claim_protection() {
         let a = for_control(
             "uac.enabled",
-            "skipped",
+            &CheckStatus::Skipped,
             "Preserving absent or nonzero UAC preference",
         );
         assert_eq!(a.status, "Protected by Windows");
@@ -773,7 +774,7 @@ mod tests {
         ] {
             let a = for_control(
                 id,
-                "skipped",
+                &CheckStatus::Skipped,
                 "Preserving absent or already-safe machine preference",
             );
             assert_eq!(a.group, Group::Protected, "{id}");
@@ -781,7 +782,7 @@ mod tests {
         }
         let p = for_control(
             "permissions.service.bits",
-            "skipped",
+            &CheckStatus::Skipped,
             "Service permissions preserved: Complex ACL requires manual review",
         );
         assert_eq!(p.group, Group::Choice);
@@ -789,7 +790,7 @@ mod tests {
         assert_eq!(
             for_control(
                 "uac.enabled",
-                "skipped",
+                &CheckStatus::Skipped,
                 "Domain-managed machine: assessment only"
             )
             .status,
@@ -798,37 +799,37 @@ mod tests {
         assert_eq!(
             for_control(
                 "uac.enabled",
-                "skipped",
+                &CheckStatus::Skipped,
                 "Group Policy authority is unknown: assessment only"
             )
             .status,
             "Needs your choice"
         );
         for (status, detail) in [
-            ("restored", "Original preference restored"),
-            ("unchanged", "Original preference already present"),
-            ("skipped", "new reason"),
+            (CheckStatus::Restored, "Original preference restored"),
+            (CheckStatus::Unchanged, "Original preference already present"),
+            (CheckStatus::Skipped, "new reason"),
         ] {
             assert_eq!(
-                for_control("uac.enabled", status, detail).group,
+                for_control("uac.enabled", &status, detail).group,
                 Group::Choice
             );
         }
         assert_eq!(
             for_control(
                 "wdigest.use_logon_credential",
-                "applied",
+                &CheckStatus::Applied,
                 "Preference applied; restart required"
             )
             .status,
             "Restart needed"
         );
         assert_eq!(
-            for_control("unknown.control", "attention", "eligible").step,
+            for_control("unknown.control", &CheckStatus::Attention, "eligible").step,
             NextStep::CheckAgain
         );
         assert_eq!(
-            for_control("firewall.public.enabled", "attention", "").step,
+            for_control("firewall.public.enabled", &CheckStatus::Attention, "").step,
             NextStep::Repair
         );
     }
