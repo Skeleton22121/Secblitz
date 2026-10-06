@@ -4,10 +4,7 @@ use std::{
     fs::File,
     io::{Seek, SeekFrom, Write},
     mem::{size_of, zeroed},
-    os::windows::{
-        ffi::OsStrExt,
-        io::{AsRawHandle, FromRawHandle},
-    },
+    os::windows::io::{AsRawHandle, FromRawHandle},
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::{
@@ -32,6 +29,8 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     UI::Shell::{FOLDERID_ProgramFiles, SHGetKnownFolderPath},
 };
+
+use crate::platform::security::{descriptor, error, sid, wide, wide_str, Local};
 
 const NAME: &str = "SecblitzMonitor";
 const ACCOUNT: &str = r"NT AUTHORITY\LocalService";
@@ -80,45 +79,6 @@ extern "system" {
     fn ChangeServiceConfig2W(service: *mut c_void, level: u32, info: *const c_void) -> i32;
 }
 
-struct Local(*mut c_void);
-impl Drop for Local {
-    fn drop(&mut self) {
-        unsafe {
-            LocalFree(self.0);
-        }
-    }
-}
-fn error() -> anyhow::Error {
-    std::io::Error::last_os_error().into()
-}
-fn wide(s: impl AsRef<OsStr>) -> Result<Vec<u16>> {
-    let mut v: Vec<u16> = s.as_ref().encode_wide().collect();
-    ensure!(!v.contains(&0), "Embedded NUL");
-    v.push(0);
-    Ok(v)
-}
-fn descriptor(s: &str) -> Result<Local> {
-    let s = wide(s)?;
-    let mut p = null_mut();
-    ensure!(
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(s.as_ptr(), 1, &mut p, null_mut())
-        } != 0,
-        "Security descriptor: {}",
-        error()
-    );
-    Ok(Local(p))
-}
-fn sid(s: &str) -> Result<Local> {
-    let s = wide(s)?;
-    let mut p = null_mut();
-    ensure!(
-        unsafe { ConvertStringSidToSidW(s.as_ptr(), &mut p) } != 0,
-        "SID: {}",
-        error()
-    );
-    Ok(Local(p))
-}
 fn attributes(sd: &Local) -> SECURITY_ATTRIBUTES {
     SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -139,16 +99,11 @@ fn base() -> Result<PathBuf> {
         "Cannot resolve Program Files ({hr:#x})"
     );
     let result = (|| {
-        let mut len = 0;
-        unsafe {
-            while len < 32768 && *raw.add(len) != 0 {
-                len += 1;
-            }
-            ensure!(len < 32768, "Invalid known-folder path");
-            let p = PathBuf::from(String::from_utf16(std::slice::from_raw_parts(raw, len))?);
-            path_text(&p)?;
-            Ok(p)
-        }
+        // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+        let text = unsafe { wide_str(raw) }.context("Invalid known-folder path")?;
+        let p = PathBuf::from(String::from_utf16(text)?);
+        path_text(&p)?;
+        Ok(p)
     })();
     unsafe {
         CoTaskMemFree(raw.cast());
@@ -175,6 +130,7 @@ fn open(path: &Path, access: u32, creation: u32, sd: Option<&Local>) -> Result<F
     Ok(unsafe { File::from_raw_handle(h) })
 }
 fn info(file: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut i = unsafe { zeroed() };
     ensure!(
         unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut i) } != 0,
@@ -593,10 +549,7 @@ fn command(path: &Path) -> Result<String> {
 }
 
 pub fn install() -> Result<()> {
-    ensure!(
-        crate::platform::is_elevated()?,
-        "Service installation requires Administrator elevation"
-    );
+    crate::platform::require_admin("Service installation requires Administrator elevation")?;
     ensure!(
         cfg!(target_arch = "x86_64"),
         "The monitor requires Windows x64"
@@ -823,10 +776,7 @@ pub fn install() -> Result<()> {
 }
 
 pub fn start() -> Result<()> {
-    ensure!(
-        crate::platform::is_elevated()?,
-        "Service startup requires Administrator elevation"
-    );
+    crate::platform::require_admin("Service startup requires Administrator elevation")?;
     ensure!(
         cfg!(target_arch = "x86_64"),
         "The monitor requires Windows x64"
@@ -992,10 +942,7 @@ fn inspect_service_descriptor(sd: *mut c_void) -> Result<()> {
 }
 
 pub fn uninstall() -> Result<()> {
-    ensure!(
-        crate::platform::is_elevated()?,
-        "Service removal requires Administrator elevation"
-    );
+    crate::platform::require_admin("Service removal requires Administrator elevation")?;
     let scm = manager(ServiceManagerAccess::CONNECT)?;
     let service = match scm.open_service(
         NAME,

@@ -352,6 +352,13 @@ fn load_journal(path: &Path) -> Journal {
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
+/// For cleanup after a failure: the caller's outcome stays the same, but the lost write is not silent.
+fn save_or_log(path: &Path, journal: &mut Journal) {
+    if let Err(error) = save_journal(path, journal) {
+        eprintln!("{error:#}");
+    }
+}
+
 fn save_journal(path: &Path, journal: &mut Journal) -> Result<()> {
     use std::io::Write;
     journal.v = 1;
@@ -490,7 +497,7 @@ pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcom
     if wrote.is_err() || status(reg, setting) != Status::Safe {
         restore(reg, setting, &priors);
         stored.settings.remove(setting.id());
-        let _ = save_journal(journal, &mut stored);
+        save_or_log(journal, &mut stored);
         return Outcome::Failed;
     }
     if setting == Setting::ShowExtensions {
@@ -507,7 +514,7 @@ pub fn undo(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome
     let all = targets(setting);
     if priors.iter().any(|p| p.i >= all.len()) {
         stored.settings.remove(setting.id());
-        let _ = save_journal(journal, &mut stored);
+        save_or_log(journal, &mut stored);
         return Outcome::Blocked;
     }
     let undone = restore_unless_changed(reg, setting, &priors);
@@ -533,7 +540,6 @@ pub fn undo(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome
 }
 
 /// Settings Secblitz changed and can still put back, in [`Setting::ALL`] order.
-#[allow(dead_code)] // used by the uninstall flow
 pub fn undoable(journal: &Path) -> Vec<Setting> {
     let stored = load_journal(journal);
     Setting::ALL
@@ -544,7 +550,6 @@ pub fn undoable(journal: &Path) -> Vec<Setting> {
 
 /// Put back every journalled setting (the values are independent, so the
 /// order does not matter). A failure on one does not stop the others.
-#[allow(dead_code)] // used by the uninstall flow
 pub fn undo_all(reg: &mut dyn Registry, journal: &Path) -> Vec<(Setting, Outcome)> {
     undoable(journal)
         .into_iter()

@@ -140,6 +140,7 @@ fn make_icon(icon: Icon, size: usize) -> Option<HICON> {
 }
 
 fn data(hwnd: HWND) -> NOTIFYICONDATAW {
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
     nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
     nid.hWnd = hwnd;
@@ -419,6 +420,7 @@ pub fn run(lang: Lang) -> Result<i32> {
     let taskbar = wide("TaskbarCreated");
     let hwnd = unsafe {
         let hinstance = GetModuleHandleW(null());
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut class: WNDCLASSEXW = std::mem::zeroed();
         class.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
         class.lpfnWndProc = Some(proc);
@@ -459,6 +461,7 @@ pub fn run(lang: Lang) -> Result<i32> {
     unsafe {
         SetTimer(hwnd, POLL_TIMER, POLL_EVERY, None);
         SetTimer(hwnd, QUIESCE_TIMER, QUIESCE_EVERY, None);
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);

@@ -73,6 +73,7 @@ pub fn is_elevated() -> Result<bool> {
             return Err(winerr());
         }
         let token = Handle(token);
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut elevation: TOKEN_ELEVATION = zeroed();
         let mut len = 0;
         if GetTokenInformation(
@@ -196,6 +197,7 @@ pub fn enclosing_job() -> Result<EnclosingJob> {
     if in_job == 0 {
         return Ok(EnclosingJob::None);
     }
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut limits: ExtendedLimits = unsafe { zeroed() };
     if unsafe {
         QueryInformationJobObject(
@@ -251,6 +253,7 @@ fn job(processes: u32) -> Result<Handle> {
             winerr()
         );
         let h = Handle(h);
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut limits: ExtendedLimits = zeroed();
         limits.basic.flags = 0x2000 | 0x8; // KILL_ON_JOB_CLOSE | ACTIVE_PROCESS
         limits.basic.active_processes = processes;
@@ -312,10 +315,7 @@ pub fn support_action(id: &str) -> Result<()> {
         cfg!(target_arch = "x86_64"),
         "Secblitz supports Windows x64 only"
     );
-    ensure!(
-        is_elevated()?,
-        "Defender support actions require Administrator elevation"
-    );
+    crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let timeout = match id {
         "defender_update" => Duration::from_secs(120),
         "defender_quickscan" => Duration::from_secs(15 * 60),
@@ -336,10 +336,7 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
         cfg!(target_arch = "x86_64"),
         "Secblitz supports Windows x64 only"
     );
-    ensure!(
-        is_elevated()?,
-        "Defender support actions require Administrator elevation"
-    );
+    crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let reply: Value = run_script(script, Duration::from_secs(10 * 60)).context(
         "Windows Security could not finish removing them. Nothing else was changed",
     )?;
@@ -572,7 +569,7 @@ impl Backend for WindowsBackend {
     }
     fn write(&mut self, id: &str, value: &Value) -> Result<()> {
         validate_value(id, value)?;
-        ensure!(is_elevated()?, "Administrator elevation is required");
+        crate::platform::require_admin("Administrator elevation is required")?;
         let reply: Value = run("write", Some(id), Some(value))?;
         ensure!(
             reply == serde_json::json!({"ok":true}),

@@ -218,7 +218,7 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
                 Ok(0)
             }
             _ => match filter_command(matches) {
-                Some(action) => run_filter_request(action, platform::is_elevated, run_filter),
+                Some(action) => run_filter_request(action, platform::is_admin, run_filter),
                 None => unreachable!(),
             },
         };
@@ -242,7 +242,7 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
         service::run()?;
         return Ok(0);
     }
-    if !platform::is_elevated()? {
+    if !platform::is_admin() {
         return elevate_and_wait(&elevated_args(matches, lang));
     }
     let mut out = io::stdout().lock();
@@ -292,10 +292,10 @@ fn filter_command(matches: &ArgMatches) -> Option<FilterCommand> {
 /// and nothing happens (these commands never ask for elevation).
 fn run_filter_request(
     action: FilterCommand,
-    elevated: impl FnOnce() -> Result<bool>,
+    elevated: impl FnOnce() -> bool,
     run: impl FnOnce(FilterCommand) -> Result<()>,
 ) -> Result<i32> {
-    if !elevated()? {
+    if !elevated() {
         return Ok(2);
     }
     run(action)?;
@@ -373,7 +373,7 @@ fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Resul
     }
     match command {
         UninstallCommand::Revert => {
-            if !platform::is_elevated().unwrap_or(false) {
+            if !platform::is_admin() {
                 return Ok(UNINSTALL_REFUSED);
             }
             print(&uninstall::revert_machine(&|_, _| {}), json, lang);
@@ -448,11 +448,11 @@ fn run_update_request(
     action: UpdateCommand,
     interactive: bool,
     json: bool,
-    elevated: impl FnOnce() -> Result<bool>,
+    elevated: impl FnOnce() -> bool,
     elevate: impl FnOnce() -> Result<i32>,
     run: impl FnOnce(UpdateCommand) -> Result<UpdateReport>,
 ) -> Result<UpdateRun> {
-    if !matches!(action, UpdateCommand::InstallStaged | UpdateCommand::Health) && !elevated()? {
+    if !matches!(action, UpdateCommand::InstallStaged | UpdateCommand::Health) && !elevated() {
         anyhow::ensure!(
             interactive && !json,
             "Run update commands from an administrator terminal."
@@ -472,7 +472,7 @@ fn execute_update(matches: &ArgMatches, lang: Lang, action: UpdateCommand) -> Re
         action,
         interactive,
         json,
-        platform::is_elevated,
+        platform::is_admin,
         || {
             eprintln!("{}", lang.t("Requesting administrator access"));
             elevate_and_wait(&elevated_args(matches, lang))
@@ -571,7 +571,7 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
             .filter(|id| broker::valid_id(id))
             .map(str::to_owned);
         let start = flag_value(args, "--self-test").and_then(gui::Page::parse);
-        if !platform::is_elevated().unwrap_or(false) {
+        if !platform::is_admin() {
             return launcher::run(lang);
         }
         let _guard = match launcher::single_instance()? {
@@ -756,7 +756,7 @@ mod tests {
             assert!(!json_allowed(&matches));
             let code = run_filter_request(
                 expected,
-                || Ok(false),
+                || false,
                 |_| panic!("an unelevated caller must not run web protection changes"),
             )
             .unwrap();
@@ -764,7 +764,7 @@ mod tests {
             let mut ran = None;
             let code = run_filter_request(
                 expected,
-                || Ok(true),
+                || true,
                 |a| {
                     ran = Some(a);
                     Ok(())
@@ -863,7 +863,7 @@ mod tests {
                 update_command(&matches).unwrap(),
                 true,
                 false,
-                || Ok(false),
+                || false,
                 || Ok(27),
                 |_| panic!("parent must not run updater after UAC"),
             )
@@ -874,7 +874,7 @@ mod tests {
             UpdateCommand::Check,
             true,
             false,
-            || Ok(false),
+            || false,
             || Err(anyhow::anyhow!("cancelled")),
             |_| panic!("declined elevation must not run updater"),
         );
@@ -888,7 +888,7 @@ mod tests {
                 action,
                 false,
                 false,
-                || Ok(true),
+                || true,
                 || panic!("SYSTEM must not request UAC"),
                 |received| {
                     assert_eq!(received, action);
@@ -901,7 +901,7 @@ mod tests {
                     action,
                     interactive,
                     json,
-                    || Ok(false),
+                    || false,
                     || panic!("background/JSON request must not elevate"),
                     |_| panic!("unelevated request must not run updater"),
                 )

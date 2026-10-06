@@ -139,15 +139,9 @@ fn program_data() -> Result<PathBuf> {
     // even when the call fails.
     let hr = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramData, 0, null_mut(), &mut value) };
     let path = if hr >= 0 && !value.is_null() {
-        // SAFETY: a successful call returns a NUL-terminated UTF-16 string.
-        let slice = unsafe {
-            let mut n = 0;
-            while *value.add(n) != 0 {
-                n += 1;
-            }
-            std::slice::from_raw_parts(value, n)
-        };
-        Some(PathBuf::from(std::ffi::OsString::from_wide(slice)))
+        // SAFETY: a successful call returns a NUL-terminated UTF-16 string, freed only below.
+        let slice = unsafe { crate::platform::security::wide_str(value) };
+        slice.map(|s| PathBuf::from(std::ffi::OsString::from_wide(s)))
     } else {
         None
     };
