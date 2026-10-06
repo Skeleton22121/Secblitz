@@ -1417,6 +1417,13 @@ fn delete_sheet<'a>(index: u16, ctx: &'a Ctx) -> Element<'a, Message> {
 
 // ---- sheets --------------------------------------------------------------
 
+/// Tallest the working sheet's app list and the result's middle part grow
+/// before they scroll. With the Start menu drawing above them this keeps
+/// the whole sheet (and its Done button) on screen in the smallest window,
+/// 880 by 600.
+const WORKING_LIST_MAX: f32 = 200.0;
+const RESULT_BODY_MAX: f32 = 200.0;
+
 fn scroll_list<'a>(
     p: theme::Palette,
     list: impl Into<Element<'a, Message>>,
@@ -1609,7 +1616,7 @@ fn working_sheet<'a>(
             ctx.t("Please keep this window open. This can take a few minutes.")
         ),
         progress::bar_eased(p, ratio, Tone::Brand),
-        scroll_list(p, list, 300.0),
+        scroll_list(p, list, WORKING_LIST_MAX),
     ]
     .spacing(theme::S3)
     .into()
@@ -1630,7 +1637,9 @@ fn fate_of(step: &Step) -> Fate {
 
 /// An app's fate in the result. One the run never reported on takes its
 /// fate from the batch, at the moment the result appeared; when the whole
-/// run failed it was not removed.
+/// run failed it was not removed. An app the batch does not mention at all
+/// was no longer installed (the removal skips those without a word), so
+/// there was nothing to remove.
 fn final_fate(index: u16, step: &Step, done: &Finished) -> Fate {
     if matches!(step, Step::Done(..)) {
         return fate_of(step);
@@ -1645,8 +1654,10 @@ fn final_fate(index: u16, step: &Step, done: &Finished) -> Fate {
         Fate::Refused(at)
     } else if batch.kept.contains(&index) || done.kept.iter().any(|(i, _)| *i == index) {
         Fate::Kept(at)
-    } else {
+    } else if batch.skipped.contains(&index) {
         Fate::Stays(at)
+    } else {
+        Fate::Absent(at)
     }
 }
 
@@ -1694,8 +1705,29 @@ fn removal_menu<'a>(
     changed: Instant,
     result: String,
 ) -> Element<'a, Message> {
-    start_menu::start_menu(StartMenu {
-        palette: pal(ctx),
+    start_menu::start_menu(menu_model(
+        state,
+        pal(ctx),
+        ctx.lang,
+        apps,
+        outcome,
+        changed,
+        result,
+    ))
+}
+
+/// What [`removal_menu`] draws.
+fn menu_model(
+    state: &State,
+    palette: theme::Palette,
+    lang: Lang,
+    apps: impl Iterator<Item = (u16, Fate)>,
+    outcome: Outcome,
+    changed: Instant,
+    result: String,
+) -> StartMenu {
+    StartMenu {
+        palette,
         plate: Plate::Surface,
         outcome,
         changed,
@@ -1703,13 +1735,13 @@ fn removal_menu<'a>(
         apps: apps
             .map(|(i, fate)| MenuApp {
                 glyph: start_menu::glyph_for(app_of(i).family),
-                name: ctx.t(app_of(i).name),
+                name: lang.t(app_of(i).name),
                 fate,
             })
             .collect(),
-        fillers: menu_fillers(state, ctx.lang),
-        labels: menu_labels(ctx.lang, result),
-    })
+        fillers: menu_fillers(state, lang),
+        labels: menu_labels(lang, result),
+    }
 }
 
 /// Plain reason an app was left installed.
@@ -1761,7 +1793,10 @@ fn result_block<'a>(
 
 fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
-    let mut col = column![].spacing(theme::S3);
+    // The drawing and title stay put; what follows scrolls when it is long,
+    // so the Done button is always on screen.
+    let mut head = column![].spacing(theme::S3);
+    let mut body: Vec<Element<'a, Message>> = Vec::new();
     let fates = done
         .steps
         .iter()
@@ -1801,9 +1836,9 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             } else {
                 Outcome::Partly
             };
-            col = col.push(menu(outcome, &title)).push(widgets::h2(p, title));
+            head = head.push(menu(outcome, &title)).push(widgets::h2(p, title));
             if !removed.is_empty() {
-                col = col.push(result_block(
+                body.push(result_block(
                     p,
                     state,
                     Icon::CheckCircle,
@@ -1813,7 +1848,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 ));
             }
             if !protected.is_empty() {
-                col = col.push(result_block(
+                body.push(result_block(
                     p,
                     state,
                     Icon::Info,
@@ -1833,7 +1868,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                         .map(|(i, _)| *i),
                 );
                 if !list.is_empty() {
-                    col = col.push(result_block(
+                    body.push(result_block(
                         p,
                         state,
                         Icon::Info,
@@ -1844,7 +1879,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 }
             }
             if !failed.is_empty() {
-                col = col.push(result_block(
+                body.push(result_block(
                     p,
                     state,
                     Icon::AlertTriangle,
@@ -1852,7 +1887,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Couldn't remove"),
                     failed,
                 ));
-                col = col.push(widgets::small(
+                body.push(widgets::small(
                     p,
                     ctx.t("Restart your PC and try again. Nothing else was changed."),
                 ));
@@ -1883,13 +1918,13 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
         }
         (None, error) => {
             let title = ctx.t("We couldn't remove the apps");
-            col = col
+            head = head
                 .push(menu(Outcome::Failed, &title))
-                .push(widgets::h2(p, title))
-                .push(widgets::muted(
-                    p,
-                    ctx.t("Nothing was changed. Please try again."),
-                ));
+                .push(widgets::h2(p, title));
+            body.push(widgets::muted(
+                p,
+                ctx.t("Nothing was changed. Please try again."),
+            ));
             if let Some(e) = error {
                 technical.push(ctx.t(debloat::friendly::removal_run_failure(e)));
             }
@@ -1920,12 +1955,29 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                 ctx.t("Windows was asked not to add suggested apps again, but this may not stop every suggestion."),
             ),
         };
-        col = col.push(note);
+        body.push(note);
     }
     if !technical.is_empty() {
-        col = col.push(details(state, ctx, technical));
+        body.push(details(state, ctx, technical));
     }
-    col.push(space::vertical().height(theme::S1))
+    let mut sheet = column![head].spacing(theme::S3);
+    if !body.is_empty() {
+        sheet = sheet.push(
+            container(
+                scrollable(
+                    // Room on the right for the scrollbar when it shows.
+                    container(column(body).spacing(theme::S3))
+                        .padding(Padding::ZERO.right(theme::S3))
+                        .width(Length::Fill),
+                )
+                .direction(widgets::controls::scrollbar())
+                .style(widgets::controls::scroll_style(p)),
+            )
+            .max_height(RESULT_BODY_MAX),
+        );
+    }
+    sheet
+        .push(space::vertical().height(theme::S1))
         .push(row![
             space::horizontal(),
             widgets::action(
@@ -2033,31 +2085,49 @@ mod tests {
         assert_eq!(final_fate(1, &Step::Working, &done), Fate::Removed(t2));
         assert_eq!(final_fate(2, &Step::Waiting, &done), Fate::Refused(t2));
         assert_eq!(final_fate(3, &Step::Waiting, &done), Fate::Stays(t2));
+        // An app the batch never mentions was no longer installed: not
+        // "Windows protects it", just gone.
+        assert_eq!(final_fate(4, &Step::Waiting, &done), Fate::Absent(t2));
         // The whole run failed: nothing it did not report was removed.
         let failed = Finished {
             at: t2,
             ..Finished::default()
         };
         assert_eq!(final_fate(1, &Step::Working, &failed), Fate::Refused(t2));
-        // Which tiles are gone for this step list: only the removed app,
-        // once it has lifted out; the tiles after it close the gap.
+        // The drawing for this result: the removed app and the one that was
+        // not installed both leave once they have gone, and the tiles after
+        // them close the gap; the one that could not be removed stays.
         let steps = [
-            Step::Done(ItemResult::Removed, t),
-            Step::Working,
-            Step::Done(ItemResult::Failed("x".into()), t),
+            (1, Step::Done(ItemResult::Removed, t)),
+            (2, Step::Working),
+            (4, Step::Waiting),
         ];
-        let seq = start_menu::sequence(steps.len(), 5);
-        let gone: Vec<bool> = seq
-            .iter()
-            .map(|w| match w {
-                start_menu::Who::App(i) => matches!(fate_of(&steps[*i]), Fate::Removed(_)),
-                start_menu::Who::Filler(_) => false,
-            })
-            .collect();
-        let (places, hidden) = start_menu::places(&gone);
-        assert_eq!(hidden, 0);
-        assert_eq!(places.iter().filter(|p| **p == start_menu::Place::Gone).count(), 1);
-        assert_eq!(places[2], start_menu::Place::Slot(1));
+        let fates = steps.iter().map(|(i, s)| (*i, final_fate(*i, s, &done)));
+        let state = State::default();
+        let m = menu_model(
+            &state,
+            theme::LIGHT,
+            Lang::En,
+            fates,
+            Outcome::Partly,
+            t2,
+            "x".into(),
+        );
+        // Grid: Settings, removed, Explorer, Security, Store, refused,
+        // not installed, Notepad.
+        let sc = m.scene(t2 + Duration::from_millis(300));
+        assert_eq!(m.label(start_menu::Part::Tile(6), &sc), app_of(4).name);
+        assert_eq!(
+            m.label(start_menu::Part::Tile(5), &sc),
+            format!("Couldn't remove {}", app_of(2).name)
+        );
+        let sc = m.scene(t2 + Duration::from_secs(2));
+        use start_menu::Place::{Gone, Slot};
+        assert_eq!(sc.hidden, 0);
+        assert_eq!(
+            sc.places,
+            vec![Slot(0), Gone, Slot(1), Slot(2), Slot(3), Slot(4), Gone, Slot(5)]
+        );
     }
 
     #[test]
