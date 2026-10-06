@@ -1243,6 +1243,8 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
         "persistence.wmi_subscriptions" => "Something is set to run quietly in the background. Ask someone you trust to look at it.",
         "services.unquoted_paths" => "A background program has a risky setup. Ask someone you trust to look at it.",
+        "remote.rdp" => "Remote access is on. If you don't use it, Secblitz can turn it off for you on the Protection page.",
+        "smb.v1" => "An old way of sharing files is still on. Secblitz can turn it off for you on the Protection page, unless an old device needs it.",
         "accounts.stale_enabled" => "Some old accounts are still switched on. Remove the ones nobody uses.",
         "smb.shares_exposed" => "Some folders are shared with everyone on your network. Stop sharing what you don't need.",
         "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.",
