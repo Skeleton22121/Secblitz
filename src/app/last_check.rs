@@ -15,6 +15,7 @@ struct Saved {
     report: Report,
 }
 
+// A restart can finish changes that were waiting for it, so older checks are stale.
 fn fresh(at: u64, now: u64, boot: u64) -> bool {
     at >= boot && at <= now && now - at < FRESH_SECONDS
 }

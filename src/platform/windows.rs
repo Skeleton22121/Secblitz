@@ -346,6 +346,7 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
     super::parse_threat_reply(&reply)
 }
 
+const DISM_PROCESSES: u32 = 4;
 const RECOVERY_PROCESSES: u32 = 4;
 
 fn run_script<T: DeserializeOwned>(script: String, timeout: Duration) -> Result<T> {

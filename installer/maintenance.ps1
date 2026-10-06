@@ -56,6 +56,7 @@ public static class SecblitzPaths {
         return Open(path, 0x20080);
     }
     static SafeFileHandle Open(string path, uint access) {
+        // Include read-data/list-directory: metadata-only handles do NOT enforce
         // share-delete restrictions. Share write for the live monitor report.
         var h = CreateFile(path, access, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
         if (h.IsInvalid) { h.Dispose(); throw new Win32Exception(); }

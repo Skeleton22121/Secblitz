@@ -1,0 +1,35 @@
+Fix recommended
+The new check could not finish. Check again before choosing more fixes. Undo is still available.
+Only these fixes will be applied. Some changes may need a restart. Extra tools and software installs are not included.
+Apply these fixes?
+Apply these fixes
+Change selection
+Choose the fixes to keep. The boxes start unchecked.
+Rechecking your protection
+Technical details of the latest check failure:
+Protected by Windows
+Windows is already providing this firewall protection. No change is needed.
+The active firewall setting could not be verified. Check again before making changes.
+For your information
+More information
+Before making changes
+Windows drive
+Saved changes drive
+Free space unknown
+{gb} GB free
+Disk is read-only. Fixes will wait.
+No space for saved changes. Fixes will wait.
+Power information unknown
+Plugged in
+Not plugged in
+Power source unknown
+Battery: not applicable
+Battery: {percent}%
+Low battery. Connect power before making changes.
+Battery level unknown
+Battery information unknown
+Windows Update needs a restart. Save your work and restart when ready.
+No update restart pending
+Update restart status unknown
+Readiness evidence
+Firewall evidence
