@@ -22,7 +22,6 @@ compiles the installer. CI runs it on every push, with a RustSec audit of
 
 ## Rules
 
-- **No jargon** in anything a user reads. No acronyms, no fear, no em dashes.
 - **Every check explains itself** in [`src/explain/`](src/explain/).
 - **Every string in six languages** in [`src/i18n.rs`](src/i18n.rs), or in
   [`i18n-pending/`](i18n-pending/) if you can't translate it.
