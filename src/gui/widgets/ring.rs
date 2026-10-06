@@ -56,15 +56,15 @@ impl canvas::Program<Message> for Counted {
         if anim::reduced() {
             state.start = None;
             state.shown = target;
-            return Some(canvas::Action::request_redraw());
+            return None;
         }
         let t = now.saturating_duration_since(start).as_secs_f32() / anim::SLOW.as_secs_f32();
         if t >= 1.0 {
             state.start = None;
             state.shown = target;
-        } else {
-            state.shown = anim::ring_fill(state.from, target, t);
+            return None;
         }
+        state.shown = anim::ring_fill(state.from, target, t);
         Some(canvas::Action::request_redraw())
     }
     fn draw(
