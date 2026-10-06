@@ -1,7 +1,6 @@
 //! Native launcher: trusted paths, a clean environment, suspended job assignment,
 //! one process per probe, bounded pipes, deadline, memory and no child processes.
 use super::*;
-use base64::Engine;
 use std::{
     ffi::{c_void, OsStr, OsString},
     fs::File,
@@ -274,12 +273,6 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
         (root.join(tool), arguments.to_owned(), String::new())
     } else {
         let bootstrap = "$global:ProgressPreference='SilentlyContinue';[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);& ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
-        let encoded = base64::engine::general_purpose::STANDARD.encode(
-            bootstrap
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        );
         let script = format!(
             "$probe='{id:?}'\n{}\n{}\n{}",
             include_str!("common.ps1"),
@@ -292,7 +285,8 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
         );
         (
             root.join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            format!("-NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}"),
+            // The bootstrap holds no double quote, so it stays one argument.
+            format!("-NoLogo -NoProfile -NonInteractive -Command \"{bootstrap}\""),
             script,
         )
     };

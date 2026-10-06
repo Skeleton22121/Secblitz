@@ -3,7 +3,6 @@ use super::{
     core::{Control, Event, Execution, Facts, LaunchPermit},
     *,
 };
-use base64::Engine as _;
 use std::{
     ffi::c_void,
     fs::File,
@@ -196,18 +195,12 @@ impl Backend {
             commands::script(defender, action)?
         );
         let bootstrap = "$global:ProgressPreference='SilentlyContinue'; [Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
-        let encoded = base64::engine::general_purpose::STANDARD.encode(
-            bootstrap
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        );
         command.args([
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
-            "-EncodedCommand",
-            &encoded,
+            "-Command",
+            bootstrap,
         ]);
         let output = run(
             command,
