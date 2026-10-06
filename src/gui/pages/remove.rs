@@ -37,8 +37,7 @@ const WEB_STOPS: &str = "Web protection stops too, because it is part of Secblit
 const KEEP_DELETES_COPIES: &str = "The saved copies of removed apps are deleted to free space, so those apps can then only come back from the Microsoft Store.";
 const OWN_ACCOUNT_ONLY: &str =
     "Personal settings are put back for your account only. Other accounts on this PC keep theirs.";
-const STORE_NEEDS_INTERNET: &str =
-    "Apps without a saved copy come back from the Microsoft Store, which needs an internet connection.";
+const STORE_NEEDS_INTERNET: &str = "Apps without a saved copy download again from the Microsoft Store, which needs an internet connection. They can take a few minutes to show up in Start.";
 const CANCEL: &str = "Cancel";
 const LOADING: &str = "Looking at what Secblitz changed…";
 const WORKING_TITLE: &str = "Putting everything back…";
@@ -515,24 +514,48 @@ fn still_removed_names() -> Vec<String> {
         .collect()
 }
 
-/// Apps without a usable saved copy come back from the Store (when online).
+/// How long "put everything back" waits for Store downloads. Quick failures
+/// (an app the Store no longer offers, no internet) show within seconds; a
+/// download still going after this carries on in the Store by itself.
 #[cfg(windows)]
-fn reinstall_from_store(client: Option<&crate::broker::Client>) {
+const STORE_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Apps without a usable saved copy come back from the Store (when online),
+/// all at once rather than one after another. Returns the names of the apps
+/// still downloading when the wait is over.
+#[cfg(windows)]
+fn reinstall_from_store(client: Option<&crate::broker::Client>) -> Vec<String> {
     use secblitz::debloat::{self, journal};
-    let Some(client) = client else { return };
-    for (index, _) in journal::still_removed(&journal::load(), debloat::catalog().len()) {
-        if debloat::catalog()[usize::from(index)].store_id.is_none() {
-            continue;
-        }
-        match client.send(Request::ReinstallStoreApp(index)) {
+    use std::time::Duration;
+    let Some(client) = client else {
+        return Vec::new();
+    };
+    let mut pending: Vec<u16> = journal::still_removed(&journal::load(), debloat::catalog().len())
+        .into_iter()
+        .map(|(index, _)| index)
+        .filter(|index| debloat::catalog()[usize::from(*index)].store_id.is_some())
+        .filter(|index| matches!(client.send(Request::StartStoreApp(*index)), Ok(Reply::Done)))
+        .collect();
+    let deadline = Instant::now() + STORE_WAIT;
+    while !pending.is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(500));
+        pending.retain(|index| match client.send(Request::StoreAppStatus(*index)) {
+            Ok(Reply::Working) => true,
             Ok(Reply::Done) => {
-                let _ = journal::mark_restored(index);
+                let _ = journal::mark_restored(*index);
+                false
             }
-            // No internet: the rest would fail the same way.
-            Ok(Reply::Offline) => break,
-            _ => {}
-        }
+            _ => false,
+        });
     }
+    pending
+        .into_iter()
+        .filter_map(|index| {
+            debloat::catalog()
+                .get(usize::from(index))
+                .map(|a| a.name.to_owned())
+        })
+        .collect()
 }
 
 /// Only when a switch is on; the uninstaller removes the rest.
@@ -573,23 +596,29 @@ fn run_put_back(
     emit(Event::Finished(Item::Personal, left.is_empty()));
 
     emit(Event::Started(Item::Settings));
+    // Apps still downloading from the Store are on their way back.
+    let downloading = std::cell::RefCell::new(Vec::new());
+    let still_removed = || -> Vec<String> {
+        let downloading = downloading.borrow();
+        still_removed_names()
+            .into_iter()
+            .filter(|name| !downloading.contains(name))
+            .collect()
+    };
     let summary = revert_machine(&|step, ok| match step {
         Step::Settings => {
             emit(Event::Finished(Item::Settings, ok));
             emit(Event::Started(Item::Apps));
         }
         Step::Apps => {
-            reinstall_from_store(client.as_deref());
-            emit(Event::Finished(
-                Item::Apps,
-                still_removed_names().is_empty(),
-            ));
+            *downloading.borrow_mut() = reinstall_from_store(client.as_deref());
+            emit(Event::Finished(Item::Apps, still_removed().is_empty()));
             emit(Event::Started(Item::Suggested));
         }
         Step::Suggested => emit(Event::Finished(Item::Suggested, ok)),
     });
     left.extend(summary.left);
-    let left = prune_apps(left, &still_removed_names());
+    let left = prune_apps(left, &still_removed());
 
     emit(Event::Started(Item::Web));
     let web = web_protection_off();

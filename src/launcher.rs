@@ -545,6 +545,8 @@ mod imp {
             // Journaled like every personal setting, so it can be undone.
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
+            Request::StartStoreApp(index) => start_store_app(index),
+            Request::StoreAppStatus(index) => store_app_status(index),
             Request::UserSetting(setting, op) => user_setting(setting, op),
             Request::AppUpdatesScan => match scan_apps() {
                 Ok(states) => {
@@ -641,42 +643,98 @@ mod imp {
         (1..=32).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric())
     }
 
-    fn reinstall_store_app(index: u16) -> Reply {
-        use std::os::windows::process::CommandExt;
-        use std::process::{Command, Stdio};
-        let Some(store_id) = secblitz::debloat::catalog()
+    fn store_id(index: u16) -> Option<&'static str> {
+        secblitz::debloat::catalog()
             .get(usize::from(index))
             .and_then(|app| app.store_id)
-        else {
+            .filter(|id| valid_store_id(id))
+    }
+
+    /// A silent, windowless winget install of one Store app, for this account.
+    fn store_install(store_id: &str) -> Option<std::process::Child> {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let winget = secblitz::tools::winget_path().ok()?;
+        Command::new(winget)
+            .args([
+                "install",
+                "--id",
+                store_id,
+                "--source",
+                "msstore",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+                "--exact",
+                "--silent",
+                "--disable-interactivity",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+    }
+
+    /// Store downloads started for "put everything back", by catalog index.
+    /// They run side by side; the GUI asks how each one is doing. A download
+    /// still going when Secblitz closes carries on by itself.
+    fn store_jobs() -> &'static std::sync::Mutex<std::collections::HashMap<u16, std::process::Child>>
+    {
+        static JOBS: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<u16, std::process::Child>>,
+        > = std::sync::OnceLock::new();
+        JOBS.get_or_init(Default::default)
+    }
+
+    fn start_store_app(index: u16) -> Reply {
+        let Some(store_id) = store_id(index) else {
             return Reply::Unavailable;
         };
-        if !valid_store_id(store_id) {
-            return Reply::Unavailable;
+        let Ok(mut jobs) = store_jobs().lock() else {
+            return Reply::Failed;
+        };
+        if jobs.contains_key(&index) {
+            return Reply::Done;
         }
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let exit = secblitz::tools::winget_path()
-            .ok()
-            .and_then(|winget| {
-                Command::new(winget)
-                    .args([
-                        "install",
-                        "--id",
-                        store_id,
-                        "--source",
-                        "msstore",
-                        "--accept-package-agreements",
-                        "--accept-source-agreements",
-                        "--exact",
-                        "--silent",
-                        "--disable-interactivity",
-                    ])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .ok()
-            })
+        match store_install(store_id) {
+            Some(child) => {
+                jobs.insert(index, child);
+                Reply::Done
+            }
+            None => Reply::Failed,
+        }
+    }
+
+    fn store_app_status(index: u16) -> Reply {
+        let Ok(mut jobs) = store_jobs().lock() else {
+            return Reply::Failed;
+        };
+        let Some(child) = jobs.get_mut(&index) else {
+            return Reply::Unavailable;
+        };
+        let code = match child.try_wait() {
+            Ok(None) => return Reply::Working,
+            Ok(Some(status)) => status.code().map(|c| c as u32),
+            Err(_) => None,
+        };
+        jobs.remove(&index);
+        if code == Some(0) {
+            Reply::Done
+        } else if code.is_some_and(secblitz::tools::is_offline_code) || secblitz::tools::dns_offline()
+        {
+            Reply::Offline
+        } else {
+            Reply::Failed
+        }
+    }
+
+    fn reinstall_store_app(index: u16) -> Reply {
+        let Some(store_id) = store_id(index) else {
+            return Reply::Unavailable;
+        };
+        let exit = store_install(store_id)
             .and_then(|mut child| {
                 // Give the install a generous but finite time.
                 let deadline = std::time::Instant::now() + Duration::from_secs(14 * 60);
