@@ -256,3 +256,38 @@ pub const FONT_FILES: [&[u8]; 4] = [
     include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf"),
     include_bytes!("../../assets/fonts/IBMPlexSans-Bold.ttf"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mix_blends_and_clamps_the_amount() {
+        let (a, b) = (Color::from_rgb(0.0, 0.2, 1.0), Color::from_rgb(1.0, 0.6, 0.0));
+        assert_eq!(mix(a, b, 0.0), a);
+        assert_eq!(mix(a, b, 1.0), b);
+        assert_eq!(mix(a, b, -3.0), a);
+        assert_eq!(mix(a, b, 9.0), b);
+        let mid = mix(a, b, 0.5);
+        assert!((mid.r - 0.5).abs() < 1e-6 && (mid.g - 0.4).abs() < 1e-6 && (mid.b - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn palette_follows_the_mode() {
+        assert_eq!(Palette::of(Mode::Light), LIGHT);
+        assert_eq!(Palette::of(Mode::Dark), DARK);
+        assert_ne!(LIGHT.bg, DARK.bg);
+    }
+
+    #[test]
+    fn tints_are_see_through_versions_of_the_tone() {
+        for p in [LIGHT, DARK] {
+            for tone in [Tone::Good, Tone::Warn, Tone::Bad, Tone::Neutral, Tone::Brand] {
+                let t = p.tint(tone);
+                assert!(t.a > 0.0 && t.a < 0.2);
+                assert_eq!((t.r, t.g, t.b), (p.tone(tone).r, p.tone(tone).g, p.tone(tone).b));
+            }
+        }
+        assert!(DARK.tint(Tone::Good).a > LIGHT.tint(Tone::Good).a);
+    }
+}
