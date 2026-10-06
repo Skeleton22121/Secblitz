@@ -99,7 +99,7 @@ versions and the RustSec database commit identify this review's snapshot.
 
 GNU objdump 2.46 and independent PE-header parsing inspected the existing files
 without executing or rebuilding them. Hashes match `dist/SHA256SUMS` and the
-0.4.2 artifact identities recorded in [Windows validation](windows-v042-results.md).
+0.4.2 artifact identities recorded in Windows validation.
 The existing Windows `--version` evidence is from that earlier validation; it
 was not rerun on this Linux host.
 

@@ -40,7 +40,7 @@ Readiness or eligibility failures are recorded as blocked, never relabeled as su
 
 ## Completed first batch and security follow-up
 
-The genuine published [0.4.3 to 0.5.0 live gate passed](windows-v050-results.md): Installed **18.865 s**, UpToDate **1.336 s**, DeferredBusy **1.005 s**, fresh resumed LocalService report **9,195 bytes**, all 18 baselines/WAL preserved. Native functional acceptance: **138 library + 66 CLI**, separate readiness smoke and nine SYSTEM cases. No claim that all proposed PC-maintenance features are finished follows.
+The genuine published 0.4.3 to 0.5.0 live gate passed: Installed **18.865 s**, UpToDate **1.336 s**, DeferredBusy **1.005 s**, fresh resumed LocalService report **9,195 bytes**, all 18 baselines/WAL preserved. Native functional acceptance: **138 library + 66 CLI**, separate readiness smoke and nine SYSTEM cases. No claim that all proposed PC-maintenance features are finished follows.
 
 | Previously identified gap | Implemented disposition | Boundary |
 | --- | --- | --- |
@@ -52,7 +52,7 @@ The genuine published [0.4.3 to 0.5.0 live gate passed](windows-v050-results.md)
 | Observed release replay and unlink-first persistence | Protected version/hash/timestamp floor and atomic temp/flush/MoveFileEx replacement shipped in 0.4.3 | Local trust/time/signing boundaries remain; not full TUF or installer rollback |
 | Public source/test deployment | Allowlisted dist/pages, private docs/scripts, retired-path blocks and old-deployment removal | Reviewed exposed material had no secrets; not exhaustive leak proof |
 
-The [old 0.4.2 audit](../target/windows-live-v042/post-checks/audit.json) is the historical reproduction, not current behavior. [0.5.0 evidence](windows-v050-results.md) shows zero inherited-firewall candidates, exact approved two-control apply/undo and post-failure verification. [Security review](SECURITY-REVIEW.md) records tested fixes and known boundaries. Authenticode remains an explicitly accepted unsigned-preview limitation because no real certificate was available; the opt-in production signature gate exists, but publisher certification is not completed.
+The old 0.4.2 audit is the historical reproduction, not current behavior. 0.5.0 evidence shows zero inherited-firewall candidates, exact approved two-control apply/undo and post-failure verification. [Security review](SECURITY-REVIEW.md) records tested fixes and known boundaries. Authenticode remains an explicitly accepted unsigned-preview limitation because no real certificate was available; the opt-in production signature gate exists, but publisher certification is not completed.
 
 ## Next focused tranche
 

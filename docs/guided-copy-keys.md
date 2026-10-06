@@ -53,7 +53,7 @@ The brand/version template `Secblitz · v{}` and fixed service-host command argu
 ## Verification commands
 
 ```sh
-source /tmp/opencode/secblitz-cross-env.sh
+source target/build-tools/cross-env.sh
 cargo test --bin secblitz i18n
 cargo test --bin secblitz
 cargo clippy --all-targets -- -D warnings
