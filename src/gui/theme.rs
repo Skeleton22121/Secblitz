@@ -259,6 +259,9 @@ pub const ICON_ROW: f32 = 20.0;
 pub const MENU_ROW: f32 = 32.0;
 /// Widest readable content block (sheet panels).
 pub const CONTENT_MAX: f32 = 560.0;
+/// The smallest window the app allows (logical px).
+pub const WINDOW_MIN_WIDTH: f32 = 880.0;
+pub const WINDOW_MIN_HEIGHT: f32 = 600.0;
 /// Checkbox box edge.
 pub const CHECK: f32 = 18.0;
 /// Settings row height: ROW plus S2, so single and two line rows align.

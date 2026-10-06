@@ -2085,6 +2085,12 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["Windows Security", "Seguridad de Windows", "Sécurité Windows", "Windows-Sicherheit", "Segurança do Windows", "Sicurezza di Windows"],
     ["Microsoft Store", "Microsoft Store", "Microsoft Store", "Microsoft Store", "Microsoft Store", "Microsoft Store"],
     ["Notepad", "Bloc de notas", "Bloc-notes", "Editor", "Bloco de Notas", "Blocco note"],
+    ["Making your fixes", "Aplicando tus correcciones", "Application de vos corrections", "Deine Korrekturen werden vorgenommen", "Aplicando suas correções", "Applicazione delle correzioni"],
+    ["Nothing was changed", "No se cambió nada", "Rien n’a été modifié", "Es wurde nichts geändert", "Nada foi alterado", "Non è stato cambiato nulla"],
+    ["Back to how it was before your fixes", "Como estaba antes de tus correcciones", "Comme avant vos corrections", "Wieder wie vor deinen Korrekturen", "Como era antes das suas correções", "Come prima delle tue correzioni"],
+    ["Back to how it was before Secblitz", "Como estaba antes de Secblitz", "Comme avant Secblitz", "Wieder wie vor Secblitz", "Como era antes do Secblitz", "Come prima di Secblitz"],
+    // Merged from i18n-pending (checks, explanations, GUI follow-ups).
+    ["Putting everything back", "Dejando todo como estaba", "Remise en état de tout", "Alles wird zurückgesetzt", "Voltando tudo ao que era antes", "Rimetto tutto com'era"],
 ];
 
 // Each row is English, Spanish, French, German, Portuguese.
