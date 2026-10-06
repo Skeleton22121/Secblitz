@@ -80,7 +80,7 @@ impl std::fmt::Debug for Secret {
 /// checked before busy/network because a message such as "blocked by policy"
 /// will never succeed on a retry.
 pub const ERR_USE_WINDOWS_UPDATE: &str =
-    "Updates can't be installed from this account. Sign in to Windows with an administrator account, or ask the person who manages this PC, then open Secblitz again. You can also install them in Windows Update.";
+    "Updates can't be installed from this account. Sign in to Windows with a different administrator account, or ask the person who manages this PC, then open Secblitz again. You can also install them in Windows Update.";
 pub const ERR_UNAVAILABLE: &str =
     "This isn't available on this PC. Check for a newer version of Secblitz, or use Windows Settings instead.";
 pub const ERR_SETTINGS_BLOCK: &str =
@@ -187,7 +187,7 @@ pub fn friendly_error(raw: &str) -> &'static str {
 /// friendly note. Never contains raw engine text.
 pub fn why_for_note(note: &str) -> &'static str {
     match note {
-        ERR_USE_WINDOWS_UPDATE => "Windows only lets Secblitz install updates when you are signed in with an administrator account. Sign in with one, or ask the person who manages this PC, then open Secblitz again.",
+        ERR_USE_WINDOWS_UPDATE => "Windows only lets Secblitz install updates from a standard administrator account, and this account can't. Sign in with a different administrator account, or ask the person who manages this PC, then open Secblitz again.",
         ERR_UNAVAILABLE => "This version of Windows doesn't support this feature, so Secblitz can't do it here.",
         ERR_SETTINGS_BLOCK => "A setting on this PC, often set by a workplace or school, stops Secblitz from doing this.",
         ERR_CHANGED => "Windows found different updates from the ones you looked at, so nothing was installed.",
@@ -201,6 +201,22 @@ pub fn why_for_note(note: &str) -> &'static str {
         ERR_EARLIER => "A job that was running earlier didn't finish cleanly, and Secblitz wants to check it first.",
         ERR_NETWORK => "Secblitz couldn't connect to the internet. Your connection may be off or very slow.",
         _ => "Something unexpected stopped this. Nothing was damaged. Restart your PC and try again, and check for a Secblitz update if it keeps happening.",
+    }
+}
+
+/// "More details" for Bitwarden when the account can't install apps.
+pub const WHY_BITWARDEN_UNAVAILABLE: &str = "Windows only lets Secblitz install apps from a standard administrator account, and this account can't. Get Bitwarden from bitwarden.com instead.";
+/// "More details" for Bitwarden when there is no internet.
+pub const WHY_BITWARDEN_OFFLINE: &str =
+    "Secblitz couldn't connect to the internet. Check your connection, then press Retry.";
+
+/// "More details" for an unexpected Bitwarden failure. Connection problems get
+/// Bitwarden wording (not the Windows Update wording).
+pub fn bitwarden_why(raw: &str) -> &'static str {
+    if friendly_error(raw) == ERR_NETWORK {
+        WHY_BITWARDEN_OFFLINE
+    } else {
+        friendly_why(raw)
     }
 }
 
@@ -1786,6 +1802,22 @@ mod tests {
             why_for_note(ERR_GENERAL)
         );
         assert_eq!(friendly_error("The updates changed since they were reviewed; look again"), ERR_CHANGED);
+        // Per call site: Bitwarden reasons get Bitwarden text, never the
+        // Windows Update or "unexpected" wording.
+        // The Offline and Unavailable replies use fixed sentences in the view.
+        for why in [bitwarden_why("Offline"), WHY_BITWARDEN_OFFLINE, WHY_BITWARDEN_UNAVAILABLE] {
+            assert!(!why.contains("Windows Update"));
+            assert!(!why.contains("unexpected"));
+        }
+        assert_eq!(bitwarden_why("Offline"), WHY_BITWARDEN_OFFLINE);
+        assert_eq!(bitwarden_why("WinGet timed out"), WHY_BITWARDEN_OFFLINE);
+        assert_eq!(bitwarden_why("something odd"), why_for_note(ERR_GENERAL));
+        assert!(WHY_BITWARDEN_UNAVAILABLE.contains("bitwarden.com"));
+        // Scan and Defender errors map to cause-specific text.
+        assert_eq!(friendly_why("Scan failed: network unreachable"), why_for_note(ERR_NETWORK));
+        assert_eq!(friendly_why("scan blocked by policy"), why_for_note(ERR_SETTINGS_BLOCK));
+        assert_eq!(friendly_why("Defender update: restart required"), why_for_note(ERR_RESTART));
+        assert!(why_for_note(ERR_USE_WINDOWS_UPDATE).contains("different administrator"));
         assert!(repair_why(RepairResult::CouldNotFinish, Some(ERR_BUSY)).contains("maintenance"));
         assert!(install_why(InstallResult::NeedsRestart, None).contains("Restart"));
     }
