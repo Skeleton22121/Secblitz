@@ -4,7 +4,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "defender.asr.office" => Explainer {
             what: "Stops Word, Excel and other Office programs from starting other programs or hiding code inside other apps.",
-            risk: "A booby-trapped invoice in your email could use Office to quietly start a program that steals your files.",
+            risk: "A harmful invoice in your email could use Office to quietly start a program that copies your files.",
             change: "Nothing you'll notice for normal documents. Files that rely on macros or add-ins may stop working until you allow them.",
         },
         "defender.asr.ransomware_usb" => Explainer {
@@ -24,7 +24,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "net.stack_hardening" => Explainer {
             what: "Tells your PC to ignore network messages that try to reroute its traffic or release its name.",
-            risk: "Someone on the same cafe Wi-Fi could send fake messages that steer your PC's traffic through their device.",
+            risk: "Someone on the same cafe Wi-Fi could send messages that steer your PC's traffic through their device.",
             change: "Nothing you'll notice. It takes effect after a restart.",
         },
         "net.netbios" => Explainer {
@@ -44,12 +44,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "firewall.outbound_smb_internet" => Explainer {
             what: "Adds a firewall rule so this PC never sends file-sharing traffic out to the internet.",
-            risk: "A harmful link could make your PC try to log in to a stranger's file server, handing over your sign-in details.",
+            risk: "A harmful link could make your PC try to log in to an outside file server, handing over your sign-in details.",
             change: "Nothing you'll notice. Cloud file shares reached over the internet may stop connecting. Sharing at home still works.",
         },
         "tls.legacy_protocols" => Explainer {
             what: "Turns off old versions of the secure connection Windows uses for websites and apps.",
-            risk: "An attacker could force an old, breakable connection and read what you send, like passwords or card numbers.",
+            risk: "Someone on the network could force an old, breakable connection and read what you send, like passwords or card numbers.",
             change: "Browsers keep working. Very old apps, accounting software or network drives may fail to connect. It takes effect after a restart.",
         },
         _ => return None,

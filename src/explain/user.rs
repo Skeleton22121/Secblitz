@@ -5,7 +5,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "smartscreen.store_apps" => Explainer {
             what: "Windows can check the web addresses that Store apps open and warn you about unsafe ones.",
-            risk: "A Store app could send you to a fake or harmful website and Windows would not warn you.",
+            risk: "A Store app could send you to a harmful website and Windows would not warn you.",
             change: "Nothing you'll notice. You may see a warning page now and then when an app opens a risky site.",
         },
         "files.show_extensions" => Explainer {
@@ -15,7 +15,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "net.nearby_sharing" => Explainer {
             what: "Nearby sharing lets this PC send and receive files with other devices close to you.",
-            risk: "While it is open to everyone nearby, strangers on a train or in a cafe can try to send you files.",
+            risk: "While it is open to everyone nearby, people on a train or in a cafe can try to send you files.",
             change: "Only your own devices can share with this PC. Sending to a friend's PC may need you to switch it back.",
         },
         "privacy.tailored_experiences" => Explainer {
@@ -25,12 +25,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "office.internet_macros" => Explainer {
             what: "Office files downloaded from the internet can contain small programs, called macros, that run when you open them.",
-            risk: "A document from a fake email could run a hidden program the moment you click Enable Content.",
+            risk: "A document from an unexpected email could run a hidden program the moment you click Enable Content.",
             change: "Macros in files from email or the web stay off. Work files that need macros may need to be unblocked first.",
         },
         "software.outdated_winget" => Explainer {
             what: "Popular programs like your browser, Java and PDF reader get safety fixes from time to time.",
-            risk: "An out-of-date browser or PDF reader can be taken over by a bad web page or a booby-trapped file.",
+            risk: "An out-of-date browser or PDF reader can be taken over by a harmful web page or file.",
             change: "The program updates itself and may close for a moment. You can't go back to the old version afterwards.",
         },
         _ => return None,

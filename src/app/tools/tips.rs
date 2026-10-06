@@ -252,7 +252,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::DefenderProtection => "Open Windows Security and check your virus protection settings.",
         P::SmartScreen => "Turn on warnings for risky downloads and websites in Windows Security.",
         P::UpdatePolicy => "Turn automatic Windows updates back on and restart your PC when asked.",
-        P::LegacyFeatures => "Remove an old Windows tool that attackers like to use.",
+        P::LegacyFeatures => "Remove a very old Windows tool that is rarely needed.",
         P::HostsFile => "A hidden file may be sending trusted websites somewhere else. Ask someone you trust to check it.",
         P::Persistence => "Something is set up to run quietly in the background. Ask someone you trust to look at it.",
         P::AccountHygiene => "Turn off hidden or unused accounts on this PC.",

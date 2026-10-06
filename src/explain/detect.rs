@@ -5,7 +5,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "os.feature_release_support" => Explainer {
             what: "This checks whether your version of Windows still gets safety updates from Microsoft.",
-            risk: "Once a version stops getting updates, new security holes stay open and attackers can use them on your PC.",
+            risk: "Once a version stops getting updates, new security holes stay open on your PC.",
             change: "To fix it, install the newest Windows version in Windows Update. It takes a while and needs a restart. Back up first.",
         },
         "boot.secure_boot_certs" => Explainer {
@@ -20,7 +20,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "defender.threats" => Explainer {
             what: "This looks for harmful files that Windows Security found and has not finished dealing with.",
-            risk: "A harmful file left in place can steal passwords or damage your files.",
+            risk: "A harmful file left in place can read your passwords or damage your files.",
             change: "On the Tools page, choose Remove on the Virus protection safeguards tip. Windows Security usually keeps what it removes, so you can restore it.",
         },
         "defender.exclusions_risky" => Explainer {
@@ -35,12 +35,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "smartscreen.apps" => Explainer {
             what: "This is the warning Windows shows before you run an unknown or risky download.",
-            risk: "Without it, you could open a fake installer from a website or email with no warning at all.",
+            risk: "Without it, you could open an unrecognized installer from a website or email with no warning at all.",
             change: "Turn it on in Windows Security. You'll see an extra warning sometimes when you open unfamiliar downloads.",
         },
         "smartscreen.browser_policy" => Explainer {
             what: "This checks that Edge and Chrome can still warn you about dangerous websites.",
-            risk: "A browser that doesn't warn you may let you walk into a fake bank or shopping page.",
+            risk: "A browser that doesn't warn you may let you open a look-alike bank or shopping page.",
             change: "Secblitz removes the setting that turned the warnings off, so risky sites get a warning page again. Undo puts it back.",
         },
         "smart_app_control.state" => Explainer {
@@ -65,12 +65,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "ps.v2_engine" => Explainer {
             what: "This is a very old part of Windows' command tool that almost nobody needs anymore.",
-            risk: "Attackers like it because it skips newer safety checks, so harmful scripts can run unnoticed.",
+            risk: "It skips newer safety checks, so harmful scripts can run unnoticed.",
             change: "You can remove it in Windows Features. Very old scripts may stop working; normal use isn't affected.",
         },
         "net.hosts_file" => Explainer {
             what: "This is a small file on your PC that can send website names to other places.",
-            risk: "Malware can use it to send you to a fake bank website or to block your antivirus updates.",
+            risk: "Malware can use it to send you to a look-alike bank website or to block your antivirus updates.",
             change: "Only the lines that redirect trusted websites are turned into notes. The rest stays as it is. You can undo this.",
         },
         "persistence.wmi_subscriptions" => Explainer {
@@ -90,7 +90,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "smb.shares_exposed" => Explainer {
             what: "This looks for folders on your PC that other people on your network can open.",
-            risk: "On a shared or café network, strangers could read or change files in a folder shared with everyone.",
+            risk: "On a shared or café network, other people could read or change files in a folder shared with everyone.",
             change: "Secblitz takes away the open access for everyone, so only the people listed on each folder can open it from other devices. Undo gives it back.",
         },
         "smb.server_encryption" => Explainer {
@@ -100,7 +100,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "firewall.user_dir_inbound_allow" => Explainer {
             what: "This looks for apps in your Downloads, Desktop or Temp folders that the firewall lets receive connections.",
-            risk: "A harmful app in one of those folders could let attackers connect straight to your PC.",
+            risk: "A harmful app in one of those folders could let others connect straight to your PC.",
             change: "Those allowances are switched off, not deleted. A game or app may ask again. You can undo this.",
         },
         "accounts.daily_admin" => Explainer {
@@ -110,17 +110,17 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "accounts.hello_configured" => Explainer {
             what: "This checks whether you have a PIN or Windows Hello (face or fingerprint) set up to sign in.",
-            risk: "Without one you sign in with your long password, which people can watch you type or steal from a website.",
+            risk: "Without one you sign in with your long password, which can be seen as you type it or leak from a website.",
             change: "Add a PIN in Sign-in options. It only works on this PC, and signing in gets faster. Your password still works.",
         },
         "accounts.find_my_device" => Explainer {
             what: "Find my device lets you see where a lost laptop is and lock it.",
-            risk: "If your laptop is lost or stolen, you can't find it or lock it, so strangers can try to get at your files.",
+            risk: "If your laptop is lost or stolen, you can't find it or lock it, so someone who finds it could try to get at your files.",
             change: "Turn it on in Settings. It shares your laptop's location with your Microsoft account. Only checked on laptops.",
         },
         "vbs.kernel_stack_protection" => Explainer {
-            what: "This is an extra shield that protects the core of Windows from a kind of attack that hijacks programs.",
-            risk: "Without it, an attacker who finds a bug in a driver has an easier time taking control of Windows.",
+            what: "This is an extra shield that keeps harmful code from taking over programs that run in the core of Windows.",
+            risk: "Without it, a bug in a driver is easier to use for taking control of Windows.",
             change: "If your PC supports it, Secblitz can turn it on after Core system protection runs. You restart once, and some older drivers may not load. You can undo it.",
         },
         "net.dns_encryption" => Explainer {
