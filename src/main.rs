@@ -719,6 +719,31 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Windows shows these file details in Properties and Task Manager, and
+    /// security products read them. They must name this exact release.
+    #[test]
+    fn windows_file_details_match_the_package_version() {
+        let version = env!("CARGO_PKG_VERSION");
+        let numbers = format!("{},0", version.replace('.', ","));
+        let rc = include_str!("../assets/secblitz.rc");
+        for line in [
+            format!("FILEVERSION {numbers}"),
+            format!("PRODUCTVERSION {numbers}"),
+            format!("VALUE \"FileVersion\", \"{version}\""),
+            format!("VALUE \"ProductVersion\", \"{version}\""),
+        ] {
+            assert!(rc.contains(&line), "secblitz.rc lacks {line}");
+        }
+        for name in ["CompanyName", "FileDescription", "ProductName", "OriginalFilename", "LegalCopyright"] {
+            assert!(rc.contains(&format!("VALUE \"{name}\"")), "secblitz.rc lacks {name}");
+        }
+        let manifest = include_str!("../assets/secblitz.manifest");
+        assert!(
+            manifest.contains(&format!("version=\"{version}.0\"")),
+            "secblitz.manifest names another version"
+        );
+    }
+
     #[test]
     fn health_is_raw_json_and_routes_before_privilege_or_state_access() {
         let health = updater::UpdateHealth {

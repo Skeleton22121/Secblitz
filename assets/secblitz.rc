@@ -1,2 +1,34 @@
 1 24 "secblitz.manifest"
 1 ICON "secblitz.ico"
+
+// Plain file details that Windows shows in Properties, Task Manager and
+// security prompts. A test keeps these numbers equal to Cargo.toml.
+1 VERSIONINFO
+FILEVERSION 0,8,0,0
+PRODUCTVERSION 0,8,0,0
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 0x1
+FILESUBTYPE 0x0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Secblitz"
+            VALUE "FileDescription", "Secblitz"
+            VALUE "FileVersion", "0.8.0"
+            VALUE "InternalName", "secblitz"
+            VALUE "LegalCopyright", "Copyright 2026 Secblitz contributors. MIT License."
+            VALUE "OriginalFilename", "secblitz.exe"
+            VALUE "ProductName", "Secblitz"
+            VALUE "ProductVersion", "0.8.0"
+            VALUE "Comments", "Checks and improves Windows security settings. https://secblitz.lol"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
