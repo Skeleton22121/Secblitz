@@ -94,6 +94,9 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: this version of Windows does not have it" => {
             "This version of Windows doesn't have it, so there is nothing to turn off."
         }
+        "Not offered: Windows keeps this setting for you to change yourself" => {
+            "Windows only lets you change this yourself. To hide Widgets, open Settings, go to Personalization, then Taskbar, and turn off Widgets."
+        }
         "Not offered: this setting is not available on Windows Home" => {
             "Windows Home does not support this setting, so we leave it alone."
         }

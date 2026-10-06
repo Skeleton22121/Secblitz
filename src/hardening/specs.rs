@@ -954,7 +954,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "debloat.widgets_policy",
         title: "Widgets button and news board",
-        description: "Turn off the Widgets button and its news board for everyone on this PC (AllowNewsAndInterests=0). Not offered on Windows Home, which ignores it; undo restores the earlier value.",
+        description: "Turn off the Widgets button and its news board for everyone on this PC (AllowNewsAndInterests=0). Not offered on Windows Home, which ignores it, or while Windows protects the value from apps; undo restores the earlier value.",
         source: Source::Registry,
         reboot: false,
         ask: true,

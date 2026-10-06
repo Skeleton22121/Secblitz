@@ -968,13 +968,22 @@ Assert $true 'offered on a version of Windows that has Click to Do'
 
 ${function:Test-Path} = $savedTestPath; ${function:Get-ChildItem} = $savedChildItem; ${function:Get-CimInstance} = $savedCim
 MakeSpec '{"id":"debloat.widgets_policy","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
+function Get-Service { param($Name, $ErrorAction); Assert ($Name -ceq 'UCPD') 'Only the user choice protection driver is asked about'; if ($null -eq $script:ucpd) { return $null }; return [pscustomobject]@{ Status = $script:ucpd } }
 $script:edition = 'Professional'
+$script:ucpd = $null
 HPreflight
 Assert $true 'Widgets can be turned off on Pro'
+$script:ucpd = 'Stopped'
+HPreflight
+Assert $true 'a stopped protection driver does not block the switch'
+$script:ucpd = 'Running'
+Reject { HPreflight } 'Windows keeps this setting for you to change yourself'
+$script:ucpd = $null
 foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
     $script:edition = $ed
     Reject { HPreflight } 'not available on Windows Home'
 }
+Remove-Item -LiteralPath function:Get-Service
 MakeSpec '{"id":"debloat.device_companion_apps","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
 HPreflight
 Assert $true 'device companion apps have no extra requirement'

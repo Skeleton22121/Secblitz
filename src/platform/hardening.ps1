@@ -502,6 +502,9 @@ function HPreflight() {
         'debloat.widgets_policy' {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
             if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
+            # Windows' user choice protection driver refuses this value from scripts, so only the person can change it.
+            $ucpd = Get-Service -Name 'UCPD' -ErrorAction SilentlyContinue
+            if ($null -ne $ucpd -and [string]$ucpd.Status -ceq 'Running') { throw 'Not offered: Windows keeps this setting for you to change yourself' }
         }
         'privacy.clipboard_sync' {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
