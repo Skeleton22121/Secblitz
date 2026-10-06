@@ -1297,7 +1297,7 @@ fn unfinished_change<'a>(ctx: &Ctx) -> Element<'a, Message> {
     )
 }
 
-/// The "Needs your attention" and "Privacy extras" groups with their shared
+/// The "Needs your attention" group and the optional extras groups with their shared
 /// selection count and Fix selected button.
 fn attention_groups<'a>(
     state: &'a State,
@@ -1406,7 +1406,16 @@ fn attention_groups<'a>(
             list,
         ));
     }
-    if !shown.privacy.is_empty() {
+    for title in ["Privacy extras", "AI features", "Less clutter"] {
+        let list: Vec<&Att> = shown
+            .privacy
+            .iter()
+            .copied()
+            .filter(|a| advice::extra_section(&a.id).unwrap_or("Privacy extras") == title)
+            .collect();
+        if list.is_empty() {
+            continue;
+        }
         let note = ctx.t("Optional. Not part of your protection score.");
         let subtitle = if trailing.is_some() {
             format!("{note} · {count}")
@@ -1415,10 +1424,10 @@ fn attention_groups<'a>(
         };
         groups.push(widgets::group(
             p,
-            ctx.t("Privacy extras"),
+            ctx.t(title),
             Some(subtitle),
             trailing.take().map(Into::into),
-            rows_of(&shown.privacy, true),
+            rows_of(&list, true),
         ));
     }
     groups

@@ -109,6 +109,9 @@ pub struct Gate {
     pub tamper_exempt: bool,
     pub secedit: bool,
     pub own_policy_key: &'static str,
+    /// Values other controls of this program keep in the same policy key. They
+    /// are not somebody else's management, so they never block this control.
+    pub shared_values: &'static [&'static str],
     pub policy_values: &'static [(&'static str, &'static str)],
 }
 
@@ -502,6 +505,7 @@ impl Spec {
             "gate": {
                 "areas": g.areas, "pattern": g.pattern, "tamperExempt": g.tamper_exempt,
                 "secedit": g.secedit, "ownPolicyKey": g.own_policy_key,
+                "sharedValues": g.shared_values,
                 "policyValues": g.policy_values.iter()
                     .map(|(p, n)| json!({"path": p, "name": n})).collect::<Vec<_>>(),
             },

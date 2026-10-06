@@ -373,6 +373,7 @@ function HGatePolicy() {
         if (Test-Path -LiteralPath $own) {
             $key = Get-Item -LiteralPath $own
             $ours = @(@($spec.keys) | ForEach-Object { $_.name })
+            if ($null -ne $spec.gate.PSObject.Properties['sharedValues']) { $ours += @($spec.gate.sharedValues) }
             if (@($key.GetValueNames() | Where-Object { $_ -and $ours -cnotcontains $_ }).Count -gt 0 -or $key.SubKeyCount -gt 0) { ThrowGate 'Relevant policy is configured: assessment only' }
         }
     }
@@ -487,6 +488,20 @@ function HPreflight() {
         }
         'privacy.recall' {
             if ((HFeatureState 'Recall') -ceq 'Missing') { throw 'Not offered: Recall is not available on this PC' }
+        }
+        'ai.click_to_do' {
+            Load 'CimCmdlets'
+            if ([int](Get-CimInstance Win32_OperatingSystem).BuildNumber -lt 26100) { throw 'Not offered: this version of Windows does not have it' }
+        }
+        'ai.paint' {
+            if (!(HPackageInstalled 'Microsoft.Paint')) { throw 'Not offered: Paint was not found on this PC' }
+        }
+        'ai.notepad' {
+            if (!(HPackageInstalled 'Microsoft.WindowsNotepad')) { throw 'Not offered: Notepad was not found on this PC' }
+        }
+        'debloat.widgets_policy' {
+            $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
+            if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
         }
         'privacy.clipboard_sync' {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
@@ -829,6 +844,12 @@ function HSetMitigation([string]$name, $v) {
 }
 
 function HFeatureState([string]$name) { return (FeatureState $name) }
+function HPackageInstalled([string]$name) {
+    $root = 'HKLM:\SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
+    if (!(Test-Path -LiteralPath $root)) { throw 'The installed apps could not be listed' }
+    $prefix = $name + '_'
+    return (@(Get-ChildItem -LiteralPath $root -Name -ErrorAction Stop | Where-Object { $_.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0)
+}
 function HV2Value([string]$state) {
     switch -CaseSensitive ($state) {
         'Enabled' { return 1 }

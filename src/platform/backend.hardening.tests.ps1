@@ -908,6 +908,78 @@ foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
     Reject { HPreflight } 'Windows Home cannot accept Remote Desktop connections'
 }
 
+# Optional switches: values that sibling controls keep in one policy key, installed-app checks and edition checks.
+$aiOwn = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+$aiPath = $aiOwn.Replace('\', '\\')
+$sharedJson = '{"id":"privacy.recall","source":"Registry","dynamic":false,"reboot":false,"keys":[{"name":"DisableAIDataAnalysis","path":"' + $aiPath + '","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"' + $aiPath + '","sharedValues":["DisableClickToDo"],"policyValues":[]}}'
+$plainJson = $sharedJson.Replace('"sharedValues":["DisableClickToDo"],', '')
+if (!$env:SystemRoot) { $env:SystemRoot = 'C:\Windows' }
+$script:fakeFs = $true
+$script:fakePaths = @($aiOwn)
+MakeSpec $sharedJson
+$script:fakeKey = FakeKey @('DisableAIDataAnalysis', 'DisableClickToDo')
+HGatePolicy
+Assert $true 'a sibling control value in the shared policy key is not management'
+$script:fakeKey = FakeKey @('DisableAIDataAnalysis', 'DisableClickToDo', 'TurnOffWindowsCopilot')
+Reject { HGatePolicy } 'Relevant policy is configured'
+MakeSpec $plainJson
+$script:fakeKey = FakeKey @('DisableAIDataAnalysis')
+HGatePolicy
+Assert $true 'a spec written without shared values still gates on its own values'
+$script:fakeKey = FakeKey @('DisableAIDataAnalysis', 'DisableClickToDo')
+Reject { HGatePolicy } 'Relevant policy is configured'
+$script:fakePaths = @(); $script:fakeFs = $false
+
+$pkgRoot = 'HKLM:\SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
+$script:pkgNames = @(); $script:pkgRootExists = $true
+$savedTestPath = ${function:Test-Path}; $savedChildItem = ${function:Get-ChildItem}; $savedCim = ${function:Get-CimInstance}
+function Test-Path { param($LiteralPath, $ErrorAction); return ($LiteralPath -ceq $pkgRoot -and $script:pkgRootExists) }
+function Get-ChildItem { param($LiteralPath, [switch]$Name, $ErrorAction); Assert ($LiteralPath -ceq $pkgRoot -and $Name) 'Installed apps were listed from an unexpected place'; return @($script:pkgNames) }
+Assert (!(HPackageInstalled 'Microsoft.Paint')) 'no apps listed means Paint is missing'
+$script:pkgNames = @('Microsoft.MSPaint_6.2.0.0_x64__8wekyb3d8bbwe', 'Microsoft.Paint.Beta_1.0.0.0_x64__8wekyb3d8bbwe')
+Assert (!(HPackageInstalled 'Microsoft.Paint')) 'other apps with a similar name are not Paint'
+$script:pkgNames += 'Microsoft.Paint_11.2508.371.0_x64__8wekyb3d8bbwe'
+Assert (HPackageInstalled 'Microsoft.Paint') 'Paint is found by its package name'
+$script:pkgNames = @('microsoft.windowsnotepad_11.2508.38.0_x64__8wekyb3d8bbwe')
+Assert (HPackageInstalled 'Microsoft.WindowsNotepad') 'package names match without regard to case'
+$script:pkgRootExists = $false
+Reject { HPackageInstalled 'Microsoft.Paint' } 'could not be listed'
+$script:pkgRootExists = $true
+
+MakeSpec '{"id":"ai.paint","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
+$script:pkgNames = @()
+Reject { HPreflight } 'Paint was not found on this PC'
+$script:pkgNames = @('Microsoft.Paint_11.2508.371.0_x64__8wekyb3d8bbwe')
+HPreflight
+Assert $true 'offered where Paint is installed'
+MakeSpec '{"id":"ai.notepad","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
+Reject { HPreflight } 'Notepad was not found on this PC'
+$script:pkgNames = @('Microsoft.WindowsNotepad_11.2508.38.0_x64__8wekyb3d8bbwe')
+HPreflight
+Assert $true 'offered where the Notepad app is installed'
+
+function Get-CimInstance { param($ClassName); return [pscustomobject]@{ BuildNumber = $script:build } }
+MakeSpec '{"id":"ai.click_to_do","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
+$script:build = '22631'
+Reject { HPreflight } 'this version of Windows does not have it'
+$script:build = '26100'
+HPreflight
+Assert $true 'offered on a version of Windows that has Click to Do'
+
+${function:Test-Path} = $savedTestPath; ${function:Get-ChildItem} = $savedChildItem; ${function:Get-CimInstance} = $savedCim
+MakeSpec '{"id":"debloat.widgets_policy","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
+$script:edition = 'Professional'
+HPreflight
+Assert $true 'Widgets can be turned off on Pro'
+foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
+    $script:edition = $ed
+    Reject { HPreflight } 'not available on Windows Home'
+}
+MakeSpec '{"id":"debloat.device_companion_apps","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
+HPreflight
+Assert $true 'device companion apps have no extra requirement'
+
+
 $smbNames = @('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server', 'SMB1Protocol-Deprecation')
 $smbKeys = $smbNames | ForEach-Object {
     '{"name":"' + $_ + '","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}'

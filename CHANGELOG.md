@@ -10,6 +10,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [Unreleased]
 
 ### Added
+- **More optional switches on Protection.** You can now turn off the AI tools in Paint and Notepad, Click to Do, the Widgets button and news board, and the extra apps Windows suggests when you plug in a new device. Nothing is ticked for you, each one can be undone, and a switch only appears where the app or feature exists on your PC.
 - **Search on Protection and Clean up apps.** Type a word, or press Ctrl+F, to show only the matching settings or apps. It forgives small typing mistakes and accents, and the choices you already made stay in place while you search.
 - **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
 - **Privacy policy.** A plain privacy page says exactly when Secblitz uses the internet and what it keeps on your PC. The installer shows a short summary, and Settings links to the full page.
