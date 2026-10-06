@@ -31,6 +31,7 @@ pub struct State {
     plan: Vec<PlanRow>,
     undo_note: Option<String>,
     undo_count: usize,
+    checking: bool,
 }
 
 impl Default for State {
@@ -46,6 +47,7 @@ impl Default for State {
             plan: Vec::new(),
             undo_note: None,
             undo_count: 0,
+            checking: false,
         }
     }
 }
@@ -74,6 +76,12 @@ enum Stage {
         ids: Vec<String>,
         undo: bool,
     },
+    Blocked {
+        ids: Vec<String>,
+        undo: bool,
+        reason: String,
+        retry: bool,
+    },
     Working {
         undo: bool,
         phase: Option<Phase>,
@@ -93,6 +101,7 @@ pub enum Msg {
     Cancel,
     Done,
     CheckAgain,
+    Retry,
     Technical,
     Frame(Instant),
     UndoInfo(Option<(u64, usize)>),
@@ -154,6 +163,9 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
     let Some(report) = ctx.report.as_deref() else {
         return Task::none();
     };
+    if flow::repairs_blocked(report).is_some() {
+        return Task::none();
+    }
     let allowed = flow::candidates(report, &ctx.catalog.available);
     let mut chosen: Vec<String> = Vec::new();
     for id in ids {
@@ -220,7 +232,10 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 
 pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     let _ = ctx;
-    if matches!(state.stage, Stage::Review { .. } | Stage::Result { .. }) {
+    if matches!(
+        state.stage,
+        Stage::Review { .. } | Stage::Blocked { .. } | Stage::Result { .. }
+    ) {
         close(state);
     }
     Task::none()
@@ -229,6 +244,7 @@ pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 fn close(state: &mut State) {
     state.stage = Stage::Closed;
     state.bar = None;
+    state.checking = false;
 }
 
 fn planned(state: &State, undo: bool) -> usize {
@@ -274,7 +290,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Cancel | Msg::Done => {
-            if matches!(state.stage, Stage::Review { .. } | Stage::Result { .. }) {
+            if matches!(
+                state.stage,
+                Stage::Review { .. } | Stage::Blocked { .. } | Stage::Result { .. }
+            ) {
                 close(state);
             }
             Task::none()
@@ -292,37 +311,73 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             Task::none()
         }
+        Msg::Retry => {
+            if let Stage::Blocked { ids, undo, .. } = std::mem::take(&mut state.stage) {
+                state.stage = Stage::Review { ids, undo };
+                return update(state, Msg::Confirm, ctx);
+            }
+            Task::none()
+        }
         Msg::Confirm => {
-            let Stage::Review { ids, undo } = std::mem::take(&mut state.stage) else {
+            let Stage::Review { undo, .. } = &state.stage else {
                 return Task::none();
             };
-            if ctx.busy {
-                state.stage = Stage::Review { ids, undo };
+            if ctx.busy || state.checking {
                 return Task::none();
             }
-            ctx.busy = true;
-            let job = if undo {
-                Job::Undo
-            } else {
-                Job::Apply(ids.clone())
-            };
-            state.now = Instant::now();
-            state.work = Clock::at(state.now);
-            state.since = state.now;
-            state.bar = (!undo || planned(state, true) > 0)
-                .then(|| Tween::new(0.0, 0.0, anim::NORMAL));
-            state.stage = Stage::Working {
-                undo,
-                phase: None,
-                items: Vec::new(),
-            };
-            Task::run(ctx.worker.run(job), Message::Worker)
+            let undo = *undo;
+            state.checking = true;
+            Task::run(ctx.worker.run(Job::Preflight { undo }), Message::Worker)
         }
     }
 }
 
+fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task<Message> {
+    ctx.busy = true;
+    let job = if undo {
+        Job::Undo
+    } else {
+        Job::Apply(ids)
+    };
+    state.now = Instant::now();
+    state.work = Clock::at(state.now);
+    state.since = state.now;
+    state.bar = (!undo || planned(state, true) > 0).then(|| Tween::new(0.0, 0.0, anim::NORMAL));
+    state.stage = Stage::Working {
+        undo,
+        phase: None,
+        items: Vec::new(),
+    };
+    Task::run(ctx.worker.run(job), Message::Worker)
+}
+
 pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Task<Message> {
     use worker::Event as E;
+    if let E::Preflight { undo: asked, result } = event {
+        if !state.checking {
+            return Task::none();
+        }
+        state.checking = false;
+        let Stage::Review { ids, undo } = std::mem::take(&mut state.stage) else {
+            return Task::none();
+        };
+        if undo != *asked {
+            state.stage = Stage::Review { ids, undo };
+            return Task::none();
+        }
+        return match result {
+            Ok(()) => start(state, ids, undo, ctx),
+            Err(raw) => {
+                state.stage = Stage::Blocked {
+                    ids,
+                    undo,
+                    reason: flow::plain_failure(raw).to_owned(),
+                    retry: flow::can_retry(raw),
+                };
+                Task::none()
+            }
+        };
+    }
     let planned = planned(state, matches!(state.stage, Stage::Working { undo: true, .. }));
     let Stage::Working {
         undo, phase, items, ..
@@ -429,6 +484,8 @@ fn technical_lines(
                     let a = crate::advice::for_outcome(r);
                     let (status, next) = if r.status == "error" {
                         ("Not done", flow::NOT_DONE)
+                    } else if r.status == "skipped" && r.detail.contains("readiness blocks") {
+                        ("Not done", flow::REASON_DISK)
                     } else {
                         flow::plain_detail(&r.status, &a)
                     };
@@ -458,6 +515,12 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
     match &state.stage {
         Stage::Closed => None,
         Stage::Review { ids, undo } => Some(review_view(state, ctx, ids, *undo)),
+        Stage::Blocked {
+            undo,
+            reason,
+            retry,
+            ..
+        } => Some(blocked_view(ctx, *undo, reason, *retry)),
         Stage::Working { undo, phase, items } => {
             Some(working_view(state, ctx, *undo, *phase, items))
         }
@@ -659,7 +722,7 @@ fn review_view<'a>(
         },
         ctx.t(if undo { "Undo fixes" } else { "Fix now" }),
         None,
-        Some(Message::Fix(Msg::Confirm)),
+        (!state.checking).then_some(Message::Fix(Msg::Confirm)),
     );
     c.push(space::vertical().height(theme::S3))
         .push(footer(vec![
@@ -673,6 +736,39 @@ fn review_view<'a>(
             confirm,
         ]))
         .into()
+}
+
+fn blocked_view<'a>(ctx: &'a Ctx, undo: bool, reason: &str, retry: bool) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let title = if undo {
+        "We can't undo your fixes right now"
+    } else {
+        "We can't make these fixes right now"
+    };
+    let mut buttons = vec![widgets::action(
+        p,
+        ButtonKind::Secondary,
+        ctx.t("Close"),
+        None,
+        Some(Message::Fix(Msg::Cancel)),
+    )];
+    if retry {
+        buttons.push(widgets::action(
+            p,
+            ButtonKind::Primary,
+            ctx.t("Try again"),
+            Some(Icon::Refresh),
+            Some(Message::Fix(Msg::Retry)),
+        ));
+    }
+    column![
+        widgets::h2(p, ctx.t(title)),
+        widgets::muted(p, ctx.t(reason)),
+        space::vertical().height(theme::S3),
+        footer(buttons),
+    ]
+    .spacing(theme::S3)
+    .into()
 }
 
 fn waiting_mark<'a>(p: Palette) -> Element<'a, Message> {
@@ -878,6 +974,8 @@ fn result_view<'a>(
                 .map(|(id, reason)| row_text(p, ctx.lang.control(id), Some(ctx.t(reason))))
                 .collect(),
         ));
+    } else if let Some(why) = &s.failure {
+        body = body.push(widgets::muted(p, ctx.t(why)));
     } else if s.kind == SummaryKind::Failed && s.done.is_empty() {
         body = body.push(widgets::muted(
             p,

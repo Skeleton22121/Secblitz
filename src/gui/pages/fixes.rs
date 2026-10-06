@@ -1014,6 +1014,9 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     {
         body = body.push(unfinished_change(ctx));
     }
+    if let Some(sentence) = flow::repairs_blocked(report) {
+        body = body.push(widgets::inline_notice(p, Tone::Warn, ctx.t(sentence)));
+    }
 
     if rows.attention.is_empty() && ctx.checking.is_none() {
         body = body.push(widgets::region(
@@ -1027,7 +1030,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ),
         ));
     }
-    for group in attention_groups(state, ctx, rows) {
+    for group in attention_groups(state, ctx, report, rows) {
         body = body.push(group);
     }
     for group in other_groups(state, ctx, rows) {
@@ -1098,7 +1101,12 @@ fn unfinished_change<'a>(ctx: &Ctx) -> Element<'a, Message> {
 
 /// The "Needs your attention" and "Privacy extras" groups with their shared
 /// selection count and Fix selected button.
-fn attention_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<'a, Message>> {
+fn attention_groups<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    report: &Report,
+    rows: &Rows,
+) -> Vec<Element<'a, Message>> {
     if rows.attention.is_empty() && rows.privacy.is_empty() {
         return Vec::new();
     }
@@ -1133,7 +1141,10 @@ fn attention_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Elem
         1 => ctx.t("1 selected"),
         _ => ctx.t("{n} selected").replace("{n}", &n.to_string()),
     };
-    let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
+    let ready = !ctx.busy
+        && ctx.checking.is_none()
+        && ctx.check_error.is_none()
+        && flow::repairs_blocked(report).is_none();
     let select = if n == all.len() {
         (
             Icon::X,
