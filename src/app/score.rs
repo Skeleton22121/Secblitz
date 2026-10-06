@@ -252,7 +252,8 @@ pub fn to_check_ids(report: &Report) -> Vec<String> {
 impl Score {
     pub fn of(report: &Report) -> Self {
         let mut s = Score::default();
-        for r in &report.results {
+        // Optional switches say they are not part of the score, on or off.
+        for r in report.results.iter().filter(|r| advice::extra_section(&r.id).is_none()) {
             match classify_in(report, r) {
                 Class::Protected => s.protected += 1,
                 Class::Fixable | Class::Review => s.attention += 1,
@@ -303,6 +304,17 @@ mod tests {
             results,
             ..Report::default()
         }
+    }
+
+    #[test]
+    fn optional_switches_never_change_the_score() {
+        let off = rep(vec![out("uac.enabled", "compliant"), out("ai.paint", "attention"), out("privacy.advertising_id", "attention")]);
+        let on = rep(vec![out("uac.enabled", "compliant"), out("ai.paint", "compliant"), out("privacy.advertising_id", "compliant")]);
+        for report in [&off, &on] {
+            let s = Score::of(report);
+            assert_eq!((s.protected, s.total), (1, 1));
+        }
+        assert_eq!(classify(&on.results[1]), Class::Protected, "still listed with its undo");
     }
 
     #[test]
