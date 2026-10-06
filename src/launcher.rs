@@ -137,6 +137,18 @@ pub fn single_instance() -> anyhow::Result<Instance> {
     }
 }
 
+/// The signed-in Windows account's SID, or None when it can't be read.
+pub fn user_sid() -> Option<String> {
+    #[cfg(windows)]
+    {
+        imp::user_sid_string().ok()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{args_are_plain, Guard, Instance};
@@ -263,7 +275,7 @@ mod imp {
         Ok(Some(Elevated(Owned(info.hProcess))))
     }
 
-    fn user_sid_string() -> Result<String> {
+    pub fn user_sid_string() -> Result<String> {
         unsafe {
             let mut token: HANDLE = null_mut();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {

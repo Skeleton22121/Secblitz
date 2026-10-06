@@ -4,6 +4,7 @@
 //! these modules; everything is unit-testable on the host.
 pub mod flow;
 pub mod history;
+pub mod last_check;
 pub mod score;
 pub mod settings;
 pub mod tools;
