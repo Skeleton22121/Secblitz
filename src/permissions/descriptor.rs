@@ -66,7 +66,7 @@ pub(super) fn assess(sd: &[u8]) -> Result<Assessment> {
     // An advisory DACL-only query need not include owner/group. Unknown control
     // semantics must still never produce the ordinary no-candidate result.
     result.complex = control & !(0x8000 | 0x0004 | 0x0008 | 0x0400 | 0x1000) != 0;
-    result.unevaluated_grant = result.complex;
+    // No control flag can grant access: a missing DACL is handled below.
     if control & 4 == 0 || offset == 0 {
         result.unrestricted = true;
         return Ok(result);
@@ -94,10 +94,10 @@ pub(super) fn assess(sd: &[u8]) -> Result<Assessment> {
         if ace[0] != 0 || ace[1] != 0 {
             result.complex = true;
         }
-        // Types that can grant access but are not evaluated here: object (5),
-        // callback (9), callback object (11) and anything unknown. Deny (1, 6,
+        // Types that can grant access but are not evaluated here: compound (4),
+        // object (5), callback (9), callback object (11) and anything unknown. Deny (1, 6,
         // 10, 12) and audit/alarm/label types only ever narrow or observe.
-        if matches!(ace[0], 5 | 9 | 11) || ace[0] > 0x13 {
+        if matches!(ace[0], 4 | 5 | 9 | 11) || ace[0] > 0x13 {
             result.unevaluated_grant = true;
         }
         if matches!(ace[0], 0 | 1) {
@@ -190,7 +190,11 @@ mod tests {
         assert!(assess(&sd(&[(9, 0, 1, &[11])])).unwrap().unevaluated_grant);
         let mut flags = sd(&[]);
         flags[3] |= 1;
-        assert!(assess(&flags).unwrap().unevaluated_grant);
+        // An unknown control flag cannot grant access by itself.
+        let a = assess(&flags).unwrap();
+        assert!(a.complex && !a.unevaluated_grant);
+        // A compound allow ACE could grant access too.
+        assert!(assess(&sd(&[(4, 0, 1, &[11])])).unwrap().unevaluated_grant);
     }
     #[test]
     fn null_and_empty_dacl_differ_and_malformed_data_fails_closed() {

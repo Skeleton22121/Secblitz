@@ -70,7 +70,7 @@ const SUGGESTED_CHANGED: &str =
 const WINDOWS_SETTINGS: &str = "Windows settings";
 
 /// The plain name of a personal setting (never a registry or technical word).
-fn personal_title(id: &str) -> &'static str {
+pub(crate) fn personal_title(id: &str) -> &'static str {
     match id {
         "smartscreen.store_apps" => "Web check for Store apps",
         "files.show_extensions" => "Show file endings",

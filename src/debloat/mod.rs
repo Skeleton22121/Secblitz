@@ -278,7 +278,7 @@ pub(crate) fn remove_with(
     run: &dyn Fn(&str) -> PackageOutcome,
     emit: &dyn Fn(Progress),
 ) -> Result<Batch> {
-    remove_with_checkpoint(indices, installed, backup, run, emit, &|_| {})
+    remove_with_checkpoint(indices, installed, backup, run, emit, &|_| Ok(()))
 }
 
 /// Same, and `checkpoint` sees the batch after every app, so the record of
@@ -289,14 +289,27 @@ pub(crate) fn remove_with_checkpoint(
     backup: &dyn Fn(&Installed) -> std::result::Result<(), Kept>,
     run: &dyn Fn(&str) -> PackageOutcome,
     emit: &dyn Fn(Progress),
-    checkpoint: &dyn Fn(&Batch),
+    checkpoint: &dyn Fn(&Batch) -> Result<()>,
 ) -> Result<Batch> {
     let indices = validate_indices(indices)?;
     let mut batch = Batch {
         t: now(),
         ..Batch::default()
     };
+    let mut stopped = false;
     for index in indices {
+        if stopped {
+            // The way back could not be saved, so nothing more is removed.
+            batch.failed.push(Failure {
+                index,
+                reason: "The list of removed apps could not be saved".into(),
+            });
+            emit(Progress::Finished(
+                index,
+                ItemResult::Failed("The list of removed apps could not be saved".into()),
+            ));
+            continue;
+        }
         let packages: Vec<&Installed> = installed
             .iter()
             .filter(|p| p.index == index)
@@ -348,7 +361,7 @@ pub(crate) fn remove_with_checkpoint(
             ItemResult::Removed
         };
         batch.removed.append(&mut removed);
-        checkpoint(&batch);
+        stopped = checkpoint(&batch).is_err();
         emit(Progress::Finished(index, result));
     }
     Ok(batch)
@@ -396,14 +409,15 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
         |b: &Batch| !b.removed.is_empty() || !b.skipped.is_empty() || !b.failed.is_empty();
     // The record is saved after every app (replacing this run's own line), so
     // an app that is already gone is always on the list, even if the run stops.
-    let checkpoint = |b: &Batch| {
+    let checkpoint = |b: &Batch| -> Result<()> {
         if recordable(b) {
-            let _ = journal::upsert(b);
+            journal::upsert(b)?;
         }
+        Ok(())
     };
     let batch = remove_with_checkpoint(&indices, &installed, &backup, &run, emit, &checkpoint)?;
     if recordable(&batch) {
-        let _ = journal::upsert(&batch);
+        journal::upsert(&batch)?;
     }
     Ok(batch)
 }

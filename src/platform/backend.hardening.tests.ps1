@@ -851,4 +851,36 @@ $script:calls = @()
 HSetSmartScreen (HDef 'EnableSmartScreen') $null
 Assert ((CallLog) -ceq 'remove:EnableSmartScreen') "policy value removed: $(CallLog)"
 
+# Lock-out safety: a lockout length of 0 or "forever" is not offered.
+MakeSpec '{"id":"accounts.lockout_policy","source":"Lockout","dynamic":true,"reboot":false,"keys":[]}'
+foreach ($duration in @(0, -1)) {
+    $script:lockDuration = $duration
+    function HLockoutInfo { return @($script:lockDuration, 1800, 0) }
+    Reject { HPreflight } 'would stay locked until an administrator unlocks it'
+}
+$script:lockDuration = 1800
+HPreflight
+Remove-Item -LiteralPath function:HLockoutInfo
+# Spooler: restart only when nothing is queued, except when applying (preflight already said idle).
+$script:queueItems = @(); $script:queueFails = $false; $script:restarts = 0
+function Get-ChildItem { param($LiteralPath, [switch]$Force, $ErrorAction); if ($script:queueFails) { throw 'denied' }; return $script:queueItems }
+function Get-ItemProperty { param($LiteralPath, $Name, $ErrorAction); return $null }
+function Get-Service { param($Name, $ErrorAction); return [pscustomobject]@{ Status = 'Running' } }
+function Restart-Service { param($Name, [switch]$Force, $ErrorAction); $script:restarts++ }
+MakeSpec '{"id":"printer.spooler_remote","source":"Registry","dynamic":false,"reboot":false,"keys":[]}'
+$spoolDef = [pscustomobject]@{ rule = 'set'; safe = @(2); absentSafe = $false }
+Assert (!(HPrintBusy)) 'empty queue is idle'
+$script:queueItems = @('job.SPL'); Assert (HPrintBusy) 'a queued job is busy'
+$script:queueItems = @(); $script:queueFails = $true; Assert (HPrintBusy) 'unreadable queue counts as busy'
+$script:queueFails = $false
+HAfterRegistry $spoolDef 2; Assert ($script:restarts -eq 1) 'apply restarts an idle spooler'
+$script:queueItems = @('job.SPL')
+HAfterRegistry $spoolDef $null; Assert ($script:restarts -eq 1) 'undo leaves a busy spooler running'
+HAfterRegistry $spoolDef 2; Assert ($script:restarts -eq 2) 'apply still restarts (preflight blocks a busy queue)'
+$script:queueItems = @()
+HAfterRegistry $spoolDef $null; Assert ($script:restarts -eq 3) 'undo restarts an idle spooler'
+Remove-Item -LiteralPath function:Get-Service, function:Restart-Service
+function Get-ItemProperty { Microsoft.PowerShell.Management\Get-ItemProperty @args }
+function Get-ChildItem { Microsoft.PowerShell.Management\Get-ChildItem @args }
+
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

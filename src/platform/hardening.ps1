@@ -463,13 +463,14 @@ function HPreflight() {
         }
         'accounts.lockout_policy' {
             # A lockout length of 0 (or "forever") keeps a locked account locked
-            # until an administrator opens it: on a one-account PC that is a lock-out.
+            # until an administrator unlocks it: on a one-account PC that is a lock-out.
             $lockInfo = HLockoutInfo
-            if ($lockInfo[0] -le 0) { throw 'Not offered: a locked sign-in would stay locked until an administrator opens it' }
+            if ($lockInfo[0] -le 0) { throw 'Not offered: a locked sign-in would stay locked until an administrator unlocks it' }
         }
         'printer.spooler_remote' {
             Load 'PrintManagement'
             if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.Shared -eq $true }).Count -gt 0) { throw 'Not offered: a printer on this PC is shared with other computers' }
+            if (HPrintBusy) { throw 'Not offered: printing is busy right now' }
         }
         'privacy.recall' {
             if ((HFeatureState 'Recall') -ceq 'Missing') { throw 'Not offered: Recall is not available on this PC' }
@@ -680,7 +681,7 @@ function HSetWifi($name, $v) {
 function HSet([string]$name, $v) {
     $def = HDef $name
     switch -CaseSensitive ($spec.source) {
-        'Registry' { HSetRegistry $def $v; HAfterRegistry }
+        'Registry' { HSetRegistry $def $v; HAfterRegistry $def $v }
         'DefenderPref' { HSetDefenderPref $def $v }
         'DefenderAsr' { HSetAsr $def $v }
         'Lockout' { HSetLockout $def $v }
@@ -716,15 +717,23 @@ function HWantedNames() {
     if ($null -eq $v -or $null -eq $v.Value) { return @() }
     return @($v.Value.Keys)
 }
-function HAfterRegistry() {
+# Is anything waiting to print (or can that not be told)? Unreadable counts as busy.
+function HPrintBusy() {
+    try {
+        $dir = [string](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers' -Name 'DefaultSpoolDirectory' -ErrorAction SilentlyContinue).DefaultSpoolDirectory
+        if ([string]::IsNullOrWhiteSpace($dir)) { $dir = [IO.Path]::Combine($env:SystemRoot, 'System32\spool\PRINTERS') }
+        return (@(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop).Count -gt 0)
+    } catch { return $true }
+}
+function HAfterRegistry($def, $v) {
     if ($spec.id -ceq 'printer.spooler_remote') {
         # The setting is read when the Spooler starts: restart it once, only if it runs.
         $svc = Get-Service -Name 'Spooler' -ErrorAction Stop
-        # Never cut off a print that is in progress: with anything still queued the
-        # setting simply takes effect the next time the Spooler starts.
-        $queue = [IO.Path]::Combine($env:SystemRoot, 'System32\spool\PRINTERS')
-        $queued = @(Get-ChildItem -LiteralPath $queue -Force -ErrorAction SilentlyContinue)
-        if ([string]$svc.Status -ceq 'Running' -and $queued.Count -eq 0) { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
+        # Applying is only offered while nothing is queued (see HPreflight). Putting
+        # it back never cuts off a print in progress: with anything queued it takes
+        # effect the next time the Spooler starts.
+        $applying = HIsSafe $def $v
+        if ([string]$svc.Status -ceq 'Running' -and ($applying -or !(HPrintBusy))) { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
     }
 }
 
