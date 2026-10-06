@@ -29,6 +29,11 @@ pub fn for_check(id: &str) -> Option<Explainer> {
 mod tests {
     use super::*;
 
+    pub(super) fn assert_short_sentence(id: &str, label: &str, line: &str) {
+        assert!(line.chars().count() <= 160, "{id} {label} is too long");
+        assert!(line.ends_with('.'), "{id} {label} must be a sentence");
+    }
+
     fn dotted_literals(source: &str) -> Vec<String> {
         let mut out = Vec::new();
         for (index, piece) in source.split('"').enumerate() {

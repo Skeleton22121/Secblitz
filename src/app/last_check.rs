@@ -65,6 +65,7 @@ pub fn boot_time(now: u64) -> Option<u64> {
     #[cfg(windows)]
     {
         // Milliseconds since Windows started, counting sleep.
+        // SAFETY: GetTickCount64 takes no arguments and has no preconditions.
         let up = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
         Some(now.saturating_sub(up / 1000))
     }

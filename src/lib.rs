@@ -1,3 +1,4 @@
+//! Secblitz engine: Windows hardening checks, fixes and undo, plus the update, service and diagnostics support the GUI and CLI build on.
 pub mod actions;
 pub mod debloat;
 pub mod diagnostics;
