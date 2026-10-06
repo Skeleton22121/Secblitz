@@ -385,14 +385,7 @@ fn other(
         Bucket::GoodToKnow => detail.and_then(|d| guide::guide_not_offered(explain.0, d)),
         _ => None,
     };
-    let page = match bucket {
-        Bucket::Look => guide
-            .map(|g| g.page)
-            .or_else(|| Page::for_finding(explain.0))
-            .or_else(|| Page::for_step(a.step)),
-        Bucket::GoodToKnow => guide.map(|g| g.page),
-        _ => None,
-    };
+    let page = other_page(bucket, explain, guide, a.step);
     let icon = match bucket {
         Bucket::Managed => Icon::Lock,
         Bucket::Unavailable => Icon::Info,
@@ -440,6 +433,29 @@ fn other_line(
         (Some("Leaves you open to:"), a.impact)
     } else {
         (None, a.next)
+    }
+}
+
+/// The Windows page a row's button opens. `explain` is (id or title, finding).
+fn other_page(
+    bucket: Bucket,
+    explain: (&str, bool),
+    guide: Option<&guide::Guide>,
+    step: NextStep,
+) -> Option<Page> {
+    match bucket {
+        Bucket::Look => guide
+            .map(|g| g.page)
+            .or_else(|| Page::for_finding(explain.0))
+            .or_else(|| Page::for_step(step)),
+        // A finding that is only information still gets the page its line
+        // names ("Open Windows Update..."); a Not offered fix gets one only
+        // with its steps.
+        Bucket::GoodToKnow if explain.1 => {
+            Page::for_finding(explain.0).or_else(|| Page::for_step(step))
+        }
+        Bucket::GoodToKnow => guide.map(|g| g.page),
+        _ => None,
     }
 }
 
@@ -1384,6 +1400,38 @@ mod tests {
         assert_eq!(
             other_line(Bucket::Look, true, &a),
             (Some("Leaves you open to:"), a.impact)
+        );
+    }
+
+    #[test]
+    fn an_information_row_that_names_a_page_opens_it() {
+        for (title, page) in [
+            ("Security providers", Some(Page::WindowsSecurity)),
+            ("Windows lifecycle", Some(Page::WindowsUpdate)),
+            ("Windows updates", Some(Page::WindowsUpdate)),
+            ("SmartScreen", Some(Page::AppBrowser)),
+            ("Management and mutation eligibility", Some(Page::WorkAccounts)),
+            // "We leave this one alone": nothing to open.
+            ("Service permissions: BITS", None),
+        ] {
+            let a = advice::for_finding(title, "info", "");
+            assert_eq!(
+                other_page(Bucket::GoodToKnow, (title, true), None, a.step),
+                page,
+                "{title}"
+            );
+        }
+        // A Not offered fix without steps opens nothing.
+        let a = advice::for_control("accounts.autologon", "skipped", "");
+        assert_eq!(
+            other_page(Bucket::GoodToKnow, ("accounts.autologon", false), None, a.step),
+            None
+        );
+        // Settings the owner controls never offer a page.
+        let a = advice::for_finding("Windows updates", "info", "");
+        assert_eq!(
+            other_page(Bucket::Managed, ("Windows updates", true), None, a.step),
+            None
         );
     }
 

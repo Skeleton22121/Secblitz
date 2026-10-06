@@ -174,6 +174,7 @@ impl Page {
         Some(match title {
             "Windows Firewall" => Page::Firewall,
             "SmartScreen" => Page::AppBrowser,
+            "Management and mutation eligibility" => Page::WorkAccounts,
             _ => return None,
         })
     }
@@ -590,5 +591,9 @@ mod tests {
         assert_eq!(Page::for_finding("Windows Firewall"), Some(Page::Firewall));
         assert_eq!(Page::for_finding("SmartScreen"), Some(Page::AppBrowser));
         assert_eq!(Page::for_finding("Defender"), None);
+        assert_eq!(
+            Page::for_finding("Management and mutation eligibility"),
+            Some(Page::WorkAccounts)
+        );
     }
 }
