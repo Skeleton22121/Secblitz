@@ -195,7 +195,8 @@ mod selective {
         assert!(report.results.iter().all(|r| r.status == CheckStatus::Restored));
         invariants(&dir, &e);
         let history = e.history().unwrap();
-        assert!(history.iter().all(|h| !h.ends_with(" applied") || h == &history[0]));
+        assert!(history[0].ends_with(" applied"), "{history:?}");
+        assert!(history[1].ends_with(" reverted"), "{history:?}");
         assert!(e.load().unwrap()[0].reverted);
         assert_eq!(e.undoable_changes().unwrap(), 1);
         e.revert_selected(&ids(&[Z]), |_| {}).unwrap();
@@ -454,9 +455,20 @@ mod selective {
                     drop(e);
                     let mut e = reopen(&dir, &state, &controls());
                     invariants(&dir, &e);
+                    let ctx = format!("{chosen:?} {point} {ordinal}");
+                    let journalled = shape(&e);
+                    for id in all {
+                        let recorded = journalled
+                            .iter()
+                            .flat_map(|(_, entries)| entries)
+                            .any(|(entry, state)| entry == id && *state != State::Applied);
+                        assert!(
+                            restores(&state, id) == 0 || recorded,
+                            "{id} was written back before its intent was durable: {ctx}"
+                        );
+                    }
                     e.revert_selected(&chosen, |_| {}).unwrap();
                     invariants(&dir, &e);
-                    let ctx = format!("{chosen:?} {point} {ordinal}");
                     assert_eq!(shape(&e), want_shape, "{ctx}");
                     let values: Vec<_> = all.iter().map(|id| value(&state, id)).collect();
                     assert_eq!(values, want_values, "{ctx}");
