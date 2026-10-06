@@ -2073,6 +2073,18 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["Microsoft Defender", "Microsoft Defender", "Microsoft Defender", "Microsoft Defender", "Microsoft Defender", "Microsoft Defender"],
     ["Windows Update", "Windows Update", "Windows Update", "Windows Update", "Windows Update", "Windows Update"],
     ["Network sharing", "Uso compartido de red", "Partage réseau", "Netzwerkfreigabe", "Compartilhamento de rede", "Condivisione in rete"],
+    ["Waiting to remove {name}", "Esperando para quitar {name}", "En attente de suppression : {name}", "{name} wird gleich entfernt", "Aguardando para remover {name}", "In attesa di rimuovere {name}"],
+    ["Saving a copy of {name}", "Guardando una copia de {name}", "Enregistrement d'une copie de {name}", "Kopie von {name} wird gespeichert", "Salvando uma cópia de {name}", "Salvataggio di una copia di {name}"],
+    ["Removing {name}", "Quitando {name}", "Suppression de {name}", "{name} wird entfernt", "Removendo {name}", "Rimozione di {name}"],
+    ["Couldn't remove {name}", "No se pudo quitar {name}", "Impossible de supprimer {name}", "{name} konnte nicht entfernt werden", "Não foi possível remover {name}", "Impossibile rimuovere {name}"],
+    ["{name} stays on your PC", "{name} se queda en tu equipo", "{name} reste sur votre PC", "{name} bleibt auf deinem PC", "{name} continua no seu computador", "{name} resta sul PC"],
+    ["Windows protects {name}", "Windows protege {name}", "Windows protège {name}", "Windows schützt {name}", "O Windows protege {name}", "Windows protegge {name}"],
+    ["1 more app", "1 aplicación más", "1 application de plus", "1 weitere App", "Mais 1 app", "1 altra app"],
+    ["{n} more apps", "{n} aplicaciones más", "{n} applications de plus", "{n} weitere Apps", "Mais {n} apps", "Altre {n} app"],
+    ["File Explorer", "Explorador de archivos", "Explorateur de fichiers", "Datei-Explorer", "Explorador de Arquivos", "Esplora file"],
+    ["Windows Security", "Seguridad de Windows", "Sécurité Windows", "Windows-Sicherheit", "Segurança do Windows", "Sicurezza di Windows"],
+    ["Microsoft Store", "Microsoft Store", "Microsoft Store", "Microsoft Store", "Microsoft Store", "Microsoft Store"],
+    ["Notepad", "Bloc de notas", "Bloc-notes", "Editor", "Bloco de Notas", "Blocco note"],
 ];
 
 // Each row is English, Spanish, French, German, Portuguese.

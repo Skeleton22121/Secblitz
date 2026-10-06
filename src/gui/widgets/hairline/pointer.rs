@@ -282,6 +282,19 @@ impl<Id: Copy + PartialEq> Hotspots<Id> {
         };
         Some(Point::new(c.x + o.x, c.y + o.y - r * 0.7))
     }
+
+    /// The point (units) just under part `id`: its bottom edge, moved by
+    /// its layer. A tooltip with no room above goes below this, so it never
+    /// covers the part it names.
+    pub fn below(&self, id: Id, tilt: &Parallax) -> Option<Point> {
+        let s = self.spots.iter().find(|s| s.id == id)?;
+        let o = tilt.offset(s.layer);
+        let (c, r) = match s.area {
+            Area::Circle { centre, r } => (centre, r),
+            Area::Rect { centre, h, .. } => (centre, h / 2.0),
+        };
+        Some(Point::new(c.x + o.x, c.y + o.y + r))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -342,14 +355,28 @@ fn measure(label: &str) -> f32 {
 /// (pixels) with a 6 px gap, kept inside `canvas`. When there is no room
 /// above, it goes below the anchor instead.
 pub fn tooltip_rect(anchor: Point, text_width: f32, canvas: Size) -> Rectangle {
+    tooltip_rect_around(anchor, anchor, text_width, canvas)
+}
+
+/// [`tooltip_rect`] for a part with a top and a bottom (pixels): above
+/// `above` when it fits, otherwise below `below`, so the box never covers
+/// the part between them.
+pub fn tooltip_rect_around(
+    above: Point,
+    below: Point,
+    text_width: f32,
+    canvas: Size,
+) -> Rectangle {
     let w = (text_width + 2.0 * TIP_PAD_X).ceil();
     let h = TIP_SIZE + 2.0 * TIP_PAD_Y;
     let max_x = (canvas.width - w - TIP_MARGIN).max(TIP_MARGIN);
-    let x = (anchor.x - w / 2.0).clamp(TIP_MARGIN, max_x);
-    let mut y = anchor.y - TIP_GAP - h;
+    let mut x = above.x;
+    let mut y = above.y - TIP_GAP - h;
     if y < TIP_MARGIN {
-        y = anchor.y + TIP_GAP;
+        x = below.x;
+        y = below.y + TIP_GAP;
     }
+    let x = (x - w / 2.0).clamp(TIP_MARGIN, max_x);
     let max_y = (canvas.height - h - TIP_MARGIN).max(TIP_MARGIN);
     Rectangle::new(
         Point::new(x.round(), y.clamp(TIP_MARGIN, max_y).round()),
@@ -362,10 +389,28 @@ pub fn tooltip_rect(anchor: Point, text_width: f32, canvas: Size) -> Rectangle {
 /// 12 px medium, kept inside the canvas. Draw it last, outside any layer
 /// offset (the anchor already includes it).
 pub fn tooltip(frame: &mut Frame, p: &Palette, stage: &Stage, anchor: Point, label: &str) {
+    tooltip_around(frame, p, stage, anchor, anchor, label);
+}
+
+/// [`tooltip`] for a part with a top and a bottom (units): above `above`,
+/// or below `below` when there is no room above.
+pub fn tooltip_around(
+    frame: &mut Frame,
+    p: &Palette,
+    stage: &Stage,
+    above: Point,
+    below: Point,
+    label: &str,
+) {
     if label.is_empty() {
         return;
     }
-    let r = tooltip_rect(stage.point(anchor), label_width(label), frame.size());
+    let r = tooltip_rect_around(
+        stage.point(above),
+        stage.point(below),
+        label_width(label),
+        frame.size(),
+    );
     frame.fill(
         &Path::rounded_rectangle(r.position(), r.size(), TIP_RADIUS.into()),
         p.text,
@@ -534,6 +579,14 @@ mod tests {
         // No room above: below the anchor.
         let b = tooltip_rect(Point::new(160.0, 10.0), 60.0, c);
         assert_eq!(b.y, 16.0);
+        // A part with a bottom edge: below that edge, not over the part.
+        let (top, bottom) = (Point::new(160.0, 10.0), Point::new(160.0, 40.0));
+        let under = tooltip_rect_around(top, bottom, 60.0, c);
+        assert_eq!(under.y, 46.0);
+        // With room above, the bottom edge does not matter.
+        let (top, bottom) = (Point::new(160.0, 100.0), Point::new(160.0, 130.0));
+        let over = tooltip_rect_around(top, bottom, 60.0, c);
+        assert_eq!(over, r);
     }
 
     #[test]
