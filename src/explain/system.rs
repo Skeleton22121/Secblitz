@@ -145,8 +145,7 @@ mod tests {
         for id in IDS {
             let x = get(id).unwrap_or_else(|| panic!("no explanation for {id}"));
             for (label, line) in [("what", x.what), ("risk", x.risk), ("change", x.change)] {
-                assert!(line.chars().count() <= 160, "{id} {label} is too long");
-                assert!(line.ends_with('.'), "{id} {label} must be a sentence");
+                crate::explain::tests::assert_short_sentence(id, label, line);
                 assert!(!line.contains("  ") && line.trim() == line, "{id} {label}");
                 for word in jargon {
                     assert!(!line.contains(word), "{id} {label} uses '{word}'");

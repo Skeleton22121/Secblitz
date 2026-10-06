@@ -67,6 +67,10 @@ pub fn classify(r: &Outcome) -> Class {
         // the person to do and never claimed as protected. A note only.
         return Class::Excluded;
     }
+    class_of_group(&a)
+}
+
+fn class_of_group(a: &advice::Advice) -> Class {
     match a.group {
         Group::Protected => Class::Protected,
         Group::Recommended => Class::Fixable,
@@ -81,7 +85,6 @@ fn managed(a: &advice::Advice) -> bool {
 
 /// Classify a diagnostic finding. `info` findings are "Good to know" notes:
 /// `Class::Excluded` means they are never counted as something to check.
-#[allow(dead_code)] // consumed by the GUI integration
 pub fn classify_finding(f: &secblitz::model::Finding) -> Class {
     match f.status.as_str() {
         "error" | "unknown" | "unsupported" => return Class::Unknown,
@@ -95,17 +98,7 @@ pub fn classify_finding(f: &secblitz::model::Finding) -> Class {
     if a.step == advice::NextStep::CheckAgain {
         return Class::Unknown;
     }
-    match a.group {
-        Group::Protected => Class::Protected,
-        Group::Recommended => Class::Fixable,
-        Group::Choice => Class::Review,
-        Group::Information => Class::Excluded,
-    }
-}
-
-#[allow(dead_code)] // consumed by the GUI integration
-pub fn is_good_to_know(f: &secblitz::model::Finding) -> bool {
-    classify_finding(f) == Class::Excluded
+    class_of_group(&a)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -443,8 +436,8 @@ mod tests {
             r.findings.push(find(t, "info"));
         }
         r.findings.push(find("Remote Desktop", "attention"));
-        assert!(is_good_to_know(&r.findings[0]));
-        assert!(!is_good_to_know(&r.findings[4]));
+        assert_eq!(classify_finding(&r.findings[0]), Class::Excluded);
+        assert_ne!(classify_finding(&r.findings[4]), Class::Excluded);
         assert_eq!(to_check_count(&r), 2);
         assert_eq!(classify_finding(&find("SMB1", "error")), Class::Unknown);
     }

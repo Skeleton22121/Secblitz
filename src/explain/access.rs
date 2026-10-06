@@ -40,8 +40,7 @@ mod tests {
             assert!(secblitz::hardening::is_hardening_check_id(id), "{id}");
             let x = get(id).unwrap_or_else(|| panic!("no explanation for {id}"));
             for (label, line) in [("what", x.what), ("risk", x.risk), ("change", x.change)] {
-                assert!(line.chars().count() <= 160, "{id} {label} is too long");
-                assert!(line.ends_with('.'), "{id} {label} must be a sentence");
+                crate::explain::tests::assert_short_sentence(id, label, line);
                 assert!(!line.contains('!') && !line.contains('\u{2014}'), "{id} {label}");
                 assert!(!line.contains("SMB") && !line.contains("RDP"), "{id} {label}");
             }
