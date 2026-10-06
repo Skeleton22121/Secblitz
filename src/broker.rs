@@ -34,6 +34,8 @@ pub enum Request {
     OpenBackup,
     OpenStorage,
     OpenInstalledApps,
+    OpenReportProblem,
+    OpenSuggestFeature,
     UserSetting(Setting, Op),
     AppUpdatesScan,
     AppUpdateQuery(u16),
@@ -122,7 +124,9 @@ impl Request {
             | Request::AppUpdatesScan
             | Request::AppUpdateQuery(_)
             | Request::BitwardenStatus
-            | Request::UserSetting(_, Op::Query) => true,
+            | Request::UserSetting(_, Op::Query)
+            | Request::OpenReportProblem
+            | Request::OpenSuggestFeature => true,
             Request::UserSetting(_, Op::Apply | Op::Undo)
             | Request::InstallBitwarden
             | Request::BlockSuggestedApps
@@ -180,6 +184,8 @@ impl Request {
                 | Request::OpenBackup
                 | Request::OpenStorage
                 | Request::OpenInstalledApps
+                | Request::OpenReportProblem
+                | Request::OpenSuggestFeature
         )
     }
 
@@ -211,6 +217,8 @@ impl Request {
             Request::OpenBackup => (31, 0),
             Request::OpenStorage => (32, 0),
             Request::OpenInstalledApps => (33, 0),
+            Request::OpenReportProblem => (34, 0),
+            Request::OpenSuggestFeature => (35, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -264,6 +272,8 @@ impl Request {
             31 => Request::OpenBackup,
             32 => Request::OpenStorage,
             33 => Request::OpenInstalledApps,
+            34 => Request::OpenReportProblem,
+            35 => Request::OpenSuggestFeature,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -588,6 +598,8 @@ mod tests {
             Request::OpenBackup,
             Request::OpenStorage,
             Request::OpenInstalledApps,
+            Request::OpenReportProblem,
+            Request::OpenSuggestFeature,
             Request::AppUpdatesScan,
             Request::AppUpdateQuery(0),
             Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
@@ -625,10 +637,14 @@ mod tests {
 
     #[test]
     fn only_queries_keep_the_saved_check() {
+        let feedback = [Request::OpenReportProblem, Request::OpenSuggestFeature];
         for request in all() {
-            if request.opens_window() {
+            if request.opens_window() && !feedback.contains(&request) {
                 assert!(!request.is_read_only(), "{request:?}");
             }
+        }
+        for request in feedback {
+            assert!(request.opens_window() && request.is_read_only());
         }
         assert!(Request::UserSetting(Setting::SuggestedApps, Op::Query).is_read_only());
         assert!(!Request::UserSetting(Setting::SuggestedApps, Op::Apply).is_read_only());
@@ -640,10 +656,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 34, 35, 100, 255] {
+        for kind in [0u8, 36, 37, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=33).chain([17]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=35).chain([17]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }

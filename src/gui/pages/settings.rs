@@ -155,6 +155,8 @@ pub enum Msg {
     BackgroundDone(bool, Result<(), String>),
     TrayDone(bool, Result<(), String>),
     ToggleTechnical,
+    Feedback(crate::broker::Request),
+    FeedbackOpened(bool),
     Frame,
     Remove(remove::Msg),
 }
@@ -309,6 +311,18 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.technical = !state.technical;
             Task::none()
         }
+        Msg::Feedback(request) => ctx.broker_task(request, |reply| {
+            Message::Settings(Msg::FeedbackOpened(matches!(
+                reply,
+                Ok(crate::broker::Reply::Done)
+            )))
+        }),
+        Msg::FeedbackOpened(true) => Task::none(),
+        Msg::FeedbackOpened(false) => toast(
+            "We couldn't open your web browser. Visit github.com/Skeleton22121/Secblitz/issues to write to us.",
+            Tone::Warn,
+            ctx,
+        ),
     }
 }
 
@@ -562,6 +576,48 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         container(details).padding([theme::S2, theme::S4 + theme::ICON_ROW + theme::S4]),
     );
 
+    let link = |label: &str, request| {
+        widgets::action(
+            p,
+            ButtonKind::Secondary,
+            t(label),
+            Some(Icon::ExternalLink),
+            Some(Message::Settings(Msg::Feedback(request))),
+        )
+    };
+    let feedback = widgets::group(
+        p,
+        t("Help and feedback"),
+        None,
+        None,
+        vec![
+            widgets::row_item(
+                p,
+                Some(Icon::Bug),
+                t("Report a problem"),
+                Some(t("Tell us what went wrong. This opens a form on GitHub.")),
+                link("Report a problem", crate::broker::Request::OpenReportProblem),
+                None,
+            ),
+            widgets::row_item(
+                p,
+                Some(Icon::Sparkles),
+                t("Suggest a feature"),
+                Some(t("Share an idea that would make Secblitz better. This opens a form on GitHub.")),
+                link("Suggest a feature", crate::broker::Request::OpenSuggestFeature),
+                None,
+            ),
+            widgets::row_item(
+                p,
+                Some(Icon::Lock),
+                t("Found a security problem?"),
+                Some(t("Please don't post it publicly. Email support@secblitz.lol instead.")),
+                space::horizontal().width(0),
+                None,
+            ),
+        ],
+    );
+
     let removal = widgets::group(
         p,
         t(remove::SECTION_TITLE),
@@ -588,6 +644,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         appearance,
         protection,
         updates,
+        feedback,
         removal,
         about,
     ]

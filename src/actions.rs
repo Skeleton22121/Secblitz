@@ -31,7 +31,14 @@ pub enum Action {
     OpenBackup,
     OpenStorage,
     OpenInstalledApps,
+    OpenReportProblem,
+    OpenSuggestFeature,
 }
+
+pub const REPORT_PROBLEM_URL: &str =
+    "https://github.com/Skeleton22121/Secblitz/issues/new?template=bug_report.yml";
+pub const SUGGEST_FEATURE_URL: &str =
+    "https://github.com/Skeleton22121/Secblitz/issues/new?template=feature_request.yml";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionResult {
@@ -106,6 +113,8 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenBackup => Uri("ms-settings:backup"),
         Action::OpenStorage => Uri("ms-settings:storagesense"),
         Action::OpenInstalledApps => Uri("ms-settings:appsfeatures"),
+        Action::OpenReportProblem => Uri(REPORT_PROBLEM_URL),
+        Action::OpenSuggestFeature => Uri(SUGGEST_FEATURE_URL),
         Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
         _ => return None,
     })
@@ -138,6 +147,8 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | "windowsdefender://coreisolation"
                 | "windowsdefender://network"
                 | "windowsdefender://devicesecurity"
+                | REPORT_PROBLEM_URL
+                | SUGGEST_FEATURE_URL
                 | "ms-settings:workplace"
                 | "ms-settings:recovery"
                 | "ms-settings:remotedesktop"
@@ -268,6 +279,8 @@ mod tests {
             (Action::OpenBackup, "ms-settings:backup"),
             (Action::OpenStorage, "ms-settings:storagesense"),
             (Action::OpenInstalledApps, "ms-settings:appsfeatures"),
+            (Action::OpenReportProblem, REPORT_PROBLEM_URL),
+            (Action::OpenSuggestFeature, SUGGEST_FEATURE_URL),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
@@ -358,6 +371,8 @@ mod tests {
             Action::OpenBackup,
             Action::OpenStorage,
             Action::OpenInstalledApps,
+            Action::OpenReportProblem,
+            Action::OpenSuggestFeature,
         ] {
             assert!(run(action).is_err());
         }
