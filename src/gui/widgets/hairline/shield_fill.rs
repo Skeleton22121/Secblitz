@@ -474,7 +474,6 @@ fn excl_gap() -> &'static PathData {
 mod tests {
     use super::*;
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::MOTION_LOCK;
     use crate::gui::widgets::hairline::Parallax;
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
@@ -579,8 +578,7 @@ mod tests {
 
     #[test]
     fn fills_while_working_then_settles_and_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
@@ -611,13 +609,11 @@ mod tests {
         }
         assert!(frames as f32 * 0.016 >= RESULT_END - 0.05);
         assert_eq!(st.level.value, 1.04);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn no_splash_at_the_start_and_clicks_beside_it_do_nothing() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
@@ -639,13 +635,11 @@ mod tests {
         assert!(st.ripple.is_none() && !st.live.pulses.alive());
         click(&mut st, stage.point(C));
         assert!(st.ripple.is_some() && st.live.pulses.alive());
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_shows_the_end_at_once() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let mut st = State::default();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
@@ -668,6 +662,5 @@ mod tests {
         )));
         assert_eq!(st.level.value, 0.0);
         assert!(st.ripple.is_none());
-        anim::set_reduced_override(None);
     }
 }

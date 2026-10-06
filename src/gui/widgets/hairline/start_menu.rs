@@ -954,7 +954,6 @@ fn result_mark(
 mod tests {
     use super::*;
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::MOTION_LOCK;
     use std::time::Duration;
 
     fn menu(apps: Vec<Fate>, fillers: usize, outcome: Outcome, t0: Instant) -> StartMenu {
@@ -1037,8 +1036,7 @@ mod tests {
 
     #[test]
     fn removed_apps_leave_only_after_they_have_lifted_out() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let done = t0 + Duration::from_millis(100);
         let m = menu(
@@ -1053,7 +1051,6 @@ mod tests {
         assert_eq!(sc.places[1], Place::Gone);
         assert_eq!(sc.places[2], Place::Slot(1));
         assert_eq!(sc.places.iter().filter(|p| matches!(p, Place::Slot(_))).count(), 8);
-        anim::set_reduced_override(None);
     }
 
     #[test]
@@ -1077,8 +1074,7 @@ mod tests {
 
     #[test]
     fn hotspots_name_tiles_count_and_mark_in_translation() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let mut fates = vec![Fate::Busy];
         fates.extend(vec![Fate::Waiting; 10]);
@@ -1110,26 +1106,22 @@ mod tests {
         assert_eq!(m.label(Part::Tile(1), &sc), "Impossible de supprimer App 0");
         assert_eq!(m.label(Part::Tile(5), &sc), "Windows protège App 1");
         assert_eq!(m.label(Part::Tile(6), &sc), "App 2 reste");
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn removing_tiles_have_no_hotspot() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let m = menu(vec![Fate::Removed(t0)], 3, Outcome::Working, t0);
         let sc = m.scene(t0);
         assert_eq!(sc.places[1], Place::Slot(1));
         let spots = m.spots(&sc, false);
         assert_eq!(spots.hit(slot_centre(1), &super::super::Parallax::off()), None);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn apps_no_longer_installed_shrink_away_quietly() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let m = menu(vec![Fate::Absent(t0), Fate::Removed(t0)], 9, Outcome::Removed, t0);
         let p = pose(Some(Fate::Absent(t0)), 0.5, 0.0, 1, 1.0);
@@ -1145,13 +1137,11 @@ mod tests {
         assert_eq!(sc.places[1], Place::Gone);
         assert_eq!(sc.places[5], Place::Gone);
         assert_eq!(sc.places[2], Place::Slot(1));
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn work_out_of_sight_shows_on_the_count_and_keeps_frames() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let mut fates = vec![Fate::Refused(t0); 6];
         fates.extend([Fate::Busy, Fate::Waiting]);
@@ -1175,7 +1165,6 @@ mod tests {
             frames += 1;
             assert!(frames < 600, "never settled");
         }
-        anim::set_reduced_override(None);
     }
 
     #[test]
@@ -1198,8 +1187,7 @@ mod tests {
 
     #[test]
     fn the_tilt_is_level_with_the_pointer_in_the_middle() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let m = menu(vec![Fate::Waiting], 9, Outcome::Working, t0);
         let mut st = State::default();
@@ -1213,7 +1201,6 @@ mod tests {
         );
         assert!(st.live.tilt.x.target.abs() < 0.01);
         assert!(st.live.tilt.y.target.abs() < 0.01, "{}", st.live.tilt.y.target);
-        anim::set_reduced_override(None);
     }
 
     #[test]
@@ -1286,8 +1273,7 @@ mod tests {
 
     #[test]
     fn working_loops_then_the_result_settles_and_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(2.0, 2.0));
         let mut st = State::default();
@@ -1311,13 +1297,11 @@ mod tests {
         let sc = done.scene(clock);
         assert_eq!(sc.places.iter().filter(|p| **p == Place::Gone).count(), 2);
         assert_eq!(st.tiles[2].x.value, slot_centre(1).x);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn hovering_and_clicking_a_tile_nudges_it() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let m = menu(vec![Fate::Refused(t0)], 9, Outcome::Partly, t0);
         let mut st = State::default();
@@ -1348,13 +1332,11 @@ mod tests {
             assert!(frames < 600, "never settled");
         }
         assert!(frames > 10);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_is_still_but_still_answers() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let m = menu(
             vec![Fate::Busy, Fate::Removed(t0), Fate::Waiting],
@@ -1391,6 +1373,5 @@ mod tests {
             BOUNDS,
             over
         )));
-        anim::set_reduced_override(None);
     }
 }

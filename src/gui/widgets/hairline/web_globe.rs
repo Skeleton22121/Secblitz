@@ -1089,7 +1089,6 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
 mod tests {
     use super::*;
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::MOTION_LOCK;
     use crate::gui::widgets::hairline::Parallax;
     use iced::{window, Vector};
     use std::time::Duration;
@@ -1311,8 +1310,7 @@ mod tests {
 
     #[test]
     fn drag_on_the_globe_spins_it_and_clicks_block_by_hand() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let p = prog(Guard::On, t0);
         let mut st = State::default();
@@ -1380,13 +1378,11 @@ mod tests {
         run(&off_prog, &mut st, &down, at(ad));
         run(&off_prog, &mut st, &up, at(ad));
         assert_eq!(st.items[0].phase, Phase::Go);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn traffic_rests_after_a_while_and_wakes_for_the_pointer() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let p = prog(Guard::On, t0);
         let mut st = State::default();
@@ -1431,13 +1427,11 @@ mod tests {
         }
         assert!(stopped && frames > 30);
         assert!(!st.awake());
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_is_one_still_picture_that_still_answers() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let p = prog(Guard::On, t0);
         let mut st = State::default();
@@ -1473,6 +1467,5 @@ mod tests {
         let paused = prog(Guard::Paused, t0 + Duration::from_secs(1));
         run(&paused, &mut st, &frame(t0 + Duration::from_secs(1)), off);
         assert_eq!(st.items, still_items(Guard::Paused));
-        anim::set_reduced_override(None);
     }
 }

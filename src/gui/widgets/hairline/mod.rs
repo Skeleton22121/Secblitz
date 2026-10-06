@@ -42,7 +42,7 @@ mod example {
     //! pieces fit and pins how `update` asks for frames.
     use super::*;
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::{self, DECELERATE, MOTION_LOCK};
+    use crate::gui::widgets::anim::{self, DECELERATE};
     use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
     use iced::{mouse, window, Point, Rectangle, Renderer, Size, Theme};
     use std::time::{Duration, Instant};
@@ -210,8 +210,7 @@ mod example {
 
     #[test]
     fn example_drawing_hovers_clicks_and_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let prog = Beacon {
             p: LIGHT,
@@ -301,13 +300,11 @@ mod example {
         }
         let secs = frames as f32 * 0.016;
         assert!((secs - DONE_END).abs() < 0.1, "{secs}");
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn example_drawing_is_still_under_reduced_motion() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let prog = Beacon {
             p: LIGHT,
@@ -348,6 +345,5 @@ mod example {
         canvas::Program::update(&prog, &mut st, &up, BOUNDS, over);
         assert!(st.live.pointer.was_click);
         assert!(!st.pop.moving() && !st.live.pulses.alive());
-        anim::set_reduced_override(None);
     }
 }

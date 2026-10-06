@@ -1,13 +1,10 @@
 //! Motion tokens and small animated icons drawn on a canvas.
 
-#![allow(dead_code)]
-
 use iced::widget::canvas::{
     self, path::Arc, Cache, Frame, Geometry, LineCap, LineJoin, Path, Stroke,
 };
 use iced::{mouse, Color, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -144,38 +141,45 @@ fn ratio(elapsed: Duration, d: Duration) -> f32 {
 }
 
 
-static OVERRIDE: AtomicU8 = AtomicU8::new(0);
-static SYSTEM: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
-
-pub fn set_reduced_override(v: Option<bool>) {
-    OVERRIDE.store(
-        match v {
-            None => 0,
-            Some(true) => 1,
-            Some(false) => 2,
-        },
-        Ordering::Relaxed,
-    );
+/// Reads the system "animation effects" setting, re-asking at most every few seconds.
+pub struct Motion {
+    system: fn() -> bool,
+    cache: Mutex<Option<(Instant, bool)>>,
 }
 
-pub fn reduced() -> bool {
-    match OVERRIDE.load(Ordering::Relaxed) {
-        1 => return true,
-        2 => return false,
-        _ => {}
+impl Motion {
+    const REFRESH: Duration = Duration::from_secs(3);
+
+    pub const fn new(system: fn() -> bool) -> Self {
+        Self {
+            system,
+            cache: Mutex::new(None),
+        }
     }
-    let now = Instant::now();
-    if let Ok(mut g) = SYSTEM.lock() {
-        if let Some((at, v)) = *g {
-            if now.duration_since(at) < Duration::from_secs(3) {
+
+    pub fn reduced_at(&self, now: Instant) -> bool {
+        let Ok(mut cached) = self.cache.lock() else {
+            return false;
+        };
+        if let Some((at, v)) = *cached {
+            if now.duration_since(at) < Self::REFRESH {
                 return v;
             }
         }
-        let v = system_reduced();
-        *g = Some((now, v));
+        let v = (self.system)();
+        *cached = Some((now, v));
+        v
+    }
+}
+
+static MOTION: Motion = Motion::new(system_reduced);
+
+pub fn reduced() -> bool {
+    #[cfg(test)]
+    if let Some(v) = forced::get() {
         return v;
     }
-    false
+    MOTION.reduced_at(Instant::now())
 }
 
 pub fn animating() -> bool {
@@ -711,8 +715,32 @@ fn paint_pulse(f: &mut Frame, g: &Glyph) {
     }
 }
 
+/// Per-thread reduced-motion override for tests, so they never share state.
 #[cfg(test)]
-pub(crate) static MOTION_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) mod forced {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FORCED: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    pub fn get() -> Option<bool> {
+        FORCED.with(Cell::get)
+    }
+
+    pub struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            FORCED.with(|f| f.set(None));
+        }
+    }
+
+    pub fn set(reduced: bool) -> Guard {
+        FORCED.with(|f| f.set(Some(reduced)));
+        Guard
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -809,17 +837,27 @@ mod tests {
 
     #[test]
     fn override_controls_reduced_and_clock() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        set_reduced_override(Some(true));
+        let _m = forced::set(true);
         assert!(reduced() && !animating());
         let c = Clock::new();
         assert!(c.done(SLOW, Instant::now()));
         assert_eq!(count_up_int(0, 18, 0.0), 18);
-        set_reduced_override(Some(false));
+        let _m = forced::set(false);
         assert!(!reduced() && animating());
         assert_eq!(count_up_int(0, 18, 0.0), 0);
         assert_eq!(count_up_int(0, 18, 1.0), 18);
-        set_reduced_override(None);
+    }
+
+    #[test]
+    fn motion_caches_the_system_answer_for_a_few_seconds() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static ANSWER: AtomicBool = AtomicBool::new(true);
+        let motion = Motion::new(|| ANSWER.load(Ordering::SeqCst));
+        let t0 = Instant::now();
+        assert!(motion.reduced_at(t0));
+        ANSWER.store(false, Ordering::SeqCst);
+        assert!(motion.reduced_at(t0 + Duration::from_secs(2)));
+        assert!(!motion.reduced_at(t0 + Duration::from_secs(4)));
     }
 
     #[test]
@@ -876,9 +914,8 @@ mod tests {
 
     #[test]
     fn tween_math() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _m = forced::set(false);
         let t0 = Instant::now();
-        set_reduced_override(Some(false));
         let mut tw = Tween::starting(t0, 10.0, 20.0, SLOW);
         assert_eq!(tw.value(t0), 10.0);
         assert!((tw.value(t0 + SLOW) - 20.0).abs() < 1e-4);
@@ -892,7 +929,6 @@ mod tests {
         assert!((tw.value(mid) - shown).abs() < 1e-4);
         assert_eq!(tw.target(), 0.0);
         assert!((tw.value(mid + SLOW)).abs() < 1e-4);
-        set_reduced_override(None);
     }
 
     #[test]
