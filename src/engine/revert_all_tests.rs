@@ -18,7 +18,7 @@ mod revert_all {
     }
 
     fn apply_one(e: &mut Engine, id: &str) -> String {
-        let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+        let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
         report.transaction.expect("a batch was recorded")
     }
 
@@ -34,7 +34,7 @@ mod revert_all {
         }
         let mut seen = Vec::new();
         let report = e
-            .revert_all(|id, status| seen.push((id.to_owned(), status.to_owned())))
+            .revert_all(|p| seen.push((p.id.to_owned(), p.step.as_str().to_owned())))
             .unwrap();
         assert!(report.transaction.is_none());
         for id in [X, Y, Z] {
@@ -55,7 +55,7 @@ mod revert_all {
         let middle = apply_one(&mut e, Y);
         let newest = apply_one(&mut e, Z);
         set(&state, Y, json!("NotConfigured"));
-        let report = e.revert_all(|_, _| {}).unwrap();
+        let report = e.revert_all(|_| {}).unwrap();
         let statuses: Vec<_> = report
             .results
             .iter()
@@ -87,7 +87,7 @@ mod revert_all {
         // the journal would be rejected on the next load.
         set(&state, Y, json!("NotConfigured"));
         set(&state, Z, json!("NotConfigured"));
-        let report = e.revert_all(|_, _| {}).unwrap();
+        let report = e.revert_all(|_| {}).unwrap();
         let statuses: Vec<_> = report
             .results
             .iter()
@@ -100,7 +100,7 @@ mod revert_all {
         assert_eq!(report.findings.len(), 2);
         set(&state, Y, json!("Block"));
         set(&state, Z, json!("Block"));
-        let report = e.revert_all(|_, _| {}).unwrap();
+        let report = e.revert_all(|_| {}).unwrap();
         assert!(report.results.iter().all(|r| r.status == CheckStatus::Restored));
         assert!(e.load().unwrap().iter().all(|t| t.reverted));
         assert_eq!(e.undoable_changes().unwrap(), 0);
@@ -112,12 +112,12 @@ mod revert_all {
         apply_one(&mut e, X);
         apply_one(&mut e, Y);
         state.borrow_mut().blocked = true;
-        let report = e.revert_all(|_, _| {}).unwrap();
+        let report = e.revert_all(|_| {}).unwrap();
         assert_eq!(report.results.len(), 2);
         assert!(report.results.iter().all(|r| r.status == CheckStatus::Skipped));
         assert!(state.borrow().writes.iter().all(|(_, v)| v == "Block"));
         state.borrow_mut().blocked = false;
-        let report = e.revert_all(|_, _| {}).unwrap();
+        let report = e.revert_all(|_| {}).unwrap();
         assert!(report.results.iter().all(|r| r.status == CheckStatus::Restored));
         assert_eq!(state.borrow().values[X], json!("Allow"));
         assert_eq!(state.borrow().values[Y], json!("Allow"));
@@ -141,7 +141,7 @@ mod revert_all {
         drop(tx);
         drop(e);
         let mut e = reopen(&dir, &state, &[DEFENDER]);
-        let report = e.revert_all(|_, _| {}).unwrap();
+        let report = e.revert_all(|_| {}).unwrap();
         assert_eq!(report.results[0].status, CheckStatus::Unchanged);
         assert!(e.load().unwrap()[0].reverted);
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
@@ -158,7 +158,7 @@ mod revert_all {
         let writes = state.borrow().writes.len();
         assert_eq!(e.undoable_changes().unwrap(), 3);
         assert_eq!(state.borrow().writes.len(), writes);
-        e.revert_all(|_, _| {}).unwrap();
+        e.revert_all(|_| {}).unwrap();
         assert_eq!(e.undoable_changes().unwrap(), 0);
     }
 }

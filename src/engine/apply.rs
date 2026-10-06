@@ -4,7 +4,7 @@ use super::catalog::{
     apply_eligible, firewall_control, firewall_protected, permission_control, scope, target_for,
 };
 use super::journal::{Record, Transaction};
-use super::{Engine, Outcome, Report, MAX_TRANSACTIONS};
+use super::{Engine, Outcome, Progress, ProgressStep, Report, MAX_TRANSACTIONS};
 use crate::model::{CheckStatus, Control, Observation};
 use anyhow::{ensure, Context, Result};
 use serde_json::Value;
@@ -19,14 +19,14 @@ enum Preflight {
 }
 
 impl Engine {
-    pub fn apply(&mut self, callback: impl FnMut(&str, &str)) -> Result<Report> {
+    pub fn apply(&mut self, callback: impl FnMut(Progress<'_>)) -> Result<Report> {
         self.apply_impl(None, callback)
     }
 
     pub fn apply_selected(
         &mut self,
         ids: &[String],
-        callback: impl FnMut(&str, &str),
+        callback: impl FnMut(Progress<'_>),
     ) -> Result<Report> {
         ensure!(!ids.is_empty(), "Select at least one control");
         let mut selected = HashSet::new();
@@ -54,7 +54,7 @@ impl Engine {
             !transactions.iter().any(|t| !t.reverted && t.incomplete()),
             "Revert the active transaction before applying again"
         );
-        let readiness = self.readiness(&mut |_: &str, _: &str| {});
+        let readiness = self.readiness(&mut |_: Progress<'_>| {});
         ensure!(
             !readiness.blocks_repairs(),
             "Repair readiness blocks new changes"
@@ -65,7 +65,7 @@ impl Engine {
     fn apply_impl(
         &mut self,
         selected: Option<&HashSet<&str>>,
-        mut callback: impl FnMut(&str, &str),
+        mut callback: impl FnMut(Progress<'_>),
     ) -> Result<Report> {
         let _lock = self.lock()?;
         self.mutation_interlocks(&_lock)?;
@@ -137,7 +137,7 @@ impl Engine {
         tx: &Transaction,
         controls: &[Control],
         report: &mut Report,
-        callback: &mut impl FnMut(&str, &str),
+        callback: &mut impl FnMut(Progress<'_>),
     ) {
         report.transaction = Some(tx.name.clone());
         for c in controls {
@@ -241,7 +241,7 @@ impl Engine {
         selected: bool,
         sequence: u64,
         report: &mut Report,
-        callback: &mut impl FnMut(&str, &str),
+        callback: &mut impl FnMut(Progress<'_>),
     ) -> Result<()> {
         let mut tx: Option<Transaction> = None;
         for c in controls {
@@ -337,7 +337,7 @@ impl Engine {
         tx: &mut Transaction,
         observation: &Observation,
         expected: &Value,
-        callback: &mut impl FnMut(&str, &str),
+        callback: &mut impl FnMut(Progress<'_>),
     ) -> Result<Outcome> {
         // Intent is durable before the final eligibility/read gate. A
         // failure or race at that gate is still safely recoverable.
@@ -356,7 +356,7 @@ impl Engine {
             tx.name
         );
         if let Err(e) = self.backend.write(&c.id, expected) {
-            callback(&c.id, "error");
+            callback(Progress::new(&c.id, ProgressStep::Result(CheckStatus::Error)));
             return Err(e.context(format!(
                 "Apply {} has unknown outcome; pending transaction {} retained",
                 c.id, tx.name

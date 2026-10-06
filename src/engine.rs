@@ -40,6 +40,37 @@ const LEGACY_UPDATE_FILES: [&str; 5] = [
     "update-worker.exe",
 ];
 
+/// One progress notification: a control id, or a phase name such as `readiness`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Progress<'a> {
+    pub id: &'a str,
+    pub step: ProgressStep,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgressStep {
+    Pending,
+    Complete,
+    Result(CheckStatus),
+}
+
+impl<'a> Progress<'a> {
+    pub fn new(id: &'a str, step: ProgressStep) -> Self {
+        Self { id, step }
+    }
+}
+
+impl ProgressStep {
+    /// Stable ASCII text for this step.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Pending => "pending",
+            Self::Complete => "complete",
+            Self::Result(status) => status.as_str(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Report {
     pub transaction: Option<String>,
@@ -50,8 +81,8 @@ pub struct Report {
 }
 
 impl Report {
-    fn push(&mut self, result: Outcome, callback: &mut impl FnMut(&str, &str)) {
-        callback(&result.id, result.status.as_str());
+    fn push(&mut self, result: Outcome, callback: &mut impl FnMut(Progress<'_>)) {
+        callback(Progress::new(&result.id, ProgressStep::Result(result.status.clone())));
         self.results.push(result);
     }
 
@@ -61,7 +92,7 @@ impl Report {
         controls: &[Control],
         owned: &mut Vec<Outcome>,
         reason: &str,
-        callback: &mut impl FnMut(&str, &str),
+        callback: &mut impl FnMut(Progress<'_>),
     ) {
         for c in controls {
             let result = match owned.iter().position(|r| r.id == c.id) {
@@ -107,7 +138,7 @@ impl std::fmt::Display for JournalRecoveryRequired {
 
 impl std::error::Error for JournalRecoveryRequired {}
 
-/// Callback arguments are (control id or phase, stable ASCII status). The OS lock lasts through validation, probes, writes, callbacks and the final findings probe.
+/// The callback receives a control id or phase with its step. The OS lock lasts through validation, probes, writes, callbacks and the final findings probe.
 pub struct Engine {
     dir: PathBuf,
     backend: Box<dyn Backend>,
