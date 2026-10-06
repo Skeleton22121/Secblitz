@@ -572,7 +572,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             let text = if all_ok {
                 ctx.t(ALLOWED_AGAIN)
             } else {
-                ctx.t("We couldn't change that setting. It was left as it was.")
+                ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")
             };
             Task::batch([
                 toast(text, if all_ok { Tone::Good } else { Tone::Warn }),
@@ -619,7 +619,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Err(_) => Task::batch([
                 copies_task(),
                 toast(
-                    ctx.t("We couldn't delete the saved copy. Please try again later."),
+                    ctx.t("We couldn't delete the saved copy. Please try again. If it keeps failing, restart your PC."),
                     Tone::Bad,
                 ),
             ]),
@@ -660,7 +660,7 @@ fn couldnt_bring_back(ctx: &Ctx, name: &str) -> Task<Message> {
         format!(
             "{} {name}. {}",
             ctx.t("We couldn't bring back"),
-            ctx.t("Please try again later.")
+            ctx.t("Restart your PC and try again.")
         ),
         Tone::Bad,
     )
@@ -1009,7 +1009,7 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 p,
                 Icon::AlertTriangle,
                 ctx.t("We couldn't look at your apps"),
-                ctx.t("Nothing was changed. Please try again."),
+                ctx.t(debloat::friendly::run_failure(technical)),
                 Some(widgets::action(
                     p,
                     ButtonKind::Secondary,
@@ -1018,7 +1018,6 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                     Some(wrap(Msg::Rescan)),
                 )),
             ),
-            details(state, ctx, vec![technical.clone()]),
         ]
         .spacing(theme::S4)
         .into(),
@@ -1252,7 +1251,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             )
         } else if state.offline == Some(index) {
             (
-                ctx.t("You're offline. Connect to the internet and try again."),
+                ctx.t("You're offline. Connect to the internet, then press Retry."),
                 widgets::action(
                     p,
                     widgets::ButtonKind::Secondary,
@@ -1590,8 +1589,8 @@ fn working_sheet<'a>(
 /// Plain reason an app was left installed.
 fn kept_text(kept: &Kept) -> &'static str {
     match kept {
-        Kept::NoSpace => "Kept: not enough free space to save a copy",
-        Kept::NoCopy(_) => "Kept: couldn't save a copy",
+        Kept::NoSpace => "Kept: not enough free space to save a copy. Free up some space and try again.",
+        Kept::NoCopy(_) => "Kept: couldn't save a copy first. Restart your PC and try again.",
     }
 }
 
@@ -1719,16 +1718,28 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Restart your PC and try again. Nothing else was changed."),
                 ));
             }
+            // Plain-words reasons only; the raw text stays in the journal.
             for f in &batch.failed {
-                technical.push(format!("{}: {}", app_of(f.index).family, f.reason));
+                let line = format!(
+                    "{}: {}",
+                    ctx.t(app_of(f.index).name),
+                    ctx.t(debloat::friendly::removal_failure(&f.reason))
+                );
+                if !technical.contains(&line) {
+                    technical.push(line);
+                }
             }
             for (i, k) in &done.kept {
                 if let Kept::NoCopy(reason) = k {
-                    technical.push(format!("kept {}: {}", app_of(*i).family, reason));
+                    let line = format!(
+                        "{}: {}",
+                        ctx.t(app_of(*i).name),
+                        ctx.t(debloat::friendly::no_copy(reason))
+                    );
+                    if !technical.contains(&line) {
+                        technical.push(line);
+                    }
                 }
-            }
-            for r in &batch.removed {
-                technical.push(format!("removed {} {}", r.package, r.version));
             }
         }
         (None, error) => {
@@ -1740,7 +1751,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Nothing was changed. Please try again."),
                 ));
             if let Some(e) = error {
-                technical.push(e.clone());
+                technical.push(ctx.t(debloat::friendly::run_failure(e)));
             }
         }
     }

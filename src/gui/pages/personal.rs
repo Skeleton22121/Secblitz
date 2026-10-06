@@ -171,8 +171,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Changed(setting, reply) => {
             let note = match reply {
                 Ok(Reply::Done) => None,
-                Ok(Reply::Unavailable) => Some(ctx.t("This setting can't be changed on this PC.")),
-                _ => Some(ctx.t("We couldn't change that setting. It was left as it was.")),
+                Ok(Reply::Unavailable) => Some(ctx.t("This setting can't be changed on this PC. Your work or school may control it.")),
+                _ => Some(ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")),
             };
             // Always read it back: the switch shows what is really set.
             let reread = query(ctx, setting);
@@ -358,7 +358,7 @@ fn account_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         rows.push(widgets::row_item(
             p,
             Some(Icon::Info),
-            ctx.t("Reopen Secblitz from its shortcut to use this."),
+            ctx.t("Close Secblitz and open it again from its Start menu shortcut to use this."),
             None,
             space::horizontal().width(0),
             None,
@@ -414,7 +414,7 @@ fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<E
         // Not set on this PC: nothing reliable to show or change.
         Cell::Known(Reply::Unknown) if setting == Setting::NearbySharing => return None,
         Cell::Known(Reply::Unknown) => (
-            ctx.t("We couldn't check this."),
+            ctx.t("We couldn't check this. Leave this page and open it again to try once more."),
             space::horizontal().width(0).into(),
         ),
         Cell::Known(Reply::NeedsAttention) => {
@@ -438,10 +438,10 @@ fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<E
 
 fn why_text(ctx: &Ctx, why: Why) -> String {
     match why {
-        Why::Offline => ctx.t("Check your internet connection and try again."),
-        Why::Unavailable => ctx.t("App updates aren't available on this PC."),
-        Why::Unreadable => ctx.t("We couldn't check for updates. Please try again later."),
-        Why::NoBroker => ctx.t("Reopen Secblitz from its shortcut to use this."),
+        Why::Offline => ctx.t("You seem to be offline. Connect to the internet, then press Try again."),
+        Why::Unavailable => ctx.t("App updates need App Installer from Microsoft, which this PC doesn't have. Install it from the Microsoft Store, then open Secblitz again."),
+        Why::Unreadable => ctx.t("We couldn't check for updates. Press Try again. If it keeps failing, restart your PC."),
+        Why::NoBroker => ctx.t("Close Secblitz and open it again from its Start menu shortcut to use this."),
     }
 }
 
@@ -562,8 +562,8 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
         ),
         AppCell::Failed(why) => {
             let help = match why {
-                Why::Offline => ctx.t("Check your internet connection and try again."),
-                _ => ctx.t("We couldn't update it. Close the program and try again."),
+                Why::Offline => ctx.t("You seem to be offline. Connect to the internet, then press Try again."),
+                _ => ctx.t("We couldn't update it. Close the program, then press Try again."),
             };
             widgets::row_item_tinted(
                 p,
