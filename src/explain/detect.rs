@@ -1,6 +1,5 @@
 use super::Explainer;
 
-// Plain-language explanations for the read-only checks (diagnostics rule ids).
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {

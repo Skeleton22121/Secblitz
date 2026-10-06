@@ -1,5 +1,4 @@
-// Engine-only crash/fault tests; included inside engine::tests to reuse its
-// stateful backend and exact preference/ACL fixtures.
+// Engine-only crash/fault tests; included inside engine::tests to reuse its stateful backend and fixtures.
 mod recovery {
     use super::*;
 
@@ -93,7 +92,6 @@ mod recovery {
         for cut in 0..bytes.len() {
             let mut writer = Writes::default();
             fault("snapshot_byte", cut);
-            // Exercise counts spanning calls, including exactly one full call.
             let split = bytes.len() / 2;
             let result = write_snapshot_with_fault(&mut writer, &bytes[..split])
                 .and_then(|_| write_snapshot_with_fault(&mut writer, &bytes[split..]));
@@ -338,8 +336,6 @@ mod recovery {
             "snapshot_directory",
             "snapshot_reopen",
         ] {
-            // Header, Prepare, Applied and Seal; Reverting, RestorePending,
-            // Restored and Reverted. Injection counts actual append calls.
             for restore in [false, true] {
                 for ordinal in 0..4 {
                     let (dir, state, mut e) = fixture(DEFENDER, json!(true));
@@ -597,7 +593,6 @@ mod recovery {
                     assert_eq!(state.borrow().writes.len(), writes);
                     assert_eq!(wal.as_ref().map(|p| fs::read(p).unwrap()), original_wal);
                     assert_eq!(fs::read(&attempt).unwrap(), data);
-                    // Gates must not poison the engine or prevent diagnosis.
                     e.audit().unwrap();
                     e.history().unwrap();
                 }

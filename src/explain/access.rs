@@ -6,7 +6,6 @@ const fn e(what: &'static str, risk: &'static str, change: &'static str) -> Expl
     Explainer { what, risk, change }
 }
 
-/// Ids covered here (engine controls of the access area).
 #[cfg(test)]
 const IDS: &[&str] = &["accounts.autologon", "remote_desktop.disabled", "smb1.disabled"];
 

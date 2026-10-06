@@ -1,5 +1,4 @@
-# Fixed support operations only. Policy helpers and trusted module bootstrap
-# come from the compiled backend, with its dispatcher excluded by Rust.
+# Support operations only; policy helpers come from the compiled backend.
 try {
     if ($supportId -cnotin @('defender_update','defender_quickscan','defender_remove_threats')) { throw 'Unknown support operation' }
     Load 'CimCmdlets'

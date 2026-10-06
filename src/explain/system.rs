@@ -6,7 +6,6 @@ const fn e(what: &'static str, risk: &'static str, change: &'static str) -> Expl
     Explainer { what, risk, change }
 }
 
-/// Ids covered here (engine controls of the system area).
 #[cfg(test)]
 const IDS: &[&str] = &[
     "ntlm.extras",
@@ -153,7 +152,6 @@ mod tests {
                     assert!(!line.contains(word), "{id} {label} uses '{word}'");
                 }
             }
-            // Calm and second person, never a scare.
             assert!(!x.risk.to_lowercase().contains("hack"), "{id}");
         }
         assert!(get("not.a.check").is_none());

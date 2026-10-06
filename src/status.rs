@@ -1,8 +1,4 @@
-//! Tiny user-readable protection summary for the tray (`status.json`).
-//!
-//! OWNER: platform agent. Written by the monitor service (LocalService) and by
-//! the elevated GUI after each check; read by the unelevated tray. Contains no
-//! paths, evidence or details — only counts, ids and a timestamp.
+//! Tiny protection summary for the tray (`status.json`). Written by the monitor service and the elevated GUI, read by the unelevated tray. Holds only counts, ids and a timestamp.
 use crate::model::{Authority, EffectiveFirewall, InboundAction, Observation};
 use serde::{Deserialize, Serialize};
 
@@ -20,18 +16,15 @@ pub enum State {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub schema: u32,
-    /// Unix seconds when the check finished.
     pub t: u64,
     pub protected: u32,
     pub total: u32,
-    /// Control ids needing attention (ASCII ids only, capped).
     pub attention: Vec<String>,
     pub state: State,
 }
 
 impl Status {
-    /// Downgrade a stale or future-dated status to `Unknown` so a tray never
-    /// shows "protected" from old or forged data.
+    /// A stale or future-dated status becomes `Unknown`, so the tray never shows "protected" from old or forged data.
     pub fn fresh(mut self, now: u64) -> Self {
         let stale = now.saturating_sub(self.t) > MAX_AGE;
         let future = self.t.saturating_sub(now) > MAX_FUTURE;
@@ -41,7 +34,6 @@ impl Status {
         self
     }
 
-    /// Parse and validate untrusted bytes (size, schema, id charset).
     pub fn parse(bytes: &[u8]) -> anyhow::Result<Self> {
         anyhow::ensure!(bytes.len() <= LIMIT, "status too large");
         let s: Status = serde_json::from_slice(bytes)?;
@@ -59,7 +51,6 @@ impl Status {
     }
 }
 
-/// Per-control result used to build a [`Status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Item {
     Protected,
@@ -67,9 +58,7 @@ pub enum Item {
     Unknown,
 }
 
-/// Classification of one observed control, mirroring the engine's assessment:
-/// a preference that differs from the target is not protected; firewall
-/// controls additionally need local authority and matching effective evidence.
+/// Firewall controls also need local authority and matching effective evidence.
 pub fn classify(id: &str, target: &serde_json::Value, o: &Observation) -> Item {
     if id.starts_with("firewall.") && !crate::hardening::is_hardening(id) {
         if o.authority != Some(Authority::Local) || !o.eligible {
@@ -97,8 +86,7 @@ pub fn classify(id: &str, target: &serde_json::Value, o: &Observation) -> Item {
     }
 }
 
-/// Build a status from per-control results. `complete` is false when the scan
-/// was cut short; an incomplete scan never reports "ok".
+/// An incomplete scan never reports "ok".
 pub fn summarize(items: &[(String, Item)], complete: bool, now: u64) -> Status {
     let items = &items[..items.len().min(256)];
     let total = items.len() as u32;
@@ -150,13 +138,11 @@ fn dir() -> anyhow::Result<std::path::PathBuf> {
     crate::platform::app_dir()
 }
 
-/// Path of the shared status file (`<Program Files>\Secblitz\Status\status.json`).
 pub fn path() -> anyhow::Result<std::path::PathBuf> {
     Ok(dir()?.join("status.json"))
 }
 
-/// Atomically write `status.json` into `dir` (temp file in the same directory,
-/// then rename over the target). Shared by the service and the GUI.
+/// Atomic: temp file in the same directory, then rename.
 pub fn write_to(dir: &std::path::Path, status: &Status) -> anyhow::Result<()> {
     use std::io::Write;
     let bytes = serde_json::to_vec(status)?;
@@ -183,8 +169,6 @@ pub fn write_to(dir: &std::path::Path, status: &Status) -> anyhow::Result<()> {
     result
 }
 
-/// Atomically replace the shared status file. Requires write access
-/// (elevated GUI or the monitor service); failures are non-fatal for callers.
 pub fn write(status: &Status) -> anyhow::Result<()> {
     #[cfg(windows)]
     if crate::service::trusted_status_dir().is_some() {
@@ -194,7 +178,6 @@ pub fn write(status: &Status) -> anyhow::Result<()> {
     write_to(&crate::platform::app_dir()?, status)
 }
 
-/// Read the shared status file, if present and valid.
 pub fn read() -> Option<Status> {
     let p = path().ok()?;
     if std::fs::metadata(&p).ok()?.len() > LIMIT as u64 {

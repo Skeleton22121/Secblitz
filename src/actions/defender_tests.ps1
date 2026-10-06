@@ -4,8 +4,6 @@ Set-StrictMode -Version 2
 $tokens = $null; $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'defender.ps1'), [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
-# Execute the production try body; exceptions are caught by this test harness
-# instead of the production top-level stderr/exit handler.
 $body = $ast.EndBlock.Statements[0].Body.Statements | ForEach-Object { $_.Extent.Text }
 $operation = [scriptblock]::Create(($body -join "`n"))
 function Load($name) { }
@@ -80,7 +78,6 @@ function Remove-MpThreat {
     param($ErrorAction)
     $script:calls.Add('remove')
     if ($script:scenario -eq 'command-error') { throw 'Mock command failure' }
-    # Defender's own remediation: active threats go to quarantine and stop being active.
     if ($script:scenario -ne 'stubborn') { $script:threats = @($script:threats | ForEach-Object { @{IsActive=$false; Id=$_.Id} }) }
 }
 function Start-Sleep { param($Seconds) $script:sleeps++ }
@@ -148,7 +145,6 @@ function PolicyValues($path) {
     }
     return @{}
 }
-# Host-independent Join-Path for registry-provider fixture paths.
 function Join-Path($Path, $ChildPath) { return "$Path\$ChildPath" }
 foreach ($script:policyCase in @('empty', 'current', 'provider')) {
     $script:paths = [Collections.Generic.List[string]]::new()

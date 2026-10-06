@@ -34,7 +34,6 @@ use windows_sys::Win32::UI::Shell::{
 };
 
 const PATH_CAPACITY: usize = 32768;
-// Win32 DRIVE_FIXED, without an extra feature module.
 const DRIVE_FIXED: u32 = 3;
 
 pub(super) fn collect() -> Readiness {
@@ -124,7 +123,6 @@ impl VolumeApi for NativeVolume {
     }
     fn available(&self, root: &[u16]) -> Option<u64> {
         let mut available = 0_u64;
-        // First output is caller/quota-aware; no total volume size is collected.
         // SAFETY: validated root and correctly sized output.
         (unsafe { GetDiskFreeSpaceExW(root.as_ptr(), &mut available, null_mut(), null_mut()) } != 0)
             .then_some(available)
@@ -225,7 +223,6 @@ fn local_directories(path: &[u16]) -> Option<(Vec<u16>, Vec<Handle>)> {
 }
 
 fn power() -> Option<PowerReadiness> {
-    // windows-sys supplies the native repr(C) SYSTEM_POWER_STATUS ABI.
     let mut status: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
     // SAFETY: correctly sized and aligned writable native structure.
     if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
@@ -332,10 +329,7 @@ impl Drop for Exception {
 }
 
 fn system_info_class() -> Option<GUID> {
-    // CLSIDFromProgID can CREATE a registry mapping when a ProgID is absent.
-    // Read the machine's registered class instead, then parse its GUID. This
-    // avoids an HKCU ProgID override. CoCreateInstance's separate class lookup
-    // is protected at >Medium IL by the documented COM policy; see the review.
+    // CLSIDFromProgID can create a registry mapping for an absent ProgID, so read the machine's registered class and parse its GUID. This also avoids an HKCU ProgID override.
     let key = wide("SOFTWARE\\Classes\\Microsoft.Update.SystemInfo\\CLSID");
     let mut text = [0_u16; 40];
     let mut bytes = std::mem::size_of_val(&text) as u32;
@@ -362,7 +356,6 @@ fn parse_system_info_class(text: &[u16; 40], bytes: u32) -> Option<GUID> {
         return None;
     }
     let mut class = GUID::from_u128(0);
-    // Braced, NUL-terminated CLSID string (not a ProgID); parsing is read-only.
     if unsafe { CLSIDFromString(text.as_ptr(), &mut class) } < 0 {
         return None;
     }

@@ -66,7 +66,6 @@ pub(super) fn assess(sd: &[u8]) -> Result<Assessment> {
     // An advisory DACL-only query need not include owner/group. Unknown control
     // semantics must still never produce the ordinary no-candidate result.
     result.complex = control & !(0x8000 | 0x0004 | 0x0008 | 0x0400 | 0x1000) != 0;
-    // No control flag can grant access: a missing DACL is handled below.
     if control & 4 == 0 || offset == 0 {
         result.unrestricted = true;
         return Ok(result);
@@ -90,7 +89,6 @@ pub(super) fn assess(sd: &[u8]) -> Result<Assessment> {
         ensure!(size >= 4 && size.is_multiple_of(4), "Invalid ACE size");
         let ace = acl.get(at..at + size).context("Truncated ACE")?;
         at += size;
-        // Denies, inheritance, object/callback/conditional ACEs are not evaluated.
         if ace[0] != 0 || ace[1] != 0 {
             result.complex = true;
         }
@@ -177,8 +175,6 @@ mod tests {
     }
     #[test]
     fn deny_inherited_and_extra_mask_aces_are_not_unevaluated_grants() {
-        // A DACL with a deny, an inherited ACE and an extra mask bit is
-        // understood well enough to say no risky grant exists.
         let a = assess(&sd(&[
             (1, 0, 2, &[11]),
             (0, 16, 0x20019, &[11]),
@@ -186,14 +182,11 @@ mod tests {
         ]))
         .unwrap();
         assert!(a.complex && !a.unevaluated_grant && a.candidates.is_empty());
-        // A callback allow ACE could grant anything, so it stays unknown.
         assert!(assess(&sd(&[(9, 0, 1, &[11])])).unwrap().unevaluated_grant);
         let mut flags = sd(&[]);
         flags[3] |= 1;
-        // An unknown control flag cannot grant access by itself.
         let a = assess(&flags).unwrap();
         assert!(a.complex && !a.unevaluated_grant);
-        // A compound allow ACE could grant access too.
         assert!(assess(&sd(&[(4, 0, 1, &[11])])).unwrap().unevaluated_grant);
     }
     #[test]

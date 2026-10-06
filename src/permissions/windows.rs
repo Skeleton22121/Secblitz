@@ -9,7 +9,6 @@ use anyhow::{ensure, Result};
 use serde_json::Value;
 use std::{ffi::c_void, io, ptr};
 
-// Fixed local objects only; no service names or remote hosts from caller input.
 const SERVICES: [&str; 5] = [
     "BITS",
     "wuauserv",
@@ -132,8 +131,7 @@ fn config_string(buffer: &[u64], pointer: *const u16) -> Result<String> {
     anyhow::bail!("Unterminated service config string")
 }
 
-/// Pin the expected Windows service host and check its owner and file metadata.
-/// This is identity screening, not Authenticode or DLL-path integrity auditing.
+/// Identity screening of the service host, not Authenticode or DLL-path auditing.
 fn identity(service: &Handle) -> Result<std::fs::File> {
     use std::os::windows::{
         fs::{MetadataExt, OpenOptionsExt},
@@ -258,7 +256,6 @@ pub(super) fn write(id: &str, value: &Value) -> Result<()> {
     let _host = identity(&service)?;
     let current = snapshot(&service)?;
     current.check_transition(&desired)?;
-    // Repeat policy and exact-state checks immediately before the native write.
     crate::platform::permission_gate(id)?;
     let _host_again = identity(&service)?;
     ensure!(

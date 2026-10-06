@@ -1,12 +1,7 @@
-//! Plain step-by-step help for the few things only the person can do in
-//! Windows itself. Pure data: a guide names one fixed Windows page and a few
-//! short numbered steps. It never carries an address, a command or a string
-//! that reaches the system; opening a page goes through `Page::request`, the
-//! fixed list of broker requests. All text is translation source keys.
+//! Plain step-by-step help for what only the person can do in Windows itself. Pure data: pages open only through `Page::request`; all text is translation source keys.
 use crate::broker::Request;
 use secblitz::actions::Action;
 
-/// A Windows page a guide can open. A closed set, never free text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     CoreIsolation,
@@ -61,7 +56,6 @@ impl Page {
         Page::InstalledApps,
     ];
 
-    /// The page's name as Windows shows it. Also what to type in Start.
     pub fn name(self) -> &'static str {
         match self {
             Page::CoreIsolation => "Core isolation",
@@ -90,7 +84,6 @@ impl Page {
         }
     }
 
-    /// The visible button that opens it.
     pub fn button(self) -> &'static str {
         match self {
             Page::CoreIsolation => "Open Core isolation",
@@ -147,7 +140,6 @@ impl Page {
         }
     }
 
-    /// The broker request the launcher serves for this page.
     pub fn request(self) -> Request {
         match self {
             Page::CoreIsolation => Request::OpenCoreIsolation,
@@ -176,18 +168,15 @@ impl Page {
         }
     }
 
-    /// The page for a request, when it is one of these.
     #[cfg(test)]
     pub fn from_request(request: Request) -> Option<Page> {
         Page::ALL.into_iter().find(|p| p.request() == request)
     }
 
-    /// The page for an `actions::Action`.
     pub fn from_action(action: Action) -> Option<Page> {
         Page::ALL.into_iter().find(|p| p.action() == action)
     }
 
-    /// The page for an older finding that has no step-by-step guide.
     pub fn for_finding(title: &str) -> Option<Page> {
         Some(match title {
             "Windows Firewall" => Page::Firewall,
@@ -197,7 +186,6 @@ impl Page {
         })
     }
 
-    /// The page the older "next step" kinds point to.
     pub fn for_step(step: crate::advice::NextStep) -> Option<Page> {
         use crate::advice::NextStep as S;
         Some(match step {
@@ -213,11 +201,9 @@ impl Page {
     }
 }
 
-/// Two to four short steps and the page they start from.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Guide {
     pub page: Page,
-    /// A second page some PCs need instead (for example BitLocker).
     pub alt: Option<Page>,
     pub steps: &'static [&'static str],
 }
@@ -406,7 +392,6 @@ static HIDDEN_TASKS: Guide = g(
     ],
 );
 
-/// The guide for a control id, a finding title or a diagnostics rule id.
 pub fn guide(key: &str) -> Option<&'static Guide> {
     Some(match key {
         "vbs.memory_integrity" | "Memory integrity" => &MEMORY_INTEGRITY,
@@ -434,15 +419,7 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
     })
 }
 
-/// The guide for a control that is "Not offered", only when the reason is one
-/// the person can act on. Reasons such as unsupported hardware, a firmware
-/// lock, a restart already pending, an edition without the feature, a remote
-/// session in use or a feature still in use get no steps: following them would
-/// do nothing, or do harm.
-///
-/// Matched on the exact backend reasons: a driver the scan was unsure about
-/// (Windows Security names the blocking driver and lets the person decide),
-/// and stack protection waiting for memory integrity (its first step).
+/// Only reasons the person can act on get steps. Unsupported hardware, firmware locks, pending restarts and the like get none: following them would do nothing or harm. Matched on exact backend reasons.
 pub fn guide_not_offered(key: &str, detail: &str) -> Option<&'static Guide> {
     use secblitz::vbs;
     match key {
@@ -452,7 +429,6 @@ pub fn guide_not_offered(key: &str, detail: &str) -> Option<&'static Guide> {
     }
 }
 
-/// One short sentence for a page that would not open: what it is called and
 /// how to reach it by hand.
 pub fn failure_text(lang: crate::i18n::Lang, page: Page) -> String {
     lang.t("We couldn't open {page}. Press the Windows key, type {page} and press Enter.")
@@ -558,7 +534,6 @@ mod tests {
     fn not_offered_gets_steps_only_for_reasons_a_person_can_act_on() {
         use secblitz::vbs;
         let mi = vbs::MEMORY_INTEGRITY;
-        // The exact driver reason, alone or with the driver names after it.
         assert!(guide_not_offered(mi, vbs::DRIVER).is_some());
         let named = format!("{}: old.sys, older.sys", vbs::DRIVER);
         assert!(guide_not_offered(mi, &named).is_some());
