@@ -149,17 +149,17 @@ fn busy_row<'a>(state: &State, p: Palette, icon: Icon, title: String, sub: Strin
 
 /// A finished job: the mark draws itself in (check, cross or warning), with
 /// the outcome as title and the rest in the row's menu.
-struct Outcome<'a> {
+struct Outcome {
     slot: Slot,
     icon: Icon,
     tone: Tone,
     title: String,
     sub: Option<String>,
     menu: Vec<MenuEntry>,
-    raw: Option<(Detail, &'a str)>,
+    raw: Option<(Detail, String)>,
 }
 
-fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome<'a>) -> El<'a> {
+fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome) -> El<'a> {
     finished_with(state, ctx, o, None)
 }
 
@@ -167,7 +167,7 @@ fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome<'a>) -> El<'a> {
 fn finished_with<'a>(
     state: &State,
     ctx: &Ctx,
-    o: Outcome<'a>,
+    o: Outcome,
     button: Option<(String, Icon, Msg)>,
 ) -> El<'a> {
     let p = ctx.palette;
@@ -187,7 +187,7 @@ fn finished_with<'a>(
             Msg::ToggleDetail(which),
         ));
         if state.detail_open(which) {
-            below.push(raw_text(ctx, raw));
+            below.push(raw_text(ctx, &raw));
         }
     }
     widgets::row_item_below(
@@ -216,19 +216,16 @@ fn finished_with<'a>(
     )
 }
 
-/// The raw evidence for people who want it.
-fn raw_text<'a>(ctx: &Ctx, raw: &str) -> El<'a> {
+/// Plain-words explanation for the "More details" pane. Never raw
+/// developer text: callers pass sentences from `logic::*_why`.
+fn raw_text<'a>(ctx: &Ctx, plain: &str) -> El<'a> {
     let p = ctx.palette;
-    let shown = if raw.trim().is_empty() {
+    let shown = if plain.trim().is_empty() {
         ctx.t("No extra details.")
     } else {
-        raw.trim().to_owned()
+        ctx.t(plain.trim())
     };
-    text(shown)
-        .size(theme::SMALL)
-        .font(Font::MONOSPACE)
-        .color(p.text_muted)
-        .into()
+    text(shown).size(theme::SMALL).color(p.text_muted).into()
 }
 
 fn elapsed_phrase(ctx: &Ctx, secs: u64) -> String {
@@ -324,7 +321,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     .into_iter()
                     .chain([entry(Icon::Refresh, ctx.t("Try again"), Msg::ClearScan)])
                     .collect(),
-                raw: Some((Detail::Scan, raw)),
+                raw: Some((Detail::Scan, logic::friendly_why(raw).to_owned())),
             },
         ),
     }
@@ -371,7 +368,7 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("We couldn't update right now"),
                 sub: Some(ctx.t("Check your internet connection and try again.")),
                 menu: vec![entry(Icon::Refresh, ctx.t("Try again"), Msg::ClearDefender)],
-                raw: Some((Detail::Defender, raw)),
+                raw: Some((Detail::Defender, logic::friendly_why(raw).to_owned())),
             },
         ),
     }
@@ -479,7 +476,7 @@ fn repair_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             kind,
             result,
             note,
-            technical: raw,
+            ..
         } => {
             let tone = match result {
                 RepairResult::NoProblems | RepairResult::Repaired => Tone::Good,
@@ -511,7 +508,7 @@ fn repair_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     title: ctx.t(result.title()),
                     sub: Some(detail),
                     menu,
-                    raw: Some((Detail::Repair, raw)),
+                    raw: Some((Detail::Repair, logic::repair_why(*result, *note).to_owned())),
                 },
             )
         }
@@ -590,10 +587,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 None,
             )
         }
-        Updates::Failed {
-            technical: raw,
-            note,
-        } => {
+        Updates::Failed { note, .. } => {
             let (menu, button) = failure_steps(ctx, note, again(ctx.t("Try again")));
             finished_with(
                 state,
@@ -605,7 +599,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     title: ctx.t("We couldn't check for updates"),
                     sub: Some(ctx.t(note)),
                     menu,
-                    raw: Some((Detail::Updates, raw)),
+                    raw: Some((Detail::Updates, logic::why_for_note(note).to_owned())),
                 },
                 button,
             )
@@ -646,11 +640,7 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 },
             )
         }
-        Updates::Done {
-            result,
-            note,
-            technical: raw,
-        } => {
+        Updates::Done { result, note, .. } => {
             let tone = match result {
                 InstallResult::Installed => Tone::Good,
                 InstallResult::CouldNotFinish => Tone::Bad,
@@ -685,12 +675,23 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     title: ctx.t(result.title()),
                     sub: Some(detail),
                     menu,
-                    raw: Some((Detail::Updates, raw)),
+                    raw: Some((Detail::Updates, logic::install_why(*result, *note).to_owned())),
                 },
                 button,
             )
         }
     }
+}
+
+/// Plain count of what the tips check found.
+fn tips_summary(ctx: &Ctx, report: &logic::TipsReport) -> String {
+    ctx.t("{good} checks look fine, {look} need a look and {unknown} could not be checked.")
+        .replace("{good}", &report.count(logic::TipState::Good).to_string())
+        .replace("{look}", &report.count(logic::TipState::Look).to_string())
+        .replace(
+            "{unknown}",
+            &report.count(logic::TipState::Unknown).to_string(),
+        )
 }
 
 fn open_update_button(ctx: &Ctx) -> (String, Icon, Msg) {
@@ -793,7 +794,7 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let mut below = vec![picker, blurb];
     if let Tips::Done(report) = &state.tips {
         if state.detail_open(Detail::Tips) {
-            below.push(raw_text(ctx, &report.technical));
+            below.push(raw_text(ctx, &tips_summary(ctx, report)));
         }
     }
     let mut out = vec![widgets::row_item_below(
@@ -1038,7 +1039,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 raw: None,
             },
         ),
-        Run::Done(Err(raw)) if state.bitwarden_why == Some(broker::Reply::Unavailable) => finished(
+        Run::Done(Err(_)) if state.bitwarden_why == Some(broker::Reply::Unavailable) => finished(
             state,
             ctx,
             Outcome {
@@ -1048,10 +1049,10 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("Bitwarden can't be installed from this account"),
                 sub: Some(ctx.t("You can get it from bitwarden.com instead.")),
                 menu: vec![entry(Icon::Check, ctx.t("Done"), Msg::ClearBitwarden)],
-                raw: Some((Detail::Bitwarden, raw)),
+                raw: Some((Detail::Bitwarden, logic::WHY_BITWARDEN_UNAVAILABLE.to_owned())),
             },
         ),
-        Run::Done(Err(raw)) if state.bitwarden_why == Some(broker::Reply::Offline) => finished_with(
+        Run::Done(Err(_)) if state.bitwarden_why == Some(broker::Reply::Offline) => finished_with(
             state,
             ctx,
             Outcome {
@@ -1061,7 +1062,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("We couldn't install Bitwarden"),
                 sub: Some(ctx.t("You're offline. Connect to the internet and try again.")),
                 menu: vec![entry(Icon::X, ctx.t("Done"), Msg::ClearBitwarden)],
-                raw: Some((Detail::Bitwarden, raw)),
+                raw: Some((Detail::Bitwarden, logic::WHY_BITWARDEN_OFFLINE.to_owned())),
             },
             Some((ctx.t("Retry"), Icon::Refresh, Msg::Ask(Sheet::Bitwarden))),
         ),
@@ -1073,13 +1074,13 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 icon: Icon::Lock,
                 tone: Tone::Bad,
                 title: ctx.t("We couldn't install Bitwarden"),
-                sub: Some(ctx.t("Please try again later.")),
+                sub: Some(ctx.t("Check your internet connection and try again. You can also get it from bitwarden.com.")),
                 menu: vec![entry(
                     Icon::Refresh,
                     ctx.t("Try again"),
                     Msg::ClearBitwarden,
                 )],
-                raw: Some((Detail::Bitwarden, raw)),
+                raw: Some((Detail::Bitwarden, logic::bitwarden_why(raw).to_owned())),
             },
         ),
     }
@@ -1244,7 +1245,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                 ));
             }
             content = content.push(list);
-            let mut raw = found.technical.clone();
+            let mut raw = ctx.t("These updates come from Microsoft through Windows Update.");
             let mut seen: Vec<&str> = Vec::new();
             for u in &found.updates {
                 if !u.license.is_empty() && !seen.contains(&u.license.as_str()) {
