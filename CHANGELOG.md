@@ -14,12 +14,14 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
 - **Privacy policy.** A plain privacy page says exactly when Secblitz uses the internet and what it keeps on your PC. The installer shows a short summary, and Settings links to the full page.
 - Web protection credits the block lists it uses, from AdGuard, EasyList and HaGeZi.
+- **Tools sections remember how you left them.** Virus protection, Repair & updates, Passwords, Your account, App updates and Windows settings open and close with a click, start closed, and stay as you left them, even after you restart Secblitz. When something is running or has just finished inside a closed section, its title says so in a few words, and anything that needs you is shown in color.
 
 ### Changed
 - **Checks before it starts.** Fixes, app clean-up, repairs, updates and per-account settings now check what they need before showing any progress. If something is missing, you see why and what to do instead of a progress bar that fails at the end.
 - **"Run as administrator" asks the usual way.** Opening Secblitz with "Run as administrator" now reopens it normally and asks for permission once, so every feature works.
 - Fix details show only what the row above does not already say.
 - The Web protection page no longer repeats its on or off state in a second section.
+- **PC health tips come first on the Tools page.** They are always open at the top, and the other Tools sections are closed until you open them.
 - Secblitz is open source under the MIT license. The website and README link to the source code.
 - Items to fix now say what turning them on protects you from, and their explanations use calmer words.
 - Clean up apps no longer ticks any app for you. You choose what to remove.
@@ -32,6 +34,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The score circle turns green when everything it counts is protected, even when a few steps are still up to you.
 
 ### Removed
+- **The password maker on the Tools page.** Bitwarden, the free password manager Secblitz can install, also makes strong passwords for you and keeps them safe, so Secblitz no longer makes passwords itself.
 - Three notes that only reported something another check already fixes: Remote Desktop waiting for connections, file sharing waiting for connections, and accounts without a password.
 
 ## [0.8.1] - 2026-10-06

@@ -33,7 +33,7 @@ Windows has strong security and privacy settings, but many are turned off by def
 
 - **More than 50 checks** across virus protection, network and Wi-Fi, sign-in and accounts, updates, startup and disk, and privacy. Protection you already have is recognized, so nothing changes for the sake of it.
 - **Clean up apps.** Remove the apps Windows came with that you never use. Secblitz keeps a copy of each one, so you can bring it back any time, even without internet.
-- **Tools.** Microsoft Defender scans and protection updates, Windows repair, security updates, PC health tips, a password maker and an optional Bitwarden install.
+- **Tools.** Microsoft Defender scans and protection updates, Windows repair, security updates, PC health tips and an optional Bitwarden install. Bitwarden is a free password manager that also makes strong passwords for you.
 - **Background checks.** Secblitz can keep an eye on your PC from the notification area and tell you if something changes.
 - **History.** How your protection changed over time, every change made, and every app removed.
 - **Six languages** (English, Spanish, French, German, Portuguese, Italian), light and dark mode.
