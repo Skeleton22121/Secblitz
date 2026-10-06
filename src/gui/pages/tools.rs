@@ -5,8 +5,9 @@ use super::personal;
 
 use crate::app::maintenance::{
     self as logic, Found, InstallEvent, InstallResult, InstallStage, RepairEvent, RepairKind,
-    RepairProgress, RepairResult, Secret, TipProfile, TipsReport,
+    RepairProgress, RepairResult, TipProfile, TipsReport,
 };
+use crate::app::settings::ToolsSection;
 use crate::broker;
 use crate::gui::widgets::anim::{self, Clock};
 use crate::gui::{blocking, blocking_stream, Ctx, Message, Tone};
@@ -14,9 +15,34 @@ use iced::{Subscription, Task};
 use secblitz::actions;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub use view::{modal, view};
+#[cfg(test)]
+pub use view::{closed_summary, section_status, Block, PAGE_ORDER};
+
+/// What a closed section says about its work, so nothing important is hidden.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Status {
+    pub tone: Tone,
+    pub text: String,
+}
+
+impl Status {
+    pub fn new(tone: Tone, text: String) -> Self {
+        Self { tone, text }
+    }
+}
+
+/// The most important of several statuses: what needs attention first, then
+/// what is still running, then what finished well.
+pub fn most_important(items: Vec<Status>) -> Option<Status> {
+    items.into_iter().min_by_key(|status| match status.tone {
+        Tone::Bad | Tone::Warn => 0,
+        Tone::Neutral | Tone::Brand => 1,
+        Tone::Good => 2,
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
@@ -92,10 +118,6 @@ pub enum Msg {
     Tips(Box<TipsReport>),
     TipsRefreshed(Box<TipsReport>),
     TipChoice(TipProfile),
-    NewPassword,
-    CopyPassword,
-    TogglePassword,
-    CopiedReset,
     Frame(Instant),
     BitwardenDone(Result<broker::Reply, String>),
     BitwardenKnown(Result<broker::Reply, String>),
@@ -105,6 +127,8 @@ pub enum Msg {
     OpenSecurity,
     RestartDone(Result<(), String>),
     ToggleDetail(Detail),
+    ToggleSection(ToolsSection),
+    PrefsSaved,
     Personal(personal::Msg),
     AccountKnown(Option<&'static str>),
     CheckAccount,
@@ -186,13 +210,6 @@ pub enum Tips {
     Done(Box<TipsReport>),
 }
 
-#[derive(Debug)]
-pub struct Password {
-    secret: Option<Secret>,
-    shown: bool,
-    copied: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
     Scan,
@@ -201,10 +218,7 @@ enum Slot {
     Repair,
     Updates,
     Bitwarden,
-    Copy,
 }
-
-const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 
 pub struct State {
     sheet: Option<Sheet>,
@@ -218,7 +232,6 @@ pub struct State {
     updates: Updates,
     tips: Tips,
     tip_choice: TipProfile,
-    password: Password,
     bitwarden: Run<Result<(), String>>,
     bitwarden_why: Option<broker::Reply>,
     pub bitwarden_present: bool,
@@ -257,11 +270,6 @@ impl Default for State {
             updates: Updates::Idle,
             tips: Tips::Pick,
             tip_choice: TipProfile::Everyday,
-            password: Password {
-                secret: Secret::generate().ok(),
-                shown: true,
-                copied: false,
-            },
             bitwarden: Run::Idle,
             bitwarden_why: None,
             bitwarden_present: false,
@@ -586,44 +594,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.tip_choice = profile;
             Task::none()
         }
-        Msg::NewPassword => {
-            state.password.secret = Secret::generate().ok();
-            state.password.shown = true;
-            state.password.copied = false;
-            state.shots.retain(|(slot, _)| *slot != Slot::Copy);
-            Task::none()
-        }
-        Msg::CopyPassword => match state
-            .password
-            .secret
-            .as_ref()
-            .map(|s| s.reveal().to_owned())
-        {
-            Some(secret) => {
-                state.password.copied = true;
-                state.finish(Slot::Copy);
-                Task::batch([
-                    iced::clipboard::write(secret),
-                    Task::perform(blocking(|| std::thread::sleep(COPIED_SHOWN)), |()| {
-                        tools(Msg::CopiedReset)
-                    }),
-                ])
-            }
-            None => Task::none(),
-        },
-        Msg::CopiedReset => {
-            state.password.copied = false;
-            Task::none()
-        }
         Msg::Frame(now) => {
             state.now = now;
             state
                 .shots
                 .retain(|(_, clock)| !clock.done(anim::SLOW, now));
-            Task::none()
-        }
-        Msg::TogglePassword => {
-            state.password.shown = !state.password.shown;
             Task::none()
         }
         Msg::BitwardenDone(reply) => {
@@ -665,6 +640,13 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Tone::Warn,
             )),
         },
+        Msg::ToggleSection(section) => {
+            ctx.prefs.toggle_tools_section(section);
+            Task::perform(crate::gui::save_prefs(ctx.prefs.clone()), |_| {
+                tools(Msg::PrefsSaved)
+            })
+        }
+        Msg::PrefsSaved => Task::none(),
         Msg::Personal(msg) => personal::update(&mut state.personal, msg, ctx),
         Msg::ToggleDetail(detail) => {
             if state.open_details.contains(&detail) {

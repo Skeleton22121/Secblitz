@@ -488,6 +488,26 @@ pub fn collapsible<'a>(
     on_toggle: Message,
     body: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    collapsible_toned(
+        p,
+        title,
+        summary.map(|s| (s, p.text_muted)),
+        open,
+        on_toggle,
+        body,
+    )
+}
+
+/// Like `collapsible`, with the summary in a color of the caller's choosing so
+/// a result that needs attention stands out on the closed header.
+pub fn collapsible_toned<'a>(
+    p: Palette,
+    title: impl Into<String>,
+    summary: Option<(String, Color)>,
+    open: bool,
+    on_toggle: Message,
+    body: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
     let mut head = row![
         row![
             container(chevron(16.0, p.text_muted, open)).center_x(theme::ICON_ROW),
@@ -504,12 +524,12 @@ pub fn collapsible<'a>(
     ]
     .spacing(theme::S4)
     .align_y(Alignment::Center);
-    if let Some(s) = summary {
+    if let Some((s, color)) = summary {
         head = head.push(
             text(s)
                 .size(theme::SMALL)
                 .font(theme::REGULAR)
-                .color(p.text_muted)
+                .color(color)
                 .wrapping(Wrapping::None),
         );
     }
