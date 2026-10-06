@@ -853,16 +853,24 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             Some(Icon::History),
             Some(Message::Navigate(crate::gui::Page::History)),
         ));
-    } else if let (Some(page), None) = (o.page, o.guide) {
-        // No steps to show: just the button named after the page.
-        tools = tools.push(widgets::action(
-            p,
-            ButtonKind::Secondary,
-            ctx.t(page.button()),
-            Some(Icon::ExternalLink),
-            Some(Message::Fixes(Msg::Open(page))),
-        ));
     }
+    // No steps to show: just the button named after the page, on its own
+    // line under the text (as with steps) so the text keeps its width.
+    let page_bar = match (o.bucket, o.step, o.page, o.guide) {
+        (Bucket::Unavailable, ..)
+        | (_, NextStep::CheckAgain | NextStep::ReviewUndo | NextStep::OpenHistory, ..) => None,
+        (_, _, Some(page), None) => Some(row![
+            space::horizontal().width(INDENT_PLAIN),
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t(page.button()),
+                Some(Icon::ExternalLink),
+                Some(Message::Fixes(Msg::Open(page))),
+            )
+        ]),
+        _ => None,
+    };
     tools = tools.push(widgets::overflow_menu(p, menu));
     let head = line(
         None,
@@ -880,6 +888,9 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     let mut rows = column![head].spacing(theme::S1);
     if let Some(g) = o.guide {
         rows = rows.push(guide_block(ctx, g, INDENT_PLAIN, true));
+    }
+    if let Some(bar) = page_bar {
+        rows = rows.push(bar);
     }
     if let Some(inset) =
         widgets::explain::panel(ctx, "fixes", &o.explain, o.report_only, INDENT_PLAIN)
