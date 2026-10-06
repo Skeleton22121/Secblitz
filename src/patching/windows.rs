@@ -216,7 +216,8 @@ fn user_sid(token: HANDLE) -> Result<String> {
                 user.User.Sid,
                 &mut text,
             )
-        } != 0 && !text.is_null(),
+        } != 0
+            && !text.is_null(),
         "Cannot format token SID"
     );
     let _text = storage::Local(text.cast());
@@ -232,7 +233,10 @@ fn user_sid(token: HANDLE) -> Result<String> {
     })?)
 }
 fn binding(win: &Path) -> Result<Binding> {
-    ensure!(cfg!(target_arch = "x86_64"), "Elevated Windows x64 required");
+    ensure!(
+        cfg!(target_arch = "x86_64"),
+        "Elevated Windows x64 required"
+    );
     crate::platform::require_admin("Elevated Windows x64 required")?;
     // SAFETY: SYSTEM_INFO is plain data and all-zero bytes are valid.
     let mut system: SYSTEM_INFO = unsafe { zeroed() };

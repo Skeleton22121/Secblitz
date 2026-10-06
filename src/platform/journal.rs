@@ -210,7 +210,8 @@ fn program_data() -> Result<PathBuf> {
         );
         let result = (|| {
             // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
-            let text = crate::platform::security::wide_str(raw).context("Invalid known-folder path")?;
+            let text =
+                crate::platform::security::wide_str(raw).context("Invalid known-folder path")?;
             Ok(PathBuf::from(String::from_utf16(text)?))
         })();
         CoTaskMemFree(raw as *const c_void);
@@ -264,13 +265,10 @@ pub fn state_dir() -> Result<PathBuf> {
     // Serialize native directory establishment in this process. Retain only
     // ancestor/root handles, allowing the engine to atomically replace journals.
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .map_err(|e| {
-            eprintln!("{e}");
-            anyhow::anyhow!("Journal lock poisoned")
-        })?;
+    let _guard = LOCK.get_or_init(|| Mutex::new(())).lock().map_err(|e| {
+        eprintln!("{e}");
+        anyhow::anyhow!("Journal lock poisoned")
+    })?;
     crate::platform::require_admin("Protected journal access requires Administrator elevation")?;
     let base = program_data()?;
     let mut components = base.components();

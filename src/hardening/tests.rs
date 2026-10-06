@@ -992,7 +992,11 @@ fn optional_switches_set_exactly_the_documented_policy_values_and_undo_by_the_jo
         (
             "ai.paint",
             r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint",
-            &["DisableCocreator", "DisableGenerativeFill", "DisableImageCreator"][..],
+            &[
+                "DisableCocreator",
+                "DisableGenerativeFill",
+                "DisableImageCreator",
+            ][..],
         ),
         (
             "ai.notepad",
@@ -1008,26 +1012,51 @@ fn optional_switches_set_exactly_the_documented_policy_values_and_undo_by_the_jo
         let s = spec(id).unwrap();
         assert!(s.ask && !s.reboot && !s.dynamic(), "{id}");
         assert_eq!(s.source, Source::Registry, "{id}");
-        assert_eq!(s.keys.iter().map(|k| k.name).collect::<Vec<_>>(), names, "{id}");
+        assert_eq!(
+            s.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
+            names,
+            "{id}"
+        );
         assert!(s.keys.iter().all(|k| k.path == path), "{id}");
         let off = if id == "debloat.widgets_policy" { 0 } else { 1 };
         let on = 1 - off;
         for k in s.keys {
-            let Rule::Set { safe, absent_safe, fix } = k.rule else {
+            let Rule::Set {
+                safe,
+                absent_safe,
+                fix,
+            } = k.rule
+            else {
                 unreachable!()
             };
-            assert_eq!((safe, absent_safe, fix), (&[off][..], false, Some(off)), "{id}");
+            assert_eq!(
+                (safe, absent_safe, fix),
+                (&[off][..], false, Some(off)),
+                "{id}"
+            );
         }
         let untouched = vec![None; names.len()];
-        assert!(s.any_unsafe(&items(s, &untouched)), "{id}: absent means still on");
-        assert!(s.any_unsafe(&items(s, &vec![Some(on); names.len()])), "{id}");
-        assert!(!s.any_unsafe(&items(s, &vec![Some(off); names.len()])), "{id}");
+        assert!(
+            s.any_unsafe(&items(s, &untouched)),
+            "{id}: absent means still on"
+        );
+        assert!(
+            s.any_unsafe(&items(s, &vec![Some(on); names.len()])),
+            "{id}"
+        );
+        assert!(
+            !s.any_unsafe(&items(s, &vec![Some(off); names.len()])),
+            "{id}"
+        );
         assert_eq!(
             s.derive_target(&items(s, &untouched)).unwrap(),
             items(s, &vec![Some(off); names.len()]),
             "{id}"
         );
-        assert!(s.validate(&items(s, &vec![Some(2); names.len()])).is_err(), "{id}");
+        assert!(
+            s.validate(&items(s, &vec![Some(2); names.len()])).is_err(),
+            "{id}"
+        );
         assert_eq!(s.gate.own_policy_key, path, "{id}");
     }
 }

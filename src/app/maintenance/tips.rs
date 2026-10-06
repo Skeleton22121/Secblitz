@@ -327,7 +327,10 @@ pub fn core_restart_advice(control: &str) -> &'static str {
     }
 }
 
-pub fn tip_words(tip: &Tip, fix: TipFix<'_>) -> (&'static str, Option<&'static crate::guide::Guide>) {
+pub fn tip_words(
+    tip: &Tip,
+    fix: TipFix<'_>,
+) -> (&'static str, Option<&'static crate::guide::Guide>) {
     let other = tip
         .guide
         .filter(|g| tip.fix.and_then(crate::guide::guide) != Some(*g));
@@ -534,9 +537,9 @@ pub fn run_tips(profile: TipProfile) -> TipsReport {
 
 #[cfg(test)]
 mod tests {
+    use super::super::errors::assert_no_dev_terms;
     use super::super::rules::{threats_result, ThreatsResult};
     use super::*;
-    use super::super::errors::assert_no_dev_terms;
 
     fn report_with(probe_id: diag::ProbeId, rules: &[&str]) -> diag::Report {
         let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
@@ -569,8 +572,6 @@ mod tests {
             .find(|t| t.title == tip_title(probe_id))
             .expect("tip for the probe")
     }
-
-
 
     #[test]
     fn checks_with_a_protection_fix_point_to_it_instead_of_manual_steps() {
@@ -618,9 +619,15 @@ mod tests {
         }
         let tip = tip_in(&report, diag::ProbeId::AccountHygiene);
         assert_eq!((tip.fix, tip.remove_threats, tip.open), (None, false, None));
-        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
+        let tip = tip_for(
+            diag::ProbeId::Persistence,
+            &["persistence.wmi_subscriptions"],
+        );
         assert_eq!(tip.fix, None);
-        assert_eq!(tip.advice, rule_advice("persistence.wmi_subscriptions").unwrap());
+        assert_eq!(
+            tip.advice,
+            rule_advice("persistence.wmi_subscriptions").unwrap()
+        );
     }
 
     #[test]
@@ -644,7 +651,13 @@ mod tests {
     #[test]
     fn threat_removal_is_judged_only_by_what_defender_reports() {
         use secblitz::actions::ThreatRemoval as R;
-        let judge = |found, removed, left| threats_result(&R { found, removed, left });
+        let judge = |found, removed, left| {
+            threats_result(&R {
+                found,
+                removed,
+                left,
+            })
+        };
         assert_eq!(judge(0, 0, 0), ThreatsResult::Nothing);
         assert_eq!(judge(2, 2, 0), ThreatsResult::Removed);
         assert_eq!(judge(3, 1, 2), ThreatsResult::Partly);
@@ -736,7 +749,10 @@ mod tests {
         );
         assert!(crate::guide::guide_not_offered(mi, &reason).is_some());
         let r = protection(mi, "skipped", secblitz::vbs::NOT_SUPPORTED);
-        assert!(matches!(tip_fix(&tip, Some(&r), &all), TipFix::NotOffered { .. }));
+        assert!(matches!(
+            tip_fix(&tip, Some(&r), &all),
+            TipFix::NotOffered { .. }
+        ));
         assert!(crate::guide::guide_not_offered(mi, secblitz::vbs::NOT_SUPPORTED).is_none());
         assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
         let other = protection("uac.enabled", "attention", "");
@@ -752,7 +768,11 @@ mod tests {
         let stack = look_tip("vbs.kernel_stack_protection");
         let r = protection("vbs.kernel_stack_protection", "compliant", "");
         assert_eq!(
-            tip_fix(&stack, Some(&r), &["vbs.kernel_stack_protection".to_owned()]),
+            tip_fix(
+                &stack,
+                Some(&r),
+                &["vbs.kernel_stack_protection".to_owned()]
+            ),
             TipFix::Restart(core_restart_advice("vbs.kernel_stack_protection"))
         );
         for (status, detail) in [
@@ -761,7 +781,11 @@ mod tests {
             ("skipped", secblitz::vbs::ALREADY_ON),
         ] {
             let r = protection(mi, status, detail);
-            assert_eq!(tip_fix(&tip, Some(&r), &all), TipFix::Manual, "{status} {detail}");
+            assert_eq!(
+                tip_fix(&tip, Some(&r), &all),
+                TipFix::Manual,
+                "{status} {detail}"
+            );
         }
         let manual = look_tip("defender.tamper_protection");
         assert_eq!(manual.fix, None);
@@ -783,28 +807,45 @@ mod tests {
         assert_eq!(winre.explain.as_deref(), Some("winre.enabled"));
         let fixes = ["recovery.winre_enabled".to_owned()];
         let r = protection("recovery.winre_enabled", "attention", "Eligible");
-        assert_eq!(tip_fix(&winre, Some(&r), &fixes), TipFix::Offered("recovery.winre_enabled"));
+        assert_eq!(
+            tip_fix(&winre, Some(&r), &fixes),
+            TipFix::Offered("recovery.winre_enabled")
+        );
         assert_eq!(
             tip_action(&winre, tip_fix(&winre, Some(&r), &fixes), true),
             TipAction::ReviewFix("recovery.winre_enabled")
         );
-        assert_eq!(tip_words(&winre, TipFix::Offered("recovery.winre_enabled")).0, winre.fix_advice);
+        assert_eq!(
+            tip_words(&winre, TipFix::Offered("recovery.winre_enabled")).0,
+            winre.fix_advice
+        );
         let reason = "Not offered: the recovery tools are missing from this PC";
         let r = protection("recovery.winre_enabled", "skipped", reason);
         assert_eq!(
             tip_fix(&winre, Some(&r), &fixes),
-            TipFix::NotOffered { control: "recovery.winre_enabled", reason }
+            TipFix::NotOffered {
+                control: "recovery.winre_enabled",
+                reason
+            }
         );
-        assert_eq!(tip_action(&winre, tip_fix(&winre, Some(&r), &fixes), true), TipAction::SeeWhy);
+        assert_eq!(
+            tip_action(&winre, tip_fix(&winre, Some(&r), &fixes), true),
+            TipAction::SeeWhy
+        );
         assert_eq!(tip_fix(&winre, None, &fixes), TipFix::Unchecked);
         let r = protection("recovery.winre_enabled", "compliant", "");
         assert_eq!(tip_fix(&winre, Some(&r), &fixes), TipFix::Manual);
         assert_eq!(tip_action(&winre, TipFix::Manual, true), TipAction::SeeWhy);
-        assert!(!rule_advice("winre.enabled").unwrap().contains("Secblitz can"));
+        assert!(!rule_advice("winre.enabled")
+            .unwrap()
+            .contains("Secblitz can"));
         for rule in ["remote.rdp", "smb.v1", mi, "vbs.kernel_stack_protection"] {
             let text = rule_advice(rule).unwrap();
             assert!(!text.contains("Secblitz can"), "{rule}: {text}");
-            assert!(crate::guide::guide(rule).is_some(), "{rule}: steps for doing it by hand");
+            assert!(
+                crate::guide::guide(rule).is_some(),
+                "{rule}: steps for doing it by hand"
+            );
         }
     }
 
@@ -825,11 +866,7 @@ mod tests {
             .find(|p| p.probes().contains(&probe_id))
             .expect("a profile lists the probe");
         let mut report = diag::collect(profile.profile(), &diag::Context::default());
-        let probe = report
-            .probes
-            .iter_mut()
-            .find(|p| p.id == probe_id)
-            .unwrap();
+        let probe = report.probes.iter_mut().find(|p| p.id == probe_id).unwrap();
         probe.status = diag::Status::Attention;
         probe.assessments = rules
             .iter()
@@ -859,14 +896,23 @@ mod tests {
             "net.hosts_file",
             "persistence.run_and_tasks",
         ] {
-            assert_eq!(rule_fix(id), Some(id), "{id} must be a real fix on the Protection page");
+            assert_eq!(
+                rule_fix(id),
+                Some(id),
+                "{id} must be a real fix on the Protection page"
+            );
             let fix = rule_fix_advice(id);
             assert!(fix.contains("We can"), "{id}: {fix}");
             let manual = rule_advice(id).unwrap();
-            assert!(!manual.contains("We can") && !manual.contains("Secblitz can"), "{id}: {manual}");
+            assert!(
+                !manual.contains("We can") && !manual.contains("Secblitz can"),
+                "{id}: {manual}"
+            );
             assert!(!manual.contains('\u{2014}'), "{id}");
         }
-        assert!(rule_advice("persistence.run_and_tasks").unwrap().contains("Task Manager"));
+        assert!(rule_advice("persistence.run_and_tasks")
+            .unwrap()
+            .contains("Task Manager"));
         let tip = tip_for(
             diag::ProbeId::Persistence,
             &["persistence.wmi_subscriptions", "services.unquoted_paths"],
@@ -876,9 +922,15 @@ mod tests {
         assert_eq!(tip.advice, rule_advice("services.unquoted_paths").unwrap());
         assert_eq!(tip.fix_advice, rule_fix_advice("services.unquoted_paths"));
         assert_eq!(tip.explain.as_deref(), Some("services.unquoted_paths"));
-        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
+        let tip = tip_for(
+            diag::ProbeId::Persistence,
+            &["persistence.wmi_subscriptions"],
+        );
         assert!(tip.fix.is_none() && !tip.restart);
-        assert_eq!(tip.guide, crate::guide::guide("persistence.wmi_subscriptions"));
+        assert_eq!(
+            tip.guide,
+            crate::guide::guide("persistence.wmi_subscriptions")
+        );
     }
 
     #[test]
@@ -886,9 +938,16 @@ mod tests {
         let id = "net.hosts_file";
         let tip = tip_for(diag::ProbeId::HostsFile, &[id]);
         let all = vec![id.to_owned()];
-        assert_eq!(tip_fix(&tip, Some(&protection(id, "attention", "Eligible")), &all), TipFix::Offered(id));
+        assert_eq!(
+            tip_fix(&tip, Some(&protection(id, "attention", "Eligible")), &all),
+            TipFix::Offered(id)
+        );
         for status in ["ok", "conflict", "compliant", "unknown"] {
-            assert_eq!(tip_fix(&tip, Some(&protection(id, status, "")), &all), TipFix::Manual, "{status}");
+            assert_eq!(
+                tip_fix(&tip, Some(&protection(id, status, "")), &all),
+                TipFix::Manual,
+                "{status}"
+            );
         }
         let managed = protection(id, "skipped", "Domain-managed machine: assessment only");
         assert_eq!(tip_fix(&tip, Some(&managed), &all), TipFix::Manual);
@@ -896,7 +955,10 @@ mod tests {
         let reason = "Not offered: the hosts file uses a format we cannot keep exactly";
         assert_eq!(
             tip_fix(&tip, Some(&protection(id, "skipped", reason)), &all),
-            TipFix::NotOffered { control: id, reason }
+            TipFix::NotOffered {
+                control: id,
+                reason
+            }
         );
         let mut pending = protection(id, "attention", "Eligible");
         pending.findings.push(secblitz::model::Finding {
@@ -906,7 +968,11 @@ mod tests {
         });
         assert_eq!(tip_fix(&tip, Some(&pending), &all), TipFix::Manual);
         assert_eq!(
-            tip_fix(&tip, Some(&protection("services.unquoted_paths", "attention", "")), &all),
+            tip_fix(
+                &tip,
+                Some(&protection("services.unquoted_paths", "attention", "")),
+                &all
+            ),
             TipFix::Unchecked
         );
     }
@@ -917,7 +983,10 @@ mod tests {
         let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue"]);
         assert!(tip.restart && tip.fix.is_none() && tip.open.is_none() && tip.guide.is_none());
         assert!(tip.advice.contains("Save your work"));
-        let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue", "update.paused"]);
+        let tip = tip_for(
+            diag::ProbeId::UpdatePolicy,
+            &["update.reboot_overdue", "update.paused"],
+        );
         assert_eq!((tip.fix, tip.restart), (Some("update.paused"), false));
         let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
         for probe in &mut report.probes {
@@ -954,7 +1023,11 @@ mod tests {
                 explain: None,
             };
             let action = tip_action(&tip, TipFix::Manual, true);
-            assert_eq!(action == TipAction::None, none.contains(&id), "{id:?}: {action:?}");
+            assert_eq!(
+                action == TipAction::None,
+                none.contains(&id),
+                "{id:?}: {action:?}"
+            );
             if let (Some(g), Some(page)) = (probe_guide(id), probe_page(id)) {
                 assert_eq!(g.page, page, "{id:?}");
             }
@@ -1019,11 +1092,20 @@ mod tests {
         let tip = look_tip("vbs.memory_integrity");
         let fix = TipFix::Restart(crate::app::score::RESTART_TO_START);
         assert_eq!(tip_action(&tip, fix, true), TipAction::None);
-        assert_eq!(tip_words(&tip, fix), (crate::app::score::RESTART_TO_START, None));
+        assert_eq!(
+            tip_words(&tip, fix),
+            (crate::app::score::RESTART_TO_START, None)
+        );
         let tip = look_tip("net.hosts_file");
-        assert_eq!(tip_action(&tip, TipFix::Unchecked, true), TipAction::CheckNow);
+        assert_eq!(
+            tip_action(&tip, TipFix::Unchecked, true),
+            TipAction::CheckNow
+        );
         assert_eq!(tip_action(&tip, TipFix::Manual, true), TipAction::SeeWhy);
-        assert_eq!(tip_action(&tip, TipFix::Offered("net.hosts_file"), true), TipAction::ReviewFix("net.hosts_file"));
+        assert_eq!(
+            tip_action(&tip, TipFix::Offered("net.hosts_file"), true),
+            TipAction::ReviewFix("net.hosts_file")
+        );
         let tip = look_tip("firewall.user_dir_inbound_allow");
         assert_eq!(
             tip_action(&tip, TipFix::Unchecked, true),
@@ -1035,7 +1117,10 @@ mod tests {
         assert!(guide.steps[0].contains("Don't remove anything yourself"));
         let tip = tip_for(diag::ProbeId::Persistence, &[wmi]);
         assert_eq!(tip.guide, Some(guide));
-        let tip = tip_for(diag::ProbeId::Persistence, &["services.unquoted_paths", wmi]);
+        let tip = tip_for(
+            diag::ProbeId::Persistence,
+            &["services.unquoted_paths", wmi],
+        );
         assert_eq!(tip.fix, Some("services.unquoted_paths"));
         assert_eq!(tip.guide, Some(guide));
         for fix in [
@@ -1050,7 +1135,10 @@ mod tests {
             assert_eq!(tip_words(&tip, fix).1, Some(guide), "{fix:?}");
         }
         let rdp = look_tip("remote.rdp");
-        assert_eq!(tip_words(&rdp, TipFix::Offered("remote_desktop.disabled")).1, None);
+        assert_eq!(
+            tip_words(&rdp, TipFix::Offered("remote_desktop.disabled")).1,
+            None
+        );
     }
 
     #[test]
@@ -1090,11 +1178,21 @@ mod tests {
         assert_eq!(rule_advice("update.freshness"), None);
         for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
             assert_eq!(rule_fix(id), Some(id), "{id}");
-            assert_eq!(rule_open(id), Some(secblitz::actions::Action::OpenCoreIsolation), "{id}");
+            assert_eq!(
+                rule_open(id),
+                Some(secblitz::actions::Action::OpenCoreIsolation),
+                "{id}"
+            );
             assert!(rule_advice(id).unwrap().contains("Protection"), "{id}");
         }
-        assert_eq!(rule_fix("defender.exclusions_risky"), Some("defender.exclusions_risky"));
-        assert!(rule_fix("defender.tamper_protection").is_none() && rule_fix("update.freshness").is_none());
+        assert_eq!(
+            rule_fix("defender.exclusions_risky"),
+            Some("defender.exclusions_risky")
+        );
+        assert!(
+            rule_fix("defender.tamper_protection").is_none()
+                && rule_fix("update.freshness").is_none()
+        );
         assert_eq!(
             rule_open("os.feature_release_support"),
             Some(secblitz::actions::Action::OpenWindowsUpdate)
@@ -1189,7 +1287,11 @@ mod tests {
         let guide = tip.guide.expect("guide");
         assert_eq!(guide.page.action(), tip.open.unwrap());
         assert_eq!(tip.fix, None);
-        for rule in ["accounts.find_my_device", "net.wifi_security", "vbs.kernel_stack_protection"] {
+        for rule in [
+            "accounts.find_my_device",
+            "net.wifi_security",
+            "vbs.kernel_stack_protection",
+        ] {
             let g = crate::guide::guide(rule).expect(rule);
             assert_eq!(rule_open(rule), Some(g.page.action()), "{rule}");
         }

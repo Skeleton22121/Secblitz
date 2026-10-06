@@ -207,7 +207,10 @@ mod tests {
             ("AC power not confirmed", ERR_POWER),
             ("Insufficient system storage", ERR_DISK),
             ("Metered/unknown network", ERR_METERED),
-            ("Default update source is not unmanaged Windows Update", ERR_SETTINGS_BLOCK),
+            (
+                "Default update source is not unmanaged Windows Update",
+                ERR_SETTINGS_BLOCK,
+            ),
             ("Pending reboot; owner action required", ERR_RESTART),
         ] {
             assert_eq!(friendly_error(&wrap(why)), want, "{why}");
@@ -318,9 +321,15 @@ mod tests {
     fn account_note_matches_the_engine_wording() {
         assert_eq!(updates_account_note(Ok(())), None);
         let split = anyhow::anyhow!("Interactive split-token administrator required; service/over-the-shoulder elevation unsupported");
-        assert_eq!(updates_account_note(Err(split)), Some(ERR_USE_WINDOWS_UPDATE));
+        assert_eq!(
+            updates_account_note(Err(split)),
+            Some(ERR_USE_WINDOWS_UPDATE)
+        );
         let shoulder = anyhow::anyhow!("Elevated caller is not the original desktop user");
-        assert_eq!(updates_account_note(Err(shoulder)), Some(ERR_USE_WINDOWS_UPDATE));
+        assert_eq!(
+            updates_account_note(Err(shoulder)),
+            Some(ERR_USE_WINDOWS_UPDATE)
+        );
     }
 
     #[test]
@@ -350,8 +359,15 @@ mod tests {
             friendly_why("something unexpected"),
             why_for_note(ERR_GENERAL)
         );
-        assert_eq!(friendly_error("The updates changed since they were reviewed; look again"), ERR_CHANGED);
-        for why in [bitwarden_why("Offline"), WHY_BITWARDEN_OFFLINE, WHY_BITWARDEN_UNAVAILABLE] {
+        assert_eq!(
+            friendly_error("The updates changed since they were reviewed; look again"),
+            ERR_CHANGED
+        );
+        for why in [
+            bitwarden_why("Offline"),
+            WHY_BITWARDEN_OFFLINE,
+            WHY_BITWARDEN_UNAVAILABLE,
+        ] {
             assert!(!why.contains("Windows Update"));
             assert!(!why.contains("unexpected"));
         }
@@ -359,12 +375,20 @@ mod tests {
         assert_eq!(bitwarden_why("WinGet timed out"), WHY_BITWARDEN_OFFLINE);
         assert_eq!(bitwarden_why("something odd"), why_for_note(ERR_GENERAL));
         assert!(WHY_BITWARDEN_UNAVAILABLE.contains("bitwarden.com"));
-        assert_eq!(friendly_why("Scan failed: network unreachable"), why_for_note(ERR_NETWORK));
-        assert_eq!(friendly_why("scan blocked by policy"), why_for_note(ERR_SETTINGS_BLOCK));
-        assert_eq!(friendly_why("Defender update: restart required"), why_for_note(ERR_RESTART));
+        assert_eq!(
+            friendly_why("Scan failed: network unreachable"),
+            why_for_note(ERR_NETWORK)
+        );
+        assert_eq!(
+            friendly_why("scan blocked by policy"),
+            why_for_note(ERR_SETTINGS_BLOCK)
+        );
+        assert_eq!(
+            friendly_why("Defender update: restart required"),
+            why_for_note(ERR_RESTART)
+        );
         assert!(why_for_note(ERR_USE_WINDOWS_UPDATE).contains("different administrator"));
         assert!(repair_why(RepairResult::CouldNotFinish, Some(ERR_BUSY)).contains("maintenance"));
         assert!(install_why(InstallResult::NeedsRestart, None).contains("Restart"));
     }
-
 }

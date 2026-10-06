@@ -196,8 +196,17 @@ mod tests {
 
     #[test]
     fn only_the_hand_is_swapped_for_the_arrow() {
-        assert_eq!(arrow_only(mouse::Interaction::Pointer), mouse::Interaction::Idle);
-        assert_eq!(arrow_only(mouse::Interaction::Text), mouse::Interaction::Text);
-        assert_eq!(arrow_only(mouse::Interaction::None), mouse::Interaction::None);
+        assert_eq!(
+            arrow_only(mouse::Interaction::Pointer),
+            mouse::Interaction::Idle
+        );
+        assert_eq!(
+            arrow_only(mouse::Interaction::Text),
+            mouse::Interaction::Text
+        );
+        assert_eq!(
+            arrow_only(mouse::Interaction::None),
+            mouse::Interaction::None
+        );
     }
 }

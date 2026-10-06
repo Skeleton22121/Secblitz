@@ -8,7 +8,6 @@ use std::cell::Cell;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Curve {
     x1: f32,
@@ -85,7 +84,6 @@ impl Curve {
     }
 }
 
-
 pub const FASTER: Duration = Duration::from_millis(83);
 pub const FAST: Duration = Duration::from_millis(150);
 pub const NORMAL: Duration = Duration::from_millis(250);
@@ -142,7 +140,6 @@ fn ratio(elapsed: Duration, d: Duration) -> f32 {
     }
     (elapsed.as_secs_f32() / d.as_secs_f32()).clamp(0.0, 1.0)
 }
-
 
 /// Reads the system "animation effects" setting, re-asking at most every few seconds.
 pub struct Motion {
@@ -220,7 +217,6 @@ fn effective(t: f32, reduced: bool) -> f32 {
     }
 }
 
-
 pub fn ring_fill(from: f32, to: f32, t: f32) -> f32 {
     ring_fill_with(from, to, t, reduced())
 }
@@ -267,7 +263,6 @@ impl Tween {
         ring_fill(self.from, self.to, self.clock.progress_at(self.dur, now))
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
@@ -401,7 +396,6 @@ fn one_shot<'a, M: 'a>(kind: Kind, size: f32, color: Color, t: f32) -> Element<'
         },
     )
 }
-
 
 #[derive(Clone, Copy)]
 struct Xf {

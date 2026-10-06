@@ -64,7 +64,10 @@ mod tests {
     fn stages_follow_each_other() {
         let _m = forced::set(false);
         assert_eq!(stage(Duration::ZERO), Stage::Finishing);
-        assert_eq!(stage(FILL + HOLD - Duration::from_millis(1)), Stage::Finishing);
+        assert_eq!(
+            stage(FILL + HOLD - Duration::from_millis(1)),
+            Stage::Finishing
+        );
         assert_eq!(stage(FILL + HOLD), Stage::Leaving(0.0));
         match stage(FILL + HOLD + LEAVE / 2) {
             Stage::Leaving(t) => assert!((t - 0.5).abs() < 1e-3),

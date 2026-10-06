@@ -1,7 +1,6 @@
 //! "Web protection": three switches that block ads, trackers and dangerous
 //! websites, a plain status line, a one-hour pause and today's counts.
 use crate::app::{history, settings as app_settings};
-use secblitz::explain;
 use crate::gui::icons::Icon;
 use crate::gui::pages::home;
 use crate::gui::theme::{self, Palette, Tone};
@@ -11,6 +10,7 @@ use crate::gui::{blocking, Ctx, Message};
 use crate::i18n::Lang;
 use iced::widget::{column, container, row};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task};
+use secblitz::explain;
 use secblitz::filter::config::{self, Config, ErrorCode, State as ListState, Status};
 use secblitz::filter::control::ServiceState;
 use std::time::{Duration, Instant};
@@ -195,7 +195,6 @@ fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 3]> {
         [0; 3]
     })
 }
-
 
 fn service_state() -> ServiceState {
     #[cfg(windows)]
@@ -412,13 +411,16 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
-
 fn failure_text(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
     if has(&["administrator", "access is denied", "os error 5", "elevat"]) {
         "Windows wouldn't let Secblitz change web protection. Sign in with an account that can make changes to this PC, then open Secblitz again."
-    } else if has(&["unavailable", "only supported on windows", "requires windows"]) {
+    } else if has(&[
+        "unavailable",
+        "only supported on windows",
+        "requires windows",
+    ]) {
         "Web protection isn't available on this PC."
     } else if has(&["marked for deletion", "already exists", "1072", "1073"]) {
         "Windows is still tidying up the old web protection. Restart your PC, then try again."
@@ -430,13 +432,13 @@ fn failure_text(raw: &str) -> &'static str {
 }
 
 fn problem_hint(snapshot: &Snapshot, line: Line) -> Option<&'static str> {
-    if !matches!(
-        line,
-        Line::NotWorking | Line::GettingReady | Line::On
-    ) {
+    if !matches!(line, Line::NotWorking | Line::GettingReady | Line::On) {
         return None;
     }
-    let status = snapshot.status.as_ref().filter(|s| config::fresh(s, snapshot.now));
+    let status = snapshot
+        .status
+        .as_ref()
+        .filter(|s| config::fresh(s, snapshot.now));
     match status.and_then(|s| s.last_error) {
         Some(ErrorCode::PortInUse) => Some(
             "Another program on your PC is using what web protection needs. Close other ad blockers or VPN apps.",
@@ -595,7 +597,10 @@ fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Sna
     let head = widgets::row_item(p, Some(icon), title, Some(sub), control, None);
     let mut rows = vec![head];
     if working {
-        rows.push(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)]));
+        rows.push(widgets::under_row(vec![progress::indeterminate(
+            p,
+            Tone::Brand,
+        )]));
     }
     if let Some(e) = explain::for_check(switch.id()) {
         rows.push(widgets::under_row(vec![widgets::expander(
@@ -639,7 +644,11 @@ fn status_button<'a>(
     if working {
         col = col.push(progress::indeterminate(p, Tone::Brand));
     }
-    Some(container(col).padding(Padding::default().top(theme::S2)).into())
+    Some(
+        container(col)
+            .padding(Padding::default().top(theme::S2))
+            .into(),
+    )
 }
 
 fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
@@ -975,7 +984,9 @@ mod tests {
     fn known_failures_get_a_fix_and_unknown_ones_never_echo_raw_text() {
         let admin = failure_text("Changing web protection needs administrator rights");
         assert!(admin.contains("Sign in with an account"));
-        assert!(failure_text("The service is marked for deletion (1072)").contains("Restart your PC"));
+        assert!(
+            failure_text("The service is marked for deletion (1072)").contains("Restart your PC")
+        );
         let raw = "os error 87: weird HRESULT 0x80070057 in scm.rs";
         let general = failure_text(raw);
         assert!(general.starts_with("We couldn't change web protection."));
@@ -1000,7 +1011,9 @@ mod tests {
             service: ServiceState::Stopped,
             ..snapshot(on.clone(), None, true)
         };
-        assert!(problem_hint(&down, Line::NotWorking).unwrap().contains("restart your PC"));
+        assert!(problem_hint(&down, Line::NotWorking)
+            .unwrap()
+            .contains("restart your PC"));
         let ok = snapshot(on, Some(healthy()), true);
         assert!(problem_hint(&ok, Line::On).is_none());
     }

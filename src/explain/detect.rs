@@ -1,6 +1,5 @@
 use super::Explainer;
 
-
 pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "os.feature_release_support" => Explainer {

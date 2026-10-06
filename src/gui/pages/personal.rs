@@ -1,15 +1,15 @@
 //! Per-account settings and updates for the apps the user installed, not Windows apps or Secblitz.
 use crate::broker::{Reply, Request};
-use secblitz::explain;
 use crate::gui::icons::Icon;
 use crate::gui::pages::tools;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Helper, Message};
-use secblitz::user_apps::APPS;
-use secblitz::user_settings::{Op, Setting};
 use iced::widget::{column, space};
 use iced::{Element, Length, Task};
+use secblitz::explain;
+use secblitz::user_apps::APPS;
+use secblitz::user_settings::{Op, Setting};
 
 type El<'a> = Element<'a, Message>;
 
@@ -105,7 +105,6 @@ fn toast(text: String, tone: Tone) -> Task<Message> {
     Task::done(Message::Toast(text, tone))
 }
 
-
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if ctx.helper != Helper::Ready {
         return Task::none();
@@ -193,16 +192,21 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             if ctx.helper != Helper::Ready
                 || matches!(
                     state.apps,
-                    Apps::Unchecked | Apps::Probing | Apps::Preparing | Apps::Scanning | Apps::Reading(_)
+                    Apps::Unchecked
+                        | Apps::Probing
+                        | Apps::Preparing
+                        | Apps::Scanning
+                        | Apps::Reading(_)
                 )
                 || updating(state)
             {
                 return Task::none();
             }
             state.apps = Apps::Preparing;
-            Task::perform(blocking(secblitz::software_install::dns_offline), |offline| {
-                wrap(Msg::ScanOnline(!offline))
-            })
+            Task::perform(
+                blocking(secblitz::software_install::dns_offline),
+                |offline| wrap(Msg::ScanOnline(!offline)),
+            )
         }
         Msg::InstallerChecked(reply) => {
             if state.apps == Apps::Probing {
@@ -267,9 +271,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.app_cells[index] = AppCell::Preparing;
-            Task::perform(blocking(secblitz::software_install::dns_offline), move |offline| {
-                wrap(Msg::UpdateOnline(index, !offline))
-            })
+            Task::perform(
+                blocking(secblitz::software_install::dns_offline),
+                move |offline| wrap(Msg::UpdateOnline(index, !offline)),
+            )
         }
         Msg::UpdateOnline(index, online) => {
             if state.app_cells[index] != AppCell::Preparing {
@@ -305,9 +310,11 @@ fn updating(state: &State) -> bool {
 }
 
 fn helper_text(ctx: &Ctx) -> String {
-    ctx.t(ctx.helper.blocker().unwrap_or(crate::gui::REOPEN_TO_DO_THIS))
+    ctx.t(ctx
+        .helper
+        .blocker()
+        .unwrap_or(crate::gui::REOPEN_TO_DO_THIS))
 }
-
 
 /// One section's content, ready for the Tools page to put under its header.
 pub struct Part<'a> {
@@ -331,14 +338,11 @@ pub fn apps<'a>(state: &'a State, ctx: &'a Ctx) -> Part<'a> {
 
 pub fn account_status(state: &State, ctx: &Ctx) -> Option<tools::Status> {
     let working = |text| tools::Status::new(Tone::Neutral, ctx.t(text));
-    state
-        .cells
-        .iter()
-        .find_map(|c| match c {
-            Cell::Working => Some(working("Changing…")),
-            Cell::Loading => Some(working("Checking…")),
-            _ => None,
-        })
+    state.cells.iter().find_map(|c| match c {
+        Cell::Working => Some(working("Changing…")),
+        Cell::Loading => Some(working("Checking…")),
+        _ => None,
+    })
 }
 
 pub fn apps_status(state: &State, ctx: &Ctx) -> Option<tools::Status> {
@@ -587,7 +591,10 @@ fn apps_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
                     space::horizontal().width(0),
                     None,
                 ),
-                Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
+                Some(widgets::under_row(vec![progress::indeterminate(
+                    p,
+                    Tone::Brand,
+                )])),
             )),
             Apps::Failed(why) => rows.push(widgets::row_item_tinted(
                 p,
@@ -622,7 +629,9 @@ fn apps_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
                         p,
                         Some(Icon::Download),
                         ctx.t("Newer versions are available"),
-                        Some(ctx.t("Updates can't be undone. A program may close while it updates.")),
+                        Some(
+                            ctx.t("Updates can't be undone. A program may close while it updates."),
+                        ),
                         again,
                         None,
                     ));
@@ -653,7 +662,10 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
                 space::horizontal().width(0),
                 None,
             ),
-            Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
+            Some(widgets::under_row(vec![progress::indeterminate(
+                p,
+                Tone::Brand,
+            )])),
         ),
         AppCell::Preparing => widgets::row_item(
             p,
@@ -683,7 +695,9 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
         ),
         AppCell::Failed(why) => {
             let help = match why {
-                Why::Offline => ctx.t("You seem to be offline. Connect to the internet, then press Try again."),
+                Why::Offline => {
+                    ctx.t("You seem to be offline. Connect to the internet, then press Try again.")
+                }
                 _ => ctx.t("We couldn't update it. Close the program, then press Try again."),
             };
             widgets::row_item_tinted(

@@ -1,13 +1,13 @@
 //! Timing of the interface on the CPU renderer. Run with
 //! `CARGO_PROFILE_DEV_OPT_LEVEL=2 cargo test bench_pages -- --ignored --nocapture`.
 use super::*;
-use iced::advanced::renderer::Headless;
+use crate::app::settings::ToolsSection;
 use iced::advanced::layout::{Layout, Limits};
+use iced::advanced::renderer::Headless;
 use iced::advanced::renderer::Renderer as _;
 use iced::advanced::widget::Tree;
 use iced::advanced::{mouse, renderer};
 use iced::Rectangle;
-use crate::app::settings::ToolsSection;
 use secblitz::engine::Outcome;
 use secblitz::user_settings::Setting;
 use std::time::Instant;
@@ -16,7 +16,13 @@ const SIZE: iced::Size = iced::Size::new(1100.0, 720.0);
 const RUNS: u32 = 20;
 
 fn report() -> Report {
-    let statuses = ["attention", "compliant", "applied", "attention", "compliant"];
+    let statuses = [
+        "attention",
+        "compliant",
+        "applied",
+        "attention",
+        "compliant",
+    ];
     Report {
         results: secblitz::hardening::all()
             .iter()
@@ -72,7 +78,10 @@ fn the_toast_leaves_four_seconds_after_the_latest_one() {
     drop(app.update(Message::Toast("First.".into(), Tone::Good)));
     drop(app.update(Message::Toast("Second.".into(), Tone::Good)));
     drop(app.update(Message::ToastExpire(1)));
-    assert!(app.ctx.toast.is_some() && !app.toast_leaving, "an old timer must not close a newer toast");
+    assert!(
+        app.ctx.toast.is_some() && !app.toast_leaving,
+        "an old timer must not close a newer toast"
+    );
     drop(app.update(Message::ToastExpire(2)));
     assert!(app.toast_leaving || app.ctx.toast.is_none());
 }
@@ -85,7 +94,10 @@ fn checking_again_shows_the_whole_checking_screen_then_hands_off() {
     assert!(home::fills_window(&app.ctx) && fixes::fills_window(&app.ctx));
     let done = Ok(app.ctx.report.clone().expect("a report"));
     drop(app.update(Message::Worker(worker::Event::Checked(done))));
-    assert!(app.ctx.finishing && app.handoff.is_some(), "the result waits for the screen to settle");
+    assert!(
+        app.ctx.finishing && app.handoff.is_some(),
+        "the result waits for the screen to settle"
+    );
     drop(app.update(Message::Navigate(Page::Tools)));
     assert!(!app.ctx.finishing && app.ctx.checking.is_none());
 }
@@ -116,11 +128,23 @@ fn typing_in_protection_keeps_only_matching_rows_in_their_normal_order() {
     assert!(all.len() > 20, "{}", all.len());
     type_into_protection(&mut app, "firewall");
     let some = shown_on_protection(&app);
-    assert!(!some.is_empty() && some.len() < all.len(), "{} of {}", some.len(), all.len());
+    assert!(
+        !some.is_empty() && some.len() < all.len(),
+        "{} of {}",
+        some.len(),
+        all.len()
+    );
     let in_order: Vec<_> = all.iter().filter(|key| some.contains(key)).collect();
-    assert_eq!(in_order, some.iter().collect::<Vec<_>>(), "rows must not jump around");
+    assert_eq!(
+        in_order,
+        some.iter().collect::<Vec<_>>(),
+        "rows must not jump around"
+    );
     type_into_protection(&mut app, "firewall zzzqqq");
-    assert!(shown_on_protection(&app).is_empty(), "every word has to match");
+    assert!(
+        shown_on_protection(&app).is_empty(),
+        "every word has to match"
+    );
     type_into_protection(&mut app, "  ");
     assert_eq!(shown_on_protection(&app), all, "blank means no filter");
     drop(app.view());
@@ -146,7 +170,10 @@ fn english_words_still_find_rows_while_the_app_is_in_another_language() {
     drop(app.update(Message::Fixes(fixes::Msg::Search("firewall".into()))));
     let german = shown_on_protection(&app);
     assert!(!english.is_empty());
-    assert!(english.iter().all(|key| german.contains(key)), "{english:?} vs {german:?}");
+    assert!(
+        english.iter().all(|key| german.contains(key)),
+        "{english:?} vs {german:?}"
+    );
     drop(app.view());
 }
 
@@ -173,7 +200,10 @@ fn select_all_in_protection_takes_only_the_rows_shown_and_hidden_choices_stay() 
     assert!(fixes::selected_ids(&app.fixes).is_empty());
     type_into_protection(&mut app, "firewall");
     let first = fixes::shown_fixable(&app.fixes, &app.ctx);
-    assert!(!first.is_empty(), "the test report needs a fixable firewall row");
+    assert!(
+        !first.is_empty(),
+        "the test report needs a fixable firewall row"
+    );
     drop(app.update(Message::Fixes(fixes::Msg::SelectAll)));
     let mut expected = first.clone();
     expected.sort();
@@ -182,17 +212,29 @@ fn select_all_in_protection_takes_only_the_rows_shown_and_hidden_choices_stay() 
     let others: Vec<String> = fixes::shown_fixable(&app.fixes, &app.ctx);
     type_into_protection(&mut app, "");
     let every: Vec<String> = fixes::shown_fixable(&app.fixes, &app.ctx);
-    assert!(every.len() > others.len(), "the unfiltered list has more fixable rows");
+    assert!(
+        every.len() > others.len(),
+        "the unfiltered list has more fixable rows"
+    );
     let outside = every.iter().find(|id| !first.contains(id)).unwrap().clone();
     type_into_protection(&mut app, &outside);
-    assert!(!fixes::shown_fixable(&app.fixes, &app.ctx).iter().any(|id| first.contains(id)));
-    assert_eq!(fixes::selected_ids(&app.fixes), expected, "typing never changes the choice");
+    assert!(!fixes::shown_fixable(&app.fixes, &app.ctx)
+        .iter()
+        .any(|id| first.contains(id)));
+    assert_eq!(
+        fixes::selected_ids(&app.fixes),
+        expected,
+        "typing never changes the choice"
+    );
     drop(app.update(Message::Fixes(fixes::Msg::SelectAll)));
     let selected = fixes::selected_ids(&app.fixes);
     assert!(selected.contains(&outside) && first.iter().all(|id| selected.contains(id)));
     drop(app.update(Message::Fixes(fixes::Msg::SelectNone)));
     let left = fixes::selected_ids(&app.fixes);
-    assert!(!left.contains(&outside) && first.iter().all(|id| left.contains(id)), "none only clears what is shown");
+    assert!(
+        !left.contains(&outside) && first.iter().all(|id| left.contains(id)),
+        "none only clears what is shown"
+    );
     drop(app.view());
     type_into_protection(&mut app, "");
     drop(app.update(Message::Fixes(fixes::Msg::SelectAll)));
@@ -210,7 +252,11 @@ fn with_report(app: &mut App, edit: impl FnOnce(&mut Report)) {
 /// Marks the first `n` protected settings as ones Secblitz changed.
 fn mark_undoable(r: &mut Report, n: usize) -> Vec<String> {
     let mut ids = Vec::new();
-    for o in r.results.iter_mut().filter(|o| o.status == CheckStatus::Compliant) {
+    for o in r
+        .results
+        .iter_mut()
+        .filter(|o| o.status == CheckStatus::Compliant)
+    {
         if ids.len() == n {
             break;
         }
@@ -232,9 +278,10 @@ fn lays_out(app: &mut App, renderer: &iced::Renderer) {
     app.enter_t = 1.0;
     let mut element = app.view();
     let mut tree = Tree::new(&element);
-    let node = element
-        .as_widget_mut()
-        .layout(&mut tree, renderer, &Limits::new(iced::Size::ZERO, SIZE));
+    let node =
+        element
+            .as_widget_mut()
+            .layout(&mut tree, renderer, &Limits::new(iced::Size::ZERO, SIZE));
     assert!(node.size().width > 0.0 && node.size().height > 0.0);
 }
 
@@ -266,9 +313,15 @@ fn settings_secblitz_changed_come_first_and_nothing_starts_chosen() {
         .collect();
     assert!(!plain.is_empty());
     let last_changed = ids.iter().map(at).max().unwrap();
-    assert!(plain.iter().all(|id| at(id) > last_changed), "changed settings sort first");
+    assert!(
+        plain.iter().all(|id| at(id) > last_changed),
+        "changed settings sort first"
+    );
     drop(app.update(Message::Fixes(fixes::Msg::ToggleUndo(plain[0].clone()))));
-    assert!(fixes::undo_selected_ids(&app.fixes).is_empty(), "only changed settings can be chosen");
+    assert!(
+        fixes::undo_selected_ids(&app.fixes).is_empty(),
+        "only changed settings can be chosen"
+    );
     drop(app.update(Message::Fixes(fixes::Msg::ToggleUndo(ids[0].clone()))));
     assert_eq!(fixes::undo_selected_ids(&app.fixes), vec![ids[0].clone()]);
     drop(app.update(Message::Fixes(fixes::Msg::ToggleUndo(ids[0].clone()))));
@@ -292,14 +345,21 @@ fn a_chosen_selection_acts_on_the_rows_shown_and_is_pruned_by_a_new_check() {
     drop(app.update(Message::Fixes(fixes::Msg::UndoSelectAll)));
     let mut want = shown.clone();
     want.sort();
-    assert_eq!(fixes::undo_selected_ids(&app.fixes), want, "only what the search shows");
+    assert_eq!(
+        fixes::undo_selected_ids(&app.fixes),
+        want,
+        "only what the search shows"
+    );
     type_into_protection(&mut app, "");
     drop(app.update(Message::Fixes(fixes::Msg::UndoSelectAll)));
     assert_eq!(fixes::undo_selected_ids(&app.fixes).len(), 3);
     type_into_protection(&mut app, &ids[0]);
     drop(app.update(Message::Fixes(fixes::Msg::UndoSelectNone)));
     let left = fixes::undo_selected_ids(&app.fixes);
-    assert!(!left.contains(&ids[0]) && left.len() == 3 - shown.len(), "none only clears what is shown");
+    assert!(
+        !left.contains(&ids[0]) && left.len() == 3 - shown.len(),
+        "none only clears what is shown"
+    );
     drop(app.view());
     type_into_protection(&mut app, "");
 
@@ -310,7 +370,11 @@ fn a_chosen_selection_acts_on_the_rows_shown_and_is_pruned_by_a_new_check() {
         }
     });
     drop(app.update(Message::Fixes(fixes::Msg::Search(String::new()))));
-    assert_eq!(fixes::undo_selected_ids(&app.fixes), vec![keep], "a new check keeps only what can still be put back");
+    assert_eq!(
+        fixes::undo_selected_ids(&app.fixes),
+        vec![keep],
+        "a new check keeps only what can still be put back"
+    );
     with_report(&mut app, |_| {});
     drop(app.update(Message::Fixes(fixes::Msg::Search(String::new()))));
     assert!(fixes::undo_selected_ids(&app.fixes).is_empty());
@@ -332,7 +396,10 @@ fn putting_back_chosen_settings_goes_from_review_to_working_to_a_calm_result() {
         Some((vec![ids[1].clone(), ids[0].clone()], true)),
         "only settings Secblitz changed, once each, in the order chosen"
     );
-    assert_eq!(fixflow::plan_ids(&app.fix), vec![ids[1].clone(), ids[0].clone()]);
+    assert_eq!(
+        fixflow::plan_ids(&app.fix),
+        vec![ids[1].clone(), ids[0].clone()]
+    );
     assert!(!fixflow::added_together(&app.fix));
     drop(app.view());
 
@@ -344,16 +411,31 @@ fn putting_back_chosen_settings_goes_from_review_to_working_to_a_calm_result() {
 
     app.ctx.busy = true;
     drop(app.update(Message::ReviewUndoSome(vec![ids[0].clone()])));
-    assert_eq!(fixflow::stage_name(&app.fix), "closed", "nothing opens while another job runs");
+    assert_eq!(
+        fixflow::stage_name(&app.fix),
+        "closed",
+        "nothing opens while another job runs"
+    );
     app.ctx.busy = false;
     app.ctx.checking = Some(CheckProgress::default());
     drop(app.update(Message::ReviewUndoSome(vec![ids[0].clone()])));
-    assert_eq!(fixflow::stage_name(&app.fix), "closed", "nor while a check runs");
+    assert_eq!(
+        fixflow::stage_name(&app.fix),
+        "closed",
+        "nor while a check runs"
+    );
     app.ctx.checking = None;
 
-    drop(app.update(Message::ReviewUndoSome(vec![ids[0].clone(), ids[1].clone()])));
+    drop(app.update(Message::ReviewUndoSome(vec![
+        ids[0].clone(),
+        ids[1].clone(),
+    ])));
     drop(app.update(Message::Fix(fixflow::Msg::Confirm)));
-    assert_eq!(fixflow::stage_name(&app.fix), "review", "a pre-flight check comes first");
+    assert_eq!(
+        fixflow::stage_name(&app.fix),
+        "review",
+        "a pre-flight check comes first"
+    );
     drop(app.update(Message::Worker(worker::Event::Preflight {
         undo: true,
         result: Ok(()),
@@ -390,7 +472,10 @@ fn putting_back_chosen_settings_goes_from_review_to_working_to_a_calm_result() {
     assert_eq!(fixflow::stage_name(&app.fix), "result");
     let summary = fixflow::result_summary(&app.fix).expect("a result");
     assert_eq!(summary.done, vec![ids[0].clone()]);
-    assert_eq!(summary.not_done, vec![(ids[1].clone(), app::flow::REASON_LEFT_AS_IS.to_owned())]);
+    assert_eq!(
+        summary.not_done,
+        vec![(ids[1].clone(), app::flow::REASON_LEFT_AS_IS.to_owned())]
+    );
     assert!(!summary.less_protected.is_empty());
     drop(app.view());
     drop(app.update(Message::Fix(fixflow::Msg::Done)));
@@ -433,14 +518,23 @@ fn a_protection_another_one_needs_is_added_and_said_so() {
 #[test]
 fn the_last_fixes_come_from_the_check_and_follow_a_partial_undo() {
     let (mut app, ids) = app_with_undoable(3);
-    with_report(&mut app, |r| r.undo_next = vec![ids[0].clone(), ids[1].clone()]);
+    with_report(&mut app, |r| {
+        r.undo_next = vec![ids[0].clone(), ids[1].clone()]
+    });
     drop(app.update(Message::ReviewUndo));
     assert_eq!(fixflow::review(&app.fix), Some((Vec::new(), true)));
-    assert_eq!(fixflow::plan_ids(&app.fix), vec![ids[0].clone(), ids[1].clone()]);
+    assert_eq!(
+        fixflow::plan_ids(&app.fix),
+        vec![ids[0].clone(), ids[1].clone()]
+    );
     drop(app.update(Message::Fix(fixflow::Msg::Cancel)));
     with_report(&mut app, |r| r.undo_next = vec![ids[1].clone()]);
     drop(app.update(Message::ReviewUndo));
-    assert_eq!(fixflow::plan_ids(&app.fix), vec![ids[1].clone()], "no stale rows");
+    assert_eq!(
+        fixflow::plan_ids(&app.fix),
+        vec![ids[1].clone()],
+        "no stale rows"
+    );
     drop(app.update(Message::Fix(fixflow::Msg::Cancel)));
     with_report(&mut app, |_| {});
     drop(app.update(Message::ReviewUndo));
@@ -506,12 +600,18 @@ fn typing_in_clean_up_apps_hides_other_apps_and_finds_typos_and_package_names() 
     assert_eq!(names, ["Solitaire games"]);
     type_into_clean_up(&mut app, "GamingOverlay");
     let by_package = debloat::visible_apps(&app.debloat, &app.ctx);
-    assert!(by_package.iter().any(|i| secblitz::debloat::catalog()[*i as usize].name == "Game Bar"));
+    assert!(by_package
+        .iter()
+        .any(|i| secblitz::debloat::catalog()[*i as usize].name == "Game Bar"));
     type_into_clean_up(&mut app, "qqqzzz");
     assert!(debloat::visible_apps(&app.debloat, &app.ctx).is_empty());
     drop(app.view());
     drop(app.update(Message::Escape));
-    assert_eq!(debloat::visible_apps(&app.debloat, &app.ctx), all, "Escape clears the search");
+    assert_eq!(
+        debloat::visible_apps(&app.debloat, &app.ctx),
+        all,
+        "Escape clears the search"
+    );
 }
 
 #[test]
@@ -529,8 +629,14 @@ fn choosing_a_whole_group_while_searching_takes_only_the_apps_shown() {
         .collect();
     assert_eq!(chosen, in_group);
     type_into_clean_up(&mut app, "weather");
-    assert_eq!(debloat::selected_apps(&app.debloat), in_group, "hidden choices stay");
-    drop(app.update(Message::Debloat(debloat::Msg::ToggleGroup(secblitz::debloat::catalog()[0].group))));
+    assert_eq!(
+        debloat::selected_apps(&app.debloat),
+        in_group,
+        "hidden choices stay"
+    );
+    drop(app.update(Message::Debloat(debloat::Msg::ToggleGroup(
+        secblitz::debloat::catalog()[0].group,
+    ))));
     let after = debloat::selected_apps(&app.debloat);
     assert!(in_group.iter().all(|i| after.contains(i)) && after.len() > in_group.len());
     drop(app.update(Message::Debloat(debloat::Msg::ClearSearch)));
@@ -559,10 +665,15 @@ fn both_pages_lay_out_with_a_search_active_and_with_nothing_found() {
             }
             let mut element = app.view();
             let mut tree = Tree::new(&element);
-            let node = element
-                .as_widget_mut()
-                .layout(&mut tree, &renderer, &Limits::new(iced::Size::ZERO, SIZE));
-            assert!(node.size().width > 0.0 && node.size().height > 0.0, "{page:?} {typed:?}");
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(iced::Size::ZERO, SIZE),
+            );
+            assert!(
+                node.size().width > 0.0 && node.size().height > 0.0,
+                "{page:?} {typed:?}"
+            );
         }
     }
 }
@@ -600,7 +711,9 @@ fn the_tools_page_starts_with_pc_health_tips_then_the_closed_sections() {
         .collect();
     assert_eq!(rest, TOOLS_SECTIONS);
     let mut app = app();
-    assert!(TOOLS_SECTIONS.iter().all(|s| !app.ctx.prefs.tools_section_open(*s)));
+    assert!(TOOLS_SECTIONS
+        .iter()
+        .all(|s| !app.ctx.prefs.tools_section_open(*s)));
     app.page = Page::Tools;
     drop(app.view());
 }
@@ -643,39 +756,70 @@ fn tools_sections_stay_as_left_after_leaving_the_page_and_after_a_restart() {
 #[test]
 fn a_closed_tools_section_says_what_is_running_or_finished_inside() {
     let mut app = app();
-    assert!(TOOLS_SECTIONS.iter().all(|s| tools_status(&app, *s).is_none()));
+    assert!(TOOLS_SECTIONS
+        .iter()
+        .all(|s| tools_status(&app, *s).is_none()));
 
     tools_msg(&mut app, tools::Msg::ScanDone(Ok(())));
     let scan = tools_status(&app, ToolsSection::Virus).expect("a finished scan is told");
-    assert_eq!((scan.tone, scan.text.as_str()), (Tone::Good, "Scan started"));
+    assert_eq!(
+        (scan.tone, scan.text.as_str()),
+        (Tone::Good, "Scan started")
+    );
 
     tools_msg(&mut app, tools::Msg::DefenderDone(Err("offline".into())));
     let defender = tools_status(&app, ToolsSection::Virus).expect("a failed update is told");
-    assert_eq!(defender.tone, Tone::Warn, "what needs attention wins over what went well");
+    assert_eq!(
+        defender.tone,
+        Tone::Warn,
+        "what needs attention wins over what went well"
+    );
     assert_eq!(defender.text, "We couldn't update right now");
 
-    let left = secblitz::actions::ThreatRemoval { found: 3, removed: 1, left: 2 };
+    let left = secblitz::actions::ThreatRemoval {
+        found: 3,
+        removed: 1,
+        left: 2,
+    };
     tools_msg(&mut app, tools::Msg::ThreatsDone(Ok(left)));
     let threats = tools_status(&app, ToolsSection::Virus).expect("threats left are told");
-    assert_eq!((threats.tone, threats.text.as_str()), (Tone::Warn, "Some are still there"));
+    assert_eq!(
+        (threats.tone, threats.text.as_str()),
+        (Tone::Warn, "Some are still there")
+    );
 
     tools_msg(&mut app, tools::Msg::LookForUpdates);
     let looking = tools_status(&app, ToolsSection::Repair).expect("a running look is told");
-    assert_eq!((looking.tone, looking.text.as_str()), (Tone::Neutral, "Looking for updates…"));
+    assert_eq!(
+        (looking.tone, looking.text.as_str()),
+        (Tone::Neutral, "Looking for updates…")
+    );
     tools_msg(&mut app, tools::Msg::Found(Err(("raw".into(), "network"))));
     let failed = tools_status(&app, ToolsSection::Repair).expect("a failed look is told");
-    assert_eq!((failed.tone, failed.text.as_str()), (Tone::Warn, "We couldn't check for updates"));
+    assert_eq!(
+        (failed.tone, failed.text.as_str()),
+        (Tone::Warn, "We couldn't check for updates")
+    );
 
-    tools_msg(&mut app, tools::Msg::BitwardenDone(Ok(crate::broker::Reply::Done)));
+    tools_msg(
+        &mut app,
+        tools::Msg::BitwardenDone(Ok(crate::broker::Reply::Done)),
+    );
     let manager = tools_status(&app, ToolsSection::Passwords).expect("an install is told");
-    assert_eq!((manager.tone, manager.text.as_str()), (Tone::Good, "Bitwarden is installed"));
+    assert_eq!(
+        (manager.tone, manager.text.as_str()),
+        (Tone::Good, "Bitwarden is installed")
+    );
     tools_msg(&mut app, tools::Msg::ClearBitwarden);
     assert!(tools_status(&app, ToolsSection::Passwords).is_none());
 
     assert!(tools_status(&app, ToolsSection::Windows).is_none());
     app.ctx.lang = Lang::De;
     let german = tools_status(&app, ToolsSection::Virus).expect("still told");
-    assert_ne!(german.text, "Some are still there", "the summary follows the language");
+    assert_ne!(
+        german.text, "Some are still there",
+        "the summary follows the language"
+    );
     app.page = Page::Tools;
     drop(app.view());
 }
@@ -719,8 +863,14 @@ fn the_ads_and_tips_tab_shows_five_switches_and_none_is_on_until_asked() {
         assert_eq!(debloat::ads_shown_as(&app.debloat, setting), "off");
     }
     drop(app.view());
-    assert!(!debloat::shows_search(&app.debloat), "the app search belongs to the Apps tab");
-    assert!(debloat::footer(&app.debloat, &app.ctx).is_none(), "no Remove bar on this tab");
+    assert!(
+        !debloat::shows_search(&app.debloat),
+        "the app search belongs to the Apps tab"
+    );
+    assert!(
+        debloat::footer(&app.debloat, &app.ctx).is_none(),
+        "no Remove bar on this tab"
+    );
 }
 
 #[test]
@@ -730,7 +880,11 @@ fn a_switch_only_changes_when_the_person_flips_it() {
     answer_all(&mut app, Reply::NeedsAttention);
     let lock = Setting::LockScreenTips;
     ads(&mut app, debloat::ads::Msg::Toggle(lock, false));
-    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "off", "off stays off");
+    assert_eq!(
+        debloat::ads_shown_as(&app.debloat, lock),
+        "off",
+        "off stays off"
+    );
     ads(&mut app, debloat::ads::Msg::Toggle(lock, true));
     assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "working");
     for other in Setting::ADS_AND_TIPS.into_iter().filter(|s| *s != lock) {
@@ -738,12 +892,25 @@ fn a_switch_only_changes_when_the_person_flips_it() {
     }
     drop(app.view());
     ads(&mut app, debloat::ads::Msg::Changed(lock, Ok(Reply::Done)));
-    ads(&mut app, debloat::ads::Msg::Reported(lock, Ok(Reply::SafeByUs)));
-    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "on, can be switched back");
+    ads(
+        &mut app,
+        debloat::ads::Msg::Reported(lock, Ok(Reply::SafeByUs)),
+    );
+    assert_eq!(
+        debloat::ads_shown_as(&app.debloat, lock),
+        "on, can be switched back"
+    );
     ads(&mut app, debloat::ads::Msg::Toggle(lock, false));
-    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "working", "undo starts");
+    assert_eq!(
+        debloat::ads_shown_as(&app.debloat, lock),
+        "working",
+        "undo starts"
+    );
     ads(&mut app, debloat::ads::Msg::Changed(lock, Ok(Reply::Done)));
-    ads(&mut app, debloat::ads::Msg::Reported(lock, Ok(Reply::NeedsAttention)));
+    ads(
+        &mut app,
+        debloat::ads::Msg::Reported(lock, Ok(Reply::NeedsAttention)),
+    );
     assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "off");
 }
 
@@ -765,15 +932,31 @@ fn an_unreadable_or_unavailable_answer_is_shown_calmly_and_cannot_be_flipped() {
     use crate::broker::Reply;
     let mut app = on_ads_tab();
     let web = Setting::SearchWebResults;
-    ads(&mut app, debloat::ads::Msg::Reported(web, Err("unavailable".into())));
+    ads(
+        &mut app,
+        debloat::ads::Msg::Reported(web, Err("unavailable".into())),
+    );
     assert_eq!(debloat::ads_shown_as(&app.debloat, web), "unknown");
     ads(&mut app, debloat::ads::Msg::Toggle(web, true));
     assert_eq!(debloat::ads_shown_as(&app.debloat, web), "unknown");
-    ads(&mut app, debloat::ads::Msg::Reported(web, Ok(Reply::NeedsAttention)));
+    ads(
+        &mut app,
+        debloat::ads::Msg::Reported(web, Ok(Reply::NeedsAttention)),
+    );
     ads(&mut app, debloat::ads::Msg::Toggle(web, true));
-    ads(&mut app, debloat::ads::Msg::Changed(web, Ok(Reply::Unavailable)));
-    ads(&mut app, debloat::ads::Msg::Reported(web, Ok(Reply::NeedsAttention)));
-    assert_eq!(debloat::ads_shown_as(&app.debloat, web), "off", "a refused change leaves it off");
+    ads(
+        &mut app,
+        debloat::ads::Msg::Changed(web, Ok(Reply::Unavailable)),
+    );
+    ads(
+        &mut app,
+        debloat::ads::Msg::Reported(web, Ok(Reply::NeedsAttention)),
+    );
+    assert_eq!(
+        debloat::ads_shown_as(&app.debloat, web),
+        "off",
+        "a refused change leaves it off"
+    );
     drop(app.view());
 }
 
@@ -801,7 +984,10 @@ fn the_apps_tab_keeps_its_search_after_a_visit_to_ads_and_tips() {
     drop(app.update(Message::Debloat(debloat::Msg::SetTab(debloat::Tab::Apps))));
     assert!(debloat::shows_search(&app.debloat));
     assert_eq!(debloat::visible_apps(&app.debloat, &app.ctx), found);
-    assert!(debloat::selected_apps(&app.debloat).is_empty(), "nothing is ticked by a visit");
+    assert!(
+        debloat::selected_apps(&app.debloat).is_empty(),
+        "nothing is ticked by a visit"
+    );
 }
 
 #[test]
@@ -820,14 +1006,24 @@ fn the_ads_and_tips_tab_lays_out_in_every_language_with_details_open() {
     }
     for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
         app.ctx.lang = lang;
-        for reply in [Reply::NeedsAttention, Reply::SafeByUs, Reply::Safe, Reply::Unknown] {
+        for reply in [
+            Reply::NeedsAttention,
+            Reply::SafeByUs,
+            Reply::Safe,
+            Reply::Unknown,
+        ] {
             answer_all(&mut app, reply);
             let mut element = app.view();
             let mut tree = Tree::new(&element);
-            let node = element
-                .as_widget_mut()
-                .layout(&mut tree, &renderer, &Limits::new(iced::Size::ZERO, SIZE));
-            assert!(node.size().width > 0.0 && node.size().height > 0.0, "{lang:?} {reply:?}");
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(iced::Size::ZERO, SIZE),
+            );
+            assert!(
+                node.size().width > 0.0 && node.size().height > 0.0,
+                "{lang:?} {reply:?}"
+            );
         }
     }
 }
@@ -838,7 +1034,11 @@ fn every_new_app_in_the_catalog_has_a_row_on_the_apps_tab() {
     app.page = Page::Debloat;
     let shown = debloat::visible_apps(&app.debloat, &app.ctx);
     let catalog = secblitz::debloat::catalog();
-    for family in ["Microsoft.WidgetsPlatformRuntime", "microsoft.windowscommunicationsapps", "MicrosoftCorporationII.MicrosoftFamily"] {
+    for family in [
+        "Microsoft.WidgetsPlatformRuntime",
+        "microsoft.windowscommunicationsapps",
+        "MicrosoftCorporationII.MicrosoftFamily",
+    ] {
         let index = catalog.iter().position(|a| a.family == family).unwrap() as u16;
         assert!(shown.contains(&index), "{family}");
     }
@@ -851,9 +1051,11 @@ fn every_new_app_in_the_catalog_has_a_row_on_the_apps_tab() {
 #[test]
 #[ignore]
 fn bench_pages() {
-    let mut renderer = iced::futures::executor::block_on(
-        <iced::Renderer as Headless>::new(theme::REGULAR, 14.0.into(), Some("tiny-skia")),
-    )
+    let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        theme::REGULAR,
+        14.0.into(),
+        Some("tiny-skia"),
+    ))
     .expect("tiny-skia renderer");
     let mut app = app();
     let theme = app.ctx.palette.theme();
@@ -873,15 +1075,19 @@ fn bench_pages() {
         let layout_ms = avg(&mut || {
             let mut element = app.view();
             let mut tree = Tree::new(&element);
-            let _ = element
-                .as_widget_mut()
-                .layout(&mut tree, &renderer, &Limits::new(iced::Size::ZERO, SIZE));
+            let _ = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(iced::Size::ZERO, SIZE),
+            );
         });
         let mut element = app.view();
         let mut tree = Tree::new(&element);
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &Limits::new(iced::Size::ZERO, SIZE));
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &Limits::new(iced::Size::ZERO, SIZE),
+        );
         let viewport = Rectangle::with_size(SIZE);
         let draw = avg(&mut || {
             renderer.reset(viewport);
@@ -902,7 +1108,10 @@ fn bench_pages() {
                 iced::Color::WHITE,
             );
         });
-        println!("{page:<10?} {view:6.2} {:6.2} {draw:6.2} {raster:6.2}", layout_ms - view);
+        println!(
+            "{page:<10?} {view:6.2} {:6.2} {draw:6.2} {raster:6.2}",
+            layout_ms - view
+        );
     }
     println!("update handlers (ms, average of {RUNS})");
     for page in Page::ALL {

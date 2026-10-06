@@ -337,9 +337,8 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
         "Secblitz supports Windows x64 only"
     );
     crate::platform::require_admin("Defender support actions require Administrator elevation")?;
-    let reply: Value = run_script(script, Duration::from_secs(10 * 60)).context(
-        "Windows Security could not finish removing them. Nothing else was changed",
-    )?;
+    let reply: Value = run_script(script, Duration::from_secs(10 * 60))
+        .context("Windows Security could not finish removing them. Nothing else was changed")?;
     super::parse_threat_reply(&reply)
 }
 
@@ -557,12 +556,18 @@ impl Backend for WindowsBackend {
     }
     fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
         std::thread::scope(|s| {
-            let reads: Vec<_> = ids.iter().map(|id| s.spawn(move || observe_one(id))).collect();
+            let reads: Vec<_> = ids
+                .iter()
+                .map(|id| s.spawn(move || observe_one(id)))
+                .collect();
             reads
                 .into_iter()
                 .map(|read| {
-                    read.join()
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("Some details for a check could not be read.")))
+                    read.join().unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(
+                            "Some details for a check could not be read."
+                        ))
+                    })
                 })
                 .collect()
         })

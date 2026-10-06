@@ -155,10 +155,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 
 pub(crate) fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
     match setting {
-        Setting::LockScreenTips => (
-            Icon::Bell,
-            ctx.t("Hide tips and offers on the lock screen"),
-        ),
+        Setting::LockScreenTips => (Icon::Bell, ctx.t("Hide tips and offers on the lock screen")),
         Setting::StartSettingsTips => (
             Icon::Sparkles,
             ctx.t("Hide suggestions in Start and Settings"),
@@ -213,7 +210,9 @@ fn switch_row<'a>(state: &State, ctx: &Ctx, setting: Setting) -> Option<El<'a>> 
             ctx.t("We couldn't check this. Leave this page and open it again to try once more."),
             space::horizontal().width(0).into(),
         ),
-        Cell::Known(Reply::NeedsAttention) => (ctx.t("Off"), widgets::switch(p, false, Some(toggle))),
+        Cell::Known(Reply::NeedsAttention) => {
+            (ctx.t("Off"), widgets::switch(p, false, Some(toggle)))
+        }
         Cell::Known(Reply::SafeByUs) => (
             ctx.t("On. You can switch it back."),
             widgets::switch(p, true, Some(toggle)),

@@ -386,7 +386,8 @@ fn controls() -> Vec<Control> {
         description,
         target,
         reboot,
-    } in REGISTRY_REPAIRS {
+    } in REGISTRY_REPAIRS
+    {
         out.push(Control {
             id: id.into(),
             title: title.into(),
@@ -549,13 +550,20 @@ mod tests {
         assert!(!script.contains("switch -CaseSensitive ($action)"));
         assert!(script.contains("function CheckScopedPolicy"));
         let gate = script.find("function CheckScopedPolicy").unwrap();
-        let call = script.find("    CheckScopedPolicy 'defender.support'").unwrap();
+        let call = script
+            .find("    CheckScopedPolicy 'defender.support'")
+            .unwrap();
         let remove = script.find("Remove-MpThreat -ErrorAction Stop").unwrap();
         assert!(gate < call && call < remove);
         // It is not one of the plain support actions and is never a control id.
         assert!(support_script("defender_remove_threats").is_err());
         assert!(support_action("defender_remove_threats").is_err());
-        assert!(validate_request("write", Some("defender_remove_threats"), Some(&json!(false))).is_err());
+        assert!(validate_request(
+            "write",
+            Some("defender_remove_threats"),
+            Some(&json!(false))
+        )
+        .is_err());
 
         let ok = json!({"ok": true, "found": 3, "removed": 2, "left": 1});
         assert_eq!(
@@ -701,14 +709,22 @@ mod tests {
     #[test]
     fn ps_text_is_quote_free_and_round_trips() {
         use base64::Engine as _;
-        for text in ["", "plain", "it's", "\u{2018}\u{2019}\u{201A}\u{201B}", "{\"a\":\"\u{e9}\"}"] {
+        for text in [
+            "",
+            "plain",
+            "it's",
+            "\u{2018}\u{2019}\u{201A}\u{201B}",
+            "{\"a\":\"\u{e9}\"}",
+        ] {
             let expr = ps_text(text);
             let inner = expr
                 .strip_prefix("([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('")
                 .and_then(|r| r.strip_suffix("')))"))
                 .unwrap();
             assert!(inner.is_ascii() && !inner.contains('\''));
-            let bytes = base64::engine::general_purpose::STANDARD.decode(inner).unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(inner)
+                .unwrap();
             assert_eq!(String::from_utf8(bytes).unwrap(), text);
         }
     }

@@ -3,8 +3,8 @@ use super::{
     repair_target, service_name,
     state::{trusted_owner, State},
 };
-use crate::model::{CheckStatus, Finding};
 use crate::model::Observation;
+use crate::model::{CheckStatus, Finding};
 use anyhow::{ensure, Result};
 use serde_json::Value;
 use std::{ffi::c_void, io, ptr};

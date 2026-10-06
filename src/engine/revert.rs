@@ -296,7 +296,8 @@ impl Engine {
         for (t, e) in plan {
             let id = transactions[t].entries[e].id.clone();
             // Windows keeps this protection on only while the other one is on, so it waits until that one is really back.
-            let waits = undo_first(&id).is_some_and(|first| Self::owner_of(&transactions, first).is_some());
+            let waits =
+                undo_first(&id).is_some_and(|first| Self::owner_of(&transactions, first).is_some());
             let result = if waits {
                 let c = self.control(&id)?.clone();
                 Self::outcome(&c, CheckStatus::Skipped, NEEDS_OTHER)
@@ -353,9 +354,12 @@ impl Engine {
             let c = self.classify(&entry.id, &entry.before)?;
             blockers.push(match c.seen {
                 Seen::AtBefore => continue,
-                Seen::Third => {
-                    Self::observed_outcome(&c.control, CheckStatus::Conflict, DIFFERS, &c.observation)
-                }
+                Seen::Third => Self::observed_outcome(
+                    &c.control,
+                    CheckStatus::Conflict,
+                    DIFFERS,
+                    &c.observation,
+                ),
                 Seen::AtTarget if !restore_eligible(&c.control, &c.observation) => {
                     Self::observed_outcome(
                         &c.control,

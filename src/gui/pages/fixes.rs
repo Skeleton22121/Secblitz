@@ -1,11 +1,8 @@
 //! Protection page: every check grouped, attention rows selectable.
-use secblitz::advice::{self, Group, NextStep};
-use secblitz::model::CheckStatus;
 use crate::app::flow;
 use crate::app::score::{self, Class};
 use crate::app::search::{Haystack, Query};
 use crate::broker::Reply;
-use crate::guide::{self, Guide, Page};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim;
@@ -14,11 +11,14 @@ use crate::gui::widgets::hairline::Plate;
 use crate::gui::widgets::scan;
 use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
+use crate::guide::{self, Guide, Page};
 use crate::i18n::Lang;
 use iced::widget::{column, container, row, space, Column};
 use iced::{Alignment, Element, Length};
 use iced::{Subscription, Task};
+use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
+use secblitz::model::CheckStatus;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -101,7 +101,6 @@ pub enum Msg {
     Open(Page),
 }
 
-
 #[derive(Debug)]
 struct Cached {
     key: (usize, Lang, usize),
@@ -127,10 +126,26 @@ struct Shown<'r> {
 impl Rows {
     fn shown(&self, query: &Query) -> Shown<'_> {
         Shown {
-            attention: self.attention.iter().filter(|r| query.matches(&r.hay)).collect(),
-            privacy: self.privacy.iter().filter(|r| query.matches(&r.hay)).collect(),
-            others: self.others.iter().filter(|r| query.matches(&r.hay)).collect(),
-            protected: self.protected.iter().filter(|r| query.matches(&r.hay)).collect(),
+            attention: self
+                .attention
+                .iter()
+                .filter(|r| query.matches(&r.hay))
+                .collect(),
+            privacy: self
+                .privacy
+                .iter()
+                .filter(|r| query.matches(&r.hay))
+                .collect(),
+            others: self
+                .others
+                .iter()
+                .filter(|r| query.matches(&r.hay))
+                .collect(),
+            protected: self
+                .protected
+                .iter()
+                .filter(|r| query.matches(&r.hay))
+                .collect(),
         }
     }
 }
@@ -354,7 +369,11 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                     "Drivers we were unsure about: {names}",
                     secblitz::vbs::reason_names(&r.detail),
                 ),
-                detail: if finding_listed { None } else { Some(r.detail.as_str()) },
+                detail: if finding_listed {
+                    None
+                } else {
+                    Some(r.detail.as_str())
+                },
             },
         ));
     }
@@ -477,7 +496,10 @@ fn other_line(
     a: &advice::Advice,
 ) -> (Option<&'static str>, &'static str) {
     if bucket == Bucket::Managed {
-        (None, "This PC's owner controls this setting, so we leave it as it is.")
+        (
+            None,
+            "This PC's owner controls this setting, so we leave it as it is.",
+        )
     } else if has_guide && bucket == Bucket::Look && !a.impact.is_empty() {
         (Some("Turning it on protects you from:"), a.impact)
     } else {
@@ -519,7 +541,6 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
         rows: build(ctx, report),
     });
 }
-
 
 fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
     items
@@ -803,7 +824,6 @@ pub fn open_page(ctx: &Ctx, page: Page) -> Task<Message> {
     })
 }
 
-
 pub fn row_text<'a>(p: Palette, title: String, line: Option<String>) -> Element<'a, Message> {
     let mut c = column![iced::widget::text(title)
         .size(theme::BODY)
@@ -930,7 +950,6 @@ fn nothing<'a>() -> Element<'a, Message> {
     space::horizontal().width(0.0).into()
 }
 
-
 fn attention_row<'a>(
     state: &State,
     ctx: &Ctx,
@@ -983,7 +1002,11 @@ fn attention_row<'a>(
         )),
         widgets::row_item_tinted(
             p,
-            Some(if extra { Icon::Eye } else { Icon::AlertTriangle }),
+            Some(if extra {
+                Icon::Eye
+            } else {
+                Icon::AlertTriangle
+            }),
             Some(if extra { Tone::Neutral } else { Tone::Warn }),
             a.name.clone(),
             Some(a.line.clone()),
@@ -1166,7 +1189,6 @@ fn count_text(ctx: &Ctx, n: usize) -> String {
     }
 }
 
-
 fn check_status(ctx: &Ctx) -> (f32, String) {
     let seen = ctx.checking.as_ref().map_or(0, |c| c.items.len());
     let (done, total, ratio) = if ctx.finishing {
@@ -1319,8 +1341,14 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("We couldn't refresh the check. You're seeing the last result we could confirm."),
         ));
     }
-    if report.results.iter().any(|r| r.status == CheckStatus::Pending)
-        || report.findings.iter().any(|f| f.status == CheckStatus::Pending)
+    if report
+        .results
+        .iter()
+        .any(|r| r.status == CheckStatus::Pending)
+        || report
+            .findings
+            .iter()
+            .any(|f| f.status == CheckStatus::Pending)
     {
         body = body.push(unfinished_change(ctx));
     }
@@ -1471,7 +1499,10 @@ fn attention_groups<'a>(
     };
     let hidden = if narrowed {
         let on_screen: HashSet<&str> = shown.selectable().collect();
-        chosen.iter().filter(|id| !on_screen.contains(id.as_str())).count()
+        chosen
+            .iter()
+            .filter(|id| !on_screen.contains(id.as_str()))
+            .count()
     } else {
         0
     };
@@ -1519,7 +1550,11 @@ fn attention_groups<'a>(
     );
     let mut groups = Vec::new();
     if !shown.attention.is_empty() {
-        let visible = widgets::limited(&shown.attention, FIRST_ROWS, state.all_attention || narrowed);
+        let visible = widgets::limited(
+            &shown.attention,
+            FIRST_ROWS,
+            state.all_attention || narrowed,
+        );
         let mut list = rows_of(visible, false);
         if let Some(m) = more(
             ctx,
@@ -1571,7 +1606,12 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, shown: &Shown) -> Vec<Elemen
     let p = ctx.palette;
     let narrowed = searching(state);
     let bucket = |b: Bucket| -> Vec<&Other> {
-        shown.others.iter().copied().filter(|o| o.bucket == b).collect()
+        shown
+            .others
+            .iter()
+            .copied()
+            .filter(|o| o.bucket == b)
+            .collect()
     };
     let collapsed = |list: Vec<&Other>, title: String, open: bool, toggle: Msg| {
         let mut items = column![].spacing(theme::S1);
@@ -1593,7 +1633,9 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, shown: &Shown) -> Vec<Elemen
         groups.push(widgets::group(
             p,
             ctx.t("Worth a look"),
-            Some(ctx.t("Most of these are done in Windows itself. Steps are shown where they help.")),
+            Some(
+                ctx.t("Most of these are done in Windows itself. Steps are shown where they help."),
+            ),
             None,
             look.iter().map(|o| other_row(state, ctx, o)).collect(),
         ));
@@ -1644,7 +1686,11 @@ fn protected_group<'a>(
         .collect();
     let n = chosen.len();
     let tag = ctx.t("Changed by Secblitz");
-    let visible = widgets::limited(&shown.protected, FIRST_ROWS, state.all_protected || narrowed);
+    let visible = widgets::limited(
+        &shown.protected,
+        FIRST_ROWS,
+        state.all_protected || narrowed,
+    );
     let mut list = column![].spacing(theme::S1);
     let offers_undo = shown.protected.iter().any(|r| r.undoable);
     if offers_undo && (state.open_protected || narrowed) {
@@ -1683,7 +1729,10 @@ fn protected_group<'a>(
             .filter(|r| r.undoable)
             .map(|r| r.id.as_str())
             .collect();
-        let hidden = chosen.iter().filter(|id| !on_screen.contains(id.as_str())).count();
+        let hidden = chosen
+            .iter()
+            .filter(|id| !on_screen.contains(id.as_str()))
+            .count();
         let picked = if narrowed && hidden > 0 {
             ctx.t("{n} selected, {k} hidden by search")
                 .replace("{n}", &n.to_string())
@@ -1703,9 +1752,17 @@ fn protected_group<'a>(
             .filter(|r| r.undoable)
             .all(|r| state.undo_selected.contains(&r.id));
         let select = if (narrowed && every_shown_chosen) || (!narrowed && n == undoable.len()) {
-            (Icon::X, ctx.t("Select none"), Message::Fixes(Msg::UndoSelectNone))
+            (
+                Icon::X,
+                ctx.t("Select none"),
+                Message::Fixes(Msg::UndoSelectNone),
+            )
         } else {
-            (Icon::Check, ctx.t("Select all"), Message::Fixes(Msg::UndoSelectAll))
+            (
+                Icon::Check,
+                ctx.t("Select all"),
+                Message::Fixes(Msg::UndoSelectAll),
+            )
         };
         row![
             widgets::action(
@@ -1739,7 +1796,13 @@ mod tests {
     #[test]
     fn details_never_repeat_what_the_row_shows() {
         let row = "Turn on Windows Firewall.\nAccounts: bob";
-        assert!(details(&[row, "Not protected"], None, None, "Not protected · Turn on Windows Firewall.").is_none());
+        assert!(details(
+            &[row, "Not protected"],
+            None,
+            None,
+            "Not protected · Turn on Windows Firewall."
+        )
+        .is_none());
         let more = details(
             &[row],
             Some("Turn on Windows Firewall.".into()),
@@ -1750,12 +1813,36 @@ mod tests {
         assert_eq!(more.why, None);
         assert_eq!(more.tech.as_deref(), Some("Not protected"));
         assert_eq!(more.items.unwrap().1, vec!["Firewall: on".to_string()]);
-        let more = details(&["Turning it on protects you from: x"], Some("Do y.".into()), None, "Not protected · Do y.").unwrap();
-        assert_eq!((more.why.as_deref(), more.tech.as_deref()), (Some("Do y."), Some("Not protected")));
-        let more = details(&["Turning it on protects you from: x"], Some("We can fix this. Junk is blocked.".into()), None, "Can fix").unwrap();
+        let more = details(
+            &["Turning it on protects you from: x"],
+            Some("Do y.".into()),
+            None,
+            "Not protected · Do y.",
+        )
+        .unwrap();
+        assert_eq!(
+            (more.why.as_deref(), more.tech.as_deref()),
+            (Some("Do y."), Some("Not protected"))
+        );
+        let more = details(
+            &["Turning it on protects you from: x"],
+            Some("We can fix this. Junk is blocked.".into()),
+            None,
+            "Can fix",
+        )
+        .unwrap();
         assert_eq!(more.tech, None);
-        let more = details(&["Turn it on"], None, None, "On · Managed by your organization").unwrap();
-        assert_eq!(more.tech.as_deref(), Some("On · Managed by your organization"));
+        let more = details(
+            &["Turn it on"],
+            None,
+            None,
+            "On · Managed by your organization",
+        )
+        .unwrap();
+        assert_eq!(
+            more.tech.as_deref(),
+            Some("On · Managed by your organization")
+        );
     }
 
     #[test]
@@ -1773,14 +1860,28 @@ mod tests {
         };
         let r = outcome(
             "accounts.stale_enabled",
-            vec![label("account", "bob"), label("account", "amy"), label("more", "3")],
+            vec![
+                label("account", "bob"),
+                label("account", "amy"),
+                label("more", "3"),
+            ],
         );
-        assert_eq!(item_names(&r), Some(("Accounts: {names}", vec!["bob", "amy"])));
+        assert_eq!(
+            item_names(&r),
+            Some(("Accounts: {names}", vec!["bob", "amy"]))
+        );
         let r = outcome(
             "smb.shares_exposed",
-            vec![label("share", "Photos"), label("share", "Photos"), label("share", "Work")],
+            vec![
+                label("share", "Photos"),
+                label("share", "Photos"),
+                label("share", "Work"),
+            ],
         );
-        assert_eq!(item_names(&r), Some(("Folders: {names}", vec!["Photos", "Work"])));
+        assert_eq!(
+            item_names(&r),
+            Some(("Folders: {names}", vec!["Photos", "Work"]))
+        );
         assert_eq!(item_names(&outcome("smb.shares_exposed", vec![])), None);
         let r = outcome("services.unquoted_paths", vec![label("service", "Updater")]);
         assert_eq!(item_names(&r), None);
@@ -1804,7 +1905,11 @@ mod tests {
             assert_eq!(a.status, "Not offered", "{detail}");
             assert!(!a.impact.is_empty(), "{detail}");
             assert!(guide::guide_not_offered(id, &detail).is_some(), "{detail}");
-            assert_eq!(other_line(Bucket::GoodToKnow, true, &a), (None, a.next), "{detail}");
+            assert_eq!(
+                other_line(Bucket::GoodToKnow, true, &a),
+                (None, a.next),
+                "{detail}"
+            );
         }
         let a = advice::for_finding("SMB1", &CheckStatus::Attention, "");
         assert_eq!(
@@ -1820,7 +1925,10 @@ mod tests {
             ("Windows lifecycle", Some(Page::WindowsUpdate)),
             ("Windows updates", Some(Page::WindowsUpdate)),
             ("SmartScreen", Some(Page::AppBrowser)),
-            ("Management and mutation eligibility", Some(Page::WorkAccounts)),
+            (
+                "Management and mutation eligibility",
+                Some(Page::WorkAccounts),
+            ),
             ("Service permissions: BITS", None),
         ] {
             let a = advice::for_finding(title, &CheckStatus::Info, "");
@@ -1832,7 +1940,12 @@ mod tests {
         }
         let a = advice::for_control("accounts.autologon", &CheckStatus::Skipped, "");
         assert_eq!(
-            other_page(Bucket::GoodToKnow, ("accounts.autologon", false), None, a.step),
+            other_page(
+                Bucket::GoodToKnow,
+                ("accounts.autologon", false),
+                None,
+                a.step
+            ),
             None
         );
         let a = advice::for_finding("Windows updates", &CheckStatus::Info, "");

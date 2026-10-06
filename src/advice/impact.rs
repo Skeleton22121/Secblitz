@@ -72,9 +72,7 @@ pub fn control_impact(id: &str) -> &'static str {
         }
         "tls.legacy_protocols" => "Old, breakable secure connections being forced on your PC",
         "ntlm.extras" => "Weak stored copies of your password being cracked",
-        "driver.vulnerable_blocklist" => {
-            "A flawed driver being used to switch off your security"
-        }
+        "driver.vulnerable_blocklist" => "A flawed driver being used to switch off your security",
         "system.exploit_mitigations" => "A program bug being used to take full control of your PC",
         "ps.v2_engine" => "Harmful scripts running through an old version of a Windows tool",
         "printer.spooler_remote" => {
@@ -88,7 +86,9 @@ pub fn control_impact(id: &str) -> &'static str {
             "Store apps staying out of date and open to known flaws"
         }
         "update.paused" => "Security fixes waiting while known flaws stay open",
-        "smartscreen.apps" => "Unrecognized installers and harmful downloads starting with one click",
+        "smartscreen.apps" => {
+            "Unrecognized installers and harmful downloads starting with one click"
+        }
         "privacy.recall" => "Pictures of your screen, passwords included, being kept on this PC",
         "privacy.diagnostic_data_level" => {
             "More details about how you use your PC leaving it than needed"
@@ -100,16 +100,18 @@ pub fn control_impact(id: &str) -> &'static str {
         "ai.click_to_do" => "Windows offering to pass what is on your screen to AI tools",
         "ai.paint" => "Your drawings being sent to online AI tools",
         "ai.notepad" => "What you type in Notepad being sent to online AI tools",
-        "debloat.widgets_policy" => "News, ads and stories you did not ask for popping up on your PC",
-        "debloat.device_companion_apps" => "Extra apps being suggested when you plug in a new device",
+        "debloat.widgets_policy" => {
+            "News, ads and stories you did not ask for popping up on your PC"
+        }
+        "debloat.device_companion_apps" => {
+            "Extra apps being suggested when you plug in a new device"
+        }
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
         "accounts.autologon" => "Anyone who turns on your PC getting straight into your account",
         "remote_desktop.disabled" => "Someone signing in to your PC from another place",
         "smb1.disabled" => "Old file-sharing flaws that let malware spread between PCs",
         "vbs.memory_integrity" => "Harmful drivers taking over the core of Windows",
-        "vbs.kernel_stack_protection" => {
-            "A driver bug being used to take over the core of Windows"
-        }
+        "vbs.kernel_stack_protection" => "A driver bug being used to take over the core of Windows",
         "services.unquoted_paths" => {
             "A planted program being started with full power instead of the real one"
         }
@@ -123,7 +125,9 @@ pub fn control_impact(id: &str) -> &'static str {
         "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
         "smb.shares_exposed" => "Someone on your network opening or changing your shared files",
         "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
-        "recovery.winre_enabled" => "Being stuck without a way to repair Windows if it stops starting",
+        "recovery.winre_enabled" => {
+            "Being stuck without a way to repair Windows if it stops starting"
+        }
         _ => "",
     }
 }
@@ -131,7 +135,9 @@ pub fn control_impact(id: &str) -> &'static str {
 pub fn finding_impact(title: &str) -> &'static str {
     match title {
         "Windows lifecycle" => "Running Windows that no longer gets security fixes",
-        "Device encryption" => "Someone who finds your PC reading your files if it is lost or stolen",
+        "Device encryption" => {
+            "Someone who finds your PC reading your files if it is lost or stolen"
+        }
         "Secure Boot" => "Hidden malware starting before Windows does",
         "Windows updates" => "Known security holes staying open on your PC",
         "Remote Desktop" => "Someone signing in to your PC from another place",

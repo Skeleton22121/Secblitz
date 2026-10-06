@@ -385,7 +385,11 @@ fn a_run_cut_short_still_leaves_every_removed_app_on_the_list() {
     let seen = seen.into_inner();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].len(), 1);
-    assert_eq!(seen[0][0].removed.len(), 1, "first app is on record already");
+    assert_eq!(
+        seen[0][0].removed.len(),
+        1,
+        "first app is on record already"
+    );
     assert_eq!(seen[1].len(), 1, "one line per run, not one per app");
     assert_eq!(seen[1][0].removed.len(), 2);
     assert_eq!(journal::load_from(&path), vec![batch]);
@@ -397,14 +401,17 @@ fn a_run_stops_removing_when_its_record_cannot_be_saved() {
     use std::cell::Cell;
     let news = idx("Microsoft.BingNews");
     let weather = idx("Microsoft.BingWeather");
-    let installed: Vec<Installed> = [(news, "Microsoft.BingNews"), (weather, "Microsoft.BingWeather")]
-        .into_iter()
-        .map(|(index, package)| Installed {
-            index,
-            package: package.into(),
-            version: "1".into(),
-        })
-        .collect();
+    let installed: Vec<Installed> = [
+        (news, "Microsoft.BingNews"),
+        (weather, "Microsoft.BingWeather"),
+    ]
+    .into_iter()
+    .map(|(index, package)| Installed {
+        index,
+        package: package.into(),
+        version: "1".into(),
+    })
+    .collect();
     let ran = Cell::new(0);
     let batch = remove_with_checkpoint(
         &[news, weather],
@@ -436,9 +443,21 @@ fn a_second_run_in_the_same_second_is_a_new_line() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("debloat.jsonl");
     let _ = std::fs::remove_file(&path);
-    let first = Batch { t: 5, removed: vec![item(1)], ..Batch::default() };
-    let other = Batch { t: 5, removed: vec![item(2)], ..Batch::default() };
-    let grown = Batch { t: 5, removed: vec![item(2), item(3)], ..Batch::default() };
+    let first = Batch {
+        t: 5,
+        removed: vec![item(1)],
+        ..Batch::default()
+    };
+    let other = Batch {
+        t: 5,
+        removed: vec![item(2)],
+        ..Batch::default()
+    };
+    let grown = Batch {
+        t: 5,
+        removed: vec![item(2), item(3)],
+        ..Batch::default()
+    };
     journal::upsert_to(&path, &first).unwrap();
     journal::upsert_to(&path, &other).unwrap();
     assert_eq!(journal::load_from(&path), vec![first.clone(), other]);
@@ -543,7 +562,10 @@ fn paint_3d_is_not_the_normal_paint_app() {
         catalog::owner("Microsoft.MSPaint"),
         Some(idx("Microsoft.MSPaint"))
     );
-    assert_eq!(catalog()[idx("Microsoft.MSPaint") as usize].name, "Paint 3D");
+    assert_eq!(
+        catalog()[idx("Microsoft.MSPaint") as usize].name,
+        "Paint 3D"
+    );
 }
 
 #[test]

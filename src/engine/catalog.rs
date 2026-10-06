@@ -1,6 +1,8 @@
 //! Fixed control catalog: compiled targets, value domains and eligibility rules. Journal data never names its own targets.
 
-use crate::model::{Authority, CheckStatus, Control, EffectiveFirewall, InboundAction, Observation};
+use crate::model::{
+    Authority, CheckStatus, Control, EffectiveFirewall, InboundAction, Observation,
+};
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 // Kept here rather than trusting Backend or serialized Control data. This is

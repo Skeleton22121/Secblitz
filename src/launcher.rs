@@ -25,11 +25,21 @@ pub fn message_box(title: &str, text: &str) {
 pub fn friendly_problem(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
-    if has(&["requires windows", "only supported on windows", "windows 10/11"]) {
+    if has(&[
+        "requires windows",
+        "only supported on windows",
+        "windows 10/11",
+    ]) {
         "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
     } else if has(&["declined", "cancel"]) {
         "Secblitz needs your permission to open. Open it again and choose Yes when Windows asks."
-    } else if has(&["access is denied", "os error 5", "permission denied", "administrator", "elevat"]) {
+    } else if has(&[
+        "access is denied",
+        "os error 5",
+        "permission denied",
+        "administrator",
+        "elevat",
+    ]) {
         "Windows wouldn't let Secblitz open its files. Sign in with an account that can make changes to this PC, then open Secblitz again."
     } else if has(&["journal lock", "another secblitz", "already running"]) {
         "Secblitz is already busy with another task. Wait a minute, then open it again."
@@ -37,7 +47,14 @@ pub fn friendly_problem(raw: &str) -> &'static str {
         "Your PC is almost out of space. Free up some space, then open Secblitz again."
     } else if has(&["journal", "corrupt", "missing header", "utf8"]) {
         "Secblitz couldn't read its saved information. Restart your PC and open Secblitz again. If it keeps happening, install the latest Secblitz."
-    } else if has(&["timed out", "did not answer", "broker", "powershell", "script", "backend"]) {
+    } else if has(&[
+        "timed out",
+        "did not answer",
+        "broker",
+        "powershell",
+        "script",
+        "backend",
+    ]) {
         "Windows didn't answer in time. Restart your PC, then open Secblitz again."
     } else {
         "Something unexpected got in the way. Restart your PC and open Secblitz again. If it keeps happening, check for a Secblitz update."
@@ -162,9 +179,9 @@ mod imp {
     use super::{args_are_plain, Guard, Instance};
     use crate::broker::{self, Reply, Request};
     use crate::i18n::Lang;
+    use anyhow::{ensure, Context, Result};
     use secblitz::user_apps::{self, AppState};
     use secblitz::user_settings::{self, Op, Setting, SystemRegistry};
-    use anyhow::{ensure, Context, Result};
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut, time::Duration};
     use windows_sys::Win32::{
         Foundation::{
@@ -208,8 +225,7 @@ mod imp {
             Shell::{ShellExecuteExW, ShellExecuteW, SHELLEXECUTEINFOW},
             WindowsAndMessaging::{
                 EnumWindows, GetShellWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-                IsWindowVisible,
-                SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
+                IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
             },
         },
     };
@@ -624,7 +640,6 @@ mod imp {
         child.wait()
     }
 
-
     fn handle(request: Request) -> Reply {
         use secblitz::software_install::ToolError;
         let open = |action| match secblitz::actions::run(action) {
@@ -640,24 +655,22 @@ mod imp {
                     None => Reply::Failed,
                 },
             },
-            Request::BitwardenStatus => {
-                match secblitz::software_install::bitwarden_installed() {
-                    Ok(true) => Reply::Done,
+            Request::BitwardenStatus => match secblitz::software_install::bitwarden_installed() {
+                Ok(true) => Reply::Done,
+                Err(_) => Reply::Unknown,
+                Ok(false) => match secblitz::software_install::bitwarden_installable() {
+                    Ok(()) => Reply::NotApplicable,
+                    Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
                     Err(_) => Reply::Unknown,
-                    Ok(false) => {
-                        match secblitz::software_install::bitwarden_installable() {
-                            Ok(()) => Reply::NotApplicable,
-                            Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
-                            Err(_) => Reply::Unknown,
-                        }
-                    }
+                },
+            },
+            Request::AppInstallerStatus => {
+                match secblitz::software_install::bitwarden_installable() {
+                    Ok(()) => Reply::Done,
+                    Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
+                    Err(_) => Reply::Unknown,
                 }
             }
-            Request::AppInstallerStatus => match secblitz::software_install::bitwarden_installable() {
-                Ok(()) => Reply::Done,
-                Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
-                Err(_) => Reply::Unknown,
-            },
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
             Request::StartStoreApp(index) => start_store_app(index),
@@ -683,7 +696,6 @@ mod imp {
         }
     }
 
-
     fn user_setting(setting: Setting, op: Op) -> Reply {
         let mut registry = SystemRegistry;
         let journal = user_settings::journal_path();
@@ -694,10 +706,12 @@ mod imp {
         }
     }
 
-
     fn scan_apps() -> Result<[AppState; user_apps::APPS.len()], Reply> {
         let run = user_apps::run_winget(&user_apps::list_args(), Duration::from_secs(150));
-        if run.code.is_some_and(secblitz::software_install::is_offline_code) {
+        if run
+            .code
+            .is_some_and(secblitz::software_install::is_offline_code)
+        {
             return Err(Reply::Offline);
         }
         if run.code.is_none() && run.output.trim().is_empty() {
@@ -705,7 +719,9 @@ mod imp {
         }
         match user_apps::parse_upgrades(&run.output, run.code) {
             user_apps::Scan::Apps(states) => Ok(states),
-            user_apps::Scan::Unreadable if secblitz::software_install::dns_offline() => Err(Reply::Offline),
+            user_apps::Scan::Unreadable if secblitz::software_install::dns_offline() => {
+                Err(Reply::Offline)
+            }
             user_apps::Scan::Unreadable => Err(Reply::Unknown),
         }
     }
@@ -715,7 +731,10 @@ mod imp {
             return Reply::Unavailable;
         };
         let run = user_apps::run_winget(&args, Duration::from_secs(13 * 60));
-        if run.code.is_some_and(secblitz::software_install::is_offline_code) {
+        if run
+            .code
+            .is_some_and(secblitz::software_install::is_offline_code)
+        {
             return Reply::Offline;
         }
         if run.code.is_none() {
@@ -827,7 +846,8 @@ mod imp {
         jobs.remove(&index);
         if code == Some(0) {
             Reply::Done
-        } else if code.is_some_and(secblitz::software_install::is_offline_code) || secblitz::software_install::dns_offline()
+        } else if code.is_some_and(secblitz::software_install::is_offline_code)
+            || secblitz::software_install::dns_offline()
         {
             Reply::Offline
         } else {
@@ -839,28 +859,29 @@ mod imp {
         let Some(store_id) = store_id(index) else {
             return Reply::Unavailable;
         };
-        let exit = store_install(store_id)
-            .and_then(|mut child| {
-                let deadline = std::time::Instant::now() + Duration::from_secs(14 * 60);
-                loop {
-                    match child.try_wait() {
-                        Ok(Some(status)) => return Some(status.code().map(|c| c as u32)),
-                        Ok(None) if std::time::Instant::now() < deadline => {
-                            std::thread::sleep(Duration::from_millis(500))
-                        }
-                        _ => {
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            return None;
-                        }
+        let exit = store_install(store_id).and_then(|mut child| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(14 * 60);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => return Some(status.code().map(|c| c as u32)),
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(500))
+                    }
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return None;
                     }
                 }
-            });
+            }
+        });
         if exit == Some(Some(0)) {
             return Reply::Done;
         }
         let code = exit.flatten();
-        if code.is_some_and(secblitz::software_install::is_offline_code) || secblitz::software_install::dns_offline() {
+        if code.is_some_and(secblitz::software_install::is_offline_code)
+            || secblitz::software_install::dns_offline()
+        {
             return Reply::Offline;
         }
         let uri = wide(&format!("ms-windows-store://pdp/?ProductId={store_id}"));
@@ -881,7 +902,6 @@ mod imp {
             Reply::Failed
         }
     }
-
 
     pub struct Namespace(HANDLE);
     impl Drop for Namespace {
@@ -1043,8 +1063,9 @@ mod tests {
     fn known_start_problems_get_a_fix_and_unknown_ones_get_the_general_text() {
         assert!(friendly_problem("The administrator prompt was declined").contains("choose Yes"));
         assert!(friendly_problem("Secblitz requires Windows").contains("Windows 10"));
-        assert!(friendly_problem("Another Secblitz operation holds the journal lock")
-            .contains("busy"));
+        assert!(
+            friendly_problem("Another Secblitz operation holds the journal lock").contains("busy")
+        );
         let raw = "zxq 0x80004005 src/engine.rs:42 panicked";
         let text = friendly_problem(raw);
         assert!(text.starts_with("Something unexpected"));
@@ -1053,8 +1074,17 @@ mod tests {
 
     #[test]
     fn broad_words_do_not_misroute() {
-        for raw in ["blocked by policy", "clock skew", "unlock failed", "invalid argument", "bad schema"] {
-            assert!(friendly_problem(raw).starts_with("Something unexpected"), "{raw}");
+        for raw in [
+            "blocked by policy",
+            "clock skew",
+            "unlock failed",
+            "invalid argument",
+            "bad schema",
+        ] {
+            assert!(
+                friendly_problem(raw).starts_with("Something unexpected"),
+                "{raw}"
+            );
         }
     }
 

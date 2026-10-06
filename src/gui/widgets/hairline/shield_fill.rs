@@ -135,7 +135,6 @@ impl State {
     }
 }
 
-
 fn outline() -> &'static [Point] {
     static O: OnceLock<Vec<Point>> = OnceLock::new();
     O.get_or_init(|| Glyph::Shield.data().samples(180))
@@ -254,7 +253,6 @@ fn shake(run: Run, age: f32) -> f32 {
     (age * 34.0).sin() * 3.0 * (-(age - 0.9) * 4.0).exp()
 }
 
-
 impl<M> canvas::Program<M> for ShieldFill {
     type State = State;
 
@@ -279,10 +277,7 @@ impl<M> canvas::Program<M> for ShieldFill {
         let age = st.live.age(self.changed, self.now);
         let t = st.live.ambient(self.now, STILL);
         let target = level_target(self.run, self.progress, age);
-        if self.run == Run::Working
-            && !fresh
-            && target > st.level.target + 0.01
-            && !anim::reduced()
+        if self.run == Run::Working && !fresh && target > st.level.target + 0.01 && !anim::reduced()
         {
             st.ripple = Some((t, 0.6));
         }
@@ -290,7 +285,10 @@ impl<M> canvas::Program<M> for ShieldFill {
         if let Some(dt) = step.dt {
             st.level.tick(dt);
         }
-        if let Some(at) = step.click().filter(|&at| spots().hit(at, &st.live.tilt).is_some()) {
+        if let Some(at) = step
+            .click()
+            .filter(|&at| spots().hit(at, &st.live.tilt).is_some())
+        {
             if !anim::reduced() {
                 st.ripple = Some((t, 1.0));
             }
@@ -331,7 +329,10 @@ impl<M> canvas::Program<M> for ShieldFill {
                 let r1 = r0 + 10.0 * (1.0 - re);
                 let (c, s) = (a.cos(), a.sin() * 0.95);
                 f.stroke(
-                    &back.line(pt(C.x + r0 * c, C.y + r0 * s), pt(C.x + r1 * c, C.y + r1 * s)),
+                    &back.line(
+                        pt(C.x + r0 * c, C.y + r0 * s),
+                        pt(C.x + r1 * c, C.y + r1 * s),
+                    ),
                     ray,
                 );
             }
@@ -402,7 +403,10 @@ impl<M> canvas::Program<M> for ShieldFill {
 
         let drawn = |f: &mut Frame, d: &PathData, frac: f32, width: f32| {
             if frac > 0.001 {
-                f.stroke(&mid.shape(&turn.shape(&d.partial(frac))), stroke(color, width));
+                f.stroke(
+                    &mid.shape(&turn.shape(&d.partial(frac))),
+                    stroke(color, width),
+                );
             }
         };
         let outline_in = match run {
@@ -422,7 +426,9 @@ impl<M> canvas::Program<M> for ShieldFill {
             Run::Partial => {
                 let gap = phase(age, 0.8, 1.0, STANDARD);
                 if gap > 0.0 {
-                    let knock = ink.knock(stage.len(9.0)).with_color(ink.plate.scale_alpha(gap));
+                    let knock = ink
+                        .knock(stage.len(9.0))
+                        .with_color(ink.plate.scale_alpha(gap));
                     f.stroke(&mid.shape(&turn.shape(excl_gap())), knock);
                 }
                 drawn(
@@ -432,17 +438,14 @@ impl<M> canvas::Program<M> for ShieldFill {
                     W_THICK,
                 );
             }
-            Run::Failed => drawn(
-                &mut f,
-                crack(),
-                phase(age, 0.9, 1.4, DECELERATE),
-                W_THICK,
-            ),
+            Run::Failed => drawn(&mut f, crack(), phase(age, 0.9, 1.4, DECELERATE), W_THICK),
             Run::Working => {}
         }
 
         st.live
-            .draw_overlay(&mut f, &self.p, &stage, color, &spots(), |_| self.label.clone());
+            .draw_overlay(&mut f, &self.p, &stage, color, &spots(), |_| {
+                self.label.clone()
+            });
         vec![f.into_geometry()]
     }
 
@@ -469,9 +472,9 @@ fn excl_gap() -> &'static PathData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
     use crate::gui::widgets::hairline::parallax::Parallax;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
     use std::time::Duration;
@@ -494,8 +497,6 @@ mod tests {
             label: String::new(),
         }
     }
-
-
 
     #[test]
     fn constants_parse() {
@@ -528,12 +529,18 @@ mod tests {
         assert!(((12.0 - l) - (r - 12.0)).abs() < 0.05 && r - l < 12.0);
         assert!(span(1.0).is_none() && span(22.0).is_none());
         let (top, bottom) = column(12.0).unwrap();
-        assert!((top - 2.6).abs() < 0.15 && (bottom - 21.2).abs() < 0.15, "{top} {bottom}");
+        assert!(
+            (top - 2.6).abs() < 0.15 && (bottom - 21.2).abs() < 0.15,
+            "{top} {bottom}"
+        );
         let pool = water(|_| 14.0);
         assert!(pool.len() > 10);
         for q in &pool {
             let (a, b) = column(q.x.clamp(X0 + 0.02, X1 - 0.02)).unwrap();
-            assert!(q.y >= 14.0 - 1e-4 && q.y >= a - 1e-3 && q.y <= b + 1e-3, "{q:?}");
+            assert!(
+                q.y >= 14.0 - 1e-4 && q.y >= a - 1e-3 && q.y <= b + 1e-3,
+                "{q:?}"
+            );
         }
         let full = water(|_| 0.0);
         assert!(full.iter().any(|q| q.y < 3.0));

@@ -8,13 +8,12 @@ use crate::gui::widgets::anim;
 use crate::gui::{blocking, blocking_stream, Ctx, Helper, Message};
 use crate::i18n::Lang;
 use crate::uninstall::{Left, Plan};
-use secblitz::user_settings::{Op, Setting};
 use iced::{Element, Subscription, Task};
+use secblitz::user_settings::{Op, Setting};
 use std::path::PathBuf;
 use std::time::Instant;
 
 type El<'a> = Element<'a, Message>;
-
 
 pub const SECTION_TITLE: &str = "Remove Secblitz";
 pub const SECTION_ROW: &str = "Remove Secblitz from this PC";
@@ -46,7 +45,8 @@ const ITEM_WEB: &str = "Web protection";
 #[cfg_attr(not(windows), allow(dead_code))]
 const WEB_LEFT: &str = "Web protection could not be turned off. Close Secblitz, open it again and try once more. If it still does not work, check for a Secblitz update.";
 const RESULT_LEFT_TITLE: &str = "Some things could not be put back";
-const RESULT_LEFT_HELP: &str = "These are left as they are. You can remove Secblitz anyway, or keep it and try again later.";
+const RESULT_LEFT_HELP: &str =
+    "These are left as they are. You can remove Secblitz anyway, or keep it and try again later.";
 const RESULT_DONE_TITLE: &str = "Everything is back the way it was";
 const DELETE_EXE: &str = "You can now delete secblitz.exe.";
 const REMOVE_ANYWAY: &str = "Remove Secblitz anyway";
@@ -55,7 +55,6 @@ const CLOSE: &str = "Close";
 const LEAVING_TITLE: &str = "Removing Secblitz…";
 const LEAVING_HELP: &str = "This window closes by itself.";
 const CANNOT_START: &str = "We couldn't start the removal. Secblitz was not removed. Close Secblitz, open it again and try once more. If that does not work, restart your PC.";
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
@@ -393,12 +392,11 @@ fn wrap(msg: Msg) -> Message {
     Message::Settings(settings::Msg::Remove(msg))
 }
 
-
 mod system;
-pub use system::uninstaller;
-use system::{launch_uninstaller, load_plan, run_put_back};
 #[cfg(test)]
 use system::put_back_left;
+pub use system::uninstaller;
+use system::{launch_uninstaller, load_plan, run_put_back};
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
@@ -782,11 +780,20 @@ mod tests {
         assert_eq!(put_back_left(s, true, Some(Some(&Reply::Done))), None);
         assert!(matches!(
             put_back_left(s, false, Some(Some(&Reply::ChangedSince))),
-            Some(Left::Setting { reason: crate::uninstall::LeftReason::ChangedSince, .. })
+            Some(Left::Setting {
+                reason: crate::uninstall::LeftReason::ChangedSince,
+                ..
+            })
         ));
-        assert_eq!(put_back_left(s, false, Some(Some(&Reply::Unavailable))), None);
+        assert_eq!(
+            put_back_left(s, false, Some(Some(&Reply::Unavailable))),
+            None
+        );
         assert_eq!(put_back_left(s, false, None), None);
-        assert!(matches!(put_back_left(s, true, None), Some(Left::Personal { .. })));
+        assert!(matches!(
+            put_back_left(s, true, None),
+            Some(Left::Personal { .. })
+        ));
         assert!(matches!(
             put_back_left(s, false, Some(Some(&Reply::Failed))),
             Some(Left::Personal { .. })

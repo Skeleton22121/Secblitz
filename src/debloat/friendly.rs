@@ -7,7 +7,12 @@ pub fn removal_failure(raw: &str) -> &'static str {
         "Windows removed this app for some accounts but not all. Restart your PC and try again."
     } else if has(&["took too long"]) {
         "Windows took too long to answer. Restart your PC and try again."
-    } else if has(&["access is denied", "0x80070005", "administrator", "permission"]) {
+    } else if has(&[
+        "access is denied",
+        "0x80070005",
+        "administrator",
+        "permission",
+    ]) {
         "Windows did not allow the change. Sign in with an account that can make changes to this PC, then open Secblitz again."
     } else if has(&[
         "in use",
@@ -70,15 +75,20 @@ mod tests {
 
     #[test]
     fn known_reasons_get_a_fix() {
-        assert!(removal_failure("The app is still installed for at least one account.")
-            .contains("Restart your PC"));
+        assert!(
+            removal_failure("The app is still installed for at least one account.")
+                .contains("Restart your PC")
+        );
         assert!(removal_failure("Access is denied. (0x80070005)").contains("Sign in"));
         assert!(no_copy("not enough space").contains("Free up"));
         assert!(run_failure("Windows took too long to answer").contains("too long"));
         assert!(removal_run_failure("Windows took too long to answer").contains("too long"));
         assert!(removal_run_failure("odd failure").contains("remove the apps"));
         assert!(!run_failure("odd failure").contains("remove the apps"));
-        assert_eq!(run_failure("Only available on Windows"), "This works on Windows only.");
+        assert_eq!(
+            run_failure("Only available on Windows"),
+            "This works on Windows only."
+        );
         assert_eq!(
             removal_run_failure("Only available on Windows"),
             "This works on Windows only."
@@ -111,7 +121,14 @@ mod tests {
         ];
         for raw in raws {
             for out in [removal_failure(raw), no_copy(raw), run_failure(raw)] {
-                for bad in ["PowerShell", "HRESULT", "token", "registry", "0x", "\u{2014}"] {
+                for bad in [
+                    "PowerShell",
+                    "HRESULT",
+                    "token",
+                    "registry",
+                    "0x",
+                    "\u{2014}",
+                ] {
                     assert!(!out.contains(bad), "{out}");
                 }
             }

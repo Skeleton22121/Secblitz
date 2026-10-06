@@ -1,11 +1,11 @@
 //! Row disclosure that explains a check in plain words.
 use super::{body, icon_button, section_label, ButtonKind};
-use secblitz::explain::{self, Explainer};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, row, space};
 use iced::{Element, Length};
+use secblitz::explain::{self, Explainer};
 
 pub fn key(scope: &str, id: &str) -> String {
     format!("{scope}:{id}")

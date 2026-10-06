@@ -14,7 +14,6 @@ const PAD_TOP: f32 = 12.0;
 const LABEL_H: f32 = 24.0;
 const BANDS: usize = 4;
 
-
 pub fn monotone_tangents(ys: &[f32]) -> Vec<f32> {
     let n = ys.len();
     if n < 2 {
@@ -65,7 +64,6 @@ pub fn nearest(x: f32, left: f32, right: f32, n: usize) -> Option<usize> {
     let k = ((x - left) / (right - left) * (n - 1) as f32).round();
     Some(k.clamp(0.0, (n - 1) as f32) as usize)
 }
-
 
 struct Trend<'a> {
     p: Palette,

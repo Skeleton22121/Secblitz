@@ -570,7 +570,11 @@ mod tests {
         ] {
             assert!(guide_not_offered(ks, no).is_none(), "{no}");
         }
-        for key in ["remote_desktop.disabled", "smb1.disabled", "accounts.autologon"] {
+        for key in [
+            "remote_desktop.disabled",
+            "smb1.disabled",
+            "accounts.autologon",
+        ] {
             assert!(guide_not_offered(key, vbs::DRIVER).is_none(), "{key}");
         }
         let widgets = guide_not_offered("debloat.widgets_policy", WIDGETS_YOURSELF).expect("steps");

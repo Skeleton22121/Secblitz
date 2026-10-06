@@ -64,7 +64,6 @@ fn paint_bar(f: &mut Frame, p: &Palette, tone: Tone, value: f32) {
     }
 }
 
-
 struct Plain {
     p: Palette,
     tone: Tone,
@@ -104,7 +103,6 @@ pub fn bar<'a>(p: Palette, tween: &Tween, tone: Tone, now: Instant) -> Element<'
         HEIGHT,
     )
 }
-
 
 struct Eased {
     p: Palette,
@@ -173,12 +171,7 @@ pub fn bar_eased<'a>(p: Palette, value: f32, tone: Tone) -> Element<'a, Message>
 }
 
 /// Like [`bar_eased`], reaching each new value in `dur`.
-pub fn bar_eased_in<'a>(
-    p: Palette,
-    value: f32,
-    tone: Tone,
-    dur: Duration,
-) -> Element<'a, Message> {
+pub fn bar_eased_in<'a>(p: Palette, value: f32, tone: Tone, dur: Duration) -> Element<'a, Message> {
     canvas_of(
         Eased {
             p,
@@ -189,7 +182,6 @@ pub fn bar_eased_in<'a>(
         HEIGHT,
     )
 }
-
 
 struct Shimmer {
     p: Palette,
@@ -254,7 +246,6 @@ impl canvas::Program<Message> for Shimmer {
 pub fn indeterminate<'a>(p: Palette, tone: Tone) -> Element<'a, Message> {
     canvas_of(Shimmer { p, tone }, HEIGHT)
 }
-
 
 #[cfg(test)]
 mod tests {

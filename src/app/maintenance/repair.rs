@@ -10,7 +10,6 @@ fn unix_now() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairKind {
     Check,
@@ -409,8 +408,12 @@ pub fn repair_why(result: RepairResult, note: Option<&'static str>) -> &'static 
     }
     match result {
         RepairResult::NoProblems => "Windows checked itself and found nothing wrong.",
-        RepairResult::ProblemsFound => "Windows found files that need repairing. Choose Repair system files to fix them.",
-        RepairResult::Repaired => "Windows repaired the problems it found. You don't need to do anything else.",
+        RepairResult::ProblemsFound => {
+            "Windows found files that need repairing. Choose Repair system files to fix them."
+        }
+        RepairResult::Repaired => {
+            "Windows repaired the problems it found. You don't need to do anything else."
+        }
         RepairResult::NeedsRestart => "Restart your PC to finish the repair.",
         RepairResult::Stopped => "You stopped the repair. Nothing else was started.",
         RepairResult::CouldNotFinish => "The repair didn't finish. Restart your PC and try again.",

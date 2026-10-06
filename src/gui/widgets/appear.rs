@@ -203,7 +203,6 @@ pub fn slide_in<'a, Message: 'a>(
     })
 }
 
-
 pub const ENTER: Duration = Duration::from_millis(180);
 pub const ENTER_RISE: f32 = 8.0;
 const ENTER_VEIL: f32 = 0.7;

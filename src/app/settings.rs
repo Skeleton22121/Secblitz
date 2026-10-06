@@ -132,7 +132,6 @@ fn write_to(path: &Path, prefs: &Prefs) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const TRAY_VALUE: &str = "SecblitzTray";
 
@@ -311,7 +310,6 @@ mod run_key {
         Ok(())
     }
 }
-
 
 pub fn background_on() -> anyhow::Result<bool> {
     use secblitz::service::MonitorState;

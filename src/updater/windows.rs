@@ -458,8 +458,8 @@ fn known_folder(id: &windows_sys::core::GUID) -> Result<PathBuf> {
     );
     let result = (|| {
         // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
-        let text = unsafe { crate::platform::security::wide_str(p) }
-            .context("Invalid known folder")?;
+        let text =
+            unsafe { crate::platform::security::wide_str(p) }.context("Invalid known folder")?;
         Ok(PathBuf::from(String::from_utf16(text)?))
     })();
     unsafe {
@@ -1185,12 +1185,10 @@ fn config() -> Result<Option<reqwest::Url>> {
 fn key() -> Result<[u8; 32]> {
     let bytes = hex::decode(include_str!("../../assets/update-public-key.hex").trim())
         .context("Invalid embedded update public key")?;
-    bytes
-        .try_into()
-        .map_err(|v: Vec<u8>| {
-            eprintln!("{} bytes", v.len());
-            anyhow::anyhow!("Embedded update public key must be 32 bytes")
-        })
+    bytes.try_into().map_err(|v: Vec<u8>| {
+        eprintln!("{} bytes", v.len());
+        anyhow::anyhow!("Embedded update public key must be 32 bytes")
+    })
 }
 fn record(root: &Path, result: UpdateOutcome) -> Result<UpdateOutcome> {
     replace(

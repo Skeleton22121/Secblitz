@@ -65,10 +65,8 @@ pub(super) const EXPLORER_MACHINE: &str =
     r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer";
 pub(super) const WINDOWS_AI_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
 const DSH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Dsh";
-const DEVICE_METADATA_POLICY: &str =
-    r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata";
-const PAINT_POLICY: &str =
-    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint";
+const DEVICE_METADATA_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata";
+const PAINT_POLICY: &str = r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint";
 const NOTEPAD_POLICY: &str = r"HKLM:\SOFTWARE\Policies\WindowsNotepad";
 pub(super) const DATA_COLLECTION_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection";

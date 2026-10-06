@@ -103,7 +103,6 @@ impl Op {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hive {
     CurrentUser,
@@ -126,7 +125,6 @@ pub trait Registry {
     fn key_exists(&self, hive: Hive, key: &str) -> bool;
     fn notify_file_view_changed(&mut self) {}
 }
-
 
 struct Target {
     key: String,
@@ -308,7 +306,6 @@ fn targets(setting: Setting) -> Vec<Target> {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Safe,
@@ -413,7 +410,6 @@ pub fn report(reg: &dyn Registry, journal: &Path, setting: Setting) -> Report {
     }
 }
 
-
 const JOURNAL_LIMIT: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -476,7 +472,6 @@ fn save_journal(path: &Path, journal: &mut Journal) -> Result<()> {
     std::fs::rename(&tmp, path)?;
     Ok(())
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -684,7 +679,6 @@ pub enum HandleResult {
     Report(Report),
     Outcome(Outcome),
 }
-
 
 #[cfg(windows)]
 pub struct SystemRegistry;
@@ -1037,20 +1031,28 @@ mod tests {
         let (_d, path) = journal();
         let mut reg = Fake::default();
         reg.put(Setting::ShowExtensions, 0, Some(1));
-        assert_eq!(apply(&mut reg, &path, Setting::ShowExtensions), Outcome::Done);
+        assert_eq!(
+            apply(&mut reg, &path, Setting::ShowExtensions),
+            Outcome::Done
+        );
         reg.put(Setting::ShowExtensions, 0, Some(7));
         assert_eq!(
             undo(&mut reg, &path, Setting::ShowExtensions),
             Outcome::ChangedSince
         );
         assert_eq!(reg.read(Setting::ShowExtensions, 0), Value::Dword(7));
-        assert!(!load_journal(&path).settings.contains_key("files.show_extensions"));
+        assert!(!load_journal(&path)
+            .settings
+            .contains_key("files.show_extensions"));
         assert_eq!(
             undo(&mut reg, &path, Setting::ShowExtensions),
             Outcome::Blocked
         );
         reg.put(Setting::TailoredExperiences, 0, Some(1));
-        assert_eq!(apply(&mut reg, &path, Setting::TailoredExperiences), Outcome::Done);
+        assert_eq!(
+            apply(&mut reg, &path, Setting::TailoredExperiences),
+            Outcome::Done
+        );
         reg.put(Setting::TailoredExperiences, 0, None);
         assert_eq!(
             undo(&mut reg, &path, Setting::TailoredExperiences),
@@ -1067,9 +1069,15 @@ mod tests {
         for i in 0..n {
             reg.put(Setting::SuggestedApps, i, Some(1));
         }
-        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        assert_eq!(
+            apply(&mut reg, &path, Setting::SuggestedApps),
+            Outcome::Done
+        );
         reg.put(Setting::SuggestedApps, 3, Some(1));
-        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        assert_eq!(
+            apply(&mut reg, &path, Setting::SuggestedApps),
+            Outcome::Done
+        );
         assert_eq!(undo(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
         for i in 0..n {
             assert_eq!(reg.read(Setting::SuggestedApps, i), Value::Dword(1), "{i}");
@@ -1083,12 +1091,12 @@ mod tests {
         for i in 0..targets(Setting::SuggestedApps).len() {
             reg.put(Setting::SuggestedApps, i, Some(1));
         }
-        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
-        reg.put(Setting::SuggestedApps, 2, Some(1)); // set back on by hand
         assert_eq!(
-            undo(&mut reg, &path, Setting::SuggestedApps),
+            apply(&mut reg, &path, Setting::SuggestedApps),
             Outcome::Done
         );
+        reg.put(Setting::SuggestedApps, 2, Some(1)); // set back on by hand
+        assert_eq!(undo(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
         for i in 0..targets(Setting::SuggestedApps).len() {
             assert_eq!(reg.read(Setting::SuggestedApps, i), Value::Dword(1));
         }
@@ -1522,7 +1530,11 @@ mod tests {
         assert_eq!(
             found,
             [
-                (r"Software\Microsoft\GameBar".to_owned(), "UseNexusForGameBarEnabled", 0),
+                (
+                    r"Software\Microsoft\GameBar".to_owned(),
+                    "UseNexusForGameBarEnabled",
+                    0
+                ),
                 (r"System\GameConfigStore".to_owned(), "GameDVR_Enabled", 0),
                 (
                     r"Software\Microsoft\Windows\CurrentVersion\GameDVR".to_owned(),
@@ -1536,7 +1548,10 @@ mod tests {
     #[test]
     fn web_results_in_search_turn_the_policy_on_and_the_highlights_off() {
         let all = targets(Setting::SearchWebResults);
-        assert_eq!((all[0].name, all[0].safe), ("DisableSearchBoxSuggestions", 1));
+        assert_eq!(
+            (all[0].name, all[0].safe),
+            ("DisableSearchBoxSuggestions", 1)
+        );
         assert_eq!((all[1].name, all[1].safe), ("IsDynamicSearchBoxEnabled", 0));
     }
 
@@ -1546,11 +1561,23 @@ mod tests {
             let (_d, path) = journal();
             let mut reg = seeded(setting);
             assert_eq!(report(&reg, &path, setting), Report::Unsafe, "{setting:?}");
-            assert_eq!(apply(&mut reg, &path, setting), Outcome::Done, "{setting:?}");
+            assert_eq!(
+                apply(&mut reg, &path, setting),
+                Outcome::Done,
+                "{setting:?}"
+            );
             for (i, t) in targets(setting).iter().enumerate() {
-                assert_eq!(reg.read(setting, i), Value::Dword(t.safe), "{setting:?} {i}");
+                assert_eq!(
+                    reg.read(setting, i),
+                    Value::Dword(t.safe),
+                    "{setting:?} {i}"
+                );
             }
-            assert_eq!(report(&reg, &path, setting), Report::SafeByUs, "{setting:?}");
+            assert_eq!(
+                report(&reg, &path, setting),
+                Report::SafeByUs,
+                "{setting:?}"
+            );
             assert_eq!(undoable(&path), [setting]);
         }
     }
@@ -1653,7 +1680,10 @@ mod tests {
         let (_d, path) = journal();
         let mut reg = seeded(Setting::ExplorerAds);
         reg.silent_drop = true;
-        assert_eq!(apply(&mut reg, &path, Setting::ExplorerAds), Outcome::Failed);
+        assert_eq!(
+            apply(&mut reg, &path, Setting::ExplorerAds),
+            Outcome::Failed
+        );
         assert!(undoable(&path).is_empty());
         assert_eq!(reg.read(Setting::ExplorerAds, 0), Value::Absent);
     }

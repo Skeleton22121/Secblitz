@@ -38,11 +38,11 @@ mod example {
     //! A complete tiny drawing: a badge with a shield that pulses while
     //! working and draws a tick in when done. Never shown; it proves the
     //! pieces fit and pins how `update` asks for frames.
+    use super::motion::{phase, Spring};
+    use super::pointer::{Hotspots, Layer};
     use super::stage::{pt, stroke, Ink, Meaning, Stage, W_ACCENT, W_PART};
     use super::testing::{frame, wants_frame};
     use super::{Glyph, Live, Plate};
-    use super::motion::{phase, Spring};
-    use super::pointer::{Hotspots, Layer};
     use crate::gui::theme::{Palette, LIGHT};
     use crate::gui::widgets::anim::{self, DECELERATE};
     use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
@@ -170,7 +170,9 @@ mod example {
             }
             st.live.pulses.draw(&mut f, &stage, ink.accent);
             st.live
-                .draw_tooltip(&mut f, &self.p, &stage, &self.spots(), |_| self.label.clone());
+                .draw_tooltip(&mut f, &self.p, &stage, &self.spots(), |_| {
+                    self.label.clone()
+                });
             vec![f.into_geometry()]
         }
 
@@ -191,7 +193,6 @@ mod example {
         height: 192.0,
     };
 
-
     fn tick(
         st: &mut State,
         prog: &Beacon,
@@ -201,7 +202,6 @@ mod example {
         *clock += Duration::from_millis(16);
         canvas::Program::update(prog, st, &frame(*clock), BOUNDS, cursor)
     }
-
 
     #[test]
     fn example_drawing_hovers_clicks_and_goes_quiet() {
