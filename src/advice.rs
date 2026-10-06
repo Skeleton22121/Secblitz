@@ -526,6 +526,9 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: Secblitz cannot tell who is signed in" => {
             "We could not tell which account is signed in, so we leave this alone."
         }
+        "Not offered: a locked sign-in would stay locked until an administrator opens it" => {
+            "A locked account here would stay locked until an administrator opens it, so we leave this alone."
+        }
         _ => return None,
     })
 }
@@ -972,6 +975,7 @@ mod tests {
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
+            "Not offered: a locked sign-in would stay locked until an administrator opens it",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");

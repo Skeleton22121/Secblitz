@@ -461,6 +461,12 @@ function HPreflight() {
             } catch { throw 'Not offered: no other administrator account could be confirmed' }
             if (!$other) { throw 'Not offered: no other administrator account is enabled' }
         }
+        'accounts.lockout_policy' {
+            # A lockout length of 0 (or "forever") keeps a locked account locked
+            # until an administrator opens it: on a one-account PC that is a lock-out.
+            $lockInfo = HLockoutInfo
+            if ($lockInfo[0] -le 0) { throw 'Not offered: a locked sign-in would stay locked until an administrator opens it' }
+        }
         'printer.spooler_remote' {
             Load 'PrintManagement'
             if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.Shared -eq $true }).Count -gt 0) { throw 'Not offered: a printer on this PC is shared with other computers' }
@@ -714,7 +720,11 @@ function HAfterRegistry() {
     if ($spec.id -ceq 'printer.spooler_remote') {
         # The setting is read when the Spooler starts: restart it once, only if it runs.
         $svc = Get-Service -Name 'Spooler' -ErrorAction Stop
-        if ([string]$svc.Status -ceq 'Running') { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
+        # Never cut off a print that is in progress: with anything still queued the
+        # setting simply takes effect the next time the Spooler starts.
+        $queue = [IO.Path]::Combine($env:SystemRoot, 'System32\spool\PRINTERS')
+        $queued = @(Get-ChildItem -LiteralPath $queue -Force -ErrorAction SilentlyContinue)
+        if ([string]$svc.Status -ceq 'Running' -and $queued.Count -eq 0) { Restart-Service -Name 'Spooler' -Force -ErrorAction Stop }
     }
 }
 
