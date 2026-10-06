@@ -124,8 +124,9 @@ pub(super) fn session_of(pid: u32) -> Option<u32> {
 
 /// The signalled quiesce event. Dropping it closes the handle, which destroys
 /// the event, so a relaunched tray never sees a stale signal.
-#[allow(dead_code)] // Held only so the handle (and the event) stays open.
-pub(super) struct Quiesce(Handle);
+pub(super) struct Quiesce {
+    _held: Handle,
+}
 impl Quiesce {
     pub(super) fn signal() -> Result<Self> {
         let mut sd = null_mut();
@@ -160,7 +161,7 @@ impl Quiesce {
             unsafe { SetEvent(event.0) } != 0,
             "Cannot signal quiesce event"
         );
-        Ok(Self(event))
+        Ok(Self { _held: event })
     }
 }
 
