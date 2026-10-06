@@ -82,6 +82,14 @@ pub enum Source {
     SmartScreen,
     /// Dynamic: risky Microsoft Defender exclusions (1 present, 0 removed).
     DefenderExclusions,
+    // --- sign-in and remote access controls ---
+    /// Winlogon `AutoAdminLogon`, a text value ("1" on, "0" off, absent = off).
+    /// Only this one value is ever written; the saved password is never read.
+    WinlogonAutoLogon,
+    /// The old SMB1 file-sharing optional feature and its client and server
+    /// parts (1 enabled, 0 disabled or absent). Turned off without removing
+    /// the files, so undo can turn exactly the same parts back on.
+    SmbFeature,
 }
 
 /// Management and capability evidence the backend must find clean.
@@ -249,6 +257,11 @@ const CLOUD_TIMEOUT_SAFE: &[u32] = &[
     20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
     44, 45, 46, 47, 48, 49, 50,
 ];
+
+const WINLOGON: &str = r"HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
+const TERMINAL_SERVER: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server";
+const TERMINAL_SERVICES_POLICY: &str =
+    r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
 
 const TCPIP: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
 const TCPIP6: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters";
@@ -1010,6 +1023,45 @@ static SPECS: &[Spec] = &[
         reboot: false,
         ask: true,
         keys: &[set("*", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "accounts.autologon",
+        title: "Automatic sign-in",
+        description: "Turn off automatic sign-in by setting only the Winlogon AutoAdminLogon text value to 0. The saved sign-in name, any saved password and the sign-in count are never read or changed, so undo writes the earlier value back exactly. Managed devices are left alone.",
+        source: Source::WinlogonAutoLogon,
+        reboot: false,
+        ask: true,
+        keys: &[set("AutoAdminLogon", WINLOGON, &[0], true, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "remote_desktop.disabled",
+        title: "Remote Desktop connections",
+        description: "Stop this PC accepting Remote Desktop connections by setting only fDenyTSConnections to 1. Firewall rules, network-level sign-in and services are not touched. Not offered while you are connected remotely or where Windows cannot host Remote Desktop; undo writes the earlier value back.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("fDenyTSConnections", TERMINAL_SERVER, &[1], true, Some(1), 1)],
+        gate: Gate {
+            areas: &["RemoteDesktopServices", "ADMX_TerminalServer"],
+            policy_values: &[(TERMINAL_SERVICES_POLICY, "fDenyTSConnections")],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "smb1.disabled",
+        title: "Old file sharing (SMB1)",
+        description: "Turn off the old SMB1 file-sharing Windows feature and its client and server parts without removing their files. Only parts that are on are turned off; undo turns exactly those parts back on. Needs a restart and can take a minute or more.",
+        source: Source::SmbFeature,
+        reboot: true,
+        ask: true,
+        keys: &[
+            set("SMB1Protocol", "", &[0], false, Some(0), 1),
+            set("SMB1Protocol-Client", "", &[0], false, Some(0), 1),
+            set("SMB1Protocol-Server", "", &[0], false, Some(0), 1),
+            set("SMB1Protocol-Deprecation", "", &[0], false, Some(0), 1),
+        ],
         gate: NO_GATE,
     },
 ];
@@ -1829,6 +1881,65 @@ mod tests {
             .keys
             .iter()
             .all(|k| k.max <= i32::MAX as u32));
+    }
+
+    #[test]
+    fn access_controls_are_choices_that_change_exactly_one_thing() {
+        for id in ["accounts.autologon", "remote_desktop.disabled", "smb1.disabled"] {
+            assert!(is_ask(id), "{id} must be a choice");
+        }
+        // Automatic sign-in: only AutoAdminLogon, only 1 is unsafe, absent is fine.
+        let a = spec("accounts.autologon").unwrap();
+        assert_eq!(a.source, Source::WinlogonAutoLogon);
+        assert!(!a.reboot && !a.dynamic());
+        assert_eq!(a.keys.len(), 1);
+        assert_eq!(a.keys[0].name, "AutoAdminLogon");
+        assert!(a.keys[0].path.ends_with(r"\Winlogon"));
+        let on = items(a, &[Some(1)]);
+        assert!(a.any_unsafe(&on));
+        assert_eq!(a.derive_target(&on).unwrap(), items(a, &[Some(0)]));
+        assert!(!a.any_unsafe(&items(a, &[None])));
+        assert!(!a.any_unsafe(&items(a, &[Some(0)])));
+        assert!(a.validate(&items(a, &[Some(2)])).is_err());
+        let json = a.script_json();
+        for never in ["DefaultPassword", "DefaultUserName", "AutoLogonCount"] {
+            assert!(!json.contains(never), "{never} must never be touched");
+        }
+        // Remote Desktop: registry value only, managed by the Terminal Services policy.
+        let r = spec("remote_desktop.disabled").unwrap();
+        assert_eq!(r.source, Source::Registry);
+        assert!(!r.reboot && r.keys.len() == 1);
+        assert_eq!(r.keys[0].name, "fDenyTSConnections");
+        assert!(r.gate.policy_values.iter().any(|(p, n)| {
+            p.ends_with(r"\Terminal Services") && *n == "fDenyTSConnections"
+        }));
+        assert!(r.any_unsafe(&items(r, &[Some(0)])));
+        assert!(!r.any_unsafe(&items(r, &[Some(1)])));
+        assert_eq!(
+            r.derive_target(&items(r, &[Some(0)])).unwrap(),
+            items(r, &[Some(1)])
+        );
+        // Old file sharing: four parts, each repaired only if it is on, restart needed.
+        let s = spec("smb1.disabled").unwrap();
+        assert_eq!(s.source, Source::SmbFeature);
+        assert!(s.reboot && !s.dynamic());
+        let names: Vec<_> = s.keys.iter().map(|k| k.name).collect();
+        assert_eq!(
+            names,
+            [
+                "SMB1Protocol",
+                "SMB1Protocol-Client",
+                "SMB1Protocol-Server",
+                "SMB1Protocol-Deprecation"
+            ]
+        );
+        let before = items(s, &[Some(1), Some(1), Some(0), Some(1)]);
+        assert_eq!(
+            s.derive_target(&before).unwrap(),
+            items(s, &[Some(0), Some(0), Some(0), Some(0)])
+        );
+        assert!(!s.any_unsafe(&items(s, &[Some(0), Some(0), Some(0), Some(0)])));
+        assert!(s.validate(&json!({"items": {"SMB1Protocol": 1}})).is_err());
     }
 
     #[test]
