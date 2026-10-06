@@ -304,13 +304,13 @@ pub fn tip_fix<'r>(
     {
         return TipFix::Offered(control);
     }
-    let a = crate::advice::for_outcome(row);
+    let a = secblitz::advice::for_outcome(row);
     if a.status == "Not offered" {
         TipFix::NotOffered {
             control,
             reason: &row.detail,
         }
-    } else if a.step == crate::advice::NextStep::Restart {
+    } else if a.step == secblitz::advice::NextStep::Restart {
         TipFix::Restart(a.next)
     } else if secblitz::vbs::is_vbs_check_id(control) && row.status == CheckStatus::Compliant {
         TipFix::Restart(core_restart_advice(control))
@@ -473,7 +473,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                     .chain(probe.assessments.iter())
                     .map(|a| a.rule.id.as_str()),
             )
-            .find(|rule| crate::explain::for_check(rule).is_some())
+            .find(|rule| secblitz::explain::for_check(rule).is_some())
             .map(str::to_owned);
         let lead = lead.filter(|_| look);
         let restart = lead.is_some_and(rule_restart);

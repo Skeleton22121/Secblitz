@@ -110,7 +110,7 @@ impl Lang {
         out
     }
     pub fn control(self, id: &str) -> String {
-        let source = crate::advice::control_label(id);
+        let source = secblitz::advice::control_label(id);
         if source == "Protection check" {
             return id.to_owned();
         }
@@ -281,7 +281,7 @@ mod tests {
                 assert_ne!(lang.control(&control.id), control.id);
                 assert_eq!(
                     lang.control(&control.id),
-                    lang.t(crate::advice::control_label(&control.id))
+                    lang.t(secblitz::advice::control_label(&control.id))
                 );
             }
             for name in [
@@ -715,7 +715,7 @@ mod tests {
             "permissions.service.wuauserv",
         ];
         for id in control_ids {
-            let impact = crate::advice::control_impact(id);
+            let impact = secblitz::advice::control_impact(id);
             assert!(!impact.is_empty(), "control_impact({id}) is empty");
             assert!(
                 text_rows().any(|row| row[0] == impact),
@@ -750,7 +750,7 @@ mod tests {
             "Automatic logon",
         ];
         for title in finding_titles {
-            let impact = crate::advice::finding_impact(title);
+            let impact = secblitz::advice::finding_impact(title);
             assert!(!impact.is_empty(), "finding_impact({title}) is empty");
             assert!(
                 text_rows().any(|row| row[0] == impact),

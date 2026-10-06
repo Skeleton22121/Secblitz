@@ -162,8 +162,8 @@ mod imp {
     use super::{args_are_plain, Guard, Instance};
     use crate::broker::{self, Reply, Request};
     use crate::i18n::Lang;
-    use crate::user_apps::{self, AppState};
-    use crate::user_settings::{self, Op, Setting, SystemRegistry};
+    use secblitz::user_apps::{self, AppState};
+    use secblitz::user_settings::{self, Op, Setting, SystemRegistry};
     use anyhow::{ensure, Context, Result};
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut, time::Duration};
     use windows_sys::Win32::{

@@ -1,4 +1,4 @@
-use crate::advice::{self, Group, NextStep};
+use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 

@@ -1,13 +1,13 @@
 //! Per-account settings and updates for the apps the user installed, not Windows apps or Secblitz.
 use crate::broker::{Reply, Request};
-use crate::explain;
+use secblitz::explain;
 use crate::gui::icons::Icon;
 use crate::gui::pages::tools;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Helper, Message};
-use crate::user_apps::APPS;
-use crate::user_settings::{Op, Setting};
+use secblitz::user_apps::APPS;
+use secblitz::user_settings::{Op, Setting};
 use iced::widget::{column, space};
 use iced::{Element, Length, Task};
 

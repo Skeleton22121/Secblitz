@@ -1,6 +1,6 @@
 //! Checks that ask first, and what choosing them changes.
 pub fn is_choice_check_id(id: &str) -> bool {
-    secblitz::hardening::is_ask_check_id(id)
+    crate::hardening::is_ask_check_id(id)
 }
 
 pub fn choice_consequence(id: &str) -> &'static str {

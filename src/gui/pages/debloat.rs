@@ -246,8 +246,8 @@ fn suggested_task(ctx: &Ctx) -> Task<Message> {
         ),
         ctx.broker_task(
             crate::broker::Request::UserSetting(
-                crate::user_settings::Setting::SuggestedApps,
-                crate::user_settings::Op::Query,
+                secblitz::user_settings::Setting::SuggestedApps,
+                secblitz::user_settings::Op::Query,
             ),
             |r| wrap(Msg::SuggestedUser(r)),
         ),
@@ -624,8 +624,8 @@ fn allow_suggested(state: &mut State, ctx: &Ctx) -> Task<Message> {
     if user {
         tasks.push(ctx.broker_task(
             crate::broker::Request::UserSetting(
-                crate::user_settings::Setting::SuggestedApps,
-                crate::user_settings::Op::Undo,
+                secblitz::user_settings::Setting::SuggestedApps,
+                secblitz::user_settings::Op::Undo,
             ),
             |r| wrap(Msg::SuggestedAllowed(matches!(r, Ok(crate::broker::Reply::Done)))),
         ));

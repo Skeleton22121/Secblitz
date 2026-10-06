@@ -2,7 +2,7 @@
 //! uninstaller commands, which can first undo the changes Secblitz made.
 #![allow(dead_code)] // the GUI part of Remove Secblitz uses the rest
 use crate::i18n::Lang;
-use crate::user_settings::{Outcome as UserOutcome, Setting};
+use secblitz::user_settings::{Outcome as UserOutcome, Setting};
 use anyhow::Result;
 use secblitz::debloat::suggested::Undo;
 use secblitz::debloat::RestoreAll;
@@ -230,7 +230,7 @@ pub fn revert_machine(progress: &dyn Fn(Step, bool)) -> Summary {
 
 #[cfg(windows)]
 pub fn revert_user() -> Summary {
-    use crate::user_settings::{journal_path, undo_all, SystemRegistry};
+    use secblitz::user_settings::{journal_path, undo_all, SystemRegistry};
     match journal_path() {
         Some(path) => fold_user(undo_all(&mut SystemRegistry, &path)),
         None => Summary::default(),

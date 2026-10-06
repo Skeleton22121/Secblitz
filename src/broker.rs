@@ -1,7 +1,7 @@
 //! Launcher <-> elevated GUI broker: a closed set of user-context actions.
 
-use crate::user_apps;
-use crate::user_settings::{Op, Setting};
+use secblitz::user_apps;
+use secblitz::user_settings::{Op, Setting};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,8 +65,8 @@ pub enum Reply {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Reply {
-    pub fn from_result(result: crate::user_settings::HandleResult) -> Self {
-        use crate::user_settings::{HandleResult, Outcome, Report};
+    pub fn from_result(result: secblitz::user_settings::HandleResult) -> Self {
+        use secblitz::user_settings::{HandleResult, Outcome, Report};
         match result {
             HandleResult::Report(Report::Safe) => Reply::Safe,
             HandleResult::Report(Report::SafeByUs) => Reply::SafeByUs,
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn setting_results_map_to_distinct_calm_replies() {
-        use crate::user_settings::{HandleResult as H, Outcome, Report};
+        use secblitz::user_settings::{HandleResult as H, Outcome, Report};
         assert_eq!(
             Reply::from_result(H::Report(Report::Unsafe)),
             Reply::NeedsAttention
