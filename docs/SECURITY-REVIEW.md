@@ -1,6 +1,6 @@
 # Security review and release closure: Secblitz 0.5.0
 
-**2026-10-03. Current release is live at [secblitz.lol](https://secblitz.lol/).** This summary consolidates source reviews, native adversarial evidence, the owner's deployment closure and [genuine published 0.4.3 to 0.5.0 LIVE E2E PASS](windows-v050-results.md). It performs no new audit, credential access, deployment or guest operation.
+**2026-10-03. Current release is live at [secblitz.lol](https://secblitz.lol/).** This summary consolidates source reviews, native adversarial evidence, the owner's deployment closure and genuine published 0.4.3 to 0.5.0 LIVE E2E PASS. It performs no new audit, credential access, deployment or guest operation.
 
 **Verdict: no acceptance/authority bypass was found in the tested cases. Confirmed scoped defects were fixed and verified.** This is not a claim of exhaustive security, an unbreakable product, a malware-free PC or completed publisher certification. Historical review-time blockers are superseded only where the later evidence explicitly closes them.
 
@@ -18,7 +18,7 @@ The prior full frozen candidate passed 247 native library and 92 native CLI test
 
 ## Current release and acceptance
 
-The final installer is **3,850,954 bytes**. Exact current hashes are in [dist/SHA256SUMS](../dist/SHA256SUMS) and the [native artifact record](windows-v050-results.md). The executable hash is `036d8b69367cb7422ca5d6e821e73749f1c36ce35df437ac47b7d83ba829a6d9`; installer hash is `c17a543fccbb0ec1c37c487aeb8da2e7bfd8a832e04996f6ead32e6dd2b77f3b`.
+The final installer is **3,850,954 bytes**. Exact current hashes are in dist/SHA256SUMS and the native artifact record. The executable hash is `036d8b69367cb7422ca5d6e821e73749f1c36ce35df437ac47b7d83ba829a6d9`; installer hash is `c17a543fccbb0ec1c37c487aeb8da2e7bfd8a832e04996f6ead32e6dd2b77f3b`.
 
 | Evidence layer | Observed result | Scope |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ The final installer is **3,850,954 bytes**. Exact current hashes are in [dist/SH
 
 The floor advanced from authentic retained 0.4.3 state to **0.5.0**, matching signed installer hash, published_at **1791022530** and expires_at **1798798530**. Its protected owner/DACL allowed SYSTEM/Administrators only and remained byte-identical after the busy check. Live testing did not inject destructive floor/corruption fixtures; preceding SYSTEM regressions are that evidence.
 
-Only `Secblitz-W11-UI-Test`, Windows 11 Enterprise Evaluation build 26200.9457, was operated on. Original directories/network were restored and app/task/service/process residue removed. The user's VM was untouched. Ordinary-suite ignored cases are not counted as passes: native readiness and nine SYSTEM cases were separately exercised; the obsolete public-feed probe and two attended unit probes remained ignored while actual UI acceptance was conducted separately.
+Only a disposable Windows 11 VM, Windows 11 Enterprise Evaluation build 26200.9457, was operated on. Original directories/network were restored and app/task/service/process residue removed. The user's VM was untouched. Ordinary-suite ignored cases are not counted as passes: native readiness and nine SYSTEM cases were separately exercised; the obsolete public-feed probe and two attended unit probes remained ignored while actual UI acceptance was conducted separately.
 
 ## Fixed cases and deployment closure
 
@@ -77,6 +77,6 @@ The [release review](security-review-release.md) added explicit staging, path/ty
 
 ## Evidence map and next work
 
-The authoritative closure is [windows-v050-results.md](windows-v050-results.md). Prior security deployment evidence is [windows-v043-results.md](windows-v043-results.md) and [security-adversarial.md](security-adversarial.md). Independent review histories: [website](security-review-website.md), [release](security-review-release.md), [dependencies](security-review-dependencies.md), [protocol](security-review-update-protocol.md), [native](security-review-native.md), and [readiness](readiness-security-review.md). Their earlier pending statements retain review-time meaning; the later native/live result resolves only the cases it actually retested.
+The authoritative closure is windows-v050-results.md. Prior security deployment evidence is windows-v043-results.md and [security-adversarial.md](security-adversarial.md). Independent review histories: [website](security-review-website.md), [release](security-review-release.md), [dependencies](security-review-dependencies.md), [protocol](security-review-update-protocol.md), [native](security-review-native.md), and [readiness](readiness-security-review.md). Their earlier pending statements retain review-time meaning; the later native/live result resolves only the cases it actually retested.
 
 [ROADMAP.md](ROADMAP.md) now marks the reviewed-plan/effective-protection/post-check/readiness tranche and security floor/atomic persistence as implemented. Next proposals are Windows integrity diagnosis through a separate operation engine, backup/recovery readiness and trusted exact app upgrades. Those proposals are not public promises or current functionality. **No bypass found in tested cases is the bounded conclusion, not “all P0 risks gone” or “unbreakable.”**

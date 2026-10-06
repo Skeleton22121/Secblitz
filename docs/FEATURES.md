@@ -14,7 +14,7 @@ The following sections describe **published 0.5.0**, whose public downloads rema
 
 Check your Windows security settings, choose supported fixes, and retain original settings for review and undo. **No-argument launch opens the guide and scans first; it never applies repairs by default.**
 
-The live release is at **[secblitz.lol](https://secblitz.lol/)**. [Download 0.5.0](https://secblitz.lol/downloads/secblitz-0.5.0-windows-x64-setup.exe), or use the local [installer](../dist/secblitz-0.5.0-windows-x64-setup.exe) and [checksums](../dist/SHA256SUMS). The genuine published **0.4.3 to 0.5.0** update passed [live acceptance](windows-v050-results.md), including monitor resumption, release-floor advancement and real-guide deferral.
+The live release is at **[secblitz.lol](https://secblitz.lol/)**. [Download 0.5.0](https://secblitz.lol/downloads/secblitz-0.5.0-windows-x64-setup.exe), or use the local installer and checksums. The genuine published **0.4.3 to 0.5.0** update passed live acceptance, including monitor resumption, release-floor advancement and real-guide deferral.
 
 Tested platform: Windows 11 Enterprise Evaluation build 26200.9457 x64. **Windows 10 is targeted but untested.** Windows binaries are unsigned by Authenticode; the updater authenticates signed Ed25519 release metadata separately. Neither is a claim of perfect protection.
 
@@ -238,11 +238,11 @@ Native 0.5.0 acceptance passed **138 library + 66 CLI tests**, a separate real-r
 - Authentic prior release floor advanced to **0.5.0**, matching installer hash and publication timestamp **1791022530**, with SYSTEM/Administrators-only protection; current/busy checks left its bytes unchanged.
 - All 18 baseline states, original data and eight genuine journal copies unchanged; normal uninstall/cleanup restored the isolated lab's original state.
 
-Only Windows 11 Enterprise Evaluation build 26200.9457 in `Secblitz-W11-UI-Test` was used. Windows 10, broader Home/Pro/hardware/accessibility coverage and complete original-standard-user broker execution remain untested. Authenticode signing, physical power-loss durability and comprehensive prevention efficacy are not established.
+Only Windows 11 Enterprise Evaluation build 26200.9457 in a disposable VM was used. Windows 10, broader Home/Pro/hardware/accessibility coverage and complete original-standard-user broker execution remain untested. Authenticode signing, physical power-loss durability and comprehensive prevention efficacy are not established.
 
 The public homepage is current **0.5.0**; its actual **0.3.1** Remotion/Windows footage remains illustrative, muted/looping, with no captions or playback controls. Media uses content-hashed public names; source/provenance/test code stays outside allowlisted publication. The recording is not current updater evidence or six-language runtime coverage.
 
-See [security review summary](SECURITY-REVIEW.md), [security model](security-model.md), [update contract](update-contract.md), [live evidence](windows-v050-results.md) and [roadmap](ROADMAP.md). Recommended-batch approval, inherited-protection recognition, automatic verification and read-only readiness are implemented. DISM/SFC, general cleanup, broader app/Windows updating and backup provisioning remain **future work**, not hidden automatic features.
+See [security review summary](SECURITY-REVIEW.md), [security model](security-model.md), [update contract](update-contract.md), live evidence and [roadmap](ROADMAP.md). Recommended-batch approval, inherited-protection recognition, automatic verification and read-only readiness are implemented. DISM/SFC, general cleanup, broader app/Windows updating and backup provisioning remain **future work**, not hidden automatic features.
 
 ### System-area engine controls (OS, credentials, updates, privacy)
 

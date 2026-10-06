@@ -175,7 +175,7 @@ missing/truncated-destination window.
   subsequent check establishing the new floor. The immutable 0.4.2 worker cannot
   enforce a floor it does not implement; protection starts in corrected code.
 
-The previous `/tmp/opencode/secblitz-cross-env.sh` and toolchains had been removed.
+The earlier build environment and toolchains had been removed.
 Isolated Rust 1.93.0/rustfmt/Windows std and extracted MinGW tools were restored
 under `target/tools/`; no system package installation or guest operation occurred.
 Host protocol tests used system Rust 1.93.1, cached Cargo dependencies and
@@ -244,7 +244,7 @@ Native namespace, ACL, scheduler and execution behavior was inspected as
 context, not modified or dynamically certified here. No VM or native Windows
 test was run. Cross-target Clippy compiled/checks the Windows code and tests;
 it is not evidence of Windows runtime behavior. See the separate
-[native live-upgrade evidence](windows-v042-results.md).
+native live-upgrade evidence.
 
 ## Live public release verification
 
@@ -407,9 +407,9 @@ Rust toolchain: `rustc 1.93.0 (254b59607 2026-01-19)`. All Cargo runs used the
 requested persistent target and compiler-temp locations:
 
 ```sh
-source /tmp/opencode/secblitz-cross-env.sh
-export CARGO_TARGET_DIR=/home/slay/projects/cybersec/windows-hardening-tool/target/windows-release
-export TMPDIR=/home/slay/projects/cybersec/windows-hardening-tool/target/compiler-tmp
+source target/build-tools/cross-env.sh
+export CARGO_TARGET_DIR=$PWD/target/windows-release
+export TMPDIR=$PWD/target/compiler-tmp
 
 rustfmt --edition 2021 --check src/updater/tests.rs
 cargo test --locked --offline --lib updater::

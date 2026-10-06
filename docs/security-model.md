@@ -1,6 +1,6 @@
 # Secblitz 0.5.0 security model
 
-Reviewed against published 0.5.0 and [0.4.3 to 0.5.0 LIVE E2E PASS](windows-v050-results.md), 2026-10-03. See [security review summary](SECURITY-REVIEW.md) for fixed cases versus known boundaries, [features](FEATURES.md), [updater](update-contract.md), [permissions](permissions-design.md), [readiness review](readiness-security-review.md) and [roadmap](ROADMAP.md). Historical review-time compilation, deployment and replay/persistence blockers are not current release failures when superseded by recorded fixes/acceptance.
+Reviewed against published 0.5.0 and 0.4.3 to 0.5.0 LIVE E2E PASS, 2026-10-03. See [security review summary](SECURITY-REVIEW.md) for fixed cases versus known boundaries, [features](FEATURES.md), [updater](update-contract.md), [permissions](permissions-design.md), [readiness review](readiness-security-review.md) and [roadmap](ROADMAP.md). Historical review-time compilation, deployment and replay/persistence blockers are not current release failures when superseded by recorded fixes/acceptance.
 
 ## Unreleased 0.6.0 additions
 
@@ -56,7 +56,7 @@ Exactly six firewall IDs may carry typed `effective` Enabled(bool)/Inbound(Block
 
 Eligible Local raw NotConfigured plus effective Block is protected/unchanged: no setter or WAL. Genuine Allow/effective Allow remains repairable. Explicit contradictory raw/effective state, missing profile, duplicate/wrong profile, stopped services or unreadable authority cannot become a protection claim. Managed tagging uses exact structured gate metadata through bounded wrapper traversal, not arbitrary exception text; uncertain vetoes remain Unknown.
 
-Native observation refreshes effective evidence after authority checks; pre-setter observation repeats raw/effective/gate consistency. Apply requires exact raw target plus effective eligible Local protection before Applied/Sealed. Failed effective readback retains pending recovery. Undo deliberately restores raw originals, including Allow/false/NotConfigured, without falsely requiring a newly protected state. Existing owned raw-target drift is still a conflict even if the replacement setting is effectively protective. [Native 0.5.0 evidence](windows-v050-results.md) confirms zero recommendations and no new WAL for all three inherited Block profiles, resolving the old 0.4.2 false-fix case.
+Native observation refreshes effective evidence after authority checks; pre-setter observation repeats raw/effective/gate consistency. Apply requires exact raw target plus effective eligible Local protection before Applied/Sealed. Failed effective readback retains pending recovery. Undo deliberately restores raw originals, including Allow/false/NotConfigured, without falsely requiring a newly protected state. Existing owned raw-target drift is still a conflict even if the replacement setting is effectively protective. Native 0.5.0 evidence confirms zero recommendations and no new WAL for all three inherited Block profiles, resolving the old 0.4.2 false-fix case.
 
 ### Read-only readiness boundary
 
@@ -151,6 +151,8 @@ Only an explicit allowlist is staged into `dist/pages`; source README/tests/vide
 Cloudflare deployment authority and offline release signing are separate. No global credential/key/email belongs in repo/site/binary/reports. Operator credential rotation to least-privilege tokens remains recommended after the work; this document does not claim rotation occurred. Private Ed25519 material is external/protected and was not read for documentation or copied to the guest. A compromised authorized signer can authorize harmful bytes; verification does not certify benign content.
 
 ## Monitor, privacy and retained data
+
+Secblitz has no telemetry and sends no usage data. It uses the internet only for: automatic updates (optional at install); web protection block lists and DNS forwarding, only when web protection is turned on, with a Quad9 fallback when the network has no DNS server; and things the user asks for, such as installing Bitwarden with winget, opening the Microsoft Store, or following GitHub links. The privacy policy is at https://secblitz.lol/privacy.html.
 
 The LocalService monitor remains read-only on startup/about every 15 minutes; it does not repair, open administrator WALs or expose remediation IPC. It now collects readiness once and emits typed optional firewall metadata plus separate root readiness. Unknown is an unavailable completed probe, not automatically incomplete/healthy; null means not attempted. Readiness counts toward the existing between-call budget, but synchronous native calls are not preempted. The live report was **9,195 bytes**, with 18 observations/19 findings and Unknown journal-volume readiness, below the unchanged 64 KiB limit. Its in-place report write is not made atomic by the separate updater fix; other LocalService processes can affect it.
 
