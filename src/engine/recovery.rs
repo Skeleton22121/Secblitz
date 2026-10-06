@@ -9,10 +9,29 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Write};
 
+/// Finite raw preference domains only. An incomplete legacy ACL
+/// original cannot be inferred; it requires review. COW staging has
+/// an independent committed snapshot and handles ACLs separately.
+fn finite_before_values(id: &str) -> Result<Vec<Value>> {
+    if permission_control(id) || crate::hardening::is_hardening_check_id(id) {
+        return Ok(Vec::new());
+    }
+    let expected = target(id)?;
+    Ok(if expected.is_boolean() {
+        vec![json!(true), json!(false)]
+    } else if expected.is_string() {
+        vec![json!("Allow"), json!("Block"), json!("NotConfigured")]
+    } else {
+        let mut values = vec![json!({"present":false,"value":null})];
+        values.extend(
+            (0..=if id == "uac.consent" { 5 } else { 1 })
+                .map(|n| json!({"present":true,"value":n})),
+        );
+        values
+    })
+}
+
 impl Engine {
-    // Only strict canonical prefixes of legal next records qualify. In
-    // particular serde's EOF classification alone is insufficient: unknown
-    // controls, invalid domains and invalid transitions must not disappear.
     pub(super) fn owned_elsewhere(
         tx: &Transaction,
         id: &str,
@@ -23,6 +42,9 @@ impl Engine {
         })
     }
 
+    // Only strict canonical prefixes of legal next records qualify. In
+    // particular serde's EOF classification alone is insufficient: unknown
+    // controls, invalid domains and invalid transitions must not disappear.
     pub(super) fn incomplete_tail(
         &self,
         tx: &Transaction,
@@ -35,6 +57,24 @@ impl Engine {
         if !serde_json::from_slice::<Value>(tail).is_err_and(|e| e.is_eof()) {
             return Ok(false);
         }
+        for record in self.legal_next_records(tx, transactions)? {
+            let bytes = record_bytes(&record)?;
+            if bytes.starts_with(tail) && tail.len() < bytes.len() - 1 {
+                let mut complete = tx.bytes.clone();
+                complete.extend(bytes);
+                if self.decode(&tx.name, None, complete).is_ok() {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn legal_next_records(
+        &self,
+        tx: &Transaction,
+        transactions: &[Transaction],
+    ) -> Result<Vec<Record>> {
         let mut candidates = vec![Record::Sealed, Record::Reverting, Record::Reverted];
         for entry in &tx.entries {
             candidates.push(Record::Applied {
@@ -51,43 +91,14 @@ impl Engine {
             if Self::owned_elsewhere(tx, &control.id, transactions) {
                 continue;
             }
-            // Finite raw preference domains only. An incomplete legacy ACL
-            // original cannot be inferred; it requires review. COW staging has
-            // an independent committed snapshot and handles ACLs below.
-            let values = if permission_control(&control.id)
-                || crate::hardening::is_hardening_check_id(&control.id)
-            {
-                Vec::new()
-            } else if target(&control.id)?.is_boolean() {
-                vec![json!(true), json!(false)]
-            } else if target(&control.id)?.is_string() {
-                vec![json!("Allow"), json!("Block"), json!("NotConfigured")]
-            } else {
-                let mut values = vec![json!({"present":false,"value":null})];
-                values.extend(
-                    (0..=if control.id == "uac.consent" { 5 } else { 1 })
-                        .map(|n| json!({"present":true,"value":n})),
-                );
-                values
-            };
-            for before in values {
+            for before in finite_before_values(&control.id)? {
                 candidates.push(Record::Prepare {
                     id: control.id.clone(),
                     before,
                 });
             }
         }
-        for record in candidates {
-            let bytes = record_bytes(&record)?;
-            if bytes.starts_with(tail) && tail.len() < bytes.len() - 1 {
-                let mut complete = tx.bytes.clone();
-                complete.extend(bytes);
-                if self.decode(&tx.name, None, complete).is_ok() {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        Ok(candidates)
     }
 
     pub(super) fn validate_staged(
@@ -97,29 +108,49 @@ impl Engine {
         transactions: &[Transaction],
     ) -> Result<()> {
         let seq = journal_name(stem)?;
-        let Some(tx) = transactions.iter().find(|t| t.name == stem) else {
-            ensure!(
-                transactions.last().is_none_or(|tx| seq > tx.sequence),
-                "Staged header is not newest"
-            );
-            ensure!(
-                transactions
-                    .iter()
-                    .all(|tx| tx.reverted || !tx.incomplete()),
-                "Staged header follows incomplete transaction"
-            );
-            let expected = record_bytes(&Record::Header {
-                schema: SCHEMA,
-                machine: self.machine.clone(),
-                transaction: stem.into(),
-                sequence: seq,
-            })?;
-            ensure!(
-                expected.starts_with(bytes),
-                "Invalid unpublished journal header or machine mismatch"
-            );
-            return Ok(());
-        };
+        match transactions.iter().find(|t| t.name == stem) {
+            Some(tx) => self.validate_staged_append(stem, bytes, tx, transactions),
+            None => self.validate_staged_header(stem, seq, bytes, transactions),
+        }
+    }
+
+    fn validate_staged_header(
+        &self,
+        stem: &str,
+        seq: u64,
+        bytes: &[u8],
+        transactions: &[Transaction],
+    ) -> Result<()> {
+        ensure!(
+            transactions.last().is_none_or(|tx| seq > tx.sequence),
+            "Staged header is not newest"
+        );
+        ensure!(
+            transactions
+                .iter()
+                .all(|tx| tx.reverted || !tx.incomplete()),
+            "Staged header follows incomplete transaction"
+        );
+        let expected = record_bytes(&Record::Header {
+            schema: SCHEMA,
+            machine: self.machine.clone(),
+            transaction: stem.into(),
+            sequence: seq,
+        })?;
+        ensure!(
+            expected.starts_with(bytes),
+            "Invalid unpublished journal header or machine mismatch"
+        );
+        Ok(())
+    }
+
+    fn validate_staged_append(
+        &self,
+        stem: &str,
+        bytes: &[u8],
+        tx: &Transaction,
+        transactions: &[Transaction],
+    ) -> Result<()> {
         ensure!(
             !tx.reverted
                 && !transactions
@@ -160,11 +191,22 @@ impl Engine {
         if self.incomplete_tail(tx, tail, transactions)? {
             return Ok(());
         }
-        // An unpublished ACL Prepare has never authorized a backend write. Its
-        // already-copied committed prefix must match exactly, and its partial
-        // string must have the canonical fixed id/envelope and hex syntax. A
-        // completed descriptor is always checked by decode, never discarded as
-        // an incomplete string. Legacy ACL tails do not get this exception.
+        self.validate_unpublished_acl_prepare(stem, bytes, tail, tx, transactions)
+    }
+
+    // An unpublished ACL Prepare has never authorized a backend write. Its
+    // already-copied committed prefix must match exactly, and its partial
+    // string must have the canonical fixed id/envelope and hex syntax. A
+    // completed descriptor is always checked by decode, never discarded as
+    // an incomplete string. Legacy ACL tails do not get this exception.
+    fn validate_unpublished_acl_prepare(
+        &self,
+        stem: &str,
+        bytes: &[u8],
+        tail: &[u8],
+        tx: &Transaction,
+        transactions: &[Transaction],
+    ) -> Result<()> {
         if !tx.sealed && !tx.reverting && tx.entries.iter().all(|e| e.state == State::Applied) {
             for c in self.controls.iter().filter(|c| {
                 permission_control(&c.id)
