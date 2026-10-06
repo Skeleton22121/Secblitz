@@ -42,7 +42,7 @@ Secblitz is not an antivirus. It makes sure the protection Windows already gives
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) (8.5 MB) and run it. Secblitz asks for administrator permission when it opens, because reading and changing security settings needs it.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) (8.6 MB) and run it. Secblitz asks for administrator permission when it opens, because reading and changing security settings needs it.
 
 The installer is not code-signed yet, so Windows may say the publisher is unknown. Choose **More info**, then **Run anyway**. To confirm you have the exact published file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
