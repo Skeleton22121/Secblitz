@@ -356,6 +356,51 @@ fn journal_round_trip_and_restore_marking() {
 }
 
 #[test]
+fn a_run_cut_short_still_leaves_every_removed_app_on_the_list() {
+    use std::cell::RefCell;
+    let news = idx("Microsoft.BingNews");
+    let weather = idx("Microsoft.BingWeather");
+    let installed = vec![
+        Installed {
+            index: news,
+            package: "Microsoft.BingNews".into(),
+            version: "1".into(),
+        },
+        Installed {
+            index: weather,
+            package: "Microsoft.BingWeather".into(),
+            version: "1".into(),
+        },
+    ];
+    let dir = std::env::temp_dir().join(format!("secblitz-ckpt-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("debloat.jsonl");
+    let _ = std::fs::remove_file(&path);
+    let seen = RefCell::new(Vec::new());
+    let batch = remove_with_checkpoint(
+        &[news, weather],
+        &installed,
+        &|_| Ok(()),
+        &|_| PackageOutcome::Removed,
+        &|_| {},
+        &|b| {
+            // What a crash right here would leave behind.
+            journal::upsert_to(&path, b).unwrap();
+            seen.borrow_mut().push(journal::load_from(&path));
+        },
+    )
+    .unwrap();
+    let seen = seen.into_inner();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].len(), 1);
+    assert_eq!(seen[0][0].removed.len(), 1, "first app is on record already");
+    assert_eq!(seen[1].len(), 1, "one line per run, not one per app");
+    assert_eq!(seen[1][0].removed.len(), 2);
+    assert_eq!(journal::load_from(&path), vec![batch]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn offline_scripts_are_plain_ascii_and_emit_json() {
     for (name, text) in [
         ("describe", include_str!("scripts/describe.ps1")),
