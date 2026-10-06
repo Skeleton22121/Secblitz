@@ -256,8 +256,6 @@ fn environment(root: &Path) -> ProbeResult<Vec<u16>> {
     Ok(output)
 }
 
-/// Probes that run one fixed Windows tool directly instead of PowerShell.
-/// Executable and arguments are compiled constants.
 fn native_tool(id: ProbeId) -> Option<(&'static str, &'static str)> {
     match id {
         ProbeId::WinRe => Some(("System32/reagentc.exe", "/info")),
@@ -266,7 +264,6 @@ fn native_tool(id: ProbeId) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Neither the executable nor the arguments can be supplied by report data.
 fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     let deadline = Instant::now() + timeout;
     let (exe, arguments, input) = if let Some((tool, arguments)) = native_tool(id) {
@@ -285,14 +282,11 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
         );
         (
             root.join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            // The bootstrap holds no double quote, so it stays one argument.
             format!("-NoLogo -NoProfile -NonInteractive -Command \"{bootstrap}\""),
             script,
         )
     };
     let application = wide(&exe)?;
-    // Fixed paths are not sufficient: reject writable/reparse executables and
-    // retain non-delete/non-write-sharing pins through process/job teardown.
     let mut pins =
         crate::operations::pin_system_executable(&exe).map_err(|_| UnknownReason::Unavailable)?;
     if native_tool(id).is_none() {
@@ -346,7 +340,6 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     let (mut reader, child_output) = pipe()?;
     check(unsafe { SetHandleInformation(writer.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
     check(unsafe { SetHandleInformation(reader.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
-    // Restrict inheritance to these two pipe handles, including under concurrency.
     let mut attribute_size = 0;
     unsafe {
         InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut attribute_size);
@@ -458,7 +451,6 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
             match unsafe { WaitForSingleObject(process.0, 20) } {
                 WAIT_TIMEOUT => {}
                 WAIT_OBJECT_0 => {
-                    // Drain final bytes written immediately before exit.
                     let mut remaining = 0;
                     unsafe {
                         PeekNamedPipe(
@@ -484,7 +476,6 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
             }
         }
     })();
-    // All paths kill the job before joining a potentially blocked pipe writer.
     drop(job);
     let input_result = input_thread
         .join()
@@ -547,7 +538,6 @@ fn proxy() -> Evidence {
             _ => Reading::Unknown(UnknownReason::InvalidData),
         }
     };
-    // Strings are deliberately neither dereferenced nor serialized.
     unsafe {
         if !info.proxy.is_null() {
             GlobalFree(info.proxy.cast());
@@ -664,8 +654,6 @@ fn wifi() -> ProbeResult<Evidence> {
             if unsafe { enumerate(client, null(), &mut list) } != 0 || list.is_null() {
                 return Err(UnknownReason::Unavailable);
             }
-            // WLAN_INTERFACE_INFO_LIST: count, index, then 532-byte entries
-            // (GUID, 256 UTF-16 description units, state).
             let count = read(list, 0) as usize;
             let mut best: Option<&'static str> = None;
             let mut outcome = Ok(());
@@ -678,7 +666,6 @@ fn wifi() -> ProbeResult<Evidence> {
                     continue; // not connected
                 }
                 let (mut size, mut data, mut kind): (u32, *mut u8, u32) = (0, null_mut(), 0);
-                // opcode 7: wlan_intf_opcode_current_connection
                 let status =
                     unsafe { query(client, entry, 7, null(), &mut size, &mut data, &mut kind) };
                 if status != 0 || data.is_null() {
@@ -744,7 +731,6 @@ fn permissions() -> ProbeResult<Evidence> {
 }
 
 pub(super) fn collect(context: &Context) -> Vec<Diagnostic> {
-    // Serialize collection to bound process/thread resources across callers.
     static COLLECTION: Mutex<()> = Mutex::new(());
     let Ok(_guard) = COLLECTION.try_lock() else {
         return ProbeId::ALL

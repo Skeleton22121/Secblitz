@@ -12,7 +12,6 @@ pub(super) struct State {
 
 pub(super) trait Storage {
     fn load(&mut self) -> Result<Option<Vec<u8>>>;
-    /// Atomic replace, including durable flush; failure poisons the engine.
     fn save(&mut self, bytes: &[u8]) -> Result<()>;
 }
 
@@ -689,7 +688,6 @@ impl<S: Storage, B: Backend> Engine<S, B> {
                 break;
             }
         }
-        // Pending steps are not resumable execution: a new exact plan is needed.
         for j in 0..self.state.plans[i].steps.len() {
             if self.state.plans[i].steps[j].state == StepState::Pending {
                 self.transition(i, j, StepState::Cancelled, control)?;
@@ -828,7 +826,6 @@ impl<S: Storage, B: Backend> Engine<S, B> {
         self.state.plans[i].steps[j].evidence = Some(evidence);
         let kind = self.state.plans[i].plan.steps[j].operation.kind;
         if kind == OperationKind::DefenderQuickScan && evidence != Evidence::DefenderScanCompleted {
-            // The service may still own a scan after its submitting client exits.
             return self.save();
         }
         let success = match kind {

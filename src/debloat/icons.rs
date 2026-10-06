@@ -1,10 +1,4 @@
 //! Each catalog app's own Windows icon, for the Clean up apps lists.
-//!
-//! The icon is a PNG inside the app's package folder (installed apps live in
-//! `%ProgramFiles%\WindowsApps`, saved copies under the app backups). A small
-//! cache under the app data folder keeps the icon of an app after it has been
-//! removed. Everything here is best effort: any problem just means "no icon"
-//! and the page shows its generic glyph instead.
 use super::backup::{self, parse_full_name, Manifest, Store};
 use super::Installed;
 use anyhow::{bail, ensure, Context, Result};
@@ -18,7 +12,6 @@ const MAX_MANIFEST: u64 = 2 * 1024 * 1024;
 const MAX_SIDE: u32 = 512;
 const CACHE_DIR: &str = "icons";
 
-/// A decoded icon: 8-bit RGBA, row after row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rgba {
     pub width: u32,
@@ -26,17 +19,12 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
-// ---- manifest ------------------------------------------------------------
-
-/// The `Square44x44Logo` of the first `VisualElements` in an `AppxManifest`,
-/// as a '/'-separated path without the `.png` extension.
 pub fn logo_base(manifest_xml: &str) -> Option<String> {
     let mut rest = manifest_xml;
     let tag = loop {
         let at = rest.find("VisualElements")?;
         let before = &rest[..at];
         let after = &rest[at + "VisualElements".len()..];
-        // `<uap:VisualElements ` or `<VisualElements `, not a closing tag.
         let opens = before
             .rfind('<')
             .map(|lt| {
@@ -74,12 +62,8 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
-// ---- choosing a file -----------------------------------------------------
-
-/// Pick the best-looking small icon among the file names of an asset folder.
 pub fn pick(names: &[String], stem: &str) -> Option<String> {
     let prefix = format!("{}.", stem.to_ascii_lowercase());
-    // (lowercase qualifier, original name)
     let cands: Vec<(String, &String)> = names
         .iter()
         .filter_map(|n| {
@@ -123,9 +107,6 @@ pub fn pick(names: &[String], stem: &str) -> Option<String> {
         .cloned()
 }
 
-// ---- decoding ------------------------------------------------------------
-
-/// Decode a small PNG to RGBA8. Refuses anything big or odd.
 pub fn decode(bytes: &[u8]) -> Result<Rgba> {
     ensure!(bytes.len() as u64 <= MAX_PNG, "Icon file is too big");
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
@@ -170,8 +151,6 @@ pub fn decode(bytes: &[u8]) -> Result<Rgba> {
     })
 }
 
-// ---- reading files -------------------------------------------------------
-
 /// Read a regular file of at most `cap` bytes. `strict` also refuses
 /// junctions and other reparse points (our own folders); package folders only
 /// refuse symlinks, because Windows may compress some of their files.
@@ -204,9 +183,6 @@ fn file_names(dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The icon of one app from its main package folder (plus the folders of its
-/// resource packages, which may hold some of the assets). Returns the PNG
-/// bytes (which decode) and the decoded image.
 pub fn from_package(main: &Path, resources: &[PathBuf], strict: bool) -> Result<(Vec<u8>, Rgba)> {
     let manifest = read_capped(&main.join("AppxManifest.xml"), MAX_MANIFEST, strict)?;
     let manifest = String::from_utf8_lossy(&manifest);
@@ -234,7 +210,6 @@ pub fn from_package(main: &Path, resources: &[PathBuf], strict: bool) -> Result<
     }
     let all: Vec<String> = names.iter().map(|(n, _)| n.clone()).collect();
     let chosen = pick(&all, stem).context("No icon file")?;
-    // Prefer the main folder when several hold the same file name.
     let at = names
         .iter()
         .filter(|(n, _)| *n == chosen)
@@ -250,8 +225,6 @@ fn version_key(version: &str) -> Vec<u16> {
     version.split('.').filter_map(|n| n.parse().ok()).collect()
 }
 
-/// Folders of the newest installed version of `package` under a
-/// `WindowsApps`-style `root`: the main package and its resource packages.
 pub fn installed_folders(root: &Path, package: &str) -> Option<(PathBuf, Vec<PathBuf>)> {
     let mut found: Vec<(Vec<u16>, backup::Identity, PathBuf)> = Vec::new();
     for entry in fs::read_dir(root).ok()?.flatten() {
@@ -277,7 +250,6 @@ pub fn installed_folders(root: &Path, package: &str) -> Option<(PathBuf, Vec<Pat
     Some((newest.2.clone(), resources))
 }
 
-/// The same for a saved copy: folders under `<family>\packages`.
 pub fn saved_folders(store: &Store, m: &Manifest) -> Option<(PathBuf, Vec<PathBuf>)> {
     let ids: Vec<(backup::Identity, PathBuf)> = m
         .packages
@@ -303,8 +275,6 @@ pub fn saved_folders(store: &Store, m: &Manifest) -> Option<(PathBuf, Vec<PathBu
     Some((main.1.clone(), resources))
 }
 
-// ---- cache ---------------------------------------------------------------
-
 fn cache_file(app_dir: &Path, index: u16) -> PathBuf {
     app_dir.join(CACHE_DIR).join(format!("{index}.png"))
 }
@@ -314,8 +284,6 @@ fn cache_read(app_dir: &Path, index: u16) -> Option<Rgba> {
     decode(&bytes).ok()
 }
 
-/// Store icon bytes (already accepted by `decode`) for `index`. Replaces any
-/// older file by writing next to it and renaming.
 fn cache_write(app_dir: &Path, index: u16, bytes: &[u8]) -> Result<()> {
     let dir = app_dir.join(CACHE_DIR);
     match fs::symlink_metadata(&dir) {
@@ -348,9 +316,6 @@ fn cache_write(app_dir: &Path, index: u16, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-// ---- loading -------------------------------------------------------------
-
-/// Where icons come from. `root` is the `WindowsApps` folder.
 pub struct Sources<'a> {
     pub root: Option<&'a Path>,
     pub store: Option<&'a Store>,
@@ -383,8 +348,6 @@ fn one(src: &Sources, installed: &[Installed], index: u16) -> Option<Rgba> {
             }
         }
     }
-    // Not installed (or no usable icon): what we cached while it was there,
-    // else its saved copy.
     if let Some(icon) = src.app_dir.and_then(|d| cache_read(d, index)) {
         return Some(icon);
     }
@@ -403,8 +366,6 @@ fn one(src: &Sources, installed: &[Installed], index: u16) -> Option<Rgba> {
     None
 }
 
-/// Icons for every catalog app that has one. Blocking; never panics, and
-/// problems just leave an app without an icon.
 pub fn load(installed: &[Installed]) -> BTreeMap<u16, Rgba> {
     let app_dir = crate::platform::app_dir().ok();
     let store = Store::open().ok();
@@ -455,7 +416,6 @@ mod tests {
         ] {
             assert_eq!(logo_base(bad), None, "{bad}");
         }
-        // Only the first VisualElements counts.
         let two = "<uap:VisualElements A=\"1\"/><uap:VisualElements Square44x44Logo=\"a.png\"/>";
         assert_eq!(logo_base(two), None);
     }
@@ -470,7 +430,6 @@ mod tests {
             "MediaPlayerAppList.targetsize-256.png",
             "MediaPlayerAppList.targetsize-256_altform-lightunplated.png",
         ]);
-        // Nothing unplated >= 32; lightunplated 256 beats plain/scale.
         assert_eq!(
             pick(&set, stem).as_deref(),
             Some("MediaPlayerAppList.targetsize-256_altform-lightunplated.png")
@@ -750,10 +709,8 @@ mod tests {
         let got = load_from(&src, &installed, len);
         assert_eq!(got.len(), 1);
         assert_eq!(got[&index].pixels, [9, 8, 7, 255]);
-        // Removed: the cached copy still serves.
         let got = load_from(&src, &[], len);
         assert_eq!(got[&index].pixels, [9, 8, 7, 255]);
-        // Nothing anywhere: no icon, no panic.
         let none = Sources {
             root: None,
             store: None,

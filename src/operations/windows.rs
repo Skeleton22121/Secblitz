@@ -278,7 +278,6 @@ impl core::Backend for Backend {
         Ok(self.machine.clone())
     }
     fn facts(&mut self, kind: OperationKind, process: Option<&ProcessIdentity>) -> Result<Facts> {
-        // Freshness starts BEFORE the slowest probe, not when it finishes.
         let captured_at = now()?;
         let probe = self.probe(kind == OperationKind::DefenderQuickScan)?;
         let readiness = crate::readiness::collect();
@@ -475,9 +474,6 @@ pub(super) fn ensure_no_servicing_processes() -> Result<()> {
 }
 
 fn idle_seconds() -> Option<u32> {
-    // GetLastInputInfo is session-local. Never infer desktop idle from Session 0
-    // or ignore an active RDP/second desktop session. Such callers need a scoped
-    // owner exception; the service cannot silently manufacture idle evidence.
     let mut current = 0;
     if unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut current) } == 0
         || current == 0
@@ -532,8 +528,6 @@ fn drain(
     output: &mut Vec<u8>,
     overflow: &mut bool,
 ) -> Result<()> {
-    // Peek before every bounded read; no blocking read, unbounded allocation or
-    // reader thread holding engine.lock after the client wait deadline.
     for _ in 0..16 {
         let mut available = 0;
         if unsafe {
@@ -615,7 +609,6 @@ fn run(
             }
         })
     });
-    // No script: close the input pipe so native commands observe EOF.
     drop(child.stdin.take());
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
@@ -675,9 +668,6 @@ fn run(
             Ok(None) => {}
             Err(error) => {
                 problem.get_or_insert(error);
-                // Keep the process handle and lock until the OS confirms exit.
-                // Direct process exit is not proof that its job is empty.
-                // Retain the shared lock and pins until a later query succeeds.
             }
         }
         std::thread::sleep(Duration::from_millis(100));

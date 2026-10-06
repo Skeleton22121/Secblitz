@@ -276,13 +276,11 @@ fn update_freshness_is_judged_from_the_latest_successful_quality_install() {
         rules::update_freshness(Some(&[]), Some(now)).0,
         Status::Attention
     );
-    // Unreadable history or clock stays honestly unknown.
     assert_eq!(rules::update_freshness(None, Some(now)).0, Status::Unknown);
     assert_eq!(
         rules::update_freshness(Some(&fresh), None).0,
         Status::Unknown
     );
-    // A clock-skewed future entry is not trusted as "fresh".
     let future = [UpdateEvent {
         date_unix_seconds: now + 30 * 86_400,
         ..event(1, 2, 0, now, true)
@@ -320,7 +318,6 @@ fn backup_coverage_reports_found_stale_and_missing_backups() {
     let (status, detail) = rules::backup_coverage(Some(&[]), Some(4), Some(now));
     assert_eq!(status, Status::Attention);
     assert!(detail.starts_with("No backup found"));
-    // Shadow copies alone are same-drive restore points, not a backup.
     assert_ne!(
         rules::backup_coverage(Some(&[]), Some(4), Some(now)).0,
         Status::Healthy
@@ -689,10 +686,6 @@ fn unsupported_platform_never_fabricates_native_evidence() {
     assert_eq!(report.coverage.probes_with_evidence, 0);
 }
 
-// ---------------------------------------------------------------------------
-// 2026-10 detect-only checks: synthetic fixtures, no native evidence.
-// ---------------------------------------------------------------------------
-
 fn status_of(probe: &Diagnostic, id: &str) -> Status {
     assessment(probe, id).status
 }
@@ -720,7 +713,6 @@ fn defender_protection_threats_scans_and_exclusions() {
         status_of(&risky, "defender.exclusions_risky"),
         Status::Attention
     );
-    // Passive mode means another antivirus is in charge: no false scan alarm.
     let passive = assessed(
         ProbeId::DefenderProtection,
         base(0, u32::MAX as u64, 3, "Passive Mode"),
@@ -789,7 +781,6 @@ fn smartscreen_policy_and_smart_app_control_are_distinguished() {
         ),
         Status::Attention
     );
-    // Smart App Control being off is information, never an alarm.
     assert_eq!(
         status_of(
             &fixture(false, false, false, "Off"),
@@ -818,7 +809,6 @@ fn update_policy_blockers_pauses_and_overdue_restarts() {
     };
     let ok = fixture(false, false, false, 30);
     assert_eq!(ok.status, Status::Healthy);
-    // Switched-off automatic updates are an engine control now: shown once, there.
     assert!(ok
         .assessments
         .iter()
@@ -835,12 +825,10 @@ fn update_policy_blockers_pauses_and_overdue_restarts() {
         status_of(&fixture(false, false, true, 7), "update.reboot_overdue"),
         Status::Attention
     );
-    // A long uptime alone (Fast Startup) is not a pending restart.
     assert_eq!(
         status_of(&fixture(false, false, false, 90), "update.reboot_overdue"),
         Status::Healthy
     );
-    // The owned update.freshness/backup.coverage findings are untouched by this probe.
     assert!(ok
         .assessments
         .iter()
@@ -968,7 +956,6 @@ fn os_support_and_secure_boot_certificate_probes_parse_end_to_end() {
         }),
     );
     assert_eq!(p.status, Status::Healthy);
-    // A bad servicing type is unknown, not a guess.
     let p = assessed(ProbeId::SecureBootCerts, json!({"servicing_status":k(7)}));
     assert_eq!(p.status, Status::Unknown);
 }
@@ -980,7 +967,6 @@ fn new_probes_have_compiled_branches_and_read_only_privacy_boundaries() {
         include_str!("common.ps1"),
         include_str!("probes.ps1")
     );
-    // Fixed Windows tools and the WLAN API run natively, not through PowerShell.
     let native = [ProbeId::WindowsHello, ProbeId::WifiSecurity];
     for &id in &ProbeId::ALL[23..] {
         assert_eq!(
@@ -1041,7 +1027,6 @@ fn every_new_probe_has_a_launcher_module_entry_and_unique_source() {
     ] {
         assert!(launcher.contains(&format!("ProbeId::{id}")), "{id}");
     }
-    // The pinned module list matches what each branch loads.
     let script = include_str!("probes.ps1");
     for (probe, modules) in [
         (
@@ -1073,10 +1058,6 @@ fn every_new_probe_has_a_launcher_module_entry_and_unique_source() {
     sources.dedup();
     assert_eq!(sources.len(), ProbeId::ALL.len());
 }
-
-// ---------------------------------------------------------------------------
-// Sign-in, encryption, network and start-up checks.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn account_setup_daily_admin_and_find_my_device() {
@@ -1149,7 +1130,6 @@ fn kernel_stack_protection_is_a_tip_and_skipped_when_not_reported() {
         status_of(&fixture("Off", vec![1]), id),
         Status::Informational
     );
-    // Not reported by this Windows build: no assessment at all, no change to the probe.
     let absent = fixture("Absent", vec![2]);
     assert!(absent.assessments.iter().all(|a| a.rule.id != id));
     assert_eq!(status_of(&fixture("bogus", vec![2]), id), Status::Unknown);
@@ -1166,7 +1146,6 @@ fn dns_encryption_is_informational_unless_a_capable_provider_is_unencrypted() {
     let id = "net.dns_encryption";
     assert_eq!(status_of(&fixture(2, 2, 0), id), Status::Healthy);
     assert_eq!(status_of(&fixture(2, 0, 2), id), Status::Attention);
-    // Router-provided DNS: nothing to nag about, and DNS is never changed.
     assert_eq!(status_of(&fixture(1, 0, 0), id), Status::Informational);
     assert_eq!(status_of(&fixture(2, 1, 1), id), Status::Informational);
     assert_eq!(status_of(&fixture(0, 0, 0), id), Status::Unknown);

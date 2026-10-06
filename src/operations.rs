@@ -1,12 +1,4 @@
 //! Durable, opt-in maintenance, independent of reversible hardening controls.
-//!
-//! Integration: display `capabilities()` and the complete `Plan` (including risks,
-//! dependencies and policy), obtain explicit owner consent, then call `approve`
-//! with the displayed digest. `start` never elevates or reboots. Poll `Task` for
-//! progress; `wait` is bounded and cancellation stops subsequent work, NOT an OS
-//! servicing process. Keep the application alive to retain its supervisor/lock.
-//! After process loss, use `resume`: it only verifies, never replays an operation.
-//! All production entry points use the fixed protected operations directory.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use anyhow::{bail, ensure, Context, Result};
@@ -27,7 +19,6 @@ mod core;
 #[cfg(windows)]
 #[path = "operations/storage.rs"]
 mod storage;
-// Shared native trust checks only; diagnostics do not open operation state.
 #[cfg(windows)]
 pub(crate) use storage::{pin_system_executable, pin_system_module};
 #[cfg(windows)]
@@ -80,7 +71,6 @@ pub struct OperationSpec {
     pub reversibility: Reversibility,
     pub timeout_seconds: u64,
     pub downloads: bool,
-    /// Existing Defender cloud protection can use the network during a scan.
     pub network_access: bool,
     pub may_require_reboot: bool,
     pub explanation: String,
@@ -178,8 +168,6 @@ pub enum ExceptionScope {
     MeteredNetwork,
 }
 
-/// Only these soft gates can be excepted; elevation, ownership, AC, storage,
-/// reboot/busy/unknown authority and approval freshness cannot be bypassed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyException {
@@ -192,7 +180,6 @@ pub struct PolicyException {
 #[serde(deny_unknown_fields)]
 pub struct OwnerPolicy {
     pub allowed: Vec<OperationKind>,
-    /// Required for any non-diagnostic permission; at most 30 days when set.
     pub opt_in_until: Option<u64>,
     pub window: MaintenanceWindow,
     pub idle_seconds: u32,
@@ -222,7 +209,6 @@ impl Default for OwnerPolicy {
 #[serde(deny_unknown_fields)]
 pub struct PlanRequest {
     pub operations: Vec<OperationKind>,
-    /// Between 1 and 86400 seconds. Approval has a separate 15-minute maximum.
     pub valid_for_seconds: u64,
 }
 
@@ -239,13 +225,11 @@ pub struct PlanStep {
 pub struct Plan {
     pub schema: u32,
     pub id: Uuid,
-    /// One-way machine binding, not a machine credential or raw machine ID.
     pub machine: String,
     pub created_at: u64,
     pub expires_at: u64,
     pub policy: OwnerPolicy,
     pub steps: Vec<PlanStep>,
-    /// SHA-256 of the canonical typed plan with this field empty.
     pub digest: String,
 }
 
@@ -294,7 +278,6 @@ pub enum StopReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Evidence {
-    /// Diagnostic completed; this is not a clean-health assertion.
     DiagnosticCompleted,
     ComponentStoreHealthy,
     ComponentStoreRepairable,
@@ -386,7 +369,6 @@ impl Task {
             .map_err(|_| anyhow::anyhow!("Progress lock poisoned"))?
             .clone())
     }
-    /// Consume the result once. None means the supervisor is still running.
     pub fn wait(&self, timeout: Duration) -> Result<Option<PlanRecord>> {
         match self.result.recv_timeout(timeout) {
             Ok(result) => result.map(Some),
@@ -413,7 +395,6 @@ fn digest<T: Serialize>(value: &T) -> Result<String> {
 pub fn policy() -> Result<OwnerPolicy> {
     native(|e| Ok(e.state.policy.clone()))
 }
-/// Caller must obtain explicit owner opt-in before changing this policy.
 pub fn set_policy(policy: OwnerPolicy) -> Result<()> {
     native(|e| e.set_policy(policy))
 }
@@ -475,7 +456,6 @@ pub fn resume(id: Uuid) -> Result<Task> {
 fn spawn(id: Uuid, recovery: bool) -> Result<Task> {
     #[cfg(windows)]
     {
-        // Acquire before spawning: contention is a synchronous, bounded deferral.
         let store = storage::Store::open()?;
         let backend = windows::Backend::new(store.root())?;
         let mut engine = core::Engine::open(store, backend)?;

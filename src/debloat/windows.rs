@@ -1,8 +1,4 @@
 //! Windows PowerShell 5.1 runner for the embedded debloat scripts.
-//!
-//! Scripts arrive over stdin (never on the command line), run hidden with a
-//! clean environment, a deadline and bounded output. Untrusted values only
-//! travel in an environment variable that the caller validated first.
 use anyhow::{bail, ensure, Context, Result};
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -45,7 +41,6 @@ fn windows_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Run `script` and return its last non-empty stdout line.
 pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Result<String> {
     let win = windows_dir()?;
     let ps = win.join("System32/WindowsPowerShell/v1.0/powershell.exe");

@@ -23,10 +23,8 @@ function PatchSource {
     if ($defaults.Count -ne 1 -or $defaults[0] -cne '9482f4b4-e343-43b6-b170-9a65bc822c77') { throw 'Default update source is not unmanaged Windows Update' }
 }
 function PatchManagement {
-    # Shared compiled domain/MDM/cloud/RSOP/Update-policy checks; no dispatcher.
     Gate 'permissions.service.wuauserv'
     PatchSource
-    # Also veto per-user update policy; same-user token is validated natively.
     if (HasValues 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate') { throw 'User update policy configured' }
 }
 function PatchReboot {
@@ -319,7 +317,6 @@ try {
         PatchJson @{acknowledged=$true}
     }
 } catch {
-    # One line for the technical details: our own reason, or the WUA/COM error and its HRESULT.
     $why = ([string]$_.Exception.Message -replace '\s+', ' ').Trim()
     if ($why.Length -gt 200) { $why = $why.Substring(0, 200) }
     $hr = '0x{0:X8}' -f $_.Exception.HResult

@@ -1,7 +1,5 @@
-//! Saved copies of removed apps. Kept in the protected state directory so a
-//! removed app can be brought back without internet. This module owns the
-//! layout, the manifest and every check; it never runs PowerShell and never
-//! touches WindowsApps.
+//! Saved copies of removed apps, kept in the protected state directory so an
+//! app can be brought back without internet. Never runs PowerShell or touches WindowsApps.
 use anyhow::{ensure, Context, Result};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -20,9 +18,7 @@ pub const KEY: &str = "key.bin";
 pub const SCHEMA: u32 = 1;
 pub const MAX_FILES: usize = 50_000;
 pub const MAX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-/// Free space kept on top of the measured size before saving a copy.
 pub const HEADROOM: u64 = 1024 * 1024 * 1024;
-/// Publisher id of Microsoft packages. Only Microsoft frameworks are kept.
 pub const MICROSOFT: &str = "8wekyb3d8bbwe";
 const MAX_PATH_CHARS: usize = 240;
 const MAX_DEPTH: usize = 32;
@@ -41,15 +37,11 @@ pub enum Kind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
-    /// Relative, '/'-separated.
     pub path: String,
     pub size: u64,
-    /// Lowercase hex SHA-256.
     pub sha256: String,
 }
 
-/// Windows permissions (SDDL) of a package folder and of its files, as
-/// they were in WindowsApps when the copy was made.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sddl {
     pub dir: String,
@@ -61,7 +53,6 @@ pub struct Package {
     pub full_name: String,
     pub kind: Kind,
     pub files: Vec<FileEntry>,
-    /// Original permissions; checked again with `own_sddl` before use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sddl: Option<Sddl>,
 }
@@ -70,7 +61,6 @@ pub struct Package {
 pub struct DataBlob {
     pub sid: String,
     pub plain_size: u64,
-    /// SHA-256 of the encrypted file `data\<sid>.bin`.
     pub sha256: String,
 }
 
@@ -81,7 +71,6 @@ pub struct Manifest {
     pub index: u16,
     pub family: String,
     pub packages: Vec<Package>,
-    /// Full names of shared framework copies this app needs.
     pub frameworks: Vec<String>,
     pub data: Vec<DataBlob>,
     pub provisioned: bool,
@@ -96,7 +85,6 @@ pub struct FrameworkCopy {
     pub sddl: Option<Sddl>,
 }
 
-/// `Name_Version_Architecture_ResourceId_PublisherId`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     pub name: String,
@@ -160,7 +148,6 @@ pub fn parse_full_name(full: &str) -> Result<Identity> {
     })
 }
 
-/// `CON`, `NUL`, `COM1`... with or without an extension (any case).
 fn reserved_device(component: &str) -> bool {
     let stem = component.split('.').next().unwrap_or("").trim_end();
     let up = stem.to_ascii_uppercase();
@@ -172,7 +159,6 @@ fn reserved_device(component: &str) -> bool {
         && up.as_bytes()[3].is_ascii_digit())
 }
 
-/// A '/'-separated relative path that can't escape its root on Windows.
 pub fn valid_relative(path: &str) -> bool {
     if path.is_empty() || path.chars().count() > MAX_PATH_CHARS {
         return false;
@@ -192,7 +178,6 @@ pub fn valid_relative(path: &str) -> bool {
         })
 }
 
-/// A local or domain user account (`S-1-5-21-a-b-c-rid`).
 pub fn valid_sid(sid: &str) -> bool {
     let Some(rest) = sid.strip_prefix("S-1-5-21-") else {
         return false;
@@ -222,7 +207,6 @@ fn check_files(files: &[FileEntry], count: &mut usize, bytes: &mut u64) -> Resul
 }
 
 impl Manifest {
-    /// Everything restore relies on, re-derived from the compiled catalog.
     pub fn check(&self, index: u16) -> Result<()> {
         ensure!(self.schema == SCHEMA, "Unknown saved copy version");
         ensure!(self.index == index, "Saved copy belongs to another app");
@@ -284,7 +268,6 @@ impl FrameworkCopy {
     }
 }
 
-/// Refuse links of any kind: symlinks, junctions and other reparse points.
 pub(crate) fn plain(meta: &fs::Metadata) -> bool {
     if meta.file_type().is_symlink() {
         return false;
@@ -320,7 +303,6 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Every file under `root`, sorted by path. Fails on any link.
 pub fn hash_tree(root: &Path) -> Result<Vec<FileEntry>> {
     fn walk(
         root: &Path,
@@ -369,7 +351,6 @@ pub fn hash_tree(root: &Path) -> Result<Vec<FileEntry>> {
     Ok(out)
 }
 
-/// The folder holds exactly `files`, byte for byte.
 pub fn verify_tree(root: &Path, files: &[FileEntry]) -> Result<()> {
     let found = hash_tree(root)?;
     let mut want = files.to_vec();
@@ -378,7 +359,6 @@ pub fn verify_tree(root: &Path, files: &[FileEntry]) -> Result<()> {
     Ok(())
 }
 
-/// A single plain folder name that is not one of the store's own folders.
 fn valid_family_dir(family: &str) -> bool {
     !family.is_empty()
         && !family.starts_with('.')
@@ -433,7 +413,6 @@ impl Store {
         Ok(dir)
     }
 
-    /// Remove leftovers of an interrupted save or replace.
     pub fn clean_staging(&self) {
         let Ok(entries) = fs::read_dir(&self.root) else {
             return;
@@ -441,8 +420,6 @@ impl Store {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if let Some(rest) = name.strip_prefix(OLD) {
-                // An interrupted replace: if the family has no copy, the
-                // `.old-` folder is the only complete one, so put it back.
                 let family = rest
                     .get(17..)
                     .filter(|_| rest.as_bytes().get(16) == Some(&b'-'));
@@ -476,7 +453,6 @@ impl Store {
         ))
     }
 
-    /// The checked manifest stored under `family`, if any.
     pub fn load(&self, family: &str, index: u16) -> Result<Option<Manifest>> {
         ensure!(valid_family_dir(family), "Unexpected family");
         let Some(m) = Self::read_json::<Manifest>(&self.family_dir(family).join(MANIFEST))? else {
@@ -487,9 +463,6 @@ impl Store {
         Ok(Some(m))
     }
 
-    /// Every valid saved copy for catalog entry `index` (wildcard entries
-    /// can own several families). Damaged ones are skipped here; restore
-    /// reports them by loading the family directly.
     pub fn for_index(&self, index: u16) -> Vec<Manifest> {
         let Ok(entries) = fs::read_dir(&self.root) else {
             return Vec::new();
@@ -515,7 +488,6 @@ impl Store {
         Ok(Some(f))
     }
 
-    /// Atomically make `staging` the saved copy for `family`.
     pub fn commit(&self, staging: &Path, family: &str) -> Result<()> {
         ensure!(valid_family_dir(family), "Unexpected family");
         ensure!(
@@ -532,7 +504,6 @@ impl Store {
         let target = self.family_dir(family);
         let mut tag = [0u8; 8];
         rand::rngs::OsRng.fill_bytes(&mut tag);
-        // The family is part of the name so an interrupted replace can be undone.
         let old = self.root.join(format!("{OLD}{}-{family}", hex(&tag)));
         let had_old = target.exists();
         if had_old {
@@ -559,7 +530,6 @@ impl Store {
         Ok(())
     }
 
-    /// Remove framework copies no saved app needs any more.
     pub fn gc_frameworks(&self) -> Result<()> {
         let dir = self.root.join(FRAMEWORKS);
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -589,7 +559,6 @@ impl Store {
         Ok(())
     }
 
-    /// Bytes used by all saved copies (best effort; links are not followed).
     pub fn total_bytes(&self) -> u64 {
         fn size(path: &Path) -> u64 {
             let Ok(meta) = fs::symlink_metadata(path) else {
@@ -612,8 +581,6 @@ impl Store {
 
 const TRUSTED_INSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
-/// Rights that only read and run (FILE_GENERIC_READ|FILE_GENERIC_EXECUTE,
-/// GENERIC_READ, GENERIC_EXECUTE and their two-letter forms).
 fn read_only(rights: &str) -> bool {
     const ALLOWED: u32 = 0x0012_00a9 | 0x8000_0000 | 0x2000_0000; // FILE_GENERIC_READ|EXECUTE, GENERIC_READ, GENERIC_EXECUTE
     if let Some(hex) = rights.strip_prefix("0x") {
@@ -653,7 +620,6 @@ fn check_sddl(sddl: &str) -> Result<Vec<String>> {
     let mut names = Vec::new();
     while !rest.is_empty() {
         ensure!(rest.starts_with('('), "Unexpected DACL");
-        // Conditional ACEs contain parentheses; find the matching close.
         let mut depth = 0usize;
         let mut end = None;
         let mut quoted = false;
@@ -973,8 +939,6 @@ mod tests {
         assert_eq!(store.load(&m.family, index).unwrap(), Some(m.clone()));
         assert_eq!(store.for_index(index), vec![m.clone()]);
 
-        // A framework copy referenced by the manifest survives GC, an
-        // unreferenced one is removed.
         let used = store.framework_dir(&m.frameworks[0]);
         let unused = store.framework_dir("Microsoft.UI.Xaml.2.8_8.2511.26001.0_x64__8wekyb3d8bbwe");
         fs::create_dir_all(&used).unwrap();
@@ -982,7 +946,6 @@ mod tests {
         store.gc_frameworks().unwrap();
         assert!(used.exists() && !unused.exists());
 
-        // Replacing keeps exactly one copy.
         let staging = store.new_staging().unwrap();
         let mut newer = m.clone();
         newer.created = 2;
@@ -1059,7 +1022,6 @@ mod tests {
         assert!(!staging.exists() && !old.exists());
         assert!(store.family_dir(family).join("keep").exists());
 
-        // With a current copy in place the leftover is just removed.
         let old = store.root().join(format!("{OLD}0123456789abcdef-{family}"));
         fs::create_dir_all(&old).unwrap();
         store.clean_staging();
@@ -1092,7 +1054,6 @@ mod tests {
         }
     }
 
-    /// Real permissions read on Windows 11 (VCLibs framework, Calculator).
     const FRAMEWORK_DIR: &str = "O:BAG:S-1-5-21-583798214-2395324448-2099448207-513D:AI(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;AC)(A;OICI;0x1200a9;;;S-1-15-2-2)(A;OICIID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;OICIID;0x1200a9;;;S-1-15-3-1024-3635283841-2530182609-996808640-1887759898-3848208603-3313616867-983405619-2501854204)(A;OICIID;FA;;;SY)(A;CIID;0x1200a9;;;BA)(A;OICIID;0x1200a9;;;LS)(A;OICIID;0x1200a9;;;NS)(A;OICIID;0x1200a9;;;RC)";
     const APP_FILE: &str = "O:SYG:SYD:AI(XA;ID;0x1200a9;;;BU;(WIN://SYSAPPID Contains \"Microsoft.WindowsCalculator_8wekyb3d8bbwe\"))(A;ID;0x1200a9;;;S-1-15-3-466767348-3739614953-2700836392-1801644223-4227750657-1087833535-2488631167)(A;ID;FR;;;BU)(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;0x1200a9;;;S-1-15-3-1024-3635283841-2530182609-996808640-1887759898-3848208603-3313616867-983405619-2501854204)(A;ID;FA;;;SY)(A;ID;0x1200a9;;;LS)(A;ID;0x1200a9;;;NS)(A;ID;0x1200a9;;;RC)";
 
@@ -1102,9 +1063,7 @@ mod tests {
         let calc = "Microsoft.WindowsCalculator_8wekyb3d8bbwe";
         assert_eq!(own_sddl(FRAMEWORK_DIR, vclibs).unwrap(), FRAMEWORK_DIR);
         assert_eq!(own_sddl(APP_FILE, calc).unwrap(), APP_FILE);
-        // An app-only rule naming another app is refused.
         assert!(own_sddl(APP_FILE, "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
-        // Untrusted owner, write grants, audit sections are refused.
         assert!(own_sddl(&APP_FILE.replace("O:SY", "O:BU"), calc).is_err());
         assert!(own_sddl(&format!("{FRAMEWORK_DIR}(A;;FA;;;BU)"), vclibs).is_err());
         assert!(own_sddl(&format!("{FRAMEWORK_DIR}S:(AU;SA;FA;;;WD)"), vclibs).is_err());
@@ -1128,21 +1087,18 @@ mod tests {
         .unwrap();
         assert!(out.contains("\"Microsoft.BingWeather_8wekyb3d8bbwe\""));
         assert!(!out.contains("WindowsAlarms"));
-        // Family must appear in the template.
         assert!(template_sddl(
             DIR_SDDL,
             "Microsoft.Other_8wekyb3d8bbwe",
             "Microsoft.BingWeather_8wekyb3d8bbwe"
         )
         .is_err());
-        // Owner must be SYSTEM.
         assert!(template_sddl(
             &DIR_SDDL.replace("O:SY", "O:BU"),
             "Microsoft.WindowsAlarms_8wekyb3d8bbwe",
             "Microsoft.BingWeather_8wekyb3d8bbwe"
         )
         .is_err());
-        // Any write grant to someone other than SYSTEM/TrustedInstaller is refused.
         for evil in [
             "(A;;FA;;;BU)",
             "(A;;0x120116;;;WD)",
@@ -1165,7 +1121,6 @@ mod tests {
                 "{evil}"
             );
         }
-        // Target family is validated (no quote injection).
         assert!(template_sddl(
             DIR_SDDL,
             "Microsoft.WindowsAlarms_8wekyb3d8bbwe",
