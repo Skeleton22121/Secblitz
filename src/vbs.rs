@@ -46,12 +46,52 @@ pub const NEEDS_MEMORY_INTEGRITY: &str = "Not offered: it needs memory integrity
 pub const NEEDS_RESTART: &str = "Not offered: restart your PC to finish memory integrity first";
 pub const NO_SHADOW_STACKS: &str = "Not offered: this PC's processor does not support it";
 pub const UNREADABLE: &str = "Not offered: we could not check this PC's protection support";
+pub const SET_BY_HAND: &str = "Not offered: this PC's virtualization security was set up by hand";
+pub const OLD_WINDOWS: &str = "Not offered: this version of Windows does not support it";
 
 // Finding titles for the check after the restart.
 pub const MEMORY_INTEGRITY_NOT_RUNNING: &str = "Memory integrity not running";
 pub const STACK_NOT_RUNNING: &str = "Kernel stack protection not running";
+/// Memory integrity runs, but Windows refused a driver since the last start.
+pub const DEVICE_BLOCKED: &str = "A device may not be working";
 /// Prefix of the finding detail that carries driver names.
 pub const BLOCKED_PREFIX: &str = "blocked: ";
+/// The finding detail carries the start-up time (Unix seconds) so the engine
+/// can tell "restarted since the change" from "still waiting for a restart".
+pub const BOOT_PREFIX: &str = "boot: ";
+/// The engine adds this when the control's change is the newest one that can
+/// be undone, so "Undo" really undoes it and nothing else.
+pub const UNDO_READY: &str = "undo: latest";
+
+/// The control a verification finding is about.
+pub fn finding_control(title: &str) -> Option<&'static str> {
+    match title {
+        MEMORY_INTEGRITY_NOT_RUNNING | DEVICE_BLOCKED => Some(MEMORY_INTEGRITY),
+        STACK_NOT_RUNNING => Some(STACK_PROTECTION),
+        _ => None,
+    }
+}
+
+/// Start-up time carried in a verification finding.
+pub fn boot_from_detail(detail: &str) -> Option<i64> {
+    let rest = detail.split_once(BOOT_PREFIX)?.1;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Split one fix selection into separate batches: everything ordinary first,
+/// then each core protection alone, so undoing one never touches another fix.
+pub fn split_batches(ids: &[String]) -> Vec<Vec<String>> {
+    let mut batches = Vec::new();
+    let ordinary: Vec<String> = ids.iter().filter(|i| !is_vbs(i)).cloned().collect();
+    if !ordinary.is_empty() {
+        batches.push(ordinary);
+    }
+    for id in ids.iter().filter(|i| is_vbs(i)) {
+        batches.push(vec![id.clone()]);
+    }
+    batches
+}
 
 // ------------------------------------------------------------ PE scan
 
@@ -183,16 +223,33 @@ pub struct ServiceRow {
 /// Turn a service's image setting into an absolute path. Handles the forms
 /// Windows writes: `\SystemRoot\...`, `%SystemRoot%\...`, `\??\C:\...`,
 /// `system32\drivers\x.sys` (relative to the Windows folder) and `C:\...`.
-/// Anything else is skipped (None).
+/// Anything else is None: the caller must treat that as "could not check".
 pub fn resolve_image(raw: &str, windows: &str) -> Option<String> {
-    let mut text = raw.trim().trim_matches('"').trim();
-    if text.is_empty() || text.chars().any(char::is_control) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
         return None;
     }
-    // Keep only the file: some entries carry arguments after the name.
-    let lower = text.to_ascii_lowercase();
-    let end = lower.find(".sys")? + 4;
-    text = text.get(..end)?;
+    // Keep only the file: some entries carry arguments after the name. The
+    // name ends at ".sys" followed by the end, a space or a quote, so a
+    // folder such as `Foo.System` is never cut in the middle.
+    let text = if let Some(quoted) = trimmed.strip_prefix('"') {
+        quoted.split('"').next()?
+    } else {
+        let lower = trimmed.to_ascii_lowercase();
+        let mut end = None;
+        for (at, _) in lower.match_indices(".sys") {
+            let next = lower[at + 4..].chars().next();
+            if next.is_none_or(|c| c.is_whitespace() || c == '"') {
+                end = Some(at + 4);
+                break;
+            }
+        }
+        trimmed.get(..end?)?
+    };
+    let text = text.trim();
+    if !text.to_ascii_lowercase().ends_with(".sys") {
+        return None;
+    }
     let windows = windows.trim_end_matches('\\');
     let lower = text.to_ascii_lowercase();
     let full = if let Some(rest) = text.strip_prefix(r"\??\") {
@@ -214,22 +271,33 @@ pub fn resolve_image(raw: &str, windows: &str) -> Option<String> {
     (absolute && !full.split('\\').any(|part| part == "..")).then_some(full)
 }
 
+/// The drivers to scan, and the configured drivers whose file could not be
+/// located (those can never be called fine).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DriverList {
+    pub files: Vec<DriverFile>,
+    pub unresolved: Vec<String>,
+}
+
 /// The driver files configured to load (kernel or file-system driver services
 /// that start at boot, system start, automatically or on demand) plus the
 /// modules that are loaded right now. Only `.sys` files are listed, once each.
-pub fn driver_files(
-    services: &[ServiceRow],
-    loaded: &[String],
-    windows: &str,
-) -> Vec<DriverFile> {
-    let mut out: Vec<DriverFile> = Vec::new();
+pub fn driver_files(services: &[ServiceRow], loaded: &[String], windows: &str) -> DriverList {
+    let mut out = DriverList::default();
     let mut push = |name: &str, path: String| {
         let lower = path.to_ascii_lowercase();
-        if !lower.ends_with(".sys") || out.iter().any(|d| d.path.to_ascii_lowercase() == lower) {
+        if !lower.ends_with(".sys")
+            || out
+                .files
+                .iter()
+                .any(|d| d.path.to_ascii_lowercase() == lower)
+        {
             return;
         }
-        out.push(DriverFile {
-            name: file_name(&path).unwrap_or_else(|| name.to_owned()),
+        out.files.push(DriverFile {
+            name: file_name(&path)
+                .or_else(|| safe_name(name))
+                .unwrap_or_else(|| "driver".into()),
             path,
         });
     };
@@ -245,10 +313,15 @@ pub fn driver_files(
                 service.name
             )),
         };
-        if let Some(path) = path {
-            push(&service.name, path);
+        match path {
+            Some(path) => push(&service.name, path),
+            None => out.unresolved.push(
+                safe_name(&service.name).unwrap_or_else(|| "driver".into()),
+            ),
         }
     }
+    // Loaded modules include .exe and .dll files (the kernel itself): only
+    // drivers are scanned, and those are skipped on purpose.
     for module in loaded {
         if let Some(path) = resolve_image(module, windows) {
             push("", path);
@@ -310,27 +383,54 @@ pub fn scan_files(
 #[serde(rename_all = "camelCase", default)]
 pub struct Facts {
     pub available: Vec<u32>,
+    pub required: Vec<u32>,
     pub configured: Vec<u32>,
     pub running: Vec<u32>,
-    pub hypervisor_present: Option<bool>,
     pub virt_firmware: Option<bool>,
+    /// Win32_DeviceGuard VirtualizationBasedSecurityStatus: 2 means running.
+    pub vbs_status: Option<u32>,
+    /// Windows build number, for features that arrived in a later release.
+    pub build: Option<u32>,
     pub lock_vbs: Option<u32>,
     pub lock_hvci: Option<u32>,
     pub lock_stack: Option<u32>,
+    /// DeviceGuard `Mandatory`: Windows refuses to start without VBS.
+    pub mandatory: Option<u32>,
+    /// DeviceGuard `EnableVirtualizationBasedSecurity` set on purpose.
+    pub enable_vbs: Option<u32>,
+    pub require_platform: Option<u32>,
     pub enabled_hvci: Option<u32>,
     pub enabled_stack: Option<u32>,
     pub boot_unix: Option<i64>,
     /// Driver files Windows blocked since the last start.
     pub blocked: Vec<String>,
+    /// Vendor the processor reports for the hypervisor it runs under, filled
+    /// in by the caller from CPUID (not by the script). None: no hypervisor.
+    #[serde(skip)]
+    pub hypervisor_vendor: Option<String>,
 }
 
+/// The vendor id Windows' own hypervisor reports.
+pub const MICROSOFT_HV: &str = "Microsoft Hv";
+
 /// Whether the PC can start memory integrity: a hypervisor and Secure Boot
-/// are available and virtualization is on in the firmware or already in use.
+/// are available, and either Windows' own hypervisor is already in use or no
+/// hypervisor is present and virtualization is on in the firmware. Any other
+/// vendor's hypervisor (a virtual machine) cannot host Windows' hypervisor
+/// reliably, so it never counts.
 pub fn hardware_supports(facts: &Facts) -> bool {
-    facts.available.contains(&1)
-        && facts.available.contains(&2)
-        && (facts.hypervisor_present == Some(true) || facts.virt_firmware == Some(true))
+    if !(facts.available.contains(&1) && facts.available.contains(&2)) {
+        return false;
+    }
+    match facts.hypervisor_vendor.as_deref() {
+        Some(MICROSOFT_HV) => true,
+        Some(_) => facts.vbs_status == Some(2),
+        None => facts.virt_firmware == Some(true) || facts.vbs_status == Some(2),
+    }
 }
+
+/// First build of Windows 11 22H2, which added kernel-mode stack protection.
+pub const STACK_PROTECTION_BUILD: u32 = 22621;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
@@ -348,14 +448,23 @@ pub fn driver_reason(scan: &Scan) -> Option<String> {
         let mut names: Vec<&str> = scan.flagged.iter().map(|(n, _)| n.as_str()).collect();
         names.sort_unstable();
         names.dedup();
-        let more = names.len().saturating_sub(5);
-        let mut text = names.iter().take(5).copied().collect::<Vec<_>>().join(", ");
-        if more > 0 {
-            text.push_str(&format!(" and {more} more"));
-        }
+        let text = names.iter().take(5).copied().collect::<Vec<_>>().join(", ");
         return Some(format!("{DRIVER}: {text}"));
     }
     (!scan.unreadable.is_empty()).then(|| DRIVERS_UNREADABLE.to_owned())
+}
+
+/// Settings someone chose on purpose that make a change here risky or
+/// pointless: Windows refusing to start without VBS, VBS switched off by hand,
+/// or a platform feature that is required but not available.
+fn set_up_by_hand(facts: &Facts) -> Option<&'static str> {
+    if facts.mandatory == Some(1) || facts.enable_vbs == Some(0) {
+        return Some(SET_BY_HAND);
+    }
+    let missing_required = facts.required.iter().any(|p| !facts.available.contains(p));
+    let platform_needs_dma =
+        facts.require_platform.is_some_and(|v| v & 2 != 0) && !facts.available.contains(&3);
+    (missing_required || platform_needs_dma).then_some(NOT_SUPPORTED)
 }
 
 /// Decide whether a fix may be offered. `scan` runs the driver scan and is
@@ -379,15 +488,25 @@ pub fn decide(
         if locked {
             return no(LOCKED);
         }
+        if facts.build.is_some_and(|b| b < STACK_PROTECTION_BUILD) {
+            return no(OLD_WINDOWS);
+        }
+        // Say what cannot change first, so the advice can always be followed.
+        if !hardware_supports(facts) && !facts.running.contains(&2) {
+            return no(NOT_SUPPORTED);
+        }
+        if !shadow_stack_cpu {
+            return no(NO_SHADOW_STACKS);
+        }
+        if let Some(reason) = set_up_by_hand(facts) {
+            return no(reason);
+        }
         if !facts.running.contains(&2) {
             return if facts.configured.contains(&2) {
                 no(NEEDS_RESTART)
             } else {
                 no(NEEDS_MEMORY_INTEGRITY)
             };
-        }
-        if !shadow_stack_cpu {
-            return no(NO_SHADOW_STACKS);
         }
         return Decision::Offer;
     }
@@ -403,6 +522,9 @@ pub fn decide(
     if !hardware_supports(facts) {
         return no(NOT_SUPPORTED);
     }
+    if let Some(reason) = set_up_by_hand(facts) {
+        return no(reason);
+    }
     match driver_reason(&scan()) {
         Some(reason) => Decision::NotOffered(reason),
         None => Decision::Offer,
@@ -415,15 +537,15 @@ pub fn restarted_since(written_unix: Option<i64>, boot_unix: Option<i64>) -> boo
     matches!((written_unix, boot_unix), (Some(w), Some(b)) if w <= b)
 }
 
-/// Findings for the check after the restart: turned on but not running, with
-/// the driver names Windows blocked. Only claims this once the PC has
-/// restarted since the change.
-pub fn verification(
-    facts: &Facts,
-    memory_integrity_written: Option<i64>,
-    stack_written: Option<i64>,
-) -> Vec<Finding> {
+/// Candidate findings for the check after a restart. They only say what the
+/// PC reports now (plus the start-up time); the engine keeps one only when
+/// Secblitz made the change, the PC has restarted since, and says whether
+/// undoing it is the next undo.
+pub fn verification(facts: &Facts) -> Vec<Finding> {
     let mut out = Vec::new();
+    let Some(boot) = facts.boot_unix else {
+        return out;
+    };
     let names: Vec<String> = facts
         .blocked
         .iter()
@@ -431,26 +553,28 @@ pub fn verification(
         .take(5)
         .collect();
     let detail = |base: &str| {
-        if names.is_empty() {
-            base.to_owned()
-        } else {
-            format!("{base} {BLOCKED_PREFIX}{}", names.join(", "))
+        let mut text = format!("{base} {BOOT_PREFIX}{boot}.");
+        if !names.is_empty() {
+            text.push_str(&format!(" {BLOCKED_PREFIX}{}", names.join(", ")));
         }
+        text
     };
     let memory_integrity_running = facts.running.contains(&2);
-    if facts.enabled_hvci == Some(1)
-        && !memory_integrity_running
-        && restarted_since(memory_integrity_written, facts.boot_unix)
-    {
+    if facts.enabled_hvci == Some(1) && !memory_integrity_running {
         out.push(Finding {
             title: MEMORY_INTEGRITY_NOT_RUNNING.into(),
             status: "attention".into(),
             detail: detail("Memory integrity is configured but not running."),
         });
+    } else if facts.enabled_hvci == Some(1) && memory_integrity_running && !names.is_empty() {
+        out.push(Finding {
+            title: DEVICE_BLOCKED.into(),
+            status: "attention".into(),
+            detail: detail("Windows refused a driver while memory integrity was on."),
+        });
     } else if facts.enabled_stack == Some(1)
         && memory_integrity_running
         && !facts.running.contains(&5)
-        && restarted_since(stack_written, facts.boot_unix)
     {
         out.push(Finding {
             title: STACK_NOT_RUNNING.into(),
@@ -506,6 +630,43 @@ fn cpuid_leaf7_ecx() -> Option<u32> {
             return None;
         }
         Some(__cpuid_count(7, 0).ecx)
+    }
+}
+
+/// The vendor id of the hypervisor this processor runs under (CPUID leaf 1
+/// bit 31, then leaf 0x40000000), or None on bare hardware. Read-only.
+pub fn cpu_hypervisor_vendor() -> Option<String> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        hypervisor_vendor_x86()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        None
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unused_unsafe)]
+fn hypervisor_vendor_x86() -> Option<String> {
+    use std::arch::x86_64::{__cpuid, __cpuid_count};
+    // SAFETY: CPUID exists on every x86_64 processor and only reads.
+    unsafe {
+        if __cpuid(1).ecx & (1 << 31) == 0 {
+            return None;
+        }
+        let leaf = __cpuid_count(0x4000_0000, 0);
+        let mut raw = Vec::with_capacity(12);
+        for part in [leaf.ebx, leaf.ecx, leaf.edx] {
+            raw.extend_from_slice(&part.to_le_bytes());
+        }
+        let text: String = raw
+            .iter()
+            .take_while(|b| **b != 0)
+            .map(|b| if b.is_ascii_graphic() || *b == b' ' { char::from(*b) } else { '?' })
+            .collect();
+        // A flag without a readable vendor still means some hypervisor.
+        Some(if text.is_empty() { "unknown".into() } else { text })
     }
 }
 
@@ -724,6 +885,13 @@ mod tests {
             (r"\??\D:\x\a.sys", Some(r"D:\x\a.sys")),
             (r#""D:\x y\a.sys""#, Some(r"D:\x y\a.sys")),
             (r"D:\x\a.sys -flag", Some(r"D:\x\a.sys")),
+            // A ".sys" inside a folder name is not the end of the file name.
+            (
+                r"C:\Tools\Foo.System\drv.sys",
+                Some(r"C:\Tools\Foo.System\drv.sys"),
+            ),
+            (r"C:\Tools\a.sys.exe", None),
+            (r"\Windows\System32\drivers\a.sys", None),
             (r"\SYSTEMROOT\SYSTEM32\A.SYS", Some(r"C:\Windows\SYSTEM32\A.SYS")),
             (r"\Device\HarddiskVolume3\a.sys", None),
             (r"C:\a.exe", None),
@@ -757,9 +925,15 @@ mod tests {
             r"\SystemRoot\System32\drivers\BOOT.SYS".to_owned(),
             r"\??\C:\Windows\System32\drivers\extra.sys".to_owned(),
         ];
-        let files = driver_files(&services, &loaded, r"C:\Windows\");
-        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        let list = driver_files(&services, &loaded, r"C:\Windows\");
+        let names: Vec<&str> = list.files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["boot.sys", "auto.sys", "fs.sys", "extra.sys"]);
+        // A configured driver whose file cannot be located is never skipped
+        // quietly: it is listed so the check says "could not check".
+        assert_eq!(list.unresolved, ["odd"]);
+        // An odd service name never reaches the screen.
+        let odd = driver_files(&[svc("bad name;", 1, 3, Some(r"\Device\x\a.sys"))], &[], r"C:\Windows");
+        assert_eq!(odd.unresolved, ["driver"]);
     }
 
     fn read_from(
@@ -810,8 +984,8 @@ mod tests {
     fn supported() -> Facts {
         Facts {
             available: vec![1, 2, 3, 7],
-            hypervisor_present: Some(false),
             virt_firmware: Some(true),
+            build: Some(26100),
             ..Facts::default()
         }
     }
@@ -864,12 +1038,13 @@ mod tests {
         for broken in [
             |f: &mut Facts| f.available = vec![2],
             |f: &mut Facts| f.available = vec![1],
+            |f: &mut Facts| f.virt_firmware = Some(false),
+            |f: &mut Facts| f.virt_firmware = None,
+            // A virtual machine's own hypervisor (VirtualBox, VMware) never
+            // counts, even when it passes virtualization through.
+            |f: &mut Facts| f.hypervisor_vendor = Some("VBoxVBoxVBox".into()),
             |f: &mut Facts| {
-                f.hypervisor_present = Some(false);
-                f.virt_firmware = Some(false);
-            },
-            |f: &mut Facts| {
-                f.hypervisor_present = None;
+                f.hypervisor_vendor = Some("VMwareVMware".into());
                 f.virt_firmware = None;
             },
         ] {
@@ -880,10 +1055,15 @@ mod tests {
                 no(NOT_SUPPORTED)
             );
         }
-        // A running hypervisor is enough when the firmware flag is unknown.
+        // Windows' own hypervisor is enough when the firmware flag is unknown.
         let mut f = supported();
         f.virt_firmware = None;
-        f.hypervisor_present = Some(true);
+        f.hypervisor_vendor = Some(MICROSOFT_HV.into());
+        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), Decision::Offer);
+        // So is a PC where virtualization-based security already runs.
+        let mut f = supported();
+        f.virt_firmware = None;
+        f.vbs_status = Some(2);
         assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), Decision::Offer);
     }
 
@@ -918,7 +1098,7 @@ mod tests {
         };
         assert_eq!(
             decide_with(MEMORY_INTEGRITY, &supported(), true, many),
-            Decision::NotOffered(format!("{DRIVER}: d0.sys, d1.sys, d2.sys, d3.sys, d4.sys and 3 more"))
+            Decision::NotOffered(format!("{DRIVER}: d0.sys, d1.sys, d2.sys, d3.sys, d4.sys"))
         );
         let unreadable = Scan {
             flagged: vec![],
@@ -933,6 +1113,15 @@ mod tests {
     #[test]
     fn stack_protection_needs_memory_integrity_running_and_a_capable_processor() {
         let mut f = supported();
+        // What cannot change is named first, so the advice can be followed.
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &Facts::default(), true, clean()),
+            no(NOT_SUPPORTED)
+        );
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &f, false, clean()),
+            no(NO_SHADOW_STACKS)
+        );
         // Memory integrity not on at all.
         assert_eq!(
             decide_with(STACK_PROTECTION, &f, true, clean()),
@@ -951,6 +1140,12 @@ mod tests {
             no(NO_SHADOW_STACKS)
         );
         assert_eq!(decide_with(STACK_PROTECTION, &f, true, clean()), Decision::Offer);
+        // An older Windows does not have the feature at all.
+        let mut old = f.clone();
+        old.build = Some(19045);
+        assert_eq!(decide_with(STACK_PROTECTION, &old, true, clean()), no(OLD_WINDOWS));
+        old.build = Some(STACK_PROTECTION_BUILD);
+        assert_eq!(decide_with(STACK_PROTECTION, &old, true, clean()), Decision::Offer);
         // Its own lock or the general one.
         let mut locked = f.clone();
         locked.lock_stack = Some(1);
@@ -991,31 +1186,50 @@ mod tests {
     }
 
     #[test]
-    fn after_the_restart_a_setting_that_is_not_running_is_reported_with_the_drivers() {
+    fn a_setting_that_is_not_running_is_reported_with_the_start_time_and_drivers() {
         let mut f = supported();
         f.enabled_hvci = Some(1);
         f.boot_unix = Some(1000);
         f.blocked = vec!["bad.sys".into(), "not ok;rm.sys".into(), "second.sys".into()];
-        let out = verification(&f, Some(500), None);
+        let out = verification(&f);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title, MEMORY_INTEGRITY_NOT_RUNNING);
         assert_eq!(out[0].status, "attention");
         assert_eq!(blocked_names(&out[0].detail).unwrap(), "bad.sys, second.sys");
+        assert_eq!(boot_from_detail(&out[0].detail), Some(1000));
+        assert_eq!(finding_control(&out[0].title), Some(MEMORY_INTEGRITY));
         // Without blocked drivers there is nothing to name.
         f.blocked.clear();
-        let out = verification(&f, Some(500), None);
+        let out = verification(&f);
         assert_eq!(blocked_names(&out[0].detail), None);
-        // Still waiting for the first restart: say nothing.
-        assert!(verification(&f, Some(1500), None).is_empty());
-        // Unknown times: say nothing.
-        assert!(verification(&f, None, None).is_empty());
-        // Running: all well.
+        // Unknown start time: say nothing.
+        f.boot_unix = None;
+        assert!(verification(&f).is_empty());
+        f.boot_unix = Some(1000);
+        // Running with nothing blocked: all well.
         f.running = vec![2];
-        assert!(verification(&f, Some(500), None).is_empty());
+        assert!(verification(&f).is_empty());
         // Not configured: nothing to verify.
         f.running.clear();
         f.enabled_hvci = Some(0);
-        assert!(verification(&f, Some(500), None).is_empty());
+        assert!(verification(&f).is_empty());
+    }
+
+    #[test]
+    fn a_driver_blocked_while_memory_integrity_runs_is_reported_too() {
+        let mut f = supported();
+        f.enabled_hvci = Some(1);
+        f.running = vec![2];
+        f.boot_unix = Some(1000);
+        f.blocked = vec!["pen.sys".into()];
+        let out = verification(&f);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title, DEVICE_BLOCKED);
+        assert_eq!(finding_control(DEVICE_BLOCKED), Some(MEMORY_INTEGRITY));
+        assert_eq!(blocked_names(&out[0].detail).unwrap(), "pen.sys");
+        // Only when memory integrity is on.
+        f.enabled_hvci = Some(0);
+        assert!(verification(&f).is_empty());
     }
 
     #[test]
@@ -1024,16 +1238,66 @@ mod tests {
         f.enabled_stack = Some(1);
         f.running = vec![2];
         f.boot_unix = Some(1000);
-        let out = verification(&f, None, Some(10));
+        let out = verification(&f);
         assert_eq!(out[0].title, STACK_NOT_RUNNING);
+        assert_eq!(finding_control(STACK_NOT_RUNNING), Some(STACK_PROTECTION));
         f.running = vec![2, 5];
-        assert!(verification(&f, None, Some(10)).is_empty());
+        assert!(verification(&f).is_empty());
         // Memory integrity itself not running: its own finding comes first.
         f.running.clear();
         f.enabled_hvci = Some(1);
-        let out = verification(&f, Some(10), Some(10));
+        let out = verification(&f);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title, MEMORY_INTEGRITY_NOT_RUNNING);
+    }
+
+    #[test]
+    fn settings_made_on_purpose_or_that_cannot_work_are_never_offered() {
+        for set in [
+            |f: &mut Facts| f.mandatory = Some(1),
+            |f: &mut Facts| f.enable_vbs = Some(0),
+        ] {
+            let mut f = supported();
+            set(&mut f);
+            assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(SET_BY_HAND));
+            f.running = vec![2];
+            assert_eq!(decide_with(STACK_PROTECTION, &f, true, clean()), no(SET_BY_HAND));
+        }
+        // Required platform features the PC does not offer.
+        let mut f = supported();
+        f.require_platform = Some(3);
+        f.available = vec![1, 2];
+        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(NOT_SUPPORTED));
+        f.available = vec![1, 2, 3];
+        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), Decision::Offer);
+        let mut f = supported();
+        f.required = vec![1, 2, 4];
+        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(NOT_SUPPORTED));
+        // Harmless values do not block.
+        let mut f = supported();
+        f.mandatory = Some(0);
+        f.enable_vbs = Some(1);
+        f.require_platform = Some(1);
+        f.required = vec![1, 2];
+        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), Decision::Offer);
+    }
+
+    #[test]
+    fn one_selection_is_split_so_each_core_protection_is_its_own_batch() {
+        let ids: Vec<String> = ["a", STACK_PROTECTION, "b", MEMORY_INTEGRITY]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(
+            split_batches(&ids),
+            vec![
+                vec!["a".to_owned(), "b".to_owned()],
+                vec![STACK_PROTECTION.to_owned()],
+                vec![MEMORY_INTEGRITY.to_owned()],
+            ]
+        );
+        assert_eq!(split_batches(&ids[..1]), vec![vec!["a".to_owned()]]);
+        assert!(split_batches(&[]).is_empty());
     }
 
     #[test]
@@ -1056,12 +1320,12 @@ mod tests {
     #[test]
     fn facts_decode_from_the_script_and_tolerate_missing_fields() {
         let f: Facts = serde_json::from_str(
-            r#"{"available":[1,2],"running":[],"hypervisorPresent":true,"lockVbs":null,
+            r#"{"available":[1,2],"running":[],"virtFirmware":true,"lockVbs":null,
                 "enabledHvci":1,"bootUnix":1700000000,"blocked":["a.sys"],"extra":1}"#,
         )
         .unwrap();
         assert_eq!(f.available, vec![1, 2]);
-        assert_eq!(f.hypervisor_present, Some(true));
+        assert_eq!(f.virt_firmware, Some(true));
         assert_eq!(f.lock_vbs, None);
         assert_eq!(f.enabled_hvci, Some(1));
         assert_eq!(f.boot_unix, Some(1_700_000_000));
@@ -1081,6 +1345,8 @@ mod tests {
             NEEDS_RESTART,
             NO_SHADOW_STACKS,
             UNREADABLE,
+            SET_BY_HAND,
+            OLD_WINDOWS,
         ] {
             assert!(r.starts_with("Not offered: "));
             assert!(!r.contains('—'));

@@ -13,6 +13,8 @@ pub enum NextStep {
     ReviewWindowsFeatures,
     ReviewWithAdministrator,
     ReviewUndo,
+    /// Open the History page (undo your fixes there, newest first).
+    OpenHistory,
     Restart,
     CheckAgain,
 }
@@ -176,7 +178,7 @@ pub fn finding_impact(title: &str) -> &'static str {
         "SMB1" => "Old file-sharing flaws that let malware spread between PCs",
         "SmartScreen" => "Scam websites and unrecognized apps you open by mistake",
         "Local accounts" => "Weak or shared sign-ins that are easier to guess or steal",
-        "Memory integrity" | "Memory integrity not running" => {
+        "Memory integrity" | "Memory integrity not running" | "A device may not be working" => {
             "Harmful drivers taking over the core of Windows"
         }
         "Kernel stack protection not running" => {
@@ -496,7 +498,7 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(": "))
     {
         return Some(
-            "A driver on this PC may not work with it, so we leave this alone. You can look at Core isolation in Windows Security.",
+            "A driver on this PC may not work with it, so we leave this alone. To look yourself, open Windows Security, then Device security, then Core isolation details.",
         );
     }
     Some(match reason {
@@ -507,10 +509,17 @@ fn not_offered(reason: &str) -> Option<&'static str> {
             "It is locked in your PC's start-up settings, so we leave this alone."
         }
         r if r == v::DRIVERS_UNREADABLE => "We couldn't check your drivers, so we leave this alone.",
-        r if r == v::ALREADY_ON => "This protection is already running on this PC. Nothing to change.",
-        r if r == v::NEEDS_MEMORY_INTEGRITY => "Turn on Memory integrity first, then check again.",
+        r if r == v::NEEDS_MEMORY_INTEGRITY => {
+            "Turn on Core system protection first, then check again."
+        }
         r if r == v::NEEDS_RESTART => {
-            "Restart your PC to finish turning on Memory integrity, then check again."
+            "Restart your PC to finish turning on Core system protection, then check again."
+        }
+        r if r == v::SET_BY_HAND => {
+            "Virtualization security was set up by hand on this PC, so we leave it alone."
+        }
+        r if r == v::OLD_WINDOWS => {
+            "This version of Windows doesn't have it, so there is nothing to turn on."
         }
         r if r == v::NO_SHADOW_STACKS => {
             "This PC's processor doesn't support it, so there is nothing to turn on."
@@ -727,6 +736,13 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.next = "This PC's owner controls this setting, so we leave it as it is.";
             a.step = NextStep::ReviewWithAdministrator;
         }
+        "skipped" if detail == secblitz::vbs::ALREADY_ON => {
+            // Running already (on by itself or by the person): protected.
+            a.status = "Good to go";
+            a.next = "This protection is already running on this PC. Nothing to change.";
+            a.step = NextStep::None;
+            a.group = Group::Protected;
+        }
         "skipped" if not_offered(detail).is_some() => {
             a.status = "Not offered";
             a.next = not_offered(detail).unwrap_or_default();
@@ -850,7 +866,12 @@ pub fn finding_replaced_by(title: &str) -> Option<&'static str> {
     }
 }
 
-pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
+/// The engine marks a core protection note when undoing it is the next undo.
+fn undo_ready(detail: &str) -> bool {
+    detail.starts_with(secblitz::vbs::UNDO_READY)
+}
+
+pub fn for_finding(title: &str, status: &str, detail: &str) -> Advice {
     use NextStep::*;
     let (label, next, step) = match title {
         "Security providers" => ("Your security apps", "Open Windows Security to make sure your antivirus is on and working.", OpenWindowsSecurity),
@@ -865,8 +886,12 @@ pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
         "SmartScreen" => ("Unsafe app and website warnings", "Open Windows Security and make sure warnings about risky apps and websites are on.", OpenWindowsSecurity),
         "Local accounts" => ("Account sign-in safety", "Check who can sign in to this PC. Give each account its own strong password.", OpenAccounts),
         "Memory integrity" => ("Core system protection", "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.", OpenWindowsSecurity),
-        "Memory integrity not running" => ("Core system protection", "Memory integrity is turned on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it in History.", ReviewUndo),
-        "Kernel stack protection not running" => ("Extra core protection", "This extra protection is turned on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it in History.", ReviewUndo),
+        "Memory integrity not running" if undo_ready(detail) => ("Core system protection", "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it.", ReviewUndo),
+        "Memory integrity not running" => ("Core system protection", "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, open History and undo your fixes, newest first.", OpenHistory),
+        "Kernel stack protection not running" if undo_ready(detail) => ("Extra core protection", "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it.", ReviewUndo),
+        "Kernel stack protection not running" => ("Extra core protection", "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, open History and undo your fixes, newest first.", OpenHistory),
+        "A device may not be working" if undo_ready(detail) => ("Core system protection", "Windows is blocking a driver, so a device may not work. If a device stopped working, undo this fix.", ReviewUndo),
+        "A device may not be working" => ("Core system protection", "Windows is blocking a driver, so a device may not work. If a device stopped working, open History and undo your fixes, newest first.", OpenHistory),
         "Management and mutation eligibility" => ("Who manages this PC", "If you're not sure who manages this PC, look at work or school accounts in Settings.", ReviewWithAdministrator),
         "Automatic logon" => ("Automatic sign-in", "Your PC signs in by itself. Turn that off if other people can get to it.", OpenAccounts),
         "Service permissions: BITS" => ("Update download permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
@@ -1036,11 +1061,12 @@ mod tests {
             secblitz::vbs::DRIVER,
             "Not offered: a driver on this PC may not work with it: old.sys, older.sys",
             secblitz::vbs::DRIVERS_UNREADABLE,
-            secblitz::vbs::ALREADY_ON,
             secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
             secblitz::vbs::NEEDS_RESTART,
             secblitz::vbs::NO_SHADOW_STACKS,
             secblitz::vbs::UNREADABLE,
+            secblitz::vbs::SET_BY_HAND,
+            secblitz::vbs::OLD_WINDOWS,
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -1071,16 +1097,21 @@ mod tests {
                 secblitz::vbs::NOT_SUPPORTED,
                 secblitz::vbs::LOCKED,
                 "Not offered: a driver on this PC may not work with it: a.sys",
-                secblitz::vbs::ALREADY_ON,
                 secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
                 secblitz::vbs::NO_SHADOW_STACKS,
+                secblitz::vbs::SET_BY_HAND,
+                secblitz::vbs::OLD_WINDOWS,
             ] {
                 let n = for_control(id, "skipped", reason);
                 assert_eq!(n.status, "Not offered", "{reason}");
                 assert_eq!(n.group, Group::Information);
                 assert_eq!(n.step, NextStep::None);
-                assert!(n.next.ends_with('.') && n.next.len() < 140, "{reason}");
+                assert!(n.next.ends_with('.') && n.next.len() < 170, "{reason}");
+                assert!(!n.next.contains("Memory integrity"), "{reason}");
             }
+            // Already running is good news, not a gap and not a "not offered".
+            let on = for_control(id, "skipped", secblitz::vbs::ALREADY_ON);
+            assert_eq!((on.status, on.group), ("Good to go", Group::Protected));
             // A managed PC stays assessment only.
             let m = for_control(id, "skipped", "Relevant policy is configured: assessment only");
             assert_eq!(m.status, "Managed elsewhere");
@@ -1091,19 +1122,29 @@ mod tests {
             "skipped",
             "Not offered: a driver on this PC may not work with it: a.sys",
         );
-        assert!(driver.next.contains("Core isolation"));
+        assert!(driver.next.contains("Device security, then Core isolation details"));
         assert!(!driver.next.contains("a.sys"));
     }
 
     #[test]
     fn a_core_protection_that_is_on_but_not_running_offers_a_restart_then_undo() {
-        for title in ["Memory integrity not running", "Kernel stack protection not running"] {
-            let a = for_finding(title, "attention", "");
+        let ready = format!("{}. boot: 1.", secblitz::vbs::UNDO_READY);
+        for title in [
+            "Memory integrity not running",
+            "Kernel stack protection not running",
+            "A device may not be working",
+        ] {
+            // Undo goes straight to the review sheet only when it undoes this change.
+            let a = for_finding(title, "attention", &ready);
             assert_eq!(a.step, NextStep::ReviewUndo, "{title}");
             assert_eq!(a.group, Group::Choice);
-            assert!(a.next.contains("Restart") && a.next.contains("History"), "{title}");
+            assert!(a.next.contains("undo"), "{title}");
             assert!(!a.impact.is_empty(), "{title}");
             assert!(a.next.len() < 170);
+            // Otherwise the person is sent to History, never to a blind undo.
+            let h = for_finding(title, "attention", "boot: 1.");
+            assert_eq!(h.step, NextStep::OpenHistory, "{title}");
+            assert!(h.next.contains("History") && h.next.len() < 190, "{title}");
         }
         // The old tip is replaced by the fix row, but only that one.
         assert_eq!(

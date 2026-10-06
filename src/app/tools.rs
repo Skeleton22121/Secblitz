@@ -1194,7 +1194,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::SecureBoot => "Turn on Secure Boot (startup protection) in your PC's start-up settings.",
         P::Tpm => "Your security chip is off or not ready. Check your PC's start-up settings.",
         P::BitLocker => "Turn on disk encryption so your files stay private if the PC is lost.",
-        P::Vbs => "Memory integrity is off. If it is safe for this PC, you can turn it on in Protection.",
+        P::Vbs => "Memory integrity is off. Protection shows whether this PC can turn it on safely.",
         P::WinRe => "Recovery tools are off. They help if Windows ever stops starting.",
         P::Accounts => "Use a normal account every day, and switch off the guest account.",
         P::RemoteAccess => "Switch off remote access if you don't use it.",
@@ -1249,8 +1249,8 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "accounts.daily_admin" => "You use an administrator account every day. Make a normal account for daily use.",
         "accounts.hello_configured" => "No PIN or Windows Hello is set up. Add one in Sign-in options.",
         "accounts.find_my_device" => "Find my device is off. Turn it on in Settings so you can find a lost laptop.",
-        "vbs.memory_integrity" => "Memory integrity is off. If it is safe for this PC, you can turn it on in Protection.",
-        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. If your PC supports it, you can turn it on in Protection.",
+        "vbs.memory_integrity" => "Memory integrity is off. Protection shows whether this PC can turn it on safely.",
+        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Protection shows whether this PC can turn it on safely.",
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         "persistence.run_and_tasks" => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
@@ -1279,8 +1279,13 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
 
 /// Checks that Secblitz can fix itself. The tip then offers to go to the
 /// fix on the Protection page instead of sending the person to a Windows page.
-pub fn rule_fix(rule_id: &str) -> bool {
-    matches!(rule_id, "vbs.memory_integrity" | "vbs.kernel_stack_protection")
+/// Returns the id of the control that fixes it.
+pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
+    match rule_id {
+        "vbs.memory_integrity" => Some(secblitz::vbs::MEMORY_INTEGRITY),
+        "vbs.kernel_stack_protection" => Some(secblitz::vbs::STACK_PROTECTION),
+        _ => None,
+    }
 }
 
 /// Checks where the Tools page can offer its existing "scan for viruses" job
@@ -1305,8 +1310,9 @@ pub struct Tip {
     pub open: Option<secblitz::actions::Action>,
     /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
-    /// A `Look` tip that Secblitz can fix: the row offers to go to the fix.
-    pub fix: bool,
+    /// A `Look` tip about something Secblitz can fix: the id of its control.
+    /// The row goes to the Protection page, which says whether it is offered.
+    pub fix: Option<&'static str>,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1402,7 +1408,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, None, _) => None,
             },
             scan: look && scan,
-            fix: look && first.is_some_and(|(_, _, fix)| fix),
+            fix: first.filter(|_| look).and_then(|(_, _, fix)| fix),
         });
     }
     let rank = |s: TipState| match s {
@@ -1934,11 +1940,11 @@ mod tests {
             .find(|t| t.title == tip_title(diag::ProbeId::Vbs))
             .expect("the core protection tip is in the extra profile");
         assert_eq!(tip.state, TipState::Look);
-        assert!(tip.fix);
+        assert_eq!(tip.fix, Some("vbs.memory_integrity"));
         assert_eq!(tip.open, None);
         assert_eq!(tip.advice, rule_advice("vbs.memory_integrity").unwrap());
         // Everything else keeps its Windows page and no fix button.
-        assert!(tips.tips.iter().filter(|t| t.fix).count() == 1);
+        assert!(tips.tips.iter().filter(|t| t.fix.is_some()).count() == 1);
     }
 
     #[test]
@@ -1988,11 +1994,11 @@ mod tests {
         assert_eq!(rule_advice("update.freshness"), None);
         // A check Secblitz can fix sends the person to the fix, not to a Windows page.
         for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
-            assert!(rule_fix(id), "{id}");
+            assert_eq!(rule_fix(id), Some(id), "{id}");
             assert_eq!(rule_open(id), None, "{id}");
             assert!(rule_advice(id).unwrap().contains("Protection"), "{id}");
         }
-        assert!(!rule_fix("defender.exclusions_risky") && !rule_fix("net.hosts_file"));
+        assert!(rule_fix("defender.exclusions_risky").is_none() && rule_fix("net.hosts_file").is_none());
         assert_eq!(
             rule_open("os.feature_release_support"),
             Some(secblitz::actions::Action::OpenWindowsUpdate)

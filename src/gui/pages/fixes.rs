@@ -226,7 +226,14 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         if fixable.contains(&r.id) {
             continue;
         }
-        let class = score::classify(r);
+        let class = score::classify_in(report, r);
+        // Set but not running: the finding below says so, not a "protected" row.
+        if class == Class::Excluded
+            && secblitz::vbs::is_vbs(&r.id)
+            && score::classify(r) == Class::Protected
+        {
+            continue;
+        }
         let a = advice::for_outcome(r);
         if class == Class::Protected {
             let impact = advice::control_impact(&r.id);
@@ -637,6 +644,14 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     }
     if o.step == NextStep::ReviewUndo && !ctx.busy {
         menu.push((Icon::Undo, ctx.t("Undo…"), Message::ReviewUndo, false));
+    }
+    if o.step == NextStep::OpenHistory {
+        menu.push((
+            Icon::History,
+            ctx.t("Open History"),
+            Message::Navigate(crate::gui::Page::History),
+            false,
+        ));
     }
     if o.step == NextStep::CheckAgain && !ctx.busy && ctx.checking.is_none() {
         menu.push((

@@ -13,11 +13,10 @@ use std::{
     time::Duration,
 };
 use windows_sys::Win32::{
-    Foundation::FILETIME,
     System::{
         ProcessStatus::{EnumDeviceDrivers, GetDeviceDriverFileNameW},
         Registry::{
-            RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryInfoKeyW, RegQueryValueExW, HKEY,
+            RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY,
             HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
         },
     },
@@ -31,8 +30,6 @@ const SERVICES_KEY: &str = r"SYSTEM\CurrentControlSet\Services";
 const NOT_FOUND: u32 = 2;
 const PATH_NOT_FOUND: u32 = 3;
 const NO_MORE_ITEMS: u32 = 259;
-/// Seconds between 1601 (Windows file times) and 1970.
-const EPOCH_GAP: u64 = 11_644_473_600;
 /// Enough to hold the headers of any driver image.
 const HEADER_BYTES: u64 = 64 * 1024;
 
@@ -79,10 +76,22 @@ fn dword(key: &Key, name: &str) -> Option<u32> {
     (status == 0 && kind == REG_DWORD && size == 4).then(|| u32::from_le_bytes(data))
 }
 
-fn text(key: &Key, name: &str) -> Option<String> {
+/// A text value: Ok(None) when absent, Err when it exists but cannot be read
+/// (the caller must then say "could not check", never guess).
+fn text(key: &Key, name: &str) -> std::result::Result<Option<String>, ()> {
     let name = wide(name);
     let mut kind = 0u32;
-    let mut buf = [0u16; 1040];
+    let mut size = 0u32;
+    // SAFETY: a null buffer only asks for the size.
+    let status =
+        unsafe { RegQueryValueExW(key.0, name.as_ptr(), null(), &mut kind, null_mut(), &mut size) };
+    if status == NOT_FOUND {
+        return Ok(None);
+    }
+    if status != 0 || !(kind == REG_SZ || kind == REG_EXPAND_SZ) || size > 64 * 1024 {
+        return Err(());
+    }
+    let mut buf = vec![0u16; size as usize / 2 + 2];
     let mut size = (buf.len() * 2) as u32;
     // SAFETY: `size` is the byte length of `buf`.
     let status = unsafe {
@@ -95,48 +104,21 @@ fn text(key: &Key, name: &str) -> Option<String> {
             &mut size,
         )
     };
-    if status != 0 || !(kind == REG_SZ || kind == REG_EXPAND_SZ) {
-        return None;
+    if status != 0 {
+        return Err(());
     }
     let len = (size as usize / 2).min(buf.len());
-    Some(String::from_utf16_lossy(&buf[..len]).trim_end_matches('\0').to_owned())
+    Ok(Some(
+        String::from_utf16_lossy(&buf[..len])
+            .trim_end_matches('\0')
+            .to_owned(),
+    ))
 }
 
 /// A registry value of one of the two scenarios, or None when absent.
 fn scenario_value(path: &str, name: &str) -> Option<u32> {
     let key = open(HKEY_LOCAL_MACHINE, path).ok()??;
     dword(&key, name)
-}
-
-/// Unix seconds when anything under the key was last written.
-fn last_write_unix(path: &str) -> Option<i64> {
-    let key = open(HKEY_LOCAL_MACHINE, path).ok()??;
-    let mut time = FILETIME {
-        dwLowDateTime: 0,
-        dwHighDateTime: 0,
-    };
-    // SAFETY: only the last-write out pointer is given; the rest may be null.
-    let status = unsafe {
-        RegQueryInfoKeyW(
-            key.0,
-            null_mut(),
-            null_mut(),
-            null(),
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            &mut time,
-        )
-    };
-    if status != 0 {
-        return None;
-    }
-    let ticks = (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
-    i64::try_from((ticks / 10_000_000).checked_sub(EPOCH_GAP)?).ok()
 }
 
 /// Kernel and file-system driver services as the registry lists them.
@@ -178,14 +160,18 @@ fn services() -> Result<Vec<ServiceRow>> {
             name: String::from_utf16_lossy(&name[..len as usize]),
             kind,
             start,
-            image: text(&service, "ImagePath"),
+            // Present but unreadable: an empty image, which can never resolve,
+            // so the driver is reported as "could not check".
+            image: text(&service, "ImagePath").unwrap_or(Some(String::new())),
         });
     }
     bail!("too many services to list")
 }
 
-/// File names of the kernel modules loaded right now.
-fn loaded_modules() -> Vec<String> {
+/// Paths of the kernel modules loaded right now, or None when Windows does
+/// not tell (from Windows 11 24H2 the list needs a debug privilege and comes
+/// back with empty addresses).
+fn loaded_modules() -> Option<Vec<String>> {
     let mut bases = vec![null_mut::<c_void>(); 2048];
     let mut needed = 0u32;
     // SAFETY: the byte size matches the buffer.
@@ -197,19 +183,27 @@ fn loaded_modules() -> Vec<String> {
         )
     };
     if ok == 0 {
-        return Vec::new();
+        return None;
     }
     let count = (needed as usize / size_of::<*mut c_void>()).min(bases.len());
+    let known: Vec<*mut c_void> = bases[..count]
+        .iter()
+        .copied()
+        .filter(|base| !base.is_null())
+        .collect();
+    if known.is_empty() {
+        return None;
+    }
     let mut out = Vec::new();
-    for base in &bases[..count] {
+    for base in known {
         let mut buf = [0u16; 520];
         // SAFETY: the size is the buffer length in characters.
-        let n = unsafe { GetDeviceDriverFileNameW(*base, buf.as_mut_ptr(), buf.len() as u32) };
+        let n = unsafe { GetDeviceDriverFileNameW(base, buf.as_mut_ptr(), buf.len() as u32) };
         if n > 0 && (n as usize) < buf.len() {
             out.push(String::from_utf16_lossy(&buf[..n as usize]));
         }
     }
-    out
+    Some(out)
 }
 
 fn read_header(path: &str) -> std::io::Result<Vec<u8>> {
@@ -220,19 +214,26 @@ fn read_header(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Scan every driver that would load or is loaded. A list that cannot be read
+/// Scan every driver that is configured to load, plus the loaded ones when
+/// Windows lists them. When the loaded list is not available, the configured
+/// list still covers every driver that has a service entry; that is accepted
+/// only when every one of them could be located. A list that cannot be read
 /// counts as "could not check", never as "all fine".
 pub(super) fn scan_drivers(windows: &str) -> Scan {
-    match services() {
-        Ok(rows) => {
-            let files = vbs::driver_files(&rows, &loaded_modules(), windows);
-            vbs::scan_files(&files, &read_header)
+    let rows = match services() {
+        Ok(rows) => rows,
+        Err(_) => {
+            return Scan {
+                flagged: Vec::new(),
+                unreadable: vec!["drivers".into()],
+            }
         }
-        Err(_) => Scan {
-            flagged: Vec::new(),
-            unreadable: vec!["drivers".into()],
-        },
-    }
+    };
+    let loaded = loaded_modules().unwrap_or_default();
+    let list = vbs::driver_files(&rows, &loaded, windows);
+    let mut scan = vbs::scan_files(&list.files, &read_header);
+    scan.unreadable.extend(list.unresolved);
+    scan
 }
 
 /// The read-only facts script. One short PowerShell run, no extra processes.
@@ -242,7 +243,8 @@ pub(super) fn facts() -> Result<Facts> {
         super::super::backend_definitions()?,
         include_str!("vbs.ps1")
     );
-    let facts: Facts = run_script_in(script, Duration::from_secs(60), 1)?;
+    let mut facts: Facts = run_script_in(script, Duration::from_secs(60), 1)?;
+    facts.hypervisor_vendor = vbs::cpu_hypervisor_vendor();
     ensure!(facts.available.len() < 64, "unexpected protection facts");
     Ok(facts)
 }
@@ -254,18 +256,15 @@ fn any_configured() -> bool {
         || scenario_value(STACK_KEY, "Enabled") == Some(1)
 }
 
-/// What to say after a restart when a setting is on but not running. Never an
-/// error: a check that cannot be made simply reports nothing.
+/// Candidate findings for after a restart when a setting is on but not
+/// running or a driver was blocked. Never an error: a check that cannot be
+/// made simply reports nothing. The engine decides whether to show them.
 pub(super) fn verification_findings() -> Vec<Finding> {
     if !any_configured() {
         return Vec::new();
     }
     match facts() {
-        Ok(facts) => vbs::verification(
-            &facts,
-            last_write_unix(MEMORY_INTEGRITY_KEY),
-            last_write_unix(STACK_KEY),
-        ),
+        Ok(facts) => vbs::verification(&facts),
         Err(_) => Vec::new(),
     }
 }

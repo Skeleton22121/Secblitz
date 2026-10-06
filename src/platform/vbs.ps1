@@ -3,10 +3,6 @@
 # (never the backend dispatcher). It reads Windows management data, a few
 # registry values and the Code Integrity event log. It loads no driver, writes
 # nothing and starts no child process.
-$dgPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard'
-$hvciPath = "$dgPath\Scenarios\HypervisorEnforcedCodeIntegrity"
-$stackPath = "$dgPath\Scenarios\KernelShadowStacks"
-
 function VDword([string]$path, [string]$name) {
     if (!(Test-Path -LiteralPath $path)) { return $null }
     $key = Get-Item -LiteralPath $path
@@ -26,12 +22,14 @@ function VFlag($object, [string]$name) {
     return $null
 }
 
-try {
+function VbsFacts {
+    $dgPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard'
+    $hvciPath = "$dgPath\Scenarios\HypervisorEnforcedCodeIntegrity"
+    $stackPath = "$dgPath\Scenarios\KernelShadowStacks"
     Load 'CimCmdlets'
     $guard = @(Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction Stop)
     if ($guard.Count -ne 1) { throw 'Protection support could not be read' }
     $g = $guard[0]
-    $system = @(Get-CimInstance -ClassName Win32_ComputerSystem)[0]
     $os = @(Get-CimInstance -ClassName Win32_OperatingSystem)[0]
     $virt = $null
     foreach ($cpu in @(Get-CimInstance -ClassName Win32_Processor)) {
@@ -40,6 +38,11 @@ try {
     }
     $boot = $null
     if ($os.LastBootUpTime -is [datetime]) { $boot = [DateTimeOffset]::new($os.LastBootUpTime).ToUnixTimeSeconds() }
+    $build = $null
+    $parsed = 0
+    if ([int]::TryParse([string]$os.BuildNumber, [ref]$parsed)) { $build = $parsed }
+    $vbsStatus = $null
+    if ($null -ne $g.VirtualizationBasedSecurityStatus) { $vbsStatus = [int]$g.VirtualizationBasedSecurityStatus }
     $enabledHvci = VDword $hvciPath 'Enabled'
     $enabledStack = VDword $stackPath 'Enabled'
 
@@ -57,12 +60,17 @@ try {
         } catch { }
     }
 
-    Emit @{
+    return @{
         available = @(VNumbers $g.AvailableSecurityProperties)
+        required = @(VNumbers $g.RequiredSecurityProperties)
         configured = @(VNumbers $g.SecurityServicesConfigured)
         running = @(VNumbers $g.SecurityServicesRunning)
-        hypervisorPresent = (VFlag $system 'HypervisorPresent')
         virtFirmware = $virt
+        vbsStatus = $vbsStatus
+        build = $build
+        mandatory = (VDword $dgPath 'Mandatory')
+        enableVbs = (VDword $dgPath 'EnableVirtualizationBasedSecurity')
+        requirePlatform = (VDword $dgPath 'RequirePlatformSecurityFeatures')
         lockVbs = (VDword $dgPath 'Locked')
         lockHvci = (VDword $hvciPath 'Locked')
         lockStack = (VDword $stackPath 'Locked')
@@ -71,4 +79,6 @@ try {
         bootUnix = $boot
         blocked = @($blocked | Select-Object -Unique | Select-Object -First 8)
     }
-} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
+}
+
+try { Emit (VbsFacts) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
