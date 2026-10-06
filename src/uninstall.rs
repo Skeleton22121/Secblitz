@@ -57,15 +57,16 @@ pub enum Step {
 
 // ---- translation sources (rows live in i18n-pending/a4.tsv until merged) ----
 
-const SETTING_CHANGED: &str = "{title}: you changed this yourself since, so it was left as it is";
-const SETTING_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is";
-const APP_FAILED: &str = "{name} could not be brought back.";
+const SETTING_CHANGED: &str = "{title}: it has changed since Secblitz set it, so it was left as it is. No action is needed.";
+const SETTING_MACHINE_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is. Restart your PC and try again. If it still does not work, you can leave it as it is.";
+const SETTING_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is. You can change it yourself in Windows Settings.";
+const APP_FAILED: &str = "{name} could not be brought back. Try again later, or get it again from the Microsoft Store.";
 const APP_NEEDS_STORE: &str =
     "{name} could not be brought back. You can get it again from the Microsoft Store.";
 const SUGGESTED_OLDER: &str =
-    "Suggested apps were blocked by an older version of Secblitz, so they were left as they are.";
+    "Suggested apps were blocked by an older version of Secblitz, so they were left as they are. You can allow them again yourself in Windows Settings, under Personalization, then Start.";
 const SUGGESTED_CHANGED: &str =
-    "Suggested apps: you changed this yourself since, so it was left as it is";
+    "Suggested apps were left as they are, because they changed since Secblitz set them or could not be checked. You can change them yourself in Windows Settings.";
 const WINDOWS_SETTINGS: &str = "Windows settings";
 
 /// The plain name of a personal setting (never a registry or technical word).
@@ -87,7 +88,7 @@ pub fn left_line(left: &Left, lang: Lang) -> String {
         Left::Setting { title, reason } => {
             let template = match reason {
                 LeftReason::ChangedSince => SETTING_CHANGED,
-                LeftReason::NotPossible => SETTING_NOT_POSSIBLE,
+                LeftReason::NotPossible => SETTING_MACHINE_NOT_POSSIBLE,
             };
             lang.t(template).replace("{title}", &lang.t(title))
         }
@@ -407,7 +408,7 @@ mod tests {
         }
         assert_eq!(
             left_line(&every_variant()[0], Lang::En),
-            "Firewall at home: you changed this yourself since, so it was left as it is"
+            "Firewall at home: it has changed since Secblitz set it, so it was left as it is. No action is needed."
         );
         assert_eq!(
             left_line(&every_variant()[3], Lang::En),
@@ -415,8 +416,45 @@ mod tests {
         );
         assert_eq!(
             left_line(&Left::SuggestedOlderVersion, Lang::En),
-            "Suggested apps were blocked by an older version of Secblitz, so they were left as they are."
+            "Suggested apps were blocked by an older version of Secblitz, so they were left as they are. You can allow them again yourself in Windows Settings, under Personalization, then Start."
         );
+    }
+
+    #[test]
+    fn lines_that_could_not_be_put_back_say_what_to_do_next() {
+        let machine = left_line(
+            &Left::Setting {
+                title: "Firewall at home".into(),
+                reason: LeftReason::NotPossible,
+            },
+            Lang::En,
+        );
+        assert!(machine.contains("Restart your PC and try again"), "{machine}");
+        assert!(!machine.contains("Windows Settings"), "{machine}");
+        let changed = left_line(
+            &Left::Setting {
+                title: "Firewall at home".into(),
+                reason: LeftReason::ChangedSince,
+            },
+            Lang::En,
+        );
+        assert!(changed.contains("No action is needed"), "{changed}");
+        assert!(!changed.contains("you changed"), "{changed}");
+        for left in [
+            Left::Personal { id: "x.unknown" },
+            Left::SuggestedChangedSince,
+            Left::SuggestedOlderVersion,
+        ] {
+            let line = left_line(&left, Lang::En);
+            assert!(line.contains("Windows Settings"), "{line}");
+        }
+        let app = left_line(&Left::App { name: "Clipchamp".into() }, Lang::En);
+        assert!(app.contains("Microsoft Store"), "{app}");
+        assert!(!app.contains("internet"), "{app}");
+        // An unknown personal setting gets the general name, never raw text.
+        let unknown = left_line(&Left::Personal { id: "x.unknown" }, Lang::En);
+        assert!(unknown.starts_with("Windows settings:"), "{unknown}");
+        assert!(!unknown.contains("x.unknown"), "{unknown}");
     }
 
     #[test]
@@ -437,6 +475,7 @@ mod tests {
     fn every_line_has_all_six_translations() {
         let sources = [
             SETTING_CHANGED,
+            SETTING_MACHINE_NOT_POSSIBLE,
             SETTING_NOT_POSSIBLE,
             APP_FAILED,
             APP_NEEDS_STORE,

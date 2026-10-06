@@ -92,12 +92,12 @@ fr.Monitor=Vérifier mon PC automatiquement en arrière-plan (dès le prochain r
 de.Monitor=Meinen PC automatisch im Hintergrund prüfen (ab dem nächsten Neustart)
 pt.Monitor=Verificar meu PC automaticamente em segundo plano (a partir da próxima reinicialização)
 it.Monitor=Controlla il mio PC automaticamente in background (dal prossimo riavvio)
-en.Failed=Secblitz maintenance failed. See the setup log. No security settings were applied.
-es.Failed=Error de mantenimiento de Secblitz. Consulte el registro. No se aplicaron ajustes de seguridad.
-fr.Failed=Échec de la maintenance Secblitz. Consultez le journal. Aucun réglage de sécurité appliqué.
-de.Failed=Secblitz-Wartung fehlgeschlagen. Siehe Protokoll. Keine Sicherheitseinstellungen angewendet.
-pt.Failed=A manutenção do Secblitz falhou. Consulte o log de instalação. Nenhuma configuração de segurança foi aplicada.
-it.Failed=Manutenzione di Secblitz non riuscita. Consulta il registro di installazione. Nessuna impostazione di sicurezza è stata applicata.
+en.Failed=Secblitz could not finish setting up. Restart your PC and run the installer again. If it still does not work, download the latest Secblitz and try again.
+es.Failed=Secblitz no pudo terminar la instalación. Reinicia tu PC y vuelve a ejecutar el instalador. Si sigue sin funcionar, descarga la última versión de Secblitz e inténtalo de nuevo.
+fr.Failed=Secblitz n'a pas pu terminer l'installation. Redémarrez votre PC et relancez l'installateur. Si cela ne fonctionne toujours pas, téléchargez la dernière version de Secblitz et réessayez.
+de.Failed=Secblitz konnte die Einrichtung nicht abschließen. Starte Deinen PC neu und führe das Installationsprogramm erneut aus. Falls es weiterhin nicht klappt, lade die neueste Version von Secblitz herunter und versuche es noch einmal.
+pt.Failed=O Secblitz não conseguiu terminar a instalação. Reinicie o PC e execute o instalador de novo. Se ainda não funcionar, baixe a versão mais recente do Secblitz e tente novamente.
+it.Failed=Secblitz non è riuscito a completare l'installazione. Riavvia il PC ed esegui di nuovo il programma di installazione. Se continua a non funzionare, scarica l'ultima versione di Secblitz e riprova.
 en.RemoveTitle=Remove Secblitz
 es.RemoveTitle=Quitar Secblitz
 fr.RemoveTitle=Supprimer Secblitz
@@ -152,24 +152,36 @@ fr.PuttingBack=Rétablissement de vos paramètres
 de.PuttingBack=Deine Einstellungen werden zurückgesetzt
 pt.PuttingBack=Restaurando suas configurações
 it.PuttingBack=Ripristino delle tue impostazioni
-en.LeftIntro=Some things could not be put back:
-es.LeftIntro=Algunas cosas no se pudieron restaurar:
-fr.LeftIntro=Certaines choses n'ont pas pu être rétablies :
-de.LeftIntro=Einiges ließ sich nicht zurücksetzen:
-pt.LeftIntro=Algumas coisas não puderam ser restauradas:
-it.LeftIntro=Alcune cose non è stato possibile ripristinarle:
-en.PersonalLeft=Some of your personal settings could not be put back.
-es.PersonalLeft=Algunos de tus ajustes personales no se pudieron restaurar.
-fr.PersonalLeft=Certains de vos paramètres personnels n'ont pas pu être rétablis.
-de.PersonalLeft=Einige Deiner persönlichen Einstellungen ließen sich nicht zurücksetzen.
-pt.PersonalLeft=Algumas das suas configurações pessoais não puderam ser restauradas.
-it.PersonalLeft=Alcune delle tue impostazioni personali non è stato possibile ripristinarle.
-en.SettingsLeft=Some settings could not be put back.
-es.SettingsLeft=Algunos ajustes no se pudieron restaurar.
-fr.SettingsLeft=Certains paramètres n'ont pas pu être rétablis.
-de.SettingsLeft=Einige Einstellungen ließen sich nicht zurücksetzen.
-pt.SettingsLeft=Algumas configurações não puderam ser restauradas.
-it.SettingsLeft=Alcune impostazioni non è stato possibile ripristinarle.
+en.LeftIntro=Some things could not be put back. They stay as they are:
+es.LeftIntro=Algunas cosas no se pudieron restaurar. Se quedan como están:
+fr.LeftIntro=Certaines choses n'ont pas pu être rétablies. Elles restent telles quelles :
+de.LeftIntro=Einiges ließ sich nicht zurücksetzen. Es bleibt so, wie es ist:
+pt.LeftIntro=Algumas coisas não puderam ser restauradas. Elas continuam como estão:
+it.LeftIntro=Alcune cose non è stato possibile ripristinarle. Restano come sono:
+en.PersonalLeft=Some of your personal settings could not be put back. You can change them yourself in Windows Settings.
+es.PersonalLeft=Algunos de tus ajustes personales no se pudieron restaurar. Puedes cambiarlos tú mismo en Configuración de Windows.
+fr.PersonalLeft=Certains de vos paramètres personnels n'ont pas pu être rétablis. Vous pouvez les modifier vous-même dans les Paramètres de Windows.
+de.PersonalLeft=Einige Deiner persönlichen Einstellungen ließen sich nicht zurücksetzen. Du kannst sie selbst in den Windows-Einstellungen ändern.
+pt.PersonalLeft=Algumas das suas configurações pessoais não puderam ser restauradas. Você mesmo pode alterá-las nas Configurações do Windows.
+it.PersonalLeft=Alcune delle tue impostazioni personali non è stato possibile ripristinarle. Puoi modificarle tu stesso nelle Impostazioni di Windows.
+en.SettingsLeft=Some Windows settings could not be put back. You can change them yourself in Windows Settings.
+en.RemoveFailed=Secblitz could not be removed, and nothing was changed. Restart your PC and try again. If it still does not work, open Secblitz and check for an update.
+en.FixedFolder=Secblitz can only be installed in its standard folder inside Program Files. Please keep the suggested folder and try again.
+es.SettingsLeft=Algunos ajustes de Windows no se pudieron restaurar. Puedes cambiarlos tú mismo en Configuración de Windows.
+es.RemoveFailed=No se pudo quitar Secblitz y no se cambió nada. Reinicia tu PC e inténtalo de nuevo. Si sigue sin funcionar, abre Secblitz y busca una actualización.
+es.FixedFolder=Secblitz solo se puede instalar en su carpeta estándar dentro de Archivos de programa. Mantén la carpeta sugerida e inténtalo de nuevo.
+fr.SettingsLeft=Certains paramètres de Windows n'ont pas pu être rétablis. Vous pouvez les modifier vous-même dans les Paramètres de Windows.
+fr.RemoveFailed=Secblitz n'a pas pu être supprimé et rien n'a été modifié. Redémarrez votre PC et réessayez. Si cela ne fonctionne toujours pas, ouvrez Secblitz et recherchez une mise à jour.
+fr.FixedFolder=Secblitz ne peut être installé que dans son dossier standard de Program Files. Gardez le dossier proposé et réessayez.
+de.SettingsLeft=Einige Windows-Einstellungen ließen sich nicht zurücksetzen. Du kannst sie selbst in den Windows-Einstellungen ändern.
+de.RemoveFailed=Secblitz konnte nicht entfernt werden, und es wurde nichts geändert. Starte Deinen PC neu und versuche es noch einmal. Falls es weiterhin nicht klappt, öffne Secblitz und suche nach einem Update.
+de.FixedFolder=Secblitz kann nur in seinem Standardordner unter Programme installiert werden. Behalte den vorgeschlagenen Ordner bei und versuche es noch einmal.
+pt.SettingsLeft=Algumas configurações do Windows não puderam ser restauradas. Você mesmo pode alterá-las nas Configurações do Windows.
+pt.RemoveFailed=Não foi possível remover o Secblitz e nada foi alterado. Reinicie o PC e tente novamente. Se ainda não funcionar, abra o Secblitz e procure uma atualização.
+pt.FixedFolder=O Secblitz só pode ser instalado na pasta padrão dentro de Arquivos de Programas. Mantenha a pasta sugerida e tente novamente.
+it.SettingsLeft=Alcune impostazioni di Windows non è stato possibile ripristinarle. Puoi modificarle tu stesso nelle Impostazioni di Windows.
+it.RemoveFailed=Non è stato possibile rimuovere Secblitz e non è stato modificato nulla. Riavvia il PC e riprova. Se continua a non funzionare, apri Secblitz e cerca un aggiornamento.
+it.FixedFolder=Secblitz può essere installato solo nella sua cartella standard in Programmi. Mantieni la cartella suggerita e riprova.
 
 
 [Tasks]
@@ -407,7 +419,7 @@ begin
   { Reject /DIR overrides too, not just directory-page edits. }
   if CompareText(ExpandConstant('{app}'), ExpandConstant('{autopf64}\Secblitz')) <> 0 then
   begin
-    Result := 'Secblitz requires the fixed Program Files\Secblitz directory.';
+    Result := ExpandConstant('{cm:FixedFolder}');
     Exit;
   end;
   if not Maintain('Prepare') then
@@ -698,9 +710,9 @@ begin
     Ready := False;
   end;
   if not Ready then begin
-    Log(ExpandConstant('{cm:Failed}'));
+    Log(ExpandConstant('{cm:RemoveFailed}'));
     if not UninstallSilent then
-      SuppressibleMsgBox(ExpandConstant('{cm:Failed}'), mbError, MB_OK, IDOK);
+      SuppressibleMsgBox(ExpandConstant('{cm:RemoveFailed}'), mbError, MB_OK, IDOK);
     Abort;
   end;
 end;
