@@ -245,3 +245,8 @@ pub(super) fn restore_eligible(c: &Control, o: &Observation) -> bool {
             && o.value == c.target
             && o.reason == "Preserving absent or already-safe machine preference")
 }
+
+/// The control that must be put back before this one can be, because Windows only keeps this one on while the other is on.
+pub(super) fn undo_first(id: &str) -> Option<&'static str> {
+    (id == crate::vbs::MEMORY_INTEGRITY).then_some(crate::vbs::STACK_PROTECTION)
+}
