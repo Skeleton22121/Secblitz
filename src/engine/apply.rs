@@ -41,6 +41,27 @@ impl Engine {
         self.apply_impl(Some(&selected), callback)
     }
 
+    /// Read-only: answers whether a fix (or an undo) could start right now, with the same gates the real run uses and no write to the journal or the system.
+    pub fn can_change(&mut self, undo: bool) -> Result<()> {
+        let lock = self.lock()?;
+        self.mutation_interlocks(&lock)?;
+        let transactions = self.load()?;
+        self.durable(&transactions)?;
+        if undo {
+            return Ok(());
+        }
+        ensure!(
+            !transactions.iter().any(|t| !t.reverted && t.incomplete()),
+            "Revert the active transaction before applying again"
+        );
+        let readiness = self.readiness(&mut |_: &str, _: &str| {});
+        ensure!(
+            !readiness.blocks_repairs(),
+            "Repair readiness blocks new changes"
+        );
+        Ok(())
+    }
+
     fn apply_impl(
         &mut self,
         selected: Option<&HashSet<&str>>,

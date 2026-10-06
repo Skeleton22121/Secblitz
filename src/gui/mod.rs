@@ -568,7 +568,7 @@ impl App {
                 };
                 self.assessed(verify, app::history::Kind::Undo, n);
             }
-            E::History(_) => {}
+            E::History(_) | E::Preflight { .. } => {}
         }
         let warm = if matches!(&event, E::Opened(Ok(_))) {
             self.preload_all()

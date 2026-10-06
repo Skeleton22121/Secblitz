@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+- **Fixes and undo check first.** Before Secblitz shows any progress, it now makes sure it can really make the change: no other update or repair is running, nothing is left unfinished, and your disk has room. If something is in the way, you see a plain reason and what to do, instead of a fix that starts and then fails. Fix buttons are no longer offered when your disk can't take changes, and a failed undo now says why.
+
 ## [0.8.1] - 2026-10-06
 
 ### Fixed

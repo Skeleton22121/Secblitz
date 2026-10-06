@@ -16,6 +16,7 @@ pub trait Session {
     ) -> anyhow::Result<Report>;
     fn undo(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report>;
     fn history(&mut self) -> anyhow::Result<Vec<String>>;
+    fn can_start(&mut self, undo: bool) -> anyhow::Result<()>;
 }
 
 impl Session for Engine {
@@ -48,6 +49,9 @@ impl Session for Engine {
     fn history(&mut self) -> anyhow::Result<Vec<String>> {
         Engine::history(self)
     }
+    fn can_start(&mut self, undo: bool) -> anyhow::Result<()> {
+        Engine::can_change(self, undo)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +60,7 @@ pub enum Job {
     Apply(Vec<String>),
     Undo,
     History,
+    Preflight { undo: bool },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -85,6 +90,10 @@ pub enum Event {
         verify: Outcome,
     },
     History(Result<Vec<String>, String>),
+    Preflight {
+        undo: bool,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +189,10 @@ fn failed(job: &Job, message: &str) -> Event {
             verify: e(),
         },
         Job::History => Event::History(Err(message.to_owned())),
+        Job::Preflight { undo } => Event::Preflight {
+            undo: *undo,
+            result: Err(message.to_owned()),
+        },
     }
 }
 
@@ -255,6 +268,10 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
             Event::Undone { result, verify }
         }
         Job::History => Event::History(session.history().map_err(|e| format!("{e:#}"))),
+        Job::Preflight { undo } => Event::Preflight {
+            undo,
+            result: session.can_start(undo).map_err(|e| format!("{e:#}")),
+        },
     };
     let _ = reply.unbounded_send(event);
 }
@@ -322,6 +339,13 @@ mod tests {
         }
         fn history(&mut self) -> anyhow::Result<Vec<String>> {
             Ok(vec!["tx applied".into()])
+        }
+        fn can_start(&mut self, undo: bool) -> anyhow::Result<()> {
+            self.note(format!("can_change {undo}"));
+            if self.fail_apply && !undo {
+                anyhow::bail!("Repair readiness blocks new changes");
+            }
+            Ok(())
         }
     }
 
@@ -449,6 +473,22 @@ mod tests {
     }
 
     #[test]
+    fn preflight_answers_without_applying_or_checking() {
+        let (w, log) = worker(false, false);
+        match collect(&w, Job::Preflight { undo: false }).last() {
+            Some(Event::Preflight { undo: false, result: Ok(()) }) => {}
+            other => panic!("unexpected {other:?}"),
+        }
+        let (w, log2) = worker(true, false);
+        match collect(&w, Job::Preflight { undo: false }).last() {
+            Some(Event::Preflight { result: Err(e), .. }) => assert!(e.contains("readiness")),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(*log.lock().unwrap(), vec!["can_change false"]);
+        assert_eq!(*log2.lock().unwrap(), vec!["can_change false"]);
+    }
+
+    #[test]
     fn history_job_returns_lines() {
         let (w, _) = worker(false, false);
         match collect(&w, Job::History).last() {
@@ -469,6 +509,7 @@ mod tests {
             Job::Apply(vec!["a".into()]),
             Job::Undo,
             Job::History,
+            Job::Preflight { undo: true },
         ] {
             let events = collect(&w, job.clone());
             assert_eq!(events.len(), 1, "{job:?}");
