@@ -159,6 +159,7 @@ pub enum Msg {
     FeedbackOpened(bool),
     PrivacyOpened(bool),
     Frame,
+    PrefsSaved(bool),
     Remove(remove::Msg),
 }
 
@@ -171,15 +172,20 @@ fn toast(text: &str, tone: Tone, ctx: &Ctx) -> Task<Message> {
 }
 
 fn save_prefs(ctx: &Ctx) -> Task<Message> {
-    match prefs_store::save(&ctx.prefs) {
-        Ok(()) => Task::none(),
-        Err(_) => toast("We couldn't save that choice. Please try again. If it keeps happening, restart your PC.", Tone::Warn, ctx),
-    }
+    Task::perform(crate::gui::save_prefs(ctx.prefs.clone()), |saved| {
+        Message::Settings(Msg::PrefsSaved(saved))
+    })
 }
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Frame => Task::none(),
+        Msg::PrefsSaved(true) => Task::none(),
+        Msg::PrefsSaved(false) => toast(
+            "We couldn't save that choice. Please try again. If it keeps happening, restart your PC.",
+            Tone::Warn,
+            ctx,
+        ),
         Msg::Remove(m) => remove::update(&mut state.remove, m, ctx),
         Msg::Load => {
             state.clock.restart();
