@@ -20,6 +20,7 @@ use std::time::Instant;
 const LIST_MAX_HEIGHT: f32 = 300.0;
 const MARK: f32 = theme::ICON_ROW;
 const WAIT_DOT: f32 = 6.0;
+const STEP_LIST: &str = "fix-steps";
 
 #[derive(Debug)]
 pub struct State {
@@ -35,6 +36,15 @@ pub struct State {
     undo_count: usize,
     checking: bool,
     held: Option<Held>,
+    steps_view: Option<scrollable::Viewport>,
+    follow: Option<Follow>,
+}
+
+/// The step list gliding to keep the running step in its middle.
+#[derive(Debug)]
+struct Follow {
+    glide: Tween,
+    shown: f32,
 }
 
 impl Default for State {
@@ -52,6 +62,8 @@ impl Default for State {
             undo_count: 0,
             checking: false,
             held: None,
+            steps_view: None,
+            follow: None,
         }
     }
 }
@@ -117,6 +129,7 @@ pub enum Msg {
     Retry,
     Technical,
     Frame(Instant),
+    Steps(scrollable::Viewport),
     UndoInfo(Option<(u64, usize)>),
 }
 
@@ -293,7 +306,21 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     show_result(state, h.undo, h.summary, h.technical);
                 }
             }
-            Task::none()
+            glide(state, at)
+        }
+        Msg::Steps(view) => {
+            // A new row is measured only after the event that added it, so a
+            // change in size is the moment to follow again.
+            let resized = state.steps_view.is_none_or(|v| {
+                v.bounds().height != view.bounds().height
+                    || v.content_bounds().height != view.content_bounds().height
+            });
+            state.steps_view = Some(view);
+            if resized {
+                follow(state, Instant::now())
+            } else {
+                Task::none()
+            }
         }
         Msg::UndoInfo(found) => {
             if let (Stage::Review { undo: true, .. }, Some((t, n))) = (&state.stage, found) {
@@ -366,6 +393,8 @@ fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task
     state.work = Clock::at(state.now);
     state.since = state.now;
     state.bar = (!undo || planned(state, true) > 0).then(|| Tween::new(0.0, 0.0, anim::NORMAL));
+    state.steps_view = None;
+    state.follow = None;
     state.stage = Stage::Working {
         undo,
         phase: None,
@@ -427,6 +456,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             if let Some(bar) = &mut state.bar {
                 bar.retarget(Instant::now(), target);
             }
+            return follow(state, Instant::now());
         }
         E::Applied {
             attempted,
@@ -479,6 +509,83 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
         _ => {}
     }
     Task::none()
+}
+
+/// Which step row is running, and how many rows the list has.
+fn running_step(state: &State) -> Option<(usize, usize)> {
+    let Stage::Working { undo, phase, items } = &state.stage else {
+        return None;
+    };
+    let verifying = *phase == Some(Phase::Verifying) || state.held.is_some();
+    let rows = if *undo {
+        items.len().max(1) + 1
+    } else {
+        state.plan.len() + 1
+    };
+    let running = if verifying || *undo {
+        rows - 1
+    } else {
+        state
+            .plan
+            .iter()
+            .position(|r| items.iter().all(|d| d.id != r.id))
+            .unwrap_or(rows - 1)
+    };
+    Some((running, rows))
+}
+
+/// The scroll offset that puts the running step in the middle of the list.
+fn centred_offset(shown: f32, whole: f32, running: usize, rows: usize) -> Option<f32> {
+    if whole <= shown || rows == 0 {
+        return None;
+    }
+    let pitch = (whole + theme::S3) / rows as f32;
+    let middle = running as f32 * pitch + (pitch - theme::S3) / 2.0;
+    Some((middle - shown / 2.0).clamp(0.0, whole - shown))
+}
+
+fn follow(state: &mut State, now: Instant) -> Task<Message> {
+    let Some(view) = state.steps_view else {
+        return Task::none();
+    };
+    let (shown, whole) = (view.bounds().height, view.content_bounds().height);
+    let Some(to) = running_step(state).and_then(|(r, n)| centred_offset(shown, whole, r, n)) else {
+        return Task::none();
+    };
+    if !anim::animating() {
+        state.follow = None;
+        return scroll_steps(to);
+    }
+    match &mut state.follow {
+        Some(f) => f.glide.retarget(now, to),
+        None => {
+            let from = view.absolute_offset().y;
+            state.follow = Some(Follow {
+                glide: Tween::starting(now, from, to, anim::SLOW),
+                shown: from,
+            });
+        }
+    }
+    glide(state, now)
+}
+
+fn glide(state: &mut State, now: Instant) -> Task<Message> {
+    let Some(f) = &mut state.follow else {
+        return Task::none();
+    };
+    let y = f.glide.value(now);
+    if (y - f.shown).abs() < 0.5 {
+        return Task::none();
+    }
+    f.shown = y;
+    scroll_steps(y)
+}
+
+fn scroll_steps(y: f32) -> Task<Message> {
+    iced::widget::operation::scroll_to(
+        STEP_LIST,
+        iced::widget::operation::AbsoluteOffset { x: None, y: Some(y) },
+    )
 }
 
 fn finish(state: &mut State, undo: bool, summary: Summary, technical: Vec<String>) {
@@ -589,11 +696,25 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
 }
 
 fn below_art<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
-    container(
-        scrollable(content)
-            .direction(scrollbar())
-            .style(scroll_style(p)),
+    scrollable(content)
+        .direction(scrollbar())
+        .style(scroll_style(p))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn step_list<'a>(p: Palette, list: Element<'a, Message>) -> Element<'a, Message> {
+    scrollable(
+        container(list)
+            .center_x(Length::Fill)
+            .padding([0.0, theme::S3]),
     )
+    .id(STEP_LIST)
+    .on_scroll(|v| Message::Fix(Msg::Steps(v)))
+    .direction(scrollbar())
+    .style(scroll_style(p))
+    .width(Length::Fill)
     .height(Length::Fill)
     .into()
 }
@@ -936,7 +1057,7 @@ fn working_view<'a>(
         ctx.t("Checking the result"),
         verifying && !settled,
     ));
-    c.push(below_art(p, list.into())).into()
+    c.push(step_list(p, list.into())).into()
 }
 
 fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
@@ -1088,6 +1209,19 @@ fn result_view<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_running_step_is_kept_in_the_middle_of_the_list() {
+        let (rows, row) = (11, MARK);
+        let whole = rows as f32 * (row + theme::S3) - theme::S3;
+        let shown = 150.0;
+        assert_eq!(centred_offset(shown, whole, 0, rows), Some(0.0));
+        let mid = centred_offset(shown, whole, 5, rows).unwrap();
+        let centre = 5.0 * (row + theme::S3) + row / 2.0;
+        assert!((mid + shown / 2.0 - centre).abs() < 0.01);
+        assert_eq!(centred_offset(shown, whole, 10, rows), Some(whole - shown));
+        assert_eq!(centred_offset(whole, whole, 5, rows), None);
+    }
 
     fn e(t: u64, kind: Kind, n: usize) -> Entry {
         Entry {

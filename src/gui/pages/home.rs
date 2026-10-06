@@ -494,7 +494,11 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         ring::Ring {
             p,
             ratio: score.ratio(),
-            tone,
+            tone: if !stale && score.total > 0 && score.protected == score.total {
+                Tone::Good
+            } else {
+                tone
+            },
             label: shown.to_string(),
             caption: ctx
                 .t("of {n} protected")
