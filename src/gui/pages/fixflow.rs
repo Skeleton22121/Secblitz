@@ -1406,6 +1406,7 @@ mod tests {
 
     #[test]
     fn the_list_only_counts_moves_it_made_itself() {
+        let _m = anim::forced::set(false);
         let now = Instant::now();
         let mut f = Follow::at(now, 0.0, 100.0);
         assert!(f.put_it_at(0.0) && f.put_it_at(1.5) && f.put_it_at(40.0) && f.put_it_at(101.5));
