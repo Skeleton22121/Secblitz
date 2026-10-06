@@ -231,6 +231,7 @@ mod imp {
         );
         dir.truncate(n);
         dir.push(0);
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
         info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
         info.fMask = 0x40 | 0x100; // SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
@@ -278,13 +279,9 @@ mod imp {
             if ConvertSidToStringSidW(user.User.Sid, &mut raw) == 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
-            let mut len = 0;
-            while *raw.add(len) != 0 {
-                len += 1;
-            }
-            let s = String::from_utf16_lossy(std::slice::from_raw_parts(raw, len));
+            let s = secblitz::platform::security::wide_str(raw).map(String::from_utf16_lossy);
             LocalFree(raw.cast());
-            Ok(s)
+            s.context("token information unavailable")
         }
     }
 
@@ -359,6 +356,7 @@ mod imp {
     fn read_request(pipe: HANDLE, event: HANDLE, child: HANDLE, buf: &mut [u8; 3]) -> Read {
         let mut done = 0usize;
         while done < buf.len() {
+            // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
             let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
             overlapped.hEvent = event;
             unsafe { ResetEvent(event) };
@@ -396,6 +394,7 @@ mod imp {
 
     fn write_reply(pipe: HANDLE, event: HANDLE, child: HANDLE, reply: Reply) -> bool {
         let byte = [reply.encode()];
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event;
         unsafe { ResetEvent(event) };
@@ -427,6 +426,7 @@ mod imp {
         let child_handle = (child.0).0;
         let mut strangers = 0;
         loop {
+            // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
             let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
             overlapped.hEvent = event.0;
             unsafe { ResetEvent(event.0) };

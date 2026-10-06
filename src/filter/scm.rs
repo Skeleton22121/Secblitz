@@ -29,7 +29,7 @@ use windows_sys::Win32::{
 };
 
 use super::control::ServiceState;
-use crate::platform::security::{descriptor, error, sid, wide, Local};
+use crate::platform::security::{descriptor, error, sid, wide, wide_str, Local};
 use super::{config, SERVICE_NAME};
 
 const ACCOUNT: &str = r"NT AUTHORITY\LocalService";
@@ -95,15 +95,11 @@ fn program_files() -> Result<PathBuf> {
     // SAFETY: valid GUID and output pointer; freed below even on failure.
     let hr = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramFiles, 0, null_mut(), &mut raw) };
     let path = if hr >= 0 && !raw.is_null() {
-        // SAFETY: success returns a NUL-terminated UTF-16 string.
-        let slice = unsafe {
-            let mut n = 0;
-            while *raw.add(n) != 0 {
-                n += 1;
-            }
-            std::slice::from_raw_parts(raw, n)
-        };
-        String::from_utf16(slice).ok().map(PathBuf::from)
+        // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+        let slice = unsafe { wide_str(raw) };
+        slice
+            .and_then(|s| String::from_utf16(s).ok())
+            .map(PathBuf::from)
     } else {
         None
     };
@@ -164,6 +160,7 @@ fn open_dir(path: &Path) -> Result<File> {
 }
 
 fn info(file: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut i = unsafe { zeroed() };
     ensure!(
         unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut i) } != 0,

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 mod windows;
 
 #[cfg(windows)]
-pub(crate) mod security;
+pub mod security;
 
 /// Explicitly selected support operation, never a reversible hardening control.
 /// No scripts, paths, sources, scan arguments, or arbitrary IDs are accepted.

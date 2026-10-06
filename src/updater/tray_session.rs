@@ -265,9 +265,11 @@ fn launch_in_session(exe: &Path, session: u32) -> Result<()> {
     let mut command = wide(format!("\"{}\" tray", exe.display()));
     let directory = wide(exe.parent().context("Installed executable has no folder")?);
     let mut desktop = wide("winsta0\\default");
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
     startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
     startup.lpDesktop = desktop.as_mut_ptr();
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let ok = unsafe {
         CreateProcessAsUserW(
