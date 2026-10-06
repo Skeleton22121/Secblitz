@@ -640,6 +640,11 @@ mod imp {
                     }
                 }
             }
+            Request::AppInstallerStatus => match secblitz::tools::bitwarden_installable() {
+                Ok(()) => Reply::Done,
+                Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                Err(_) => Reply::Unknown,
+            },
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
             Request::StartStoreApp(index) => start_store_app(index),

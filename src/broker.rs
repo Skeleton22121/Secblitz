@@ -41,6 +41,7 @@ pub enum Request {
     AppUpdateQuery(u16),
     AppUpdate(u16),
     BitwardenStatus,
+    AppInstallerStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,7 @@ impl Request {
             | Request::AppUpdatesScan
             | Request::AppUpdateQuery(_)
             | Request::BitwardenStatus
+            | Request::AppInstallerStatus
             | Request::UserSetting(_, Op::Query)
             | Request::OpenReportProblem
             | Request::OpenSuggestFeature => true,
@@ -200,7 +202,8 @@ impl Request {
             | Request::AppUpdatesScan
             | Request::AppUpdateQuery(_)
             | Request::AppUpdate(_)
-            | Request::BitwardenStatus => return None,
+            | Request::BitwardenStatus
+            | Request::AppInstallerStatus => return None,
         })
     }
 
@@ -234,6 +237,7 @@ impl Request {
             Request::OpenInstalledApps => (33, 0),
             Request::OpenReportProblem => (34, 0),
             Request::OpenSuggestFeature => (35, 0),
+            Request::AppInstallerStatus => (36, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -289,6 +293,7 @@ impl Request {
             33 => Request::OpenInstalledApps,
             34 => Request::OpenReportProblem,
             35 => Request::OpenSuggestFeature,
+            36 => Request::AppInstallerStatus,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -621,6 +626,7 @@ mod tests {
             Request::AppUpdate(0),
             Request::AppUpdate(user_apps::APPS.len() as u16 - 1),
             Request::BitwardenStatus,
+            Request::AppInstallerStatus,
             Request::StartStoreApp(0),
             Request::StartStoreApp(41),
             Request::StoreAppStatus(0),
@@ -667,14 +673,15 @@ mod tests {
         assert!(!Request::BlockSuggestedApps.is_read_only());
         assert!(!Request::AppUpdate(0).is_read_only());
         assert!(Request::AppUpdatesScan.is_read_only());
+        assert!(Request::AppInstallerStatus.is_read_only());
     }
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 36, 37, 100, 255] {
+        for kind in [0u8, 37, 38, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=35).chain([17]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=36).chain([17]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
