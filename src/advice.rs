@@ -190,6 +190,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
         "smb.shares_exposed" => "Strangers on your network opening or changing your shared files",
         "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
+        "recovery.winre_enabled" => "Being stuck without a way to repair Windows if it stops starting",
         _ => "",
     }
 }
@@ -296,6 +297,7 @@ pub fn control_label(id: &str) -> &'static str {
         "accounts.stale_enabled" => "Old accounts still switched on",
         "smb.shares_exposed" => "Folders shared with everyone",
         "smartscreen.browser_policy" => "Browser warnings about dangerous sites",
+        "recovery.winre_enabled" => "Windows recovery tools",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -414,7 +416,8 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "persistence.run_and_tasks"
         | "accounts.stale_enabled"
         | "smb.shares_exposed"
-        | "smartscreen.browser_policy" => (
+        | "smartscreen.browser_policy"
+        | "recovery.winre_enabled" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -697,6 +700,9 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: a shared folder has permissions that could not be put back exactly" => {
             "A shared folder has permissions we could not put back exactly, so we leave this alone."
         }
+        "Not offered: the recovery tools are missing from this PC" => {
+            "The files the recovery tools need are missing from this PC, so we leave this alone."
+        }
         _ => return None,
     })
 }
@@ -745,6 +751,9 @@ fn repair_help(id: &str) -> &'static str {
         }
         "system.exploit_mitigations" => {
             "We can fix this. It switches Windows' built-in memory protections back on."
+        }
+        "recovery.winre_enabled" => {
+            "We can fix this. It turns the recovery tools back on, so Windows can repair itself if it stops starting."
         }
         _ => "We can fix this. It turns this protection on.",
     }
@@ -1185,6 +1194,7 @@ mod tests {
             "Not offered: a shared folder would be left with no one who can open it",
             "Not offered: a shared folder would be left that only administrators can open",
             "Not offered: a shared folder has permissions that could not be put back exactly",
+            "Not offered: the recovery tools are missing from this PC",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -1305,6 +1315,35 @@ mod tests {
             }
         }
         assert!(found >= 4, "{found}");
+    }
+
+    #[test]
+    fn recovery_tools_row_is_a_normal_fix_with_a_plain_reason_when_not_offered() {
+        let id = "recovery.winre_enabled";
+        // No trade-off to weigh: a recommended fix, ticked like other plain fixes.
+        let a = for_control(id, "attention", "Eligible");
+        assert_eq!((a.status, a.step, a.ask, a.group), ("Can fix", NextStep::Repair, false, Group::Recommended));
+        assert!(a.next.contains("recovery tools") && a.next.len() < 130, "{}", a.next);
+        assert_eq!(a.impact_prefix(), "Leaves you open to:");
+        assert!(!a.impact.is_empty() && !a.impact.ends_with('.'));
+        let ok = for_control(id, "compliant", "");
+        assert_eq!((ok.status, ok.group), ("Good to go", Group::Protected));
+        // Every reason the script gives is a calm sentence, never a fix.
+        let script = include_str!("platform/hardening.ps1");
+        let start = script.find("'recovery.winre_enabled' {").unwrap();
+        let body = &script[start..start + script[start..].find("\n        }\n").unwrap()];
+        let reasons: Vec<&str> = body.split('\'').filter(|p| p.starts_with("Not offered: ")).collect();
+        assert!(!reasons.is_empty());
+        for reason in reasons {
+            let a = for_control(id, "skipped", reason);
+            assert_eq!((a.status, a.group), ("Not offered", Group::Information), "{reason}");
+            assert_ne!(a.step, NextStep::Repair);
+            assert!(a.next.ends_with('.') && !a.next.contains('\u{2014}'), "{reason}");
+        }
+        // Managed PCs are left alone, and a change made after the fix is a conflict.
+        let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
+        assert_eq!(managed.status, "Managed elsewhere");
+        assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
     }
 
     #[test]

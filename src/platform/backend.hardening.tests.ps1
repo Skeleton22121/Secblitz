@@ -46,6 +46,7 @@ if ($errors.Count) { throw ($errors | Out-String) }
 $names = @($combinedAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) | ForEach-Object { $_.Name.ToLowerInvariant() })
 if (@($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { throw 'Duplicate function definition across backend.ps1, hardening.handled.ps1 and hardening.ps1' }
 $realHRead = ${function:HRead}
+$realHSet = ${function:HSet}
 $realHPreflight = ${function:HPreflight}
 function Assert($ok, [string]$message) { if (!$ok) { throw $message }; $script:checks++ }
 function Reject([scriptblock]$operation, [string]$message) {
@@ -1538,5 +1539,159 @@ function HAccountsInUse { return @{ $me = $true } }
 $script:users = @((U $bob $true $old), (U $adm $true $old))
 function Get-LocalGroupMember { param($SID, $ErrorAction); return @((Mem $bob 'User'), (Mem $adm 'User')) }
 Reject { HStalePreflight } 'no other administrator account is enabled'
+
+# ---- recovery.winre_enabled: read from ReAgent.xml, changed only by ReAgentc.exe /enable and /disable
+$recJson = '{"id":"recovery.winre_enabled","source":"RecoveryTools","dynamic":false,"reboot":false,"keys":[{"name":"Enabled","path":"","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $noGate + '}'
+MakeSpec $recJson
+if ($env:SystemRoot) {
+    Assert ((HRecoveryDir) -clike '*\System32\Recovery') "recovery folder: $(HRecoveryDir)"
+    Assert ((HReagentPath) -clike '*\System32\ReAgentc.exe') "recovery tool: $(HReagentPath)"
+}
+# The real launcher refuses anything but the two changes before starting anything.
+Reject { HRunReagent '/boottore' } 'Unknown recovery tools change'
+Reject { HRunReagent '/info' } 'Unknown recovery tools change'
+Reject { HRunReagent '/ENABLE' } 'Unknown recovery tools change'
+$realRecoveryDir = ${function:HRecoveryDir}
+$realReagentPath = ${function:HReagentPath}
+$realRunReagent = ${function:HRunReagent}
+$recRoot = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'secblitz-recovery-' + [Guid]::NewGuid().ToString('N'))
+$null = [IO.Directory]::CreateDirectory($recRoot)
+try {
+    function HRecoveryDir { return $recRoot }
+    function HReagentPath { return [IO.Path]::Combine($recRoot, 'ReAgentc.exe') }
+    # A missing tool is refused before anything is started.
+    Reject { HRunReagent '/enable' } 'recovery tools are missing'
+    function RecoveryConfig([string]$body) {
+        [IO.File]::WriteAllText([IO.Path]::Combine($recRoot, 'ReAgent.xml'), "<?xml version='1.0' encoding='utf-8'?>`r`n<WindowsRE version=`"2.0`">`r`n  <WinreBCD id=`"{00000000-0000-0000-0000-000000000000}`"/>`r`n$body`r`n  <WinREStaged state=`"0`"/>`r`n</WindowsRE>`r`n")
+    }
+    function RecoveryState([string]$state) { RecoveryConfig ('  <InstallState state="' + $state + '"/>') }
+    function RecoveryImage([int]$size) {
+        $image = [IO.Path]::Combine($recRoot, 'Winre.wim')
+        if ($size -lt 0) { if ([IO.File]::Exists($image)) { [IO.File]::Delete($image) }; return }
+        [IO.File]::WriteAllBytes($image, [byte[]]::new($size))
+    }
+    function RecoveryTool([bool]$present) {
+        $tool = [IO.Path]::Combine($recRoot, 'ReAgentc.exe')
+        if ($present) { [IO.File]::WriteAllBytes($tool, [byte[]]@(77, 90)) } elseif ([IO.File]::Exists($tool)) { [IO.File]::Delete($tool) }
+    }
+    RecoveryState '1'
+    $r = HReadRecovery
+    Assert ($r['Enabled'] -eq 1 -and !(HAnyUnsafe $r)) 'recovery tools that are on are protected'
+    RecoveryState '0'
+    $r = HReadRecovery
+    Assert ($r['Enabled'] -eq 0 -and (HAnyUnsafe $r)) 'recovery tools that are off need a look'
+    Assert ((HFixOf (HDef 'Enabled') 0) -eq 1) 'off is only ever repaired to on'
+    Assert (HIsSafe (HDef 'Enabled') 1) 'on is safe'
+    Assert (!(HIsSafe (HDef 'Enabled') $null)) 'an unknown state is never safe'
+    # Anything but exactly one plain on or off is unreadable, never a guess.
+    foreach ($bad in @('2', '', 'Enabled', ' 1', 'true')) {
+        RecoveryState $bad
+        Reject { HReadRecovery } 'not readable'
+    }
+    RecoveryConfig '  <InstallState state="1"/><InstallState state="0"/>'
+    Reject { HReadRecovery } 'not readable'
+    RecoveryConfig '  <OsInstallAvailable state="0"/>'
+    Reject { HReadRecovery } 'not readable'
+    [IO.File]::WriteAllText([IO.Path]::Combine($recRoot, 'ReAgent.xml'), "<?xml version='1.0'?><Other><InstallState state=`"1`"/></Other>")
+    Reject { HReadRecovery } 'not readable'
+    # A document type declaration is refused outright: the file is data, never instructions.
+    [IO.File]::WriteAllText([IO.Path]::Combine($recRoot, 'ReAgent.xml'), "<?xml version='1.0'?><!DOCTYPE WindowsRE [<!ENTITY x `"1`">]><WindowsRE><InstallState state=`"&x;`"/></WindowsRE>")
+    Reject { HReadRecovery } ''
+    [IO.File]::Delete([IO.Path]::Combine($recRoot, 'ReAgent.xml'))
+    Reject { HReadRecovery } 'not readable'
+    # The real dispatcher uses this reader for the source.
+    ${function:HRead} = $realHRead
+    RecoveryState '0'
+    $r = HRead
+    Assert ($r.Count -eq 1 -and $r['Enabled'] -eq 0) 'the dispatcher reads the recovery tools state'
+
+    # Offered only while Windows still has the image and its own tool.
+    ${function:HPreflight} = $realHPreflight
+    RecoveryImage 4096
+    RecoveryTool $true
+    HPreflight
+    Assert $true 'offered when the image and the tool are there'
+    RecoveryImage (-1)
+    Reject { HPreflight } 'Not offered: the recovery tools are missing from this PC'
+    RecoveryImage 0
+    Reject { HPreflight } 'Not offered: the recovery tools are missing from this PC'
+    RecoveryImage 4096
+    RecoveryTool $false
+    Reject { HPreflight } 'Not offered: the recovery tools are missing from this PC'
+    RecoveryTool $true
+    function HGate { }
+    RecoveryImage (-1)
+    $o = HObserve
+    Assert (!$o.eligible -and $o.reason -ceq 'Not offered: the recovery tools are missing from this PC' -and $o.value.items['Enabled'] -eq 0) "a missing image is a plain Not offered: $($o.reason)"
+    RecoveryImage 4096
+    $o = HObserve
+    Assert ($o.eligible -and $o.value.items['Enabled'] -eq 0) 'offered when the tools are off and can come back'
+    RecoveryState '1'
+    RecoveryImage (-1)
+    $o = HObserve
+    Assert ($o.eligible -and $o.value.items['Enabled'] -eq 1) 'tools that are on need no image check'
+
+    # Writers: only the two changes, only when the state differs, exit code checked.
+    $script:calls = @(); $script:reagentCode = 0; $script:reagentWorks = $true
+    function HRunReagent([string]$verb) {
+        $script:calls += ,@('reagentc', $verb)
+        if ($script:reagentCode -eq 0 -and $script:reagentWorks) { RecoveryState $(if ($verb -ceq '/enable') { '1' } else { '0' }) }
+        return $script:reagentCode
+    }
+    RecoveryState '1'
+    HSetRecovery 'Enabled' 1
+    Assert ((CallLog) -ceq '') 'tools that are already on are not touched'
+    RecoveryState '0'
+    HSetRecovery 'Enabled' 1
+    Assert ((CallLog) -ceq 'reagentc:/enable' -and (HReadRecovery).Enabled -eq 1) "turned on: $(CallLog)"
+    $script:calls = @()
+    HSetRecovery 'Enabled' 0
+    Assert ((CallLog) -ceq 'reagentc:/disable' -and (HReadRecovery).Enabled -eq 0) "turned back off: $(CallLog)"
+    Reject { HSetRecovery 'Other' 1 } 'Unknown hardening item'
+    Reject { HSetRecovery 'Enabled' 2 } 'Invalid recovery tools state'
+    Reject { HSetRecovery 'Enabled' $null } 'Invalid recovery tools state'
+    $script:reagentCode = 2
+    Reject { HSetRecovery 'Enabled' 1 } 'Windows could not change the recovery tools (code 2)'
+    $script:reagentCode = 0
+
+    # Whole writes through the real HWrite and dispatcher.
+    ${function:HSet} = $realHSet
+    RecoveryState '0'
+    RecoveryImage 4096
+    RecoveryTool $true
+    $script:calls = @()
+    HWrite (Input '{"items":{"Enabled":1}}')
+    Assert ((CallLog) -ceq 'reagentc:/enable' -and (HReadRecovery).Enabled -eq 1) "repair turns the tools on: $(CallLog)"
+    # Undo is never held back by the offer checks (the image has moved into place by now).
+    RecoveryImage (-1)
+    $script:calls = @()
+    HWrite (Input '{"items":{"Enabled":0}}')
+    Assert ((CallLog) -ceq 'reagentc:/disable' -and (HReadRecovery).Enabled -eq 0) "undo turns them back off: $(CallLog)"
+    # A repair is refused before anything runs when the image is gone.
+    $script:calls = @()
+    Reject { HWrite (Input '{"items":{"Enabled":1}}') } 'Not offered: the recovery tools are missing from this PC'
+    Assert ((CallLog) -ceq '') 'nothing runs when the fix is not offered'
+    # The tool reports success but nothing changed: stop, and do not run it again.
+    RecoveryImage 4096
+    $script:reagentWorks = $false
+    $script:calls = @()
+    Reject { HWrite (Input '{"items":{"Enabled":1}}') } 'Readback did not match'
+    Assert ((CallLog) -ceq 'reagentc:/enable' -and (HReadRecovery).Enabled -eq 0) "a change that did not happen is not undone blindly: $(CallLog)"
+    $script:reagentWorks = $true
+    # The tool fails: there is nothing to put back.
+    $script:reagentCode = 5
+    $script:calls = @()
+    Reject { HWrite (Input '{"items":{"Enabled":1}}') } 'Windows could not change the recovery tools'
+    Assert ((CallLog) -ceq 'reagentc:/enable') "a failed change runs the tool once: $(CallLog)"
+    $script:reagentCode = 0
+    # Only the one exact item is accepted on the wire.
+    Reject { HWrite (Input '{"items":{"Enabled":1,"Other":0}}') } 'Unknown hardening item'
+    Reject { HWrite (Input '{"items":{}}') } 'must contain every item'
+} finally {
+    ${function:HRecoveryDir} = $realRecoveryDir
+    ${function:HReagentPath} = $realReagentPath
+    ${function:HRunReagent} = $realRunReagent
+    [IO.Directory]::Delete($recRoot, $true)
+}
 
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"
