@@ -268,3 +268,32 @@ requests its own redraws; `steps` is a row of 4 px segments for flows.
   only the hover layer redraws. One point shows a level line and the value.
 - `ring::ring` / `ring::ring_counting`: stroke `size * 0.045` (4..9 px),
   7 % track, round cap, arc and number ease together over `SLOW`.
+
+## Hairline drawings
+
+Line drawings that answer the pointer, built on `widgets/hairline` (see its
+module docs for the shared rules: greys plus four meaning colours, 1 to 2.5 px
+strokes at any size, under about 150 strokes a frame, frames only while
+something moves, reduced motion shows a still frame).
+
+### Start menu (`hairline::start_menu`, Clean up apps sheet)
+
+Sits at the top of the removal sheet while it works and stays for the result,
+164 px tall and the full sheet width (the menu itself about 147 px square,
+centred), so the sheet never jumps between the two. It replaces the 20 px
+spinners beside each app and the 40 px tick, warning or cross of the result.
+
+| Part | What moves |
+| --- | --- |
+| Tiles | A 3 by 3 grid like the Start menu. The apps being removed are the highlighted tiles (accent, up to six spread over the grid); the others are parts of Windows and the apps the person kept, in grey. Each tile has springs for x, y (120, 16), hover grow (1.14, 220, 18) and a pop-in (180, 15). |
+| Working | Waiting tiles wobble gently (2 degrees) with a faint marching outline; the app being saved or removed lifts 2 units, wobbles 3.5 degrees and its outline marches at 14 units a second. Hovering it wobbles it more. |
+| Removed | When that app is really removed (its own instant, not a timer): the tile lifts 12 units (0.1 to 0.5 s, `DECELERATE`), shrinks away (0.35 to 0.7 s, `ACCELERATE`) and six short green sparks fly out (0.6 to 1.05 s). At 0.85 s the tiles after it glide into the gap and an app waiting beyond the grid pops in at the end. |
+| Couldn't remove | Lifts 10 units and drops back (0.1 to 0.8 s, `EASE_IN_OUT`), shakes 9 degrees with a fading envelope, then turns amber (red when the whole run failed) with a solid outline and a flag. An app Windows protects drops back quietly and turns grey. |
+| Result | Once the last tile has settled, a small disc on the menu's top right corner draws in its ring and mark: green tick (all removed), amber exclamation (some not removed), red cross (the run failed). No mark when nothing needed removing. |
+
+Hover names every tile ("Removing News", "Couldn't remove Solitaire games",
+"Settings"), the "+N" count of apps still out of sight and the result mark.
+Clicking a tile nudges it; clicking elsewhere sends a pulse. The page's own
+frame subscription now runs only while the small marks beside finished apps
+draw in, and while Windows is asked about suggested apps. Reduced motion: the
+grid shows where every app ended up, with no wobble, tilt or pulses.
