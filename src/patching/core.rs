@@ -514,8 +514,6 @@ impl<S: Storage, B: Backend> Engine<S, B> {
             self.state.records[i].uncertain = true;
             self.state.records[i].status = Status::NeedsReview;
             self.save()?;
-            // Record is the durable explanation: no automatic retries after even
-            // an apparently pre-submission failure. Caller can inspect/verify.
         }
         Ok(self.state.records[i].clone())
     }

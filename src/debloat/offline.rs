@@ -1,6 +1,5 @@
-//! Saving a copy before removal and bringing an app back from it. All
-//! decisions live here and are tested with a fake `Host`; `WindowsHost`
-//! does the real work through `winfs`, `wincrypto` and two scripts.
+//! Saving a copy before removal and bringing an app back from it. Decisions live
+//! here (tested with a fake `Host`); `WindowsHost` does the real work.
 use super::backup::{self, FileEntry, FrameworkCopy, Kind, Manifest, Store, SCHEMA};
 use super::vault::Sealer;
 use super::Kept;
@@ -24,7 +23,6 @@ pub struct Described {
     pub template_family: String,
 }
 
-/// Folder and file permissions to give restored package folders.
 pub type Template = backup::Sddl;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,9 +41,7 @@ pub struct BackupOutcome {
 pub trait Host {
     fn describe(&self, name: &str) -> Result<Described>;
     fn free_bytes(&self) -> Result<u64>;
-    /// Copy WindowsApps\<full> to `dst`; returns the hashed file list.
     fn copy_out(&self, full: &str, dst: &Path) -> Result<Vec<FileEntry>>;
-    /// Is WindowsApps\<full> there?
     fn present(&self, full: &str) -> bool;
     fn save_data(
         &self,
@@ -54,11 +50,9 @@ pub trait Host {
         sealer: &dyn Sealer,
         out: &mut dyn Write,
     ) -> Result<u64>;
-    /// A fresh key: its sealer and its machine-sealed form.
     fn new_key(&self) -> Result<(Box<dyn Sealer>, Vec<u8>)>;
     fn open_key(&self, sealed: &[u8]) -> Result<Box<dyn Sealer>>;
     fn template(&self, family: &str) -> Result<Template>;
-    /// Current permissions of WindowsApps\<full> (folder and a file).
     fn package_sddl(&self, full: &str) -> Result<Template>;
     fn copy_in(
         &self,
@@ -78,18 +72,13 @@ pub trait Host {
         input: &mut dyn Read,
     ) -> Result<()>;
     fn registered_ok(&self, family: &str) -> Result<bool>;
-    /// Has Windows created this account's data folder for the app yet?
     fn data_folder_ready(&self, sid: &str, family: &str) -> bool;
-    /// The account Secblitz is running as.
     fn current_sid(&self) -> Result<String>;
-    /// Is any version of `family` already in WindowsApps (for example one
-    /// reinstalled from the Store, with a different version number)?
     fn family_installed(&self, _family: &str) -> bool {
         false
     }
 }
 
-/// The disk filled up while the copy was being made.
 #[derive(Debug)]
 struct LowSpace;
 impl std::fmt::Display for LowSpace {
@@ -105,8 +94,6 @@ fn no_copy(e: impl std::fmt::Display) -> Kept {
     Kept::NoCopy(crate::text::excerpt(&e.to_string(), 300))
 }
 
-/// Save a verified copy of every package of `name` (and its data), then
-/// commit it. Nothing is removed here.
 pub(crate) fn backup_family_with(
     host: &dyn Host,
     store: &Store,
@@ -128,8 +115,6 @@ pub(crate) fn backup_family_with(
         )?;
     }
     let family = family.expect("non-empty");
-    // Package sizes are unknown until copied: start only with twice the
-    // headroom free, and re-check after every package.
     let free = host.free_bytes().map_err(no_copy)?;
     if free < backup::HEADROOM.saturating_mul(2) {
         return Err(Kept::NoSpace);
@@ -146,7 +131,6 @@ pub(crate) fn backup_family_with(
                 files,
                 sddl: recorded_sddl(host, &p.full_name),
             });
-            // The size is only known once copied: keep the headroom free.
             ensure!(host.free_bytes()? >= backup::HEADROOM, LowSpace);
         }
         let mut frameworks = Vec::new();
@@ -180,8 +164,6 @@ pub(crate) fn backup_family_with(
         std::fs::create_dir_all(staging.join(backup::DATA))?;
         let mut data = Vec::new();
         for sid in &d.users {
-            // No data folder (or a link where it should be): nothing of
-            // this account's to keep.
             if !backup::valid_sid(sid) || !host.data_folder_ready(sid, &family) {
                 continue;
             }
@@ -216,7 +198,6 @@ pub(crate) fn backup_family_with(
             staging.join(backup::MANIFEST),
             serde_json::to_vec(&manifest)?,
         )?;
-        // Re-read everything from disk before trusting it.
         for p in &manifest.packages {
             backup::verify_tree(&staging.join(backup::PACKAGES).join(&p.full_name), &p.files)?;
         }
@@ -256,8 +237,6 @@ fn recorded_sddl(host: &dyn Host, full: &str) -> Option<Template> {
     })
 }
 
-/// Permissions for restoring `full`: its own recorded ones when they still
-/// pass the checks, else the live-app template (computed once, on demand).
 fn permissions_for(
     host: &dyn Host,
     full: &str,
@@ -305,7 +284,6 @@ fn verify(store: &Store, m: &Manifest) -> Result<()> {
     Ok(())
 }
 
-/// Bring back every saved family of catalog entry `index`.
 pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result<Restored> {
     let manifests = store.for_index(index);
     if manifests.is_empty() {
@@ -354,8 +332,6 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
                 )?;
                 copied.push(p.full_name.clone());
             }
-            // Bundles register their main and resource packages; without a
-            // bundle, register each main package.
             let bundles: Vec<String> = m
                 .packages
                 .iter()
@@ -422,8 +398,6 @@ fn read_pending(store: &Store, family: &str) -> Vec<String> {
         .collect()
 }
 
-/// Put back the current account's saved data for apps restored while it
-/// was signed out. Quiet and best effort: runs at Secblitz start.
 pub(crate) fn finish_pending_with(host: &dyn Host, store: &Store) -> Result<()> {
     let me = host.current_sid()?;
     for index in 0..super::catalog().len() as u16 {
@@ -442,8 +416,6 @@ pub(crate) fn finish_pending_with(host: &dyn Host, store: &Store) -> Result<()> 
             if put_back(host, store, &m, &me).is_ok() {
                 pending.retain(|s| s != &me);
                 if pending.is_empty() {
-                    // The app was restored earlier and every account now
-                    // has its data back: the copy has done its job.
                     store.delete(&m.family)?;
                     store.gc_frameworks()?;
                 } else {
@@ -456,7 +428,6 @@ pub(crate) fn finish_pending_with(host: &dyn Host, store: &Store) -> Result<()> 
     Ok(())
 }
 
-/// Called once from the GUI's startup task (it runs elevated).
 pub fn finish_pending() {
     #[cfg(windows)]
     if let Ok(store) = Store::open() {
@@ -529,8 +500,6 @@ pub fn restore_index(index: u16) -> Result<Restored> {
     }
 }
 
-// ---- describe.ps1 output ---------------------------------------------------
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawDescribed {
@@ -595,8 +564,6 @@ pub(crate) fn parse_described(json: &str) -> Result<Described> {
     })
 }
 
-// ---- the real host ---------------------------------------------------------
-
 #[cfg(windows)]
 pub struct WindowsHost;
 
@@ -648,7 +615,6 @@ impl Host for WindowsHost {
         Ok(Box::new(super::wincrypto::Aes::new(&key)?))
     }
     fn template(&self, family: &str) -> Result<Template> {
-        // Re-describe to find a live Microsoft app whose security to copy.
         let name = family.rsplit_once('_').context("family")?.0;
         let d = self
             .describe(name)
@@ -678,7 +644,6 @@ impl Host for WindowsHost {
     fn package_sddl(&self, full: &str) -> Result<Template> {
         backup::parse_full_name(full)?;
         let dir = super::winfs::windows_apps()?.join(full);
-        // Every package (bundle, main, resource, framework) has a block map.
         Ok(Template {
             dir: super::winfs::security_sddl(&dir)?,
             file: super::winfs::security_sddl(&dir.join("AppxBlockMap.xml"))?,
@@ -753,7 +718,6 @@ impl Host for WindowsHost {
         super::vault::decrypt(input, sealer, family, sid, &mut sink)
     }
     fn registered_ok(&self, _family: &str) -> Result<bool> {
-        // register.ps1 already checked every registered package's Status.
         Ok(true)
     }
     fn data_folder_ready(&self, sid: &str, family: &str) -> bool {
@@ -918,7 +882,6 @@ mod tests {
         }
     }
 
-    /// Identity "cipher" for orchestration tests (framing is tested in vault).
     struct Plain;
     impl Sealer for Plain {
         fn seal(&self, _: &[u8; 12], _: &[u8], p: &[u8]) -> Result<Vec<u8>> {
@@ -1101,7 +1064,6 @@ mod tests {
         let (_d, store) = store();
         let host = weather();
         backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
-        // Still installed (e.g. reinstalled from the Store).
         assert_eq!(
             restore_with(&host, &store, index()).unwrap(),
             Restored::AlreadyThere
@@ -1180,12 +1142,10 @@ mod tests {
         assert!(host.data.borrow().get(OTHER).is_none());
         assert_eq!(read_pending(&store, FAMILY), vec![OTHER.to_string()]);
 
-        // Still signed out: nothing happens.
         *host.me.borrow_mut() = OTHER.into();
         finish_pending_with(&host, &store).unwrap();
         assert!(host.data.borrow().get(OTHER).is_none());
 
-        // They sign in (Windows makes the folder) and open Secblitz.
         host.signed_out.borrow_mut().clear();
         finish_pending_with(&host, &store).unwrap();
         assert_eq!(host.data.borrow().get(OTHER).unwrap(), b"other city");
@@ -1228,10 +1188,8 @@ mod tests {
         let (_d, store) = store();
         let host = weather();
         backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
-        // Another app's copy is untouched.
         let other = store.family_dir("Microsoft.BingNews_8wekyb3d8bbwe");
         std::fs::create_dir_all(&other).unwrap();
-        // A damaged copy of this app is removed too.
         let damaged = store.family_dir("Microsoft.BingWeather_abcdefghijklm");
         std::fs::create_dir_all(&damaged).unwrap();
         std::fs::write(damaged.join(crate::debloat::backup::MANIFEST), b"junk").unwrap();
@@ -1272,7 +1230,6 @@ mod tests {
         let host = weather();
         host.sddls.borrow_mut().insert(MAIN.into(), own(APP));
         host.sddls.borrow_mut().insert(FW.into(), own(SHARED));
-        // The bundle's recorded permissions grant everyone write: not kept.
         host.sddls
             .borrow_mut()
             .insert(BUNDLE.into(), own("O:SYG:SYD:(A;;FA;;;WD)"));
@@ -1312,7 +1269,6 @@ mod tests {
 
     #[test]
     fn failed_removal_keeps_app_and_copy() {
-        // remove_with integration: backup ok, removal fails.
         let (_d, store) = store();
         let host = weather();
         let installed = vec![crate::debloat::Installed {

@@ -142,7 +142,6 @@ impl Child {
     pub fn id(&self) -> u32 {
         self.pid
     }
-    /// A direct child exit is insufficient: descendants must leave the job too.
     pub fn try_wait(&self) -> Result<Option<u32>> {
         let wait = unsafe { WaitForSingleObject(self.process.0, 0) };
         ensure!(
@@ -416,7 +415,6 @@ mod tests {
     #[test]
     #[ignore = "native Windows job/pipe test; only synthetic sleeping processes, no maintenance"]
     fn direct_exit_does_not_release_descendant_supervision() {
-        // Child announces startup, then lives beyond its direct parent.
         let (command, _pins) = command("$s=[Diagnostics.ProcessStartInfo]::new();$s.FileName=[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName;$s.Arguments='-NoLogo -NoProfile -NonInteractive -Command [Console]::Out.WriteLine(123); Start-Sleep -Seconds 4';$s.UseShellExecute=$false;$s.RedirectStandardOutput=$true;$p=[Diagnostics.Process]::Start($s);$null=$p.StandardOutput.ReadLine()");
         let mut child = spawn(&command, false, None, None).unwrap();
         drop(child.stdin.take());

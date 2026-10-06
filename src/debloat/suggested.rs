@@ -1,8 +1,5 @@
 //! The machine-wide "don't push suggested apps" policy, with what was there
 //! before recorded so Remove Secblitz can put it back.
-//!
-//! The record is a tiny JSON file in the protected app folder, written before
-//! the policy is. `{"prior":null}` means the value did not exist.
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -11,14 +8,12 @@ use std::path::{Path, PathBuf};
 pub enum PolicyValue {
     Absent,
     Dword(u32),
-    /// Present, but not a DWORD.
     Other,
 }
 
 pub trait PolicyStore {
     fn get(&self) -> Result<PolicyValue>;
     fn set(&mut self, value: u32) -> Result<()>;
-    /// Deleting a value that is not there is fine.
     fn delete(&mut self) -> Result<()>;
 }
 
@@ -31,13 +26,10 @@ pub fn journal_path() -> Result<PathBuf> {
     Ok(crate::platform::app_dir()?.join("suggested-policy.json"))
 }
 
-/// Whether a prior value is on record (so Secblitz set the policy).
 pub fn recorded(journal: &Path) -> bool {
     journal.is_file()
 }
 
-/// The policy is on but nothing is recorded: a 0.7.0 block or someone else's
-/// policy. It is left alone and listed.
 pub fn legacy_block(store: &dyn PolicyStore, journal: &Path) -> bool {
     !recorded(journal) && matches!(store.get(), Ok(PolicyValue::Dword(1)))
 }
@@ -62,8 +54,6 @@ fn put_back(store: &mut dyn PolicyStore, prior: Option<u32>) -> Result<()> {
     }
 }
 
-/// Turn the policy on. The first time, the prior value is recorded before
-/// anything is written; later calls keep that first record.
 pub fn block(store: &mut dyn PolicyStore, journal: &Path) -> Result<()> {
     let fresh = !recorded(journal);
     let mut prior = None;
@@ -82,7 +72,6 @@ pub fn block(store: &mut dyn PolicyStore, journal: &Path) -> Result<()> {
         return Ok(());
     }
     if fresh {
-        // Put it back and forget the record, so nothing stale is left.
         let _ = put_back(store, prior);
         let _ = std::fs::remove_file(journal);
     }
@@ -93,7 +82,6 @@ pub fn block(store: &mut dyn PolicyStore, journal: &Path) -> Result<()> {
 pub enum Undo {
     Restored,
     NothingRecorded,
-    /// Someone changed it after Secblitz did; left as it is.
     ChangedSince,
 }
 
@@ -103,7 +91,6 @@ pub fn undo(store: &mut dyn PolicyStore, journal: &Path) -> Result<Undo> {
     }
     let text = std::fs::read_to_string(journal).context("Read the suggested apps record")?;
     let Ok(record) = serde_json::from_str::<Record>(&text) else {
-        // Unreadable record: nothing safe to put back.
         let _ = std::fs::remove_file(journal);
         return Ok(Undo::ChangedSince);
     };

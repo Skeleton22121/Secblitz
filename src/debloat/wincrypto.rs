@@ -42,7 +42,6 @@ pub struct Aes {
     key: BCRYPT_KEY_HANDLE,
 }
 
-// CNG handles are usable from any thread; Aes is used from one at a time.
 unsafe impl Send for Aes {}
 
 impl Aes {
@@ -265,14 +264,12 @@ mod tests {
                 .is_err(),
             "key bound"
         );
-        // Empty plaintext is allowed (final frame of an empty archive).
         let empty = aes.seal(&nonce, b"", b"").unwrap();
         assert_eq!(aes.open(&nonce, b"", &empty).unwrap(), b"");
     }
 
     #[test]
     fn known_answer_matches_nist_gcm() {
-        // NIST GCM test case 14 (AES-256, zero key, zero IV, 16 zero bytes).
         let key = Key::from_bytes([0u8; 32]);
         let aes = Aes::new(&key).unwrap();
         let sealed = aes.seal(&[0u8; 12], b"", &[0u8; 16]).unwrap();

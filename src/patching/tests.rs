@@ -348,8 +348,6 @@ fn expiry_and_clock_rollback_before_consume_cannot_execute() {
 }
 #[test]
 fn every_publication_fault_never_replays_and_spawn_fault_prevents_submission() {
-    // Success path also durably acknowledges each fully supervised WUA phase.
-    // Every publication (including loss of the phase acknowledgement) is injectable.
     for boundary in 1..=10 {
         let (mut e, store, os, p) = prepared();
         os.0.lock().unwrap().installed = vec![update().identity];

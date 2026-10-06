@@ -60,8 +60,6 @@ fn descriptor(directory: bool) -> Result<Local> {
     Ok(Local(value))
 }
 
-// strict = private operation state; relaxed = OS executables/ancestors.
-// Inbox WRP executables may have trusted WinSxS hardlinks. Private state may not.
 fn inspect(file: &File, directory: bool, strict: bool, ancestor: bool) -> Result<()> {
     unsafe {
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
@@ -242,9 +240,6 @@ pub(crate) fn pin_system_executable(path: &Path) -> Result<Vec<File>> {
             prefix != path && Some(prefix.as_path()) != path.parent(),
         )?);
     }
-    // CLR executable configuration can select additional managed code. Validate
-    // and pin it when present; the pinned parent denies untrusted creation when
-    // it is absent. The OS loader/WRP remains the trust root for system DLLs.
     if path
         .extension()
         .and_then(|e| e.to_str())
@@ -429,8 +424,6 @@ impl core::Storage for Store {
 fn load(root: &Path) -> Result<Option<Vec<u8>>> {
     let path = root.join("state.json");
     if !exists(&path)? {
-        // A failed first publication is not silently adopted as an empty
-        // store. It requires owner review; temporary files are never replayed.
         ensure!(
             fs::read_dir(root)?.all(|e| e.is_ok_and(|e| e.file_name() == "scratch")),
             "Missing state with orphan records; review required"
@@ -449,8 +442,6 @@ fn load(root: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 pub(super) fn ensure_update_idle(shared_engine_lock: &File) -> Result<()> {
-    // Leaf inspector: no Store::open/entry gate and no calls back to patching or
-    // updater state inspection. Shared lock validation itself is read-only.
     let base = crate::updater::inspect_engine_lock(shared_engine_lock)?;
     let root = base.base.join("operations");
     if exists(&root)? {

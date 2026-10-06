@@ -1,22 +1,15 @@
-//! Detect-only checks added in the 2026-10 batch. Every function here reads typed
-//! facts and returns assessments; nothing mutates Windows. Facts carry counts and
-//! fixed categories only, never paths, host names, account names or file contents.
+//! Detect-only checks: read typed facts, return assessments, mutate nothing.
+//! Facts carry counts and fixed categories only, never paths, names or contents.
 use super::rules::{a, boolean};
 use super::*;
 use Status::*;
-
-// ---------------------------------------------------------------------------
-// Windows feature-release support (os.feature_release_support)
-// ---------------------------------------------------------------------------
 
 /// One servicing line. `builds` are the OS build numbers that line can report;
 /// a display version and build that disagree are never assessed.
 struct Release {
     version: &'static str,
     builds: &'static [u32],
-    /// End of servicing for Home, Pro, Pro Education and Pro for Workstations.
     consumer_end: &'static str,
-    /// End of servicing for Enterprise and Education, when known.
     managed_end: Option<&'static str>,
 }
 
@@ -80,16 +73,12 @@ const RELEASES: &[Release] = &[
     },
 ];
 pub const RELEASE_TABLE_REVIEWED: &str = "2026-10-05";
-/// Days before the end date at which the finding starts asking for action.
 pub const SUPPORT_WARNING_DAYS: i64 = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReleaseSupport {
-    /// Support ended this many days ago (0 = today).
     Ended { days_ago: i64 },
-    /// Support ends in this many days.
     Ends { days_left: i64 },
-    /// Unknown release, edition class or mismatched build: no claim is made.
     NotAssessed,
 }
 
@@ -105,7 +94,6 @@ fn edition_is_consumer(edition: &str) -> Option<bool> {
     }
 }
 
-/// Days since 1970-01-01 for a `YYYY-MM-DD` table date.
 fn civil_days(date: &str) -> Option<i64> {
     let mut parts = date.split('-').map(|p| p.parse::<i64>().ok());
     let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
@@ -121,7 +109,6 @@ fn civil_days(date: &str) -> Option<i64> {
     Some(era * 146_097 + doe - 719_468)
 }
 
-/// Pure so every date boundary is testable. `today` is days since the Unix epoch.
 pub fn release_support(version: &str, build: u32, edition: &str, today: i64) -> ReleaseSupport {
     let Some(consumer) = edition_is_consumer(edition) else {
         return ReleaseSupport::NotAssessed;
@@ -178,10 +165,6 @@ pub(super) fn os_support_at(v: &OsSupport, today: Option<i64>) -> Vec<Assessment
     vec![a(id, status, detail)]
 }
 
-// ---------------------------------------------------------------------------
-// Secure Boot certificate renewal (boot.secure_boot_certs)
-// ---------------------------------------------------------------------------
-
 pub(super) fn secure_boot_certs(v: &SecureBootCerts) -> Vec<Assessment> {
     let id = "boot.secure_boot_certs";
     if v.secure_boot_enabled.known() == Some(&false) {
@@ -213,10 +196,6 @@ pub(super) fn secure_boot_certs(v: &SecureBootCerts) -> Vec<Assessment> {
     };
     vec![a(id, status, detail)]
 }
-
-// ---------------------------------------------------------------------------
-// Defender (defender.tamper_protection, threats, scan age, exclusions)
-// ---------------------------------------------------------------------------
 
 pub(super) fn defender_protection(v: &DefenderProtection) -> Vec<Assessment> {
     let normal = v.running_mode.known().map(String::as_str) == Some("Normal");
@@ -273,10 +252,6 @@ pub(super) fn defender_protection(v: &DefenderProtection) -> Vec<Assessment> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Reputation-based protection (smartscreen.*, smart_app_control.state)
-// ---------------------------------------------------------------------------
-
 pub(super) fn smartscreen(v: &SmartScreen) -> Vec<Assessment> {
     let mut out = Vec::new();
     let apps = match (v.apps_off_local.known(), v.apps_off_policy.known()) {
@@ -299,13 +274,7 @@ pub(super) fn smartscreen(v: &SmartScreen) -> Vec<Assessment> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Update hygiene (paused, drivers, reboot)
-// ---------------------------------------------------------------------------
-
 pub(super) fn update_policy(v: &UpdatePolicy) -> Vec<Assessment> {
-    // Switched-off automatic updates are a fixable engine control
-    // (update.auto_policy_disabled); only the read-only update checks live here.
     let mut out = vec![boolean("update.paused", &v.paused, false, "Windows Update pause or delay is active; updates resume after the pause ends or when resumed in Settings.")];
     out.push(a("update.drivers_excluded", match v.drivers_excluded.known() { Some(true) => Informational, Some(false) => Healthy, None => Unknown }, "Driver updates are excluded from Windows quality updates by policy. This is often deliberate and is reported for information only."));
     let reboot = match (v.reboot_pending.known(), v.uptime_days.known()) {
@@ -317,10 +286,6 @@ pub(super) fn update_policy(v: &UpdatePolicy) -> Vec<Assessment> {
     out.push(a("update.reboot_overdue", reboot, "A restart is waiting to finish installing updates and the PC has been up for a week or more. Fast Startup does not count as a restart, and nothing is restarted automatically."));
     out
 }
-
-// ---------------------------------------------------------------------------
-// Legacy features, hosts file, persistence, accounts, sharing, firewall
-// ---------------------------------------------------------------------------
 
 pub(super) fn legacy_features(v: &LegacyFeatures) -> Vec<Assessment> {
     vec![boolean("ps.v2_engine", &v.powershell_v2_enabled, false, "The deprecated Windows PowerShell 2.0 engine lacks modern logging and malware scanning hooks and is a common downgrade-attack target. A missing feature counts as removed; nothing is changed by this check.")]
@@ -406,10 +371,6 @@ pub(super) fn firewall_rules(v: &FirewallRules) -> Vec<Assessment> {
     vec![a("firewall.user_dir_inbound_allow", status, "Enabled inbound allow rules for programs in Downloads, Desktop, Temp or Public folders count as risky; other personal-folder programs are informational. Program paths are never collected.")]
 }
 
-// ---------------------------------------------------------------------------
-// Sign-in, encryption, network and start-up checks (tips only)
-// ---------------------------------------------------------------------------
-
 pub(super) fn account_setup(v: &AccountSetup) -> Vec<Assessment> {
     let daily = match v.current_user_is_admin.known() {
         Some(true) => Attention,
@@ -441,7 +402,6 @@ pub(super) fn kernel_stack(vbs: &Vbs) -> Option<Assessment> {
         Some("On") => a(id, Healthy, "Kernel-mode hardware-enforced stack protection is switched on."),
         Some("Off") if running_hvci => a(id, Attention, "Kernel-mode hardware-enforced stack protection is off although Memory integrity is running. Whether your PC supports it is not tested; the Windows Security toggle shows that. Nothing is changed by this check."),
         Some("Off") => a(id, Informational, "Kernel-mode hardware-enforced stack protection is off. It needs Memory integrity running first; nothing is changed by this check."),
-        // Not reported by this Windows build: no claim either way.
         Some("Absent") => return None,
         _ => a(id, Unknown, "Kernel-mode stack protection state could not be read."),
     })
@@ -489,10 +449,6 @@ pub(super) fn autostart(v: &Autostart) -> Vec<Assessment> {
     };
     vec![a("persistence.run_and_tasks", status, "Counts only. Start-up entries (Run keys, Startup folders, non-Microsoft scheduled tasks) are flagged when the program sits in Temp, Downloads, Public or the Roaming folder root and is not signed, or when a command hides an encoded script or downloads from the internet. Names and paths are never collected.")]
 }
-
-// ---------------------------------------------------------------------------
-// Documentation links and neutral guidance for the rule ids above
-// ---------------------------------------------------------------------------
 
 pub(super) fn documentation(id: &str) -> Option<&'static str> {
     Some(match id {
@@ -617,7 +573,6 @@ mod tests {
             release_support("24H2", 26100, "IoTEnterpriseS", consumer_end),
             ReleaseSupport::NotAssessed
         );
-        // Managed editions have no known date for 26H1.
         assert_eq!(
             release_support("26H1", 28000, "Enterprise", consumer_end),
             ReleaseSupport::NotAssessed

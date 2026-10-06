@@ -59,7 +59,6 @@ pub(super) fn build(
         data.len() <= MAX_STATE_BYTES,
         "Patching request cap exceeded"
     );
-    // Only base64 JSON is interpolated; no metadata ever becomes script syntax.
     let encoded = base64::engine::general_purpose::STANDARD.encode(data);
     let platform = include_str!("../platform/backend.ps1");
     let boundary = "\ntry {\n    switch -CaseSensitive ($action) {";

@@ -117,7 +117,6 @@ impl Backend for Fake {
         if let Some(reason) = world.stop {
             notify(Event::Stop(reason));
         }
-        // Even a callback persistence failure must reach supervision completion.
         world.supervised += 1;
         ensure!(!world.error, "injected native uncertainty");
         Ok(Execution {
@@ -541,9 +540,6 @@ fn busy_interrupted_child_defers_verification_and_every_new_plan() {
 
 #[test]
 fn fault_at_every_execution_publication_boundary_never_replays_side_effects() {
-    // Both allowed outcomes of a failed atomic publication: old durable bytes,
-    // or new durable bytes with an error returned after publication. Includes
-    // consume, intent, spawn, verify intent/spawn, success, monitor, and reboot.
     for scenario in 0..6 {
         let setup = || {
             let (e, disk, backend, plan) = approved(if scenario == 5 {
@@ -883,8 +879,6 @@ fn legacy_inconclusive_review_cannot_bypass_interlock() {
         let (mut e, disk, backend, plan) = approved(vec![OperationKind::DefenderQuickScan]);
         backend.0.borrow_mut().error = true;
         e.run(plan.id, false, &control(plan.id)).unwrap();
-        // Earlier schema-1 implementations converted launch/verification errors
-        // into NeedsReview, indistinguishable from successful reviewable work.
         let mut state: State =
             serde_json::from_slice(disk.0.borrow().bytes.as_ref().unwrap()).unwrap();
         state.plans[0].steps[0].state = StepState::NeedsReview;

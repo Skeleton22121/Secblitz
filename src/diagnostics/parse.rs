@@ -110,9 +110,6 @@ pub(super) fn diagnostic(id: ProbeId, bytes: &[u8]) -> Diagnostic {
     }
 }
 
-// serde_json::Value normally accepts duplicate object keys (last value wins).
-// Duplicate native facts are corrupt evidence, not an opportunity to pick the
-// most favorable status. The byte cap and serde_json recursion limit apply first.
 struct UniqueValue(Value);
 impl<'de> serde::Deserialize<'de> for UniqueValue {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -174,9 +171,6 @@ impl<'de> serde::Deserialize<'de> for UniqueValue {
     }
 }
 
-/// REAgentC output is localized. Recognize only one unambiguous English status
-/// line; other languages, duplicates, stderr and failed exit codes stay Unknown.
-/// No paths/BCD identifiers from the command are retained in the report.
 pub(super) fn winre(bytes: &[u8]) -> WinRe {
     let text = if bytes.starts_with(&[0xff, 0xfe])
         || bytes.iter().take(64).filter(|b| **b == 0).count() > 8
@@ -234,7 +228,6 @@ pub(super) fn dsreg(bytes: &[u8]) -> WindowsHello {
     if bytes.len() > MAX_OUTPUT_BYTES {
         return unknown(UnknownReason::OutputLimit);
     }
-    // The line is plain ASCII; other lines may hold OEM-encoded names.
     let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes));
     let mut values = text.lines().filter_map(|line| {
         let (key, value) = line.trim().trim_matches('|').trim().split_once(':')?;
@@ -263,21 +256,17 @@ pub(super) fn wifi_class(security_enabled: bool, auth: u32, cipher: u32) -> &'st
         1 if !security_enabled || cipher == 0 => "Open",
         1 if WEP.contains(&cipher) => "Wep",
         2 => "Wep",
-        // WPA (version 1) and ad-hoc WPA.
         3..=5 => "Old",
-        // WPA2: TKIP is the weak cipher, CCMP/GCMP the modern ones.
         6 | 7 => match cipher {
             2 => "Old",
             4 | 8 | 9 | 0xa => "Strong",
             _ => "Other",
         },
-        // WPA3-Enterprise 192-bit, WPA3-SAE, WPA3-Enterprise.
         8 | 9 | 11 => "Strong",
         _ => "Other",
     }
 }
 
-/// Lower is weaker; the weakest connected interface is the one reported.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn wifi_rank(class: &str) -> u8 {
     match class {
