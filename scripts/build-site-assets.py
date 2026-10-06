@@ -8,7 +8,8 @@ Run: python3 scripts/build-site-assets.py [--check]
   the site always uses the exact glyphs the app draws.
 * Font: IBM Plex Sans (assets/fonts, SIL OFL) is subset to Latin and saved as
   WOFF2 under website/assets/fonts.
-* Favicon: the app's window icon (white shield and tick on a #18181B tile).
+* Favicon: the app's small-size icon (white shield and bolt on a #18181B tile),
+  from assets/secblitz-small.svg.
 
 --check exits non-zero when any generated file is out of date.
 """
@@ -127,11 +128,17 @@ def fonts():
     return out
 
 
-FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect width="24" height="24" rx="5" fill="#18181B"/>
-  <path fill="#FFFFFF" fill-rule="evenodd" d="M12 2.5 19.5 5.5V12L18 15.8 15 19 12 21.5 9 19 6 15.8 4.5 12V5.5Z M8.16 12.84 11 15.67 16.05 10.42 14.75 9.17 11 13.13 9.44 11.56Z"/>
-</svg>
-"""
+SMALL_ICON = ROOT / "assets/secblitz-small.svg"
+
+
+def favicon():
+    """The app's small-size icon (solid shield, bolt cut out), minus its size and text."""
+    svg = SMALL_ICON.read_text(encoding="utf-8")
+    shapes = re.findall(r"^\s*(<(?:rect|path)\b[^>]*/>)$", svg, re.MULTILINE)
+    if len(shapes) != 2:
+        sys.exit(f"{SMALL_ICON}: expected one rect and one path")
+    body = "".join(f"  {shape}\n" for shape in shapes)
+    return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">\n{body}</svg>\n'
 
 
 def main():
@@ -139,7 +146,7 @@ def main():
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
 
-    wanted = {"assets/favicon.svg": FAVICON.encode()}
+    wanted = {"assets/favicon.svg": favicon().encode()}
     wanted.update(fonts())
     index = SITE / "index.html"
     wanted["index.html"] = inject(index.read_text(encoding="utf-8")).encode()

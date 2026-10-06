@@ -180,6 +180,11 @@ class BumpTests(unittest.TestCase):
         self.assertEqual(stage.count(f"secblitz-{self.shown}-windows-x64-setup.exe"), 1)
 
     def test_site_only_changes_just_the_site_files(self):
+        if self.shown == self.old:
+            # Right after a release the site already shows the Cargo version: step it back.
+            for rel in ("README.md", "website/index.html", "website/structured.json"):
+                path = self.root / rel
+                path.write_text(path.read_text(encoding="utf-8").replace(self.shown, "0.0.1"), encoding="utf-8")
         before = self.snapshot()
         self.assertEqual(self.bump("9.8.7", "--site-only")[0], 1)  # not the Cargo version
         self.assertEqual(before, self.snapshot())

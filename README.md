@@ -8,9 +8,9 @@ Security, privacy and cleanup for Windows, all in one app.
 
 Secblitz checks your Windows PC, tells you in plain language what needs fixing, and fixes it when you say yes. You don't need to know anything about computers.
 
-[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.7.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](#security) · [Contributing](#contributing)
+[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.8.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](#security) · [Contributing](#contributing)
 
-![Version 0.7.0](https://img.shields.io/badge/version-0.7.0-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B)
+![Version 0.8.0](https://img.shields.io/badge/version-0.8.0-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
@@ -41,12 +41,12 @@ Secblitz is not an antivirus. It makes sure the protection Windows already gives
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.7.0-windows-x64-setup.exe) (8.2 MB) and run it. Secblitz asks for administrator permission when it opens, because reading and changing security settings needs it.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.8.0-windows-x64-setup.exe) (8.2 MB) and run it. Secblitz asks for administrator permission when it opens, because reading and changing security settings needs it.
 
 The installer is not code-signed yet, so Windows may say the publisher is unknown. Choose **More info**, then **Run anyway**. To confirm you have the exact published file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
 ```powershell
-Get-FileHash .\secblitz-0.7.0-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\secblitz-0.8.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Tested on Windows 11, 64-bit. Windows 10 is not tested.
