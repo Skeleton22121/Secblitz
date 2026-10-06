@@ -1149,10 +1149,36 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     )
 }
 
-fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+fn bitwarden_offer_row<'a>(ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let has_broker = ctx.broker.is_some();
     let not_here = ctx.helper == Helper::NotOnThisAccount;
+    widgets::row_item(
+        p,
+        Some(Icon::Lock),
+        ctx.t("Password manager"),
+        Some(if has_broker {
+            ctx.t("Keep all your passwords safe in one place.")
+        } else if not_here {
+            format!(
+                "{} {}",
+                helper_hint(ctx),
+                ctx.t("You can get it from bitwarden.com instead.")
+            )
+        } else {
+            helper_hint(ctx)
+        }),
+        secondary(
+            p,
+            ctx.t("Install"),
+            has_broker.then_some(Msg::Ask(Sheet::Bitwarden)),
+        ),
+        None,
+    )
+}
+
+fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    let p = ctx.palette;
     match &state.bitwarden {
         Run::Idle if state.bitwarden_present => widgets::row_item(
             p,
@@ -1170,28 +1196,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             anim::warn_draw(MARK, p.tone(Tone::Warn), 1.0),
             None,
         ),
-        Run::Idle => widgets::row_item(
-            p,
-            Some(Icon::Lock),
-            ctx.t("Password manager"),
-            Some(if has_broker {
-                ctx.t("Keep all your passwords safe in one place.")
-            } else if not_here {
-                format!(
-                    "{} {}",
-                    helper_hint(ctx),
-                    ctx.t("You can get it from bitwarden.com instead.")
-                )
-            } else {
-                helper_hint(ctx)
-            }),
-            secondary(
-                p,
-                ctx.t("Install"),
-                has_broker.then_some(Msg::Ask(Sheet::Bitwarden)),
-            ),
-            None,
-        ),
+        Run::Idle => bitwarden_offer_row(ctx),
         Run::Working => busy_row(
             state,
             p,
