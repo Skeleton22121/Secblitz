@@ -623,6 +623,8 @@ var
   PersonalLeft: Boolean;
 begin
   UninstallProgressForm.StatusLabel.Caption := CustomMessage('PuttingBack');
+  { Bringing apps back can take a minute; a moving bar shows it is working. }
+  UninstallProgressForm.ProgressBar.Style := npbstMarquee;
   SetArrayLength(Lines, 0);
 
   PersonalLeft := True;
@@ -643,6 +645,7 @@ begin
     AddLine(Lines, CustomMessage('SettingsLeft'));
   end;
   DeleteFile(Output);
+  UninstallProgressForm.ProgressBar.Style := npbstNormal;
 
   if GetArrayLength(Lines) = 0 then Exit;
   Report := CustomMessage('LeftIntro');
@@ -723,5 +726,9 @@ begin
     except
       Log('Secblitz uninstall data cleanup exception: ' + GetExceptionMessage);
     end;
+    // Setup's own retry can run while unins000.exe is still being deleted;
+    // by now it is gone, so the empty program folder can go too.
+    if DirExists(ExpandConstant('{app}')) and not RemoveDir(ExpandConstant('{app}')) then
+      Log('Secblitz program folder is not empty; leaving it.');
   end;
 end;
