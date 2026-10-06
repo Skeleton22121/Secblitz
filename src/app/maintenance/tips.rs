@@ -669,6 +669,11 @@ mod tests {
     #[test]
     fn a_tip_for_something_secblitz_can_fix_goes_to_the_fix() {
         let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
+        // On Windows the probes read the real PC; only the planted finding may count.
+        for p in &mut report.probes {
+            p.status = diag::Status::Healthy;
+            p.assessments.clear();
+        }
         let probe = report
             .probes
             .iter_mut()
