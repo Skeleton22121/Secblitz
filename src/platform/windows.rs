@@ -273,28 +273,6 @@ fn job(processes: u32) -> Result<Handle> {
         Ok(h)
     }
 }
-fn base64(input: &[u8]) -> String {
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for c in input.chunks(3) {
-        let v = ((c[0] as u32) << 16)
-            | ((c.get(1).copied().unwrap_or(0) as u32) << 8)
-            | c.get(2).copied().unwrap_or(0) as u32;
-        out.push(TABLE[((v >> 18) & 63) as usize] as char);
-        out.push(TABLE[((v >> 12) & 63) as usize] as char);
-        out.push(if c.len() > 1 {
-            TABLE[((v >> 6) & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if c.len() > 2 {
-            TABLE[(v & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
 fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value>) -> Result<T> {
     ensure!(
         cfg!(target_arch = "x86_64"),
@@ -371,29 +349,29 @@ fn run_script_in<T: DeserializeOwned>(
 ) -> Result<T> {
     let win = windows_dir()?;
     let ps = win.join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    // EncodedCommand is UTF-16LE, not a shell command line. All inserted data is
-    // validated booleans, fixed enum strings, or a strict numeric registry object.
-    // Only this small fixed bootstrap is on the command line (Windows has a
-    // 32K command-line limit). The embedded script arrives over a private pipe.
+    // Only this small fixed bootstrap is on the command line, in plain text
+    // (Windows has a 32K command-line limit). It holds no double quote, so it
+    // stays one argument. All inserted data is validated booleans, fixed enum
+    // strings, or a strict numeric registry object. The embedded script arrives
+    // over a private pipe.
     // PowerShell 5.1 module initialization reports progress in the outer host
     // scope as CLIXML on stderr, even when the invoked script suppresses its
     // own progress. Set this before creating/invoking the script block. Keep
     // stderr rejection: real errors must not be filtered out as "progress".
     let bootstrap = "$global:ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
-    let bytes: Vec<u8> = bootstrap
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect();
     let job = job(processes)?;
     let mut child = Command::new(ps)
         .args([
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
+            // The script itself comes from stdin and is not a file, so policy only
+            // touches the inbox module files it imports. Those are local, so the
+            // RemoteSigned policy always allows them; nothing needs Bypass.
             "-ExecutionPolicy",
-            "Bypass",
-            "-EncodedCommand",
-            &base64(&bytes),
+            "RemoteSigned",
+            "-Command",
+            bootstrap,
         ])
         .env_clear()
         .env("SystemRoot", &win)
@@ -587,13 +565,6 @@ mod tests {
         assert_eq!(quote_arg("a b"), "\"a b\"");
         assert_eq!(quote_arg("a\"b"), "\"a\\\"b\"");
         assert_eq!(quote_arg("C:\\"), "\"C:\\\\\"");
-    }
-    #[test]
-    fn encoding() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
     }
     #[test]
     fn native_boundary_rejects_unknown_requests_before_launch() {

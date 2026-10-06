@@ -192,7 +192,7 @@ pub(super) fn spawn(
         }
     }
     let application = wide(command.get_program())?;
-    // All arguments are compiled switches/base64. Reject quoting ambiguity
+    // All arguments are compiled switches and the fixed bootstrap. Reject quoting ambiguity
     // rather than grow a general shell/Windows argument interpreter here.
     let mut line = Vec::new();
     for value in std::iter::once(command.get_program()).chain(command.get_args()) {

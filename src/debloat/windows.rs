@@ -45,30 +45,24 @@ fn windows_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
-fn base64(bytes: &[u8]) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
 /// Run `script` and return its last non-empty stdout line.
 pub fn run(script: &'static str, env: &[(&str, &str)], timeout: Duration) -> Result<String> {
     let win = windows_dir()?;
     let ps = win.join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let bootstrap = "$global:ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
-    let encoded: Vec<u8> = bootstrap
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect();
     let mut command = Command::new(ps);
     command
         .args([
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
+            // The script itself comes from stdin and is not a file, so policy only
+            // touches the inbox module files it imports. Those are local, so the
+            // RemoteSigned policy always allows them; nothing needs Bypass.
             "-ExecutionPolicy",
-            "Bypass",
-            "-EncodedCommand",
-            &base64(&encoded),
+            "RemoteSigned",
+            "-Command",
+            bootstrap,
         ])
         .env_clear()
         .env("SystemRoot", &win)
