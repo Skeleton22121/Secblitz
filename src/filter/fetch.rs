@@ -1,6 +1,4 @@
-//! Downloading, storing and compiling the block lists. Portable: the HTTP
-//! client is built here, but everything that decides what is accepted
-//! (status, size, text, domain counts) is plain code with its own tests.
+//! Downloading, storing and compiling the block lists. Portable and unit-tested.
 
 use anyhow::{bail, ensure, Context, Result};
 use std::collections::BTreeMap;
@@ -15,7 +13,6 @@ use super::matcher::{Category, Filter, HashSet64};
 const SECONDS_PER_DAY: u64 = 86_400;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// A list is refreshed when it never was, or its age reached the refresh time.
 pub fn due(source: &Source, last: Option<u64>, now: u64) -> bool {
     match last {
         None => true,
@@ -42,7 +39,6 @@ pub fn check_status(code: u16) -> Result<()> {
     Ok(())
 }
 
-/// Reads everything, but fails when there is more than `max` bytes.
 pub fn read_capped(reader: impl Read, max: u64) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     reader.take(max + 1).read_to_end(&mut out)?;
@@ -65,7 +61,6 @@ fn known(id: &str) -> Option<&'static Source> {
     SOURCES.iter().find(|s| s.id == id)
 }
 
-/// Saves a list next to the others (temporary file, then rename).
 pub fn store(lists_dir: &Path, id: &str, text: &str) -> Result<()> {
     ensure!(known(id).is_some(), "Unknown list");
     fs::create_dir_all(lists_dir)?;
@@ -76,7 +71,6 @@ pub fn store(lists_dir: &Path, id: &str, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// When the stored copy was saved (unix seconds), if there is one.
 pub fn stored_at(lists_dir: &Path, id: &str) -> Option<u64> {
     let modified = fs::metadata(file_for(lists_dir, id))
         .ok()?
@@ -85,7 +79,6 @@ pub fn stored_at(lists_dir: &Path, id: &str) -> Option<u64> {
     Some(modified.duration_since(UNIX_EPOCH).ok()?.as_secs())
 }
 
-/// Every stored list that is one of ours, within its size cap and valid text.
 pub fn load_all(lists_dir: &Path) -> BTreeMap<&'static str, String> {
     let mut out = BTreeMap::new();
     for source in &SOURCES {
@@ -121,8 +114,6 @@ fn text_of<'a>(lists: &'a BTreeMap<&str, String>, role: Role) -> Vec<&'a str> {
         .collect()
 }
 
-/// Compiles the stored lists. `None` when no list that blocks anything is
-/// present (the filter then has nothing to do).
 pub fn rebuild(lists: &BTreeMap<&str, String>) -> Option<Filter> {
     let dns = text_of(lists, Role::Dns).into_iter().next();
     let windows = text_of(lists, Role::WindowsTracking).into_iter().next();

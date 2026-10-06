@@ -140,8 +140,6 @@ pub fn elevate(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-// Small ABI declarations avoid changing Cargo feature ownership. These structures
-// are the documented JOBOBJECT_EXTENDED_LIMIT_INFORMATION ABI (Windows x64).
 #[repr(C)]
 struct BasicLimits {
     process_time: i64,
@@ -182,15 +180,11 @@ extern "system" {
     ) -> i32;
 }
 
-/// The job (if any) another program started this process in. Windows' Program
-/// Compatibility Assistant puts every app opened from Explorer into a job that
-/// only allows breakaway, so this is the normal case, not an exotic one.
+/// The job another program started this process in (Program Compatibility Assistant does this for Explorer launches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnclosingJob {
     None,
-    /// Children may be created outside it (`JOB_OBJECT_LIMIT_BREAKAWAY_OK`).
     Breakaway,
-    /// Children would stay inside, under limits we do not control.
     Locked,
 }
 
@@ -203,7 +197,6 @@ pub fn enclosing_job() -> Result<EnclosingJob> {
         return Ok(EnclosingJob::None);
     }
     let mut limits: ExtendedLimits = unsafe { zeroed() };
-    // A null handle queries the job this process belongs to.
     if unsafe {
         QueryInformationJobObject(
             null_mut(),
@@ -223,8 +216,6 @@ pub fn enclosing_job() -> Result<EnclosingJob> {
     })
 }
 
-/// Whether `pid` belongs to the job this process belongs to. Used after a
-/// suspended breakaway start to prove the child really left it.
 pub fn enclosing_job_contains(pid: u32) -> Result<bool> {
     const CAPACITY: usize = 4096;
     // JOBOBJECT_BASIC_PROCESS_ID_LIST: two u32 counts, then pointer-sized ids.
@@ -316,7 +307,6 @@ pub fn permission_gate(id: &str) -> Result<()> {
 }
 
 pub fn support_action(id: &str) -> Result<()> {
-    // Independently validated before interpolation and before launching anything.
     let script = super::support_script(id)?;
     ensure!(
         cfg!(target_arch = "x86_64"),
@@ -356,10 +346,6 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
     super::parse_threat_reply(&reply)
 }
 
-/// PowerShell plus the DISM helper processes a feature change may start.
-const DISM_PROCESSES: u32 = 4;
-/// PowerShell, ReAgentc.exe, the hidden console host Windows gives it, and
-/// room for one helper of its own.
 const RECOVERY_PROCESSES: u32 = 4;
 
 fn run_script<T: DeserializeOwned>(script: String, timeout: Duration) -> Result<T> {
@@ -423,7 +409,6 @@ fn run_script_in<T: DeserializeOwned>(
     }
     let result = (|| -> Result<T> {
         let mut input = child.stdin.take().context("Missing stdin")?;
-        // A stalled pipe writer must not prevent the outer timeout from firing.
         let writer = std::thread::spawn(move || input.write_all(script.as_bytes()));
         let (tx, rx) = mpsc::sync_channel(16);
         fn pump(
@@ -573,8 +558,6 @@ impl Backend for WindowsBackend {
         observe_one(id)
     }
     fn observe_many(&mut self, ids: &[&str]) -> Vec<Result<Observation>> {
-        // Each read is its own PowerShell process in its own job object and
-        // changes nothing, so a batch runs side by side.
         std::thread::scope(|s| {
             let reads: Vec<_> = ids.iter().map(|id| s.spawn(move || observe_one(id))).collect();
             reads
@@ -609,8 +592,6 @@ impl Backend for WindowsBackend {
     }
     fn findings(&mut self) -> Result<Vec<Finding>> {
         let mut found: Vec<Finding> = run("findings", None, None)?;
-        // After a restart: say so plainly when a protection we turned on is
-        // not running, and name the drivers Windows blocked.
         found.extend(vbs_native::verification_findings());
         Ok(found)
     }
@@ -670,8 +651,6 @@ mod tests {
     }
     #[test]
     fn inbox_powershell_pipe_encoding_and_output_bounds() {
-        // Exercise the actual 5.1 interpreter, private stdin pipe, and job. This
-        // is non-mutating and does not need Administrator privileges.
         let reply: String = run_script(
             "[Console]::Write('\"Grüße 世界\"')".into(),
             Duration::from_secs(15),
@@ -706,7 +685,6 @@ mod tests {
     fn inbox_powershell_actual_backend_read_only() {
         // Synthetic Console.Write tests don't initialize the inbox modules and
         // missed 5.1's outer-scope CLIXML progress. Exercise real production
-        // script/dispatcher/module imports; no setter or journal is invoked.
         let mut backend = WindowsBackend;
         let machine = backend
             .machine_id()

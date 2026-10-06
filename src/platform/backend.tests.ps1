@@ -94,7 +94,6 @@ foreach ($pair in @(@('defender.realtime','RealTimeProtectionEnabled'),@('defend
         Reject { WriteControl $pair[0] $false } 'readback did not match'
     }
 }
-# Exercise the real gate independently, including fail-closed tamper handling.
 function QueryMdmRegistration { if ($script:mdmFailed) { throw 'fixture MDM API unavailable' }; return $script:mdmProbe }
 function Test-Path { param($LiteralPath); return ($LiteralPath -in @('HKLM:\SOFTWARE\Microsoft\Enrollments','HKLM:\SOFTWARE\Microsoft\PolicyManager\providers') -or $LiteralPath -eq $script:registryEvidence) }
 function Get-ChildItem { param($LiteralPath); if ($LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\Enrollments') { return @(1..33) }; if ($LiteralPath -like '*PolicyManager\providers') { return @{PSPath=$PSScriptRoot} }; return @('active-id') }
@@ -184,7 +183,6 @@ foreach ($probe in @({ 'partial output'; throw 'provider failed' }, { 'unexpecte
 }
 $findings = @(Finding 'fixture' { @{title='fixture';status='ok';detail='valid'} })
 Assert ($findings.Count -eq 1 -and $findings[0].status -eq 'ok') 'Valid finding was rejected'
-# Policy authority, not provider-container presence/default values.
 $script:providerArea='knobs'; $script:providerData=@{'Power/Controls/EnergyEstimationEnabled'=@{kind='DWord';value=1}}
 & $productionGate 'uac.enabled'
 Assert $true 'Inbox power provider incorrectly classified as UAC management'
@@ -231,7 +229,6 @@ Reject { & $productionGate 'uac.enabled' } 'authority is unknown'
 $script:gpos[0].accessDenied=$false; $script:gpos[0].id='nonlocal-gpo'
 Reject { & $productionGate 'uac.enabled' } 'Applied computer Group Policy'
 $script:gpos[0].id='LocalGPO'
-# Native firewall RSOP empty-store enumeration and effective readback.
 function Get-Service($name) { return @{Status='Running'} }
 function Get-NetFirewallProfile {
     param($PolicyStore,$Name)
@@ -273,7 +270,6 @@ Reset; $script:requested='Block'; $script:firewallInbound='Allow'
 Reject { WriteControl 'firewall.public.inbound' 'Block' } 'effective readback did not match'
 Reset; $script:requested='NotConfigured'; $script:firewallInbound='NotConfigured'
 Reject { WriteControl 'firewall.public.inbound' 'NotConfigured' } 'effective readback did not match'
-# The expanded controls use exactly the same native gate, including restores.
 $script:policyMap=@{}; $script:providerArea=''; $script:registryEvidence=''
 foreach ($id in @('installer.always_install_elevated','lsa.restrict_anonymous_sam','lsa.limit_blank_password_use','wdigest.use_logon_credential')) {
     $spec=PrivilegeRegistrySpec $id

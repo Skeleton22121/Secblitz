@@ -1,6 +1,5 @@
-//! Windows side of `src/vbs.rs`: reads what the decisions need. Everything
-//! here only reads: the registry, the list of loaded modules, the first bytes
-//! of driver files and one fixed read-only script. No driver is loaded.
+//! Windows side of `src/vbs.rs`. Read-only: registry, loaded modules, driver file headers and
+//! one fixed script. No driver is loaded.
 use super::run_script_in;
 use crate::model::Finding;
 use crate::vbs::{self, Facts, Scan, ServiceRow};
@@ -30,7 +29,6 @@ const SERVICES_KEY: &str = r"SYSTEM\CurrentControlSet\Services";
 const NOT_FOUND: u32 = 2;
 const PATH_NOT_FOUND: u32 = 3;
 const NO_MORE_ITEMS: u32 = 259;
-/// Enough to hold the headers of any driver image.
 const HEADER_BYTES: u64 = 64 * 1024;
 
 fn wide(s: &str) -> Vec<u16> {
@@ -115,13 +113,11 @@ fn text(key: &Key, name: &str) -> std::result::Result<Option<String>, ()> {
     ))
 }
 
-/// A registry value of one of the two scenarios, or None when absent.
 fn scenario_value(path: &str, name: &str) -> Option<u32> {
     let key = open(HKEY_LOCAL_MACHINE, path).ok()??;
     dword(&key, name)
 }
 
-/// Kernel and file-system driver services as the registry lists them.
 fn services() -> Result<Vec<ServiceRow>> {
     let Some(root) = open(HKEY_LOCAL_MACHINE, SERVICES_KEY)? else {
         bail!("the driver list is missing");
@@ -236,7 +232,6 @@ pub(super) fn scan_drivers(windows: &str) -> Scan {
     scan
 }
 
-/// The read-only facts script. One short PowerShell run, no extra processes.
 pub(super) fn facts() -> Result<Facts> {
     let script = format!(
         "$action='vbs_facts'\n$id=''\n$inputJson=$null\n{}\n{}",
@@ -249,8 +244,6 @@ pub(super) fn facts() -> Result<Facts> {
     Ok(facts)
 }
 
-/// True when memory integrity or stack protection is switched on in the
-/// registry, which is when checking whether it runs is worth a script run.
 fn any_configured() -> bool {
     scenario_value(MEMORY_INTEGRITY_KEY, "Enabled") == Some(1)
         || scenario_value(STACK_KEY, "Enabled") == Some(1)

@@ -1,8 +1,5 @@
-# Read-only facts for memory integrity and kernel stack protection, emitted as
-# one JSON object that src/vbs.rs decodes. Appended to the backend definitions
-# (never the backend dispatcher). It reads Windows management data, a few
-# registry values and the Code Integrity event log. It loads no driver, writes
-# nothing and starts no child process.
+# Read-only facts for memory integrity and kernel stack protection, emitted as one JSON object
+# that src/vbs.rs decodes. Loads no driver, writes nothing, starts no child process.
 function VDword([string]$path, [string]$name) {
     if (!(Test-Path -LiteralPath $path)) { return $null }
     $key = Get-Item -LiteralPath $path

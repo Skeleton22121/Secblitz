@@ -38,7 +38,6 @@ fn open(path: &Path) -> Result<Handle> {
     Ok(Handle(h))
 }
 
-/// A reparse point, or an owner other than SYSTEM/Administrators: not ours.
 fn planted(handle: &Handle) -> Result<bool> {
     unsafe {
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
@@ -222,16 +221,9 @@ fn program_data() -> Result<PathBuf> {
     }
 }
 
-/// Inspect every entry under `path`. Each `opaque` folder is itself inspected
-/// but not walked. The saved app copies hold thousands of app files, inherit
-/// this folder's SYSTEM/Administrators-only ACL, and their own code refuses
-/// links. The updater's folder is checked by the updater, and during an update
-/// it is the installer's TEMP, so Setup and PowerShell put their own temporary
-/// files there; nothing here ever reads from it. Only an administrator could
-/// plant anything inside either one.
-/// `foreign` (web protection's folder) has its own, wider permissions: it
-/// only has to be a real folder owned by SYSTEM or Administrators, and it is
-/// not walked because nothing here ever reads from it.
+/// Inspect every entry under `path`. `opaque` folders are inspected but not walked (thousands of
+/// files, or the installer TEMP). `foreign` (web protection's folder) has wider permissions: it
+/// only has to be a real folder owned by SYSTEM or Administrators, and is not walked.
 fn secure_tree(
     path: &Path,
     opaque: &[PathBuf],

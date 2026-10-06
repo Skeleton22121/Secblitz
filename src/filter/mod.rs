@@ -1,6 +1,5 @@
-//! Web protection core: DNS packet handling, block-list parsing and matching,
-//! and the config/status files shared by the filter service and the app.
-//! Everything here is portable (no Windows calls) so it is unit-tested on any host.
+//! Web protection core: DNS packets, block-list parsing and matching, and the
+//! config/status files shared with the app. Portable, so tests run on any host.
 
 pub mod adapters;
 pub mod config;
@@ -16,5 +15,4 @@ pub mod scm;
 pub mod server;
 pub mod service;
 
-/// The Windows service that answers lookups for web protection.
 pub const SERVICE_NAME: &str = "SecblitzFilter";

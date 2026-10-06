@@ -1,11 +1,6 @@
-//! Pure classification of a Secblitz process command line as the tray agent.
-//!
-//! The updater ignores tray processes when deciding whether the installed app
-//! is busy, but only when the command line is *exactly* `secblitz.exe tray`.
-//! Anything else (extra arguments, other subcommands, unusual quoting) stays
-//! busy. Kept portable so it is unit-tested on every host.
+//! Classifies a command line as the tray agent. The updater ignores tray processes only when the
+//! line is exactly `secblitz.exe tray`; anything else stays busy. Portable, tested on every host.
 
-/// Split a Windows command line into arguments for the simple cases we accept.
 /// Returns `None` for anything with escaped quotes or unbalanced quoting, so
 /// callers fail closed.
 fn split(line: &str) -> Option<Vec<String>> {
@@ -50,7 +45,6 @@ fn split(line: &str) -> Option<Vec<String>> {
     Some(args)
 }
 
-/// True only for `<exe> tray` (the executable token optionally quoted).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn is_tray_command_line(line: &str) -> bool {
     matches!(split(line.trim_end_matches('\0')).as_deref(), Some([exe, mode])

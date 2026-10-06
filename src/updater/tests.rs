@@ -324,7 +324,6 @@ fn authentic_but_malformed_payloads_are_rejected() {
     let value = payload();
     let raw = serde_json::to_string(&value).unwrap();
     for (field, entry) in value.as_object().unwrap() {
-        // Duplicates must fail even when both occurrences have the same value.
         let duplicate = format!("{{\"{field}\":{entry},{}", raw.trim_start_matches('{'));
         let (bytes, key) = signed(duplicate.as_bytes());
         assert!(verify(&bytes, &key, 1500).is_err(), "duplicate {field}");
@@ -332,7 +331,6 @@ fn authentic_but_malformed_payloads_are_rejected() {
         missing.as_object_mut().unwrap().remove(field);
         assert!(verify_value(missing, 1500).is_err(), "missing {field}");
     }
-    // Escaped JSON member names are still duplicates after decoding.
     let duplicate = format!(
         "{{\"targ\\u0065t\":\"windows-x86_64\",{}",
         raw.trim_start_matches('{')
@@ -444,8 +442,6 @@ fn installed_version_order_and_canonical_versions_are_required() {
     assert!(!newer(&m, "9.0.0").unwrap());
     assert!(newer(&m, "10.0.0").is_err());
     assert!(newer(&m, "8.0.0+build").is_err());
-    // Authentication itself is stateless; callers additionally enforce the
-    // installed version and protected release floor before accepting a release.
     verify_value(payload(), 1500).unwrap();
     verify_value(payload(), 1500).unwrap();
 }
@@ -741,8 +737,6 @@ fn loopback_http_chunking_and_false_lengths_cannot_bypass_body_checks() {
             .timeout(Duration::from_secs(3))
             .build()
             .unwrap();
-        // Establish the TCP connection before accepting; all I/O then has a
-        // deadline. The response is small enough to fit without streaming a flood.
         let request = std::thread::spawn(move || client.get(format!("http://{address}/")).send());
         listener.set_nonblocking(true).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -849,7 +843,6 @@ fn release_floor_survives_restart_and_failed_payload_and_clock_rollback() {
 #[test]
 fn immutable_release_allows_renewal_but_not_hash_or_metadata_rollback() {
     let m = verify_value(payload(), 1500).unwrap();
-    // Equal installed release is remembered too, before returning UpToDate.
     let floor = advance_floor(&m, "9.0.0", None).unwrap();
     assert_eq!(advance_floor(&m, "9.0.0", Some(&floor)).unwrap(), floor);
     let mut swapped = payload();
@@ -883,7 +876,6 @@ fn immutable_release_allows_renewal_but_not_hash_or_metadata_rollback() {
         advance_floor(&next, "9.0.0", Some(&old)).unwrap().version,
         "10.0.0"
     );
-    // A manually installed newer build remains the effective minimum.
     assert!(advance_floor(&m, "10.0.0", Some(&old)).is_err());
     assert_eq!(
         advance_floor(&next, "10.0.0", Some(&old)).unwrap().version,
@@ -991,7 +983,6 @@ fn live_public_042_feed_and_installer_match_pinned_trust() -> Result<()> {
         response.status()
     );
     let mut content = installer(response, &m)?;
-    // Inspect the PE certificate directory, never launch the downloaded image.
     ensure!(content.starts_with(b"MZ"), "Missing DOS header");
     let pe = u32::from_le_bytes(content[0x3c..0x40].try_into().unwrap()) as usize;
     ensure!(
