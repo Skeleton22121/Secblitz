@@ -4,8 +4,8 @@ use crate::explain::{self, Explainer};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
 use crate::gui::{Ctx, Message};
-use iced::widget::{column, container, row, space};
-use iced::{Background, Border, Element, Length};
+use iced::widget::{column, row, space};
+use iced::{Element, Length};
 
 pub fn key(scope: &str, id: &str) -> String {
     format!("{scope}:{id}")
@@ -47,7 +47,8 @@ fn lines<'a>(ctx: &Ctx, e: Explainer, report_only: bool) -> Element<'a, Message>
     } else {
         ctx.t("If you turn it on")
     };
-    container(
+    super::well(
+        p,
         column![
             block(p, ctx.t("What it is"), ctx.t(e.what)),
             block(p, ctx.t("If it's off"), ctx.t(e.risk)),
@@ -55,16 +56,6 @@ fn lines<'a>(ctx: &Ctx, e: Explainer, report_only: bool) -> Element<'a, Message>
         ]
         .spacing(theme::S3),
     )
-    .padding(theme::S3)
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-        background: Some(Background::Color(p.surface_alt)),
-        border: Border {
-            radius: theme::R.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    })
     .into()
 }
 

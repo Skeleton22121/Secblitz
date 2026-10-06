@@ -1016,14 +1016,7 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     )
     .padding([theme::S2, theme::S3])
     .width(Length::Fill)
-    .style(move |_| container::Style {
-        background: Some(iced::Background::Color(p.surface_alt)),
-        border: iced::Border {
-            radius: theme::R.into(),
-            ..iced::Border::default()
-        },
-        ..container::Style::default()
-    });
+    .style(widgets::well_style(p));
     let eye = widgets::icon_button(
         p,
         ButtonKind::Ghost,

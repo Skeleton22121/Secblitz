@@ -11,7 +11,7 @@ use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use crate::i18n::Lang;
 use iced::widget::image::Handle;
 use iced::widget::{column, container, row, scrollable, space};
-use iced::{Alignment, Background, Border, Element, Length, Padding, Subscription, Task};
+use iced::{Alignment, Element, Length, Padding, Subscription, Task};
 use secblitz::debloat::offline::Restored;
 use secblitz::debloat::{self, Batch, Group, Installed, ItemResult, Kept, Progress};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1378,28 +1378,6 @@ fn delete_sheet<'a>(index: u16, ctx: &'a Ctx) -> Element<'a, Message> {
 const WORKING_LIST_MAX: f32 = 200.0;
 const RESULT_BODY_MAX: f32 = 200.0;
 
-fn scroll_list<'a>(
-    p: theme::Palette,
-    list: impl Into<Element<'a, Message>>,
-    max: f32,
-) -> Element<'a, Message> {
-    container(
-        scrollable(container(list).padding(theme::S3).width(Length::Fill))
-            .direction(widgets::controls::scrollbar())
-            .style(widgets::controls::scroll_style(p)),
-    )
-    .max_height(max)
-    .style(move |_| container::Style {
-        background: Some(Background::Color(p.surface_alt)),
-        border: Border {
-            radius: theme::R.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    })
-    .into()
-}
-
 fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
     let indices: Vec<u16> = state.selected.iter().copied().collect();
@@ -1425,7 +1403,7 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 ctx.t("These apps will be removed for everyone who uses this PC. Your own files are not touched.")
             },
         ),
-        scroll_list(p, list, 220.0),
+        widgets::scroll_well(p, list, 220.0),
     ]
     .spacing(theme::S3);
     col = col.push(widgets::inline_notice(
@@ -1565,7 +1543,7 @@ fn working_sheet<'a>(
             ctx.t("Please keep this window open. This can take a few minutes.")
         ),
         progress::bar_eased(p, ratio, Tone::Brand),
-        scroll_list(p, list, WORKING_LIST_MAX),
+        widgets::scroll_well(p, list, WORKING_LIST_MAX),
     ]
     .spacing(theme::S3)
     .into()

@@ -547,18 +547,6 @@ fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
     }
 }
 
-fn under<'a>(items: Vec<El<'a>>) -> El<'a> {
-    container(column(items).spacing(theme::S2).width(Length::Fill))
-        .padding(Padding {
-            top: 0.0,
-            right: theme::S4,
-            bottom: theme::S2,
-            left: theme::S4 + theme::ICON_ROW + theme::S4,
-        })
-        .width(Length::Fill)
-        .into()
-}
-
 fn detail_line<'a>(p: Palette, label: String, text: String) -> El<'a> {
     column![widgets::small(p, label), widgets::body(p, text)]
         .spacing(2)
@@ -584,10 +572,10 @@ fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Sna
     let head = widgets::row_item(p, Some(icon), title, Some(sub), control, None);
     let mut rows = vec![head];
     if working {
-        rows.push(under(vec![progress::indeterminate(p, Tone::Brand)]));
+        rows.push(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)]));
     }
     if let Some(e) = explain::for_check(switch.id()) {
-        rows.push(under(vec![widgets::expander(
+        rows.push(widgets::under_row(vec![widgets::expander(
             p,
             ctx.t("More details"),
             state.open.contains(&switch),

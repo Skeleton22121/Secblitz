@@ -14,7 +14,7 @@ use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use crate::i18n::Lang;
 use iced::widget::{column, container, row, space, Column};
-use iced::{Alignment, Background, Border, Element, Length};
+use iced::{Alignment, Element, Length};
 use iced::{Subscription, Task};
 use secblitz::engine::Report;
 use std::cell::RefCell;
@@ -563,23 +563,6 @@ pub fn row_text<'a>(p: Palette, title: String, line: Option<String>) -> Element<
     c.into()
 }
 
-pub fn well<'a>(
-    p: Palette,
-    content: impl Into<Element<'a, Message>>,
-) -> iced::widget::Container<'a, Message> {
-    container(content)
-        .padding(theme::S3)
-        .width(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(p.surface_alt)),
-            border: Border {
-                radius: theme::R.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        })
-}
-
 fn line<'a>(
     lead: Option<Element<'a, Message>>,
     content: Element<'a, Message>,
@@ -613,7 +596,7 @@ fn expanded<'a>(
     c = c
         .push(widgets::section_label(p, label))
         .push(widgets::small(p, tech));
-    row![space::horizontal().width(indent), well(p, c)].into()
+    row![space::horizontal().width(indent), widgets::well(p, c)].into()
 }
 
 pub fn guide_block<'a>(

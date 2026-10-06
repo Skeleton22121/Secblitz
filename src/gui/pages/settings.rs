@@ -7,7 +7,7 @@ use crate::gui::widgets::{self, anim, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
 use crate::i18n::Lang;
 use iced::widget::{column, container, row, space};
-use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
+use iced::{Alignment, Element, Length, Subscription, Task};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Remote<T> {
@@ -377,14 +377,7 @@ fn confirm_row<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Messa
     container(body)
         .padding(theme::S4)
         .width(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(p.surface_alt)),
-            border: Border {
-                radius: theme::R.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        })
+        .style(widgets::well_style(p))
         .into()
 }
 

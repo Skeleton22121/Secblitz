@@ -6,14 +6,65 @@ use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, column, container, row, text};
-use iced::{Alignment, Background, Border, Element, Length, Pixels, Shadow};
+use iced::widget::{button, column, container, row, scrollable, text};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Pixels, Shadow, Theme};
 
 pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
         .size(theme::SMALL)
         .font(theme::SEMIBOLD)
         .color(p.text_muted)
+        .into()
+}
+
+/// Container style for the rounded inset panels used behind grouped details.
+pub fn well_style(p: Palette) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(p.surface_alt)),
+        border: Border {
+            radius: theme::R.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn well<'a>(
+    p: Palette,
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    container(content)
+        .padding(theme::S3)
+        .width(Length::Fill)
+        .style(well_style(p))
+}
+
+/// A well whose content scrolls once it is taller than `max`.
+pub fn scroll_well<'a>(
+    p: Palette,
+    list: impl Into<Element<'a, Message>>,
+    max: f32,
+) -> Element<'a, Message> {
+    container(
+        scrollable(container(list).padding(theme::S3).width(Length::Fill))
+            .direction(super::controls::scrollbar())
+            .style(super::controls::scroll_style(p)),
+    )
+    .max_height(max)
+    .style(well_style(p))
+    .into()
+}
+
+/// Items set under a row's title, lined up with its text rather than its icon.
+pub fn under_row<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    container(column(items).spacing(theme::S2).width(Length::Fill))
+        .padding(Padding {
+            top: 0.0,
+            right: theme::S4,
+            bottom: theme::S2,
+            left: super::explain::INDENT,
+        })
+        .width(Length::Fill)
         .into()
 }
 
@@ -143,19 +194,7 @@ pub fn expander<'a>(
     );
     let mut c = column![head].spacing(theme::S2);
     if open {
-        c = c.push(
-            container(content)
-                .padding(theme::S3)
-                .width(Length::Fill)
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(p.surface_alt)),
-                    border: Border {
-                        radius: theme::R.into(),
-                        ..Border::default()
-                    },
-                    ..container::Style::default()
-                }),
-        );
+        c = c.push(well(p, content));
     }
     c.into()
 }
