@@ -196,7 +196,7 @@ mod selective {
         invariants(&dir, &e);
         let history = e.history().unwrap();
         assert!(history.iter().all(|h| !h.ends_with(" applied") || h == &history[0]));
-        assert_eq!(e.load().unwrap()[0].reverted, true);
+        assert!(e.load().unwrap()[0].reverted);
         assert_eq!(e.undoable_changes().unwrap(), 1);
         e.revert_selected(&ids(&[Z]), |_| {}).unwrap();
         assert_eq!(e.undoable_changes().unwrap(), 0);
@@ -731,6 +731,8 @@ mod released_journals {
     const Y: &str = "firewall.private.inbound";
     const Z: &str = "firewall.domain.inbound";
 
+    type Case = (&'static str, Vec<&'static str>, Vec<Vec<State>>, usize);
+
     /// Journals exactly as 0.8.1 wrote them, with the system values at that moment.
     fn open_fixture(name: &str) -> (TempDir, Rc<RefCell<FakeState>>, Engine) {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -780,7 +782,7 @@ mod released_journals {
 
     #[test]
     fn released_journals_load_unchanged_and_read_only_work_leaves_them_alone() {
-        let cases: [(&str, Vec<&str>, Vec<Vec<State>>, usize); 5] = [
+        let cases: [Case; 5] = [
             ("sealed_two_entries", vec!["applied"], vec![vec![State::Applied; 2]], 2),
             (
                 "reverting_restoring",

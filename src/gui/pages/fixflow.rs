@@ -48,6 +48,24 @@ pub struct State {
 struct Follow {
     glide: Tween,
     shown: f32,
+    /// Where the list was before the last step of the glide.
+    before: f32,
+}
+
+impl Follow {
+    fn at(now: Instant, from: f32, to: f32) -> Self {
+        Self {
+            glide: Tween::starting(now, from, to, anim::SLOW),
+            shown: from,
+            before: from,
+        }
+    }
+
+    /// Whether the list being at `y` is where this put it. The offset reported can trail by a frame, so the last two positions count.
+    fn put_it_at(&self, y: f32) -> bool {
+        let (lo, hi) = (self.shown.min(self.before), self.shown.max(self.before));
+        (lo - 2.0..=hi + 2.0).contains(&y)
+    }
 }
 
 impl Default for State {
@@ -342,13 +360,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     || v.content_bounds().height != view.content_bounds().height
             });
             let y = view.absolute_offset().y;
-            // The offset reported can trail a glide by a frame, so anything on
-            // the glide's path counts as ours.
-            let ours = |f: &Follow| {
-                let (lo, hi) = (f.glide.from.min(f.glide.to), f.glide.from.max(f.glide.to));
-                (lo - 2.0..=hi + 2.0).contains(&y)
-            };
-            if !resized && !state.follow.as_ref().is_some_and(ours) {
+            if !resized && !state.follow.as_ref().is_some_and(|f| f.put_it_at(y)) {
                 state.steps_held = true;
                 state.follow = None;
             }
@@ -581,18 +593,13 @@ fn follow(state: &mut State, now: Instant) -> Task<Message> {
         state.steps_held = false;
     }
     if !anim::animating() {
-        state.follow = None;
+        // Remembered so the move itself is not taken for the person scrolling.
+        state.follow = Some(Follow::at(now, to, to));
         return scroll_steps(to);
     }
     match &mut state.follow {
         Some(f) => f.glide.retarget(now, to),
-        None => {
-            let from = view.absolute_offset().y;
-            state.follow = Some(Follow {
-                glide: Tween::starting(now, from, to, anim::SLOW),
-                shown: from,
-            });
-        }
+        None => state.follow = Some(Follow::at(now, view.absolute_offset().y, to)),
     }
     glide(state, now)
 }
@@ -605,6 +612,7 @@ fn glide(state: &mut State, now: Instant) -> Task<Message> {
     if (y - f.shown).abs() < 0.5 {
         return Task::none();
     }
+    f.before = f.shown;
     f.shown = y;
     scroll_steps(y)
 }
@@ -1294,6 +1302,43 @@ fn result_view<'a>(
 }
 
 #[cfg(test)]
+pub fn review(state: &State) -> Option<(Vec<String>, bool)> {
+    match &state.stage {
+        Stage::Review { ids, undo } => Some((ids.clone(), *undo)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+pub fn plan_ids(state: &State) -> Vec<String> {
+    state.plan.iter().map(|r| r.id.clone()).collect()
+}
+
+#[cfg(test)]
+pub fn added_together(state: &State) -> bool {
+    state.together
+}
+
+#[cfg(test)]
+pub fn stage_name(state: &State) -> &'static str {
+    match &state.stage {
+        Stage::Closed => "closed",
+        Stage::Review { .. } => "review",
+        Stage::Blocked { .. } => "blocked",
+        Stage::Working { .. } => "working",
+        Stage::Result { .. } => "result",
+    }
+}
+
+#[cfg(test)]
+pub fn result_summary(state: &State) -> Option<&Summary> {
+    match &state.stage {
+        Stage::Result { summary, .. } => Some(summary),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1316,6 +1361,20 @@ mod tests {
         assert_eq!(planned(&state), 0);
         state.plan = vec![PlanRow::default(), PlanRow::default()];
         assert_eq!(planned(&state), 2);
+    }
+
+    #[test]
+    fn the_list_only_counts_moves_it_made_itself() {
+        let now = Instant::now();
+        let mut f = Follow::at(now, 0.0, 100.0);
+        assert!(f.put_it_at(0.0) && f.put_it_at(1.5));
+        assert!(!f.put_it_at(40.0), "the person scrolled somewhere the glide never was");
+        f.before = f.shown;
+        f.shown = 30.0;
+        assert!(f.put_it_at(30.0) && f.put_it_at(0.0), "the offset may trail by a frame");
+        assert!(!f.put_it_at(60.0));
+        let rest = Follow::at(now, 80.0, 80.0);
+        assert!(rest.put_it_at(80.0) && !rest.put_it_at(60.0));
     }
 
     #[test]
