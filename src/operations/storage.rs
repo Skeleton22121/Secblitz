@@ -376,10 +376,8 @@ pub(super) struct Store {
 }
 impl Store {
     pub fn open() -> Result<Self> {
-        ensure!(
-            cfg!(target_arch = "x86_64") && crate::platform::is_elevated()?,
-            "Operations require elevated Windows x64"
-        );
+        ensure!(cfg!(target_arch = "x86_64"), "Operations require elevated Windows x64");
+        crate::platform::require_admin("Operations require elevated Windows x64")?;
         let base = crate::platform::state_dir()?;
         let mut pins = Vec::new();
         let mut prefix = PathBuf::new();

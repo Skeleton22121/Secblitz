@@ -373,7 +373,7 @@ fn execute_uninstall(command: UninstallCommand, json: bool, lang: Lang) -> Resul
     }
     match command {
         UninstallCommand::Revert => {
-            if !platform::is_elevated().unwrap_or(false) {
+            if !platform::is_elevated_or_false() {
                 return Ok(UNINSTALL_REFUSED);
             }
             print(&uninstall::revert_machine(&|_, _| {}), json, lang);
@@ -571,7 +571,7 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
             .filter(|id| broker::valid_id(id))
             .map(str::to_owned);
         let start = flag_value(args, "--self-test").and_then(gui::Page::parse);
-        if !platform::is_elevated().unwrap_or(false) {
+        if !platform::is_elevated_or_false() {
             return launcher::run(lang);
         }
         if broker.is_none() && launcher::reopen_normally(lang) {
