@@ -285,10 +285,13 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
         // Changing a Windows feature goes through DISM, which is slow and
         // works through its own DismHost.exe helper. Only that fixed, compiled
         // write may start helpers; every other script runs with no descendants.
-        let (limit, processes) = if matches!(id, "ps.v2_engine" | "smb1.disabled") && action == "write" {
-            (900, DISM_PROCESSES)
-        } else {
-            (90, 1)
+        // Turning the recovery tools on or off goes through the inbox
+        // ReAgentc.exe, which copies the recovery image: only that write may
+        // start it. Reading their state never needs a helper.
+        let (limit, processes) = match (id, action) {
+            ("ps.v2_engine" | "smb1.disabled", "write") => (900, DISM_PROCESSES),
+            ("recovery.winre_enabled", "write") => (600, RECOVERY_PROCESSES),
+            _ => (90, 1),
         };
         return run_script_in(
             super::hardening_script(action, id, value)?,
@@ -355,6 +358,9 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
 
 /// PowerShell plus the DISM helper processes a feature change may start.
 const DISM_PROCESSES: u32 = 4;
+/// PowerShell, ReAgentc.exe, the hidden console host Windows gives it, and
+/// room for one helper of its own.
+const RECOVERY_PROCESSES: u32 = 4;
 
 fn run_script<T: DeserializeOwned>(script: String, timeout: Duration) -> Result<T> {
     run_script_in(script, timeout, 1)

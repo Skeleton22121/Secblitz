@@ -24,6 +24,7 @@ const IDS: &[&str] = &[
     "privacy.delivery_optimization",
     "privacy.clipboard_sync",
     "defender.exclusions_risky",
+    "recovery.winre_enabled",
 ];
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
@@ -102,6 +103,11 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Your antivirus keeps a list of places and programs it was told to skip, and some entries cover far too much.",
             "Malware that lands in a skipped place is never scanned, so it can sit there unnoticed.",
             "Those entries are removed, so the places are scanned again. A game or work tool kept there may scan slowly. You can undo this.",
+        ),
+        "recovery.winre_enabled" => e(
+            "Windows has built-in recovery tools that open when Windows can't start, so you can repair it or undo a bad update.",
+            "If Windows ever stops starting, there would be no built-in way to repair it, and you might have to reinstall it.",
+            "Nothing changes day to day. Windows turns the tools back on from files already on this PC. You can undo this.",
         ),
         _ => return None,
     })
