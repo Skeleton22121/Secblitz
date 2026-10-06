@@ -5,7 +5,7 @@ use super::catalog::{
 };
 use super::journal::{Record, Transaction};
 use super::{Engine, Outcome, Report, MAX_TRANSACTIONS};
-use crate::model::{Control, Observation};
+use crate::model::{CheckStatus, Control, Observation};
 use anyhow::{ensure, Context, Result};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -86,7 +86,7 @@ impl Engine {
             return Ok(report);
         }
         let mut owned = self.observe_owned(&transactions, &controls)?;
-        if owned.iter().any(|r| r.status != "unchanged") {
+        if owned.iter().any(|r| r.status != CheckStatus::Unchanged) {
             report.skip_all(
                 &controls,
                 &mut owned,
@@ -144,7 +144,7 @@ impl Engine {
             let result = if tx.incomplete() {
                 Self::outcome(
                     c,
-                    "pending",
+                    CheckStatus::Pending,
                     "Revert the active transaction before applying again",
                 )
             } else {
@@ -174,24 +174,24 @@ impl Engine {
             {
                 Self::observed_outcome(
                     c,
-                    "unchanged",
+                    CheckStatus::Unchanged,
                     "Target preference already present; original before image retained",
                     &o,
                 )
             }
             Ok((_, o)) if entry.is_some() => Self::observed_outcome(
                 c,
-                "conflict",
+                CheckStatus::Conflict,
                 "Preference drifted; original before image retained",
                 &o,
             ),
             Ok((_, o)) => Self::observed_outcome(
                 c,
-                "skipped",
+                CheckStatus::Skipped,
                 "Revert the active transaction before starting another apply",
                 &o,
             ),
-            Err(e) => Self::outcome(c, "error", format!("{e:#}")),
+            Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
         }
     }
 
@@ -216,18 +216,18 @@ impl Engine {
                 Ok(o) if scope(&c.id, &o.value, Some(&entry.before)) == expected => {
                     Self::observed_outcome(
                         c,
-                        "unchanged",
+                        CheckStatus::Unchanged,
                         "Target preference already present; original before image retained",
                         &o,
                     )
                 }
                 Ok(o) => Self::observed_outcome(
                     c,
-                    "conflict",
+                    CheckStatus::Conflict,
                     "Preference drifted; original before image retained",
                     &o,
                 ),
-                Err(e) => Self::outcome(c, "error", format!("{e:#}")),
+                Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
             };
             owned.push(result);
         }
@@ -288,7 +288,7 @@ impl Engine {
             Err(e) if selected => {
                 return Ok(Preflight::Resolved(Self::outcome(
                     c,
-                    "error",
+                    CheckStatus::Error,
                     format!("{e:#}"),
                 )))
             }
@@ -297,24 +297,24 @@ impl Engine {
         let Some(expected) = expected else {
             return Ok(Preflight::Resolved(Self::observed_outcome(
                 c,
-                "skipped",
+                CheckStatus::Skipped,
                 &observation.reason,
                 &observation,
             )));
         };
         let resolved = if firewall_control(&c.id) && !observation.eligible {
-            Self::observed_outcome(c, "skipped", &observation.reason, &observation)
+            Self::observed_outcome(c, CheckStatus::Skipped, &observation.reason, &observation)
         } else if protected || observation.value == expected {
             Self::observed_outcome(
                 c,
-                "unchanged",
+                CheckStatus::Unchanged,
                 "Target preference already present",
                 &observation,
             )
         } else if !apply_eligible(&c.id, &observation) {
             Self::observed_outcome(
                 c,
-                "skipped",
+                CheckStatus::Skipped,
                 if observation.eligible {
                     "Preserving absent or already-safe machine preference".into()
                 } else {
@@ -383,7 +383,7 @@ impl Engine {
         self.append(tx, Record::Applied { id: c.id.clone() })?;
         Ok(Self::observed_outcome(
             c,
-            "applied",
+            CheckStatus::Applied,
             if c.reboot {
                 "Preference applied; restart required"
             } else {

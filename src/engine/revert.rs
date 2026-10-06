@@ -3,6 +3,7 @@
 use super::catalog::{recorded_scope, restore_eligible, scope, target_for};
 use super::journal::{Record, State, Transaction};
 use super::{Engine, Outcome, Report};
+use crate::model::CheckStatus;
 use anyhow::{ensure, Result};
 
 impl Engine {
@@ -36,19 +37,19 @@ impl Engine {
                 tx.entries[i].state = State::Restored;
                 Self::observed_outcome(
                     &c,
-                    "unchanged",
+                    CheckStatus::Unchanged,
                     "Original preference already present",
                     &observation,
                 )
             } else if seen != expected_eff {
                 Self::observed_outcome(
                     &c,
-                    "conflict",
+                    CheckStatus::Conflict,
                     "Preference differs from both target and before image; no write performed",
                     &observation,
                 )
             } else if !restore_eligible(&c, &observation) {
-                Self::observed_outcome(&c, "skipped", &observation.reason, &observation)
+                Self::observed_outcome(&c, CheckStatus::Skipped, &observation.reason, &observation)
             } else {
                 if tx.entries[i].state != State::Restoring {
                     self.append(tx, Record::RestorePending { id: id.clone() })?;
@@ -58,12 +59,12 @@ impl Engine {
                 if scope(&id, &fresh.value, Some(&before_eff)) != expected_eff {
                     Self::observed_outcome(
                         &c,
-                        "conflict",
+                        CheckStatus::Conflict,
                         "Preference changed immediately before restore; no write performed",
                         &fresh,
                     )
                 } else if !restore_eligible(&c, &fresh) {
-                    Self::observed_outcome(&c, "skipped", &fresh.reason, &fresh)
+                    Self::observed_outcome(&c, CheckStatus::Skipped, &fresh.reason, &fresh)
                 } else {
                     if let Err(e) = self.backend.write(&id, &before_eff) {
                         callback(&id, "error");
@@ -82,7 +83,7 @@ impl Engine {
                     tx.entries[i].state = State::Restored;
                     Self::observed_outcome(
                         &c,
-                        "restored",
+                        CheckStatus::Restored,
                         if c.reboot {
                             "Original preference restored; restart required"
                         } else {
@@ -138,12 +139,12 @@ impl Engine {
             blockers.push(if seen != expected_eff {
                 Self::observed_outcome(
                     &c,
-                    "conflict",
+                    CheckStatus::Conflict,
                     "Preference differs from both target and before image; no write performed",
                     &observation,
                 )
             } else if !restore_eligible(&c, &observation) {
-                Self::observed_outcome(&c, "skipped", &observation.reason, &observation)
+                Self::observed_outcome(&c, CheckStatus::Skipped, &observation.reason, &observation)
             } else {
                 continue;
             });

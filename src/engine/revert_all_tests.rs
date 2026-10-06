@@ -1,6 +1,7 @@
 // Included inside engine::tests. Each batch owns a different control: the journal allows one active owner per control.
 mod revert_all {
     use super::*;
+    use crate::model::CheckStatus;
 
     const X: &str = "firewall.public.inbound";
     const Y: &str = "firewall.private.inbound";
@@ -44,7 +45,7 @@ mod revert_all {
         assert_eq!(seen, vec![restored(Z), restored(Y), restored(X)]);
         assert_eq!(report.results.len(), 3);
         assert_eq!(report.results[0].id, Z);
-        assert!(report.results.iter().all(|r| r.status == "restored"));
+        assert!(report.results.iter().all(|r| r.status == CheckStatus::Restored));
     }
 
     #[test]
@@ -100,7 +101,7 @@ mod revert_all {
         set(&state, Y, json!("Block"));
         set(&state, Z, json!("Block"));
         let report = e.revert_all(|_, _| {}).unwrap();
-        assert!(report.results.iter().all(|r| r.status == "restored"));
+        assert!(report.results.iter().all(|r| r.status == CheckStatus::Restored));
         assert!(e.load().unwrap().iter().all(|t| t.reverted));
         assert_eq!(e.undoable_changes().unwrap(), 0);
     }
@@ -113,11 +114,11 @@ mod revert_all {
         state.borrow_mut().blocked = true;
         let report = e.revert_all(|_, _| {}).unwrap();
         assert_eq!(report.results.len(), 2);
-        assert!(report.results.iter().all(|r| r.status == "skipped"));
+        assert!(report.results.iter().all(|r| r.status == CheckStatus::Skipped));
         assert!(state.borrow().writes.iter().all(|(_, v)| v == "Block"));
         state.borrow_mut().blocked = false;
         let report = e.revert_all(|_, _| {}).unwrap();
-        assert!(report.results.iter().all(|r| r.status == "restored"));
+        assert!(report.results.iter().all(|r| r.status == CheckStatus::Restored));
         assert_eq!(state.borrow().values[X], json!("Allow"));
         assert_eq!(state.borrow().values[Y], json!("Allow"));
     }
@@ -141,7 +142,7 @@ mod revert_all {
         drop(e);
         let mut e = reopen(&dir, &state, &[DEFENDER]);
         let report = e.revert_all(|_, _| {}).unwrap();
-        assert_eq!(report.results[0].status, "unchanged");
+        assert_eq!(report.results[0].status, CheckStatus::Unchanged);
         assert!(e.load().unwrap()[0].reverted);
         assert_eq!(state.borrow().values[DEFENDER], json!(true));
     }

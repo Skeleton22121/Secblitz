@@ -12,6 +12,7 @@ pub mod widgets;
 
 use crate::app::{self, score::Score, worker};
 use crate::i18n::Lang;
+use secblitz::model::CheckStatus;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
@@ -623,7 +624,7 @@ impl App {
                         .iter()
                         .filter(|id| {
                             r.results.iter().any(|o| {
-                                o.id == **id && (o.status == "applied" || o.status == "unchanged")
+                                o.id == **id && (o.status == CheckStatus::Applied || o.status == CheckStatus::Unchanged)
                             })
                         })
                         .count(),
@@ -634,7 +635,7 @@ impl App {
             E::Undone { result, verify } => {
                 self.ctx.checking = None;
                 let n = match result {
-                    Ok(r) => r.results.iter().filter(|o| o.status == "restored").count(),
+                    Ok(r) => r.results.iter().filter(|o| o.status == CheckStatus::Restored).count(),
                     Err(_) => 0,
                 };
                 self.assessed(verify, app::history::Kind::Undo, n);

@@ -224,7 +224,7 @@ fn apply_in_batches(
                     merged.results.push(secblitz::engine::Outcome {
                         id: id.clone(),
                         title: id.clone(),
-                        status: "error".into(),
+                        status: secblitz::model::CheckStatus::Error,
                         detail: format!("{e:#}"),
                         ..Default::default()
                     });

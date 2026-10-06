@@ -1,6 +1,6 @@
 //! Fixed control catalog: compiled targets, value domains and eligibility rules. Journal data never names its own targets.
 
-use crate::model::{Authority, Control, EffectiveFirewall, InboundAction, Observation};
+use crate::model::{Authority, CheckStatus, Control, EffectiveFirewall, InboundAction, Observation};
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 // Kept here rather than trusting Backend or serialized Control data. This is
@@ -170,34 +170,34 @@ pub(super) fn firewall_protected(o: &Observation) -> Result<bool> {
     }
 }
 
-pub(super) fn assessment_status(id: &str, o: &Observation) -> Result<&'static str> {
+pub(super) fn assessment_status(id: &str, o: &Observation) -> Result<CheckStatus> {
     if firewall_control(id) {
         return Ok(if firewall_protected(o)? {
-            "compliant"
+            CheckStatus::Compliant
         } else if apply_eligible(id, o) {
-            "attention"
+            CheckStatus::Attention
         } else {
-            "skipped"
+            CheckStatus::Skipped
         });
     }
     if permission_control(id) && !o.eligible {
-        return Ok("skipped");
+        return Ok(CheckStatus::Skipped);
     }
     if let Some(spec) = crate::hardening::spec(id) {
         return Ok(if !spec.any_unsafe(&o.value) {
-            "compliant"
+            CheckStatus::Compliant
         } else if apply_eligible(id, o) {
-            "attention"
+            CheckStatus::Attention
         } else {
-            "skipped"
+            CheckStatus::Skipped
         });
     }
     Ok(if o.value == target_for(id, &o.value)? {
-        "compliant"
+        CheckStatus::Compliant
     } else if apply_eligible(id, o) {
-        "attention"
+        CheckStatus::Attention
     } else {
-        "skipped"
+        CheckStatus::Skipped
     })
 }
 

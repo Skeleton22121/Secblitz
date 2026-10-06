@@ -9,7 +9,7 @@ mod pe;
 pub use cpu::{cpu_has_shadow_stacks, cpu_hypervisor_vendor};
 pub use pe::{scan_pe, PeProblem};
 
-use crate::model::Finding;
+use crate::model::{CheckStatus, Finding};
 use serde::Deserialize;
 
 pub const MEMORY_INTEGRITY: &str = "vbs.memory_integrity";
@@ -405,13 +405,13 @@ pub fn verification(facts: &Facts) -> Vec<Finding> {
     if facts.enabled_hvci == Some(1) && !memory_integrity_running {
         out.push(Finding {
             title: MEMORY_INTEGRITY_NOT_RUNNING.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: detail("Memory integrity is configured but not running."),
         });
     } else if facts.enabled_hvci == Some(1) && memory_integrity_running && !names.is_empty() {
         out.push(Finding {
             title: DEVICE_BLOCKED.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: detail("Windows refused a driver while memory integrity was on."),
         });
     } else if facts.enabled_stack == Some(1)
@@ -420,7 +420,7 @@ pub fn verification(facts: &Facts) -> Vec<Finding> {
     {
         out.push(Finding {
             title: STACK_NOT_RUNNING.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: detail("Kernel stack protection is configured but not running."),
         });
     }
@@ -763,7 +763,7 @@ mod tests {
         let out = verification(&f);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title, MEMORY_INTEGRITY_NOT_RUNNING);
-        assert_eq!(out[0].status, "attention");
+        assert_eq!(out[0].status, CheckStatus::Attention);
         assert_eq!(blocked_names(&out[0].detail).unwrap(), "bad.sys, second.sys");
         assert_eq!(boot_from_detail(&out[0].detail), Some(1000));
         assert_eq!(finding_control(&out[0].title), Some(MEMORY_INTEGRITY));
