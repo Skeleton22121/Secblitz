@@ -8,7 +8,7 @@ use crate::gui::widgets::anim;
 use crate::gui::{blocking, blocking_stream, Ctx, Helper, Message};
 use crate::i18n::Lang;
 use crate::uninstall::{Left, Plan};
-use crate::user_settings::{Op, Setting};
+use secblitz::user_settings::{Op, Setting};
 use iced::{Element, Subscription, Task};
 use std::path::PathBuf;
 use std::time::Instant;

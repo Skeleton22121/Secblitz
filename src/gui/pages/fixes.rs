@@ -1,5 +1,5 @@
 //! Protection page: every check grouped, attention rows selectable.
-use crate::advice::{self, Group, NextStep};
+use secblitz::advice::{self, Group, NextStep};
 use secblitz::model::CheckStatus;
 use crate::app::flow;
 use crate::app::score::{self, Class};

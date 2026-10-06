@@ -1,7 +1,7 @@
 //! Why a check is not offered, how to repair it, and who manages it.
 /// Calm facts, not faults: they never lower the score.
 pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
-    use secblitz::vbs as v;
+    use crate::vbs as v;
     // The driver reason also names the drivers after a colon; the names are
     // shown in "More details", never matched here.
     if v::is_driver_reason(reason) {

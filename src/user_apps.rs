@@ -199,7 +199,7 @@ mod run {
 
     pub fn run_winget(args: &[String], limit: Duration) -> WingetRun {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let Ok(winget) = secblitz::software_install::winget_path() else {
+        let Ok(winget) = crate::software_install::winget_path() else {
             return WingetRun {
                 code: None,
                 output: String::new(),
