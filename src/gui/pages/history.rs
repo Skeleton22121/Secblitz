@@ -361,7 +361,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         p,
         Some(Icon::Undo),
         ctx.t("Undo your last fixes"),
-        Some(undo_body),
+        Some(undo_body.clone()),
         undo_trailing,
         None,
     );
@@ -378,7 +378,11 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         p,
         Some(Icon::Undo),
         ctx.t("Put back chosen settings"),
-        Some(ctx.t("Pick the settings you want back the way they were. The rest stay as they are.")),
+        Some(if undo_enabled {
+            ctx.t("Pick the settings you want back the way they were. The rest stay as they are.")
+        } else {
+            undo_body.clone()
+        }),
         choose_trailing,
         None,
     );
