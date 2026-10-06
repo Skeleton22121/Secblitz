@@ -1,13 +1,13 @@
 //! Per-account settings and updates for the apps the user installed, not Windows apps or Secblitz.
 use crate::broker::{Reply, Request};
-use crate::explain;
+use secblitz::explain;
 use crate::gui::icons::Icon;
 use crate::gui::pages::tools;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Helper, Message};
-use crate::user_apps::APPS;
-use crate::user_settings::{Op, Setting};
+use secblitz::user_apps::APPS;
+use secblitz::user_settings::{Op, Setting};
 use iced::widget::{column, space};
 use iced::{Element, Length, Task};
 
@@ -200,7 +200,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.apps = Apps::Preparing;
-            Task::perform(blocking(secblitz::tools::dns_offline), |offline| {
+            Task::perform(blocking(secblitz::software_install::dns_offline), |offline| {
                 wrap(Msg::ScanOnline(!offline))
             })
         }
@@ -267,7 +267,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.app_cells[index] = AppCell::Preparing;
-            Task::perform(blocking(secblitz::tools::dns_offline), move |offline| {
+            Task::perform(blocking(secblitz::software_install::dns_offline), move |offline| {
                 wrap(Msg::UpdateOnline(index, !offline))
             })
         }

@@ -1,5 +1,5 @@
 //! Protection score: protected checks over all checks (findings excluded).
-use crate::advice::{self, Group};
+use secblitz::advice::{self, Group};
 use secblitz::engine::{Outcome, Report};
 use secblitz::model::{Authority, CheckStatus};
 

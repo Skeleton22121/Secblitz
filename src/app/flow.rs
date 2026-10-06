@@ -1,4 +1,4 @@
-use crate::advice::{self, Group, NextStep};
+use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 
@@ -113,7 +113,7 @@ pub fn plain_failure(raw: &str) -> &'static str {
     } else if r.contains("revert the active transaction") {
         REASON_UNDO_FIRST
     } else if r.contains("deferred:") && r.contains("servicing") {
-        crate::app::tools::ERR_BUSY
+        crate::app::maintenance::ERR_BUSY
     } else if r.contains("deferred:") && r.contains("busy") {
         REASON_BUSY
     } else if r.contains("deferred:") {
@@ -625,7 +625,7 @@ mod tests {
         );
         assert_eq!(
             plain_failure("Deferred: a Windows servicing process is active"),
-            crate::app::tools::ERR_BUSY
+            crate::app::maintenance::ERR_BUSY
         );
         assert!(can_retry("Deferred: shared engine.lock is busy"));
         assert!(can_retry("Deferred: a Windows servicing process is active"));

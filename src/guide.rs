@@ -186,8 +186,8 @@ impl Page {
         })
     }
 
-    pub fn for_step(step: crate::advice::NextStep) -> Option<Page> {
-        use crate::advice::NextStep as S;
+    pub fn for_step(step: secblitz::advice::NextStep) -> Option<Page> {
+        use secblitz::advice::NextStep as S;
         Some(match step {
             S::OpenWindowsSecurity => Page::WindowsSecurity,
             S::OpenWindowsUpdate => Page::WindowsUpdate,

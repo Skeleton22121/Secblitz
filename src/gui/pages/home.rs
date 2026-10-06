@@ -1,6 +1,6 @@
 //! Home: one hero region (score ring, verdict, one primary, extras in the
 //! overflow menu), then flat row groups; first-run PC-check view.
-use crate::advice::{self, Group, NextStep};
+use secblitz::advice::{self, Group, NextStep};
 use crate::app::flow;
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;

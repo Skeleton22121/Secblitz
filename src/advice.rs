@@ -10,7 +10,7 @@ pub use impact::{control_impact, finding_impact};
 pub use labels::control_label;
 use labels::control_help;
 use reasons::{managed, not_offered, repair_help};
-use secblitz::model::CheckStatus;
+use crate::model::CheckStatus;
 
 pub fn control_for_finding(title: &str) -> Option<&'static str> {
     Some(match title {
@@ -151,7 +151,7 @@ pub fn for_control(id: &str, status: &CheckStatus, detail: &str) -> Advice {
             a.next = "This PC's owner controls this setting, so we leave it as it is.";
             a.step = NextStep::ReviewWithAdministrator;
         }
-        CheckStatus::Skipped if detail == secblitz::vbs::ALREADY_ON => {
+        CheckStatus::Skipped if detail == crate::vbs::ALREADY_ON => {
             a.status = "Good to go";
             a.next = "This protection is already running on this PC. Nothing to change.";
             a.step = NextStep::None;
@@ -209,8 +209,8 @@ pub fn for_control(id: &str, status: &CheckStatus, detail: &str) -> Advice {
 
 /// Typed firewall evidence refines presentation only. Status and the engine's
 /// live eligibility checks remain mutation authority; prose is not evidence.
-pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
-    use secblitz::model::{Authority, EffectiveFirewall, InboundAction};
+pub fn for_outcome(outcome: &crate::engine::Outcome) -> Advice {
+    use crate::model::{Authority, EffectiveFirewall, InboundAction};
     let mut a = for_control(&outcome.id, &outcome.status, &outcome.detail);
     let enabled = matches!(
         outcome.id.as_str(),
@@ -272,7 +272,7 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
 }
 
 fn undo_ready(detail: &str) -> bool {
-    detail.starts_with(secblitz::vbs::UNDO_READY)
+    detail.starts_with(crate::vbs::UNDO_READY)
 }
 
 pub fn for_finding(title: &str, status: &CheckStatus, detail: &str) -> Advice {
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn every_extended_control_has_plain_label_impact_help_and_the_right_kind_of_offer() {
-        for spec in secblitz::hardening::all() {
+        for spec in crate::hardening::all() {
             let id = spec.id;
             assert_ne!(control_label(id), "Protection check", "{id}");
             assert!(!control_impact(id).is_empty(), "{id}");
@@ -456,17 +456,17 @@ mod tests {
             "Not offered: this PC is set up as a kiosk",
             "Not offered: Secblitz cannot tell who is signed in",
             "Not offered: a locked sign-in would stay locked until an administrator unlocks it",
-            secblitz::vbs::NOT_SUPPORTED,
-            secblitz::vbs::LOCKED,
-            secblitz::vbs::DRIVER,
+            crate::vbs::NOT_SUPPORTED,
+            crate::vbs::LOCKED,
+            crate::vbs::DRIVER,
             "Not offered: a driver on this PC may not work with it: old.sys, older.sys",
-            secblitz::vbs::DRIVERS_UNREADABLE,
-            secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
-            secblitz::vbs::NEEDS_RESTART,
-            secblitz::vbs::NO_SHADOW_STACKS,
-            secblitz::vbs::UNREADABLE,
-            secblitz::vbs::SET_BY_HAND,
-            secblitz::vbs::OLD_WINDOWS,
+            crate::vbs::DRIVERS_UNREADABLE,
+            crate::vbs::NEEDS_MEMORY_INTEGRITY,
+            crate::vbs::NEEDS_RESTART,
+            crate::vbs::NO_SHADOW_STACKS,
+            crate::vbs::UNREADABLE,
+            crate::vbs::SET_BY_HAND,
+            crate::vbs::OLD_WINDOWS,
             "Not offered: the hosts file could not be found",
             "Not offered: the hosts file is too large to change safely",
             "Not offered: the hosts file uses a format we cannot keep exactly",
@@ -495,7 +495,7 @@ mod tests {
             ("SMB1", "smb1.disabled"),
         ] {
             assert_eq!(control_for_finding(title), Some(id));
-            assert!(secblitz::hardening::is_hardening_check_id(id));
+            assert!(crate::hardening::is_hardening_check_id(id));
             assert_eq!(for_finding(title, &CheckStatus::Attention, "").label, control_label(id));
             assert_eq!(for_finding(title, &CheckStatus::Attention, "").impact, control_impact(id));
         }
@@ -514,13 +514,13 @@ mod tests {
             assert_eq!(applied.status, "Restart needed");
             assert_eq!(applied.step, NextStep::Restart);
             for reason in [
-                secblitz::vbs::NOT_SUPPORTED,
-                secblitz::vbs::LOCKED,
+                crate::vbs::NOT_SUPPORTED,
+                crate::vbs::LOCKED,
                 "Not offered: a driver on this PC may not work with it: a.sys",
-                secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
-                secblitz::vbs::NO_SHADOW_STACKS,
-                secblitz::vbs::SET_BY_HAND,
-                secblitz::vbs::OLD_WINDOWS,
+                crate::vbs::NEEDS_MEMORY_INTEGRITY,
+                crate::vbs::NO_SHADOW_STACKS,
+                crate::vbs::SET_BY_HAND,
+                crate::vbs::OLD_WINDOWS,
             ] {
                 let n = for_control(id, &CheckStatus::Skipped, reason);
                 assert_eq!(n.status, "Not offered", "{reason}");
@@ -529,7 +529,7 @@ mod tests {
                 assert!(n.next.ends_with('.') && n.next.len() < 170, "{reason}");
                 assert!(!n.next.contains("Memory integrity"), "{reason}");
             }
-            let on = for_control(id, &CheckStatus::Skipped, secblitz::vbs::ALREADY_ON);
+            let on = for_control(id, &CheckStatus::Skipped, crate::vbs::ALREADY_ON);
             assert_eq!((on.status, on.group), ("Good to go", Group::Protected));
             let m = for_control(id, &CheckStatus::Skipped, "Relevant policy is configured: assessment only");
             assert_eq!(m.status, "Managed elsewhere");
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn a_core_protection_that_is_on_but_not_running_offers_a_restart_then_undo() {
-        let ready = format!("{}. boot: 1.", secblitz::vbs::UNDO_READY);
+        let ready = format!("{}. boot: 1.", crate::vbs::UNDO_READY);
         for title in [
             "Memory integrity not running",
             "Kernel stack protection not running",
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn applied_firewall_with_contradictory_evidence_is_not_protected() {
-        use secblitz::{
+        use crate::{
             engine::Outcome,
             model::{Authority, EffectiveFirewall, InboundAction},
         };
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn firewall_protection_uses_typed_evidence_never_reason_text() {
-        use secblitz::{
+        use crate::{
             engine::Outcome,
             model::{Authority, EffectiveFirewall, InboundAction},
         };
