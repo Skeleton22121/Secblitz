@@ -377,9 +377,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Toggle(i) => {
-            if !state.selected.remove(&i) {
-                state.selected.insert(i);
-            }
+            toggle_app(state, i);
             Task::none()
         }
         Msg::ToggleGroup(group) => {
@@ -395,11 +393,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Frame(now) => {
-            state.now = now;
-            let held = state.held.as_ref().map(|(at, _)| *at);
-            if held.is_some_and(|at| now.saturating_duration_since(at) >= handoff::sheet_hold()) {
-                show_held(state);
-            }
+            on_frame(state, now);
             Task::none()
         }
         Msg::ToggleBlock => {
@@ -407,26 +401,17 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Review => {
-            if !ctx.busy && !state.selected.is_empty() {
-                state.block_again &= ctx.helper == Helper::Ready;
-                state.sheet = Sheet::Review;
-            }
+            open_review(state, ctx);
             Task::none()
         }
         Msg::Cancel => {
-            if matches!(state.sheet, Sheet::Review | Sheet::Delete(_)) {
-                state.sheet = Sheet::None;
-            }
+            cancel_sheet(state);
             Task::none()
         }
         Msg::Confirm => confirm(state, ctx),
         Msg::Run(run) => on_run(state, ctx, run),
         Msg::UserBlocked(ok) => {
-            if let Sheet::Done(done) = &mut state.sheet {
-                done.user_ok = Some(ok);
-            } else if let Some((_, done)) = &mut state.held {
-                done.user_ok = Some(ok);
-            }
+            on_user_blocked(state, ok);
             Task::none()
         }
         Msg::ToggleDetails => {
@@ -438,20 +423,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Restore(index) => restore(state, ctx, index),
-        Msg::RestoreStore(index) => {
-            if state.restoring.is_some() || state.probing || ctx.busy {
-                return Task::none();
-            }
-            store_restore(state, ctx, index)
-        }
-        Msg::StoreProbed(index, offline) => {
-            state.probing = false;
-            if offline {
-                state.offline = Some(index);
-                return Task::none();
-            }
-            start_store_restore(state, ctx, index)
-        }
+        Msg::RestoreStore(index) => restore_from_store(state, ctx, index),
+        Msg::StoreProbed(index, offline) => on_store_probed(state, ctx, index, offline),
         Msg::Restored(index, result) => on_restored(state, ctx, index, result),
         Msg::RestoredOffline(index, result) => on_restored_offline(state, ctx, index, result),
         Msg::SuggestedMachine(on) => {
@@ -476,6 +449,57 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+fn toggle_app(state: &mut State, index: u16) {
+    if !state.selected.remove(&index) {
+        state.selected.insert(index);
+    }
+}
+
+fn on_frame(state: &mut State, now: Instant) {
+    state.now = now;
+    let held = state.held.as_ref().map(|(at, _)| *at);
+    if held.is_some_and(|at| now.saturating_duration_since(at) >= handoff::sheet_hold()) {
+        show_held(state);
+    }
+}
+
+fn open_review(state: &mut State, ctx: &Ctx) {
+    if !ctx.busy && !state.selected.is_empty() {
+        state.block_again &= ctx.helper == Helper::Ready;
+        state.sheet = Sheet::Review;
+    }
+}
+
+fn cancel_sheet(state: &mut State) {
+    if matches!(state.sheet, Sheet::Review | Sheet::Delete(_)) {
+        state.sheet = Sheet::None;
+    }
+}
+
+fn on_user_blocked(state: &mut State, ok: bool) {
+    if let Sheet::Done(done) = &mut state.sheet {
+        done.user_ok = Some(ok);
+    } else if let Some((_, done)) = &mut state.held {
+        done.user_ok = Some(ok);
+    }
+}
+
+fn restore_from_store(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
+    if state.restoring.is_some() || state.probing || ctx.busy {
+        return Task::none();
+    }
+    store_restore(state, ctx, index)
+}
+
+fn on_store_probed(state: &mut State, ctx: &mut Ctx, index: u16, offline: bool) -> Task<Message> {
+    state.probing = false;
+    if offline {
+        state.offline = Some(index);
+        return Task::none();
+    }
+    start_store_restore(state, ctx, index)
 }
 
 fn on_scanned(
