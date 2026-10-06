@@ -57,8 +57,19 @@ pub fn empty_state<'a>(
     body_text: impl Into<String>,
     action: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    empty_state_art(p, icon(i, 32.0, p.text_muted), title, body_text, action)
+}
+
+/// [`empty_state`] with a drawing (or any element) in place of the icon.
+pub fn empty_state_art<'a>(
+    p: Palette,
+    art: Element<'a, Message>,
+    title: impl Into<String>,
+    body_text: impl Into<String>,
+    action: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
     let mut c = column![
-        icon(i, 32.0, p.text_muted),
+        art,
         text(title.into())
             .size(theme::H2)
             .font(theme::SEMIBOLD)

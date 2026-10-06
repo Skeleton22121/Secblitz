@@ -222,25 +222,43 @@ geometry, which transforms identically everywhere.
   the height; pass the text size.
 - Reduced motion: fixed three-quarter arc / static dots.
 
-### PC-check hero (`scan::check_hero`)
+### PC-check drawing (`hairline::magnifier`)
 
-A "scanning nearby" radar, redrawn natively from the free LottieFiles
-animation of that name (credit and license in `assets/ANIMATION-LICENSE.txt`).
-It keeps the original's 400-unit composition and 30 fps timing, scaled to the
-edge it is given (`HERO` = 160 px in compact regions, up to `HERO_MAX` =
-320 px on the first check's screen). Everything is drawn in the theme's text
-colour, so it follows light and dark mode.
+A hairline drawing: a monitor shows five settings (Firewall, Microsoft
+Defender, Windows Update, Remote Desktop, Network sharing) and a magnifying
+glass looks them over. It is 256 by 188 units, one unit per logical pixel at
+`FULL` (the first check's screen, sized by `responsive` to the height left
+after the title, bar and ticker) and `COMPACT` = 0.625 (160 px wide) in the
+Protection page's region while a new check runs. The Ready state replaces
+the shield icon on Home's "Let's check your PC". Lines are the theme's greys;
+blue (`accent`) only for what the lens is reading while checking (or after a
+click sends it to a row) and switches turning on, green for ticks and for a
+switch once its row is done. A switch strokes in its colour, fills its pill
+with 13 % of it in the plate and fills its knob with it; it turns from blue
+to green 0.45 to 0.85 s after its tick starts.
 
-| Part | What moves |
+| State | What moves |
 | --- | --- |
-| Rings | A ring is born every 2 s (60 frames) and lives 5.3 s: its radius grows from 0 to 202 units while its outline (55 % at birth) and fill (16 %) fade to nothing, both on the original's (0.333, 0) / (0.667, 1) ease. Two or three rings overlap at any time. |
-| Dots | Nine small dots on a 6 s cycle, each fading in over 0.4 s, holding 0.4 s and fading out over 0.37 s at its own moment, like things being found nearby. |
-| Centre | A fixed dot. |
+| Ready | The glass rests beside the monitor and bobs (3 and 4 units on 1.3 and 1.7 rad/s). The bob runs 6 s after the drawing appears or the pointer last moved over it (a resting cursor does not keep it going), then fades out over 1.5 s on `EASE_IN_OUT`, so a resting page asks for no frames. Over the screen the lens drifts 55 % of the way to the pointer; it highlights no row, since nothing is being checked. Under reduced motion the glass rests still at its place. |
+| Checking | The lens reads the row the check has reached: each fifth of the page's real progress finishes one row, whose tick draws in (0.35 s, `DECELERATE`, rows finished together 150 ms apart) while its switch knob springs on (k 160, c 20). The lens sweeps along that row (x on 0.9 rad/s, a 2.5 unit bob on 1.7 rad/s). Without a known total it falls back to the prototype's autopilot over all five rows. |
 
-Reduced motion shows one still frame with two rings and two dots.
+The lens position is a spring (k 70, c 13), so it glides between the
+pointer, the check's row and a clicked row. Inside the lens the screen is
+drawn again at 1.55x about its centre and cut to the lens by hand (iced only
+clips to rectangles); magnified lines keep their width, as in the
+prototype. Interaction: the lens follows the pointer over the screen while
+checking, hovering a row names it (above the lens when the lens follows the
+pointer or was sent to that row, otherwise above the row; the label glides
+on a spring, k 320, c 34, instead of jumping, and is kept low enough to fit
+above its anchor at the compact size), clicking a
+row holds the lens there for 1.6 s and draws its tick again, clicking
+elsewhere sends a pulse. Reduced motion: still frame (ambient 0.9 s), ticks
+and switches jump to their end, the lens jumps to the pointer; names and
+clicks still work. The drawing asks for its own frames only while something
+moves.
+
 `scan::checking_screen` lays the first check out across the whole page: the
-radar sized by `responsive` to the height left after the title, bar and
-ticker, all centred.
+drawing, title, bar and ticker, all centred.
 
 ### Status ticker (`scan::status_ticker`)
 

@@ -7,6 +7,8 @@ use crate::advice::{self, Group, NextStep};
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Tone};
+use crate::gui::widgets::hairline::magnifier::{self, Labels, Magnifier, Status};
+use crate::gui::widgets::hairline::Plate;
 use crate::gui::widgets::{self, anim, ring, scan, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
 use iced::widget::{column, row};
@@ -29,8 +31,12 @@ pub struct State {
     details_open: bool,
     /// Latest frame timestamp (views never call `Instant::now()`).
     now: Instant,
-    /// Started when the scan view appears; drives the shield and spinner.
+    /// Started when the scan view appears; the magnifying glass's state
+    /// change.
     scan: Option<anim::Clock>,
+    /// When the Ready view's resting glass was first made (its state never
+    /// changes, so this stays put).
+    ready_since: Instant,
     /// Status lines of the live check, oldest first, with their start time.
     lines: Vec<(String, Instant)>,
     /// How many progress items were already turned into status lines.
@@ -54,6 +60,7 @@ impl Default for State {
             details_open: false,
             now: Instant::now(),
             scan: None,
+            ready_since: Instant::now(),
             lines: Vec::new(),
             processed: 0,
             protected_open: false,
@@ -186,11 +193,20 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         if let Some(error) = &ctx.check_error {
             return error_card(state, ctx, "We couldn't check your PC", error, true);
         }
+        let art = Magnifier {
+            p,
+            plate: Plate::Surface,
+            status: Status::Ready,
+            progress: None,
+            changed: state.ready_since,
+            now: state.now,
+            labels: Labels::new(|s| ctx.t(s)),
+        };
         return widgets::region(
             p,
-            widgets::empty_state(
+            widgets::empty_state_art(
                 p,
-                Icon::ShieldCheck,
+                art.view(magnifier::FULL),
                 ctx.t("Let's check your PC"),
                 ctx.t("This takes about a minute. Nothing is changed."),
                 Some(widgets::action(
@@ -224,19 +240,24 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
     } else {
         (n as f32 / total as f32).min(0.96)
     };
-    let elapsed = state
-        .scan
-        .map(|c| c.elapsed_at(state.now))
-        .unwrap_or_default();
-
+    let art = Magnifier {
+        p,
+        plate: Plate::Bg,
+        status: Status::Checking,
+        // Without a known total the lens wanders over every row instead.
+        progress: (!ctx.catalog.available.is_empty()).then_some(ratio),
+        changed: state.scan.map_or(state.now, |c| c.start()),
+        now: state.now,
+        labels: Labels::new(|s| ctx.t(s)),
+    };
     scan::checking_screen(
         p,
         ctx.t("Checking your PC"),
         ctx.t("This takes about a minute. Nothing is changed."),
         ratio,
+        art,
         &state.lines,
         state.now,
-        elapsed,
     )
 }
 
