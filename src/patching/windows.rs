@@ -59,9 +59,19 @@ fn boot_id() -> Result<Uuid> {
         firmware: u32,
         flags: u64,
     }
-    let mut boot: Boot = unsafe { zeroed() };
+    let mut boot = Boot {
+        id: windows_sys::core::GUID {
+            data1: 0,
+            data2: 0,
+            data3: 0,
+            data4: [0; 8],
+        },
+        firmware: 0,
+        flags: 0,
+    };
     let mut size = 0;
     ensure!(
+        // SAFETY: `boot` is a repr(C) buffer of exactly the size passed.
         unsafe {
             NtQuerySystemInformation(
                 90,
@@ -80,12 +90,15 @@ fn boot_id() -> Result<Uuid> {
 fn active_session(session: u32) -> Result<()> {
     let (mut raw, mut bytes) = (null_mut(), 0);
     ensure!(
+        // SAFETY: the out-pointers are valid; the returned buffer is freed below.
         unsafe { WTSQuerySessionInformationW(null_mut(), session, 8, &mut raw, &mut bytes) } != 0,
         "Interactive session state unavailable"
     );
     let active =
+        // SAFETY: `raw` is non-null and holds a u32, checked first.
         !raw.is_null() && bytes as usize == size_of::<u32>() && unsafe { *raw.cast::<u32>() } == 0;
     if !raw.is_null() {
+        // SAFETY: `raw` came from WTSQuerySessionInformationW and is freed once.
         unsafe {
             WTSFreeMemory(raw.cast());
         }
@@ -96,6 +109,7 @@ fn active_session(session: u32) -> Result<()> {
 struct Handle(HANDLE);
 impl Drop for Handle {
     fn drop(&mut self) {
+        // SAFETY: the handle is owned by this wrapper and closed once.
         unsafe {
             CloseHandle(self.0);
         }
@@ -103,6 +117,7 @@ impl Drop for Handle {
 }
 fn windows_dir() -> Result<PathBuf> {
     let mut b = vec![0u16; 32768];
+    // SAFETY: `b` is writable for the length passed.
     let n = unsafe { GetWindowsDirectoryW(b.as_mut_ptr(), b.len() as u32) } as usize;
     ensure!(n > 0 && n < b.len(), "Windows directory unavailable");
     Ok(PathBuf::from(String::from_utf16(&b[..n])?))
@@ -111,6 +126,7 @@ pub(super) fn machine() -> Result<String> {
     let mut raw = [0u16; 256];
     let mut bytes = size_of_val(&raw) as u32;
     ensure!(
+        // SAFETY: both names are NUL-terminated and `raw` and `bytes` describe the same writable buffer.
         unsafe {
             RegGetValueW(
                 HKEY_LOCAL_MACHINE,
@@ -138,15 +154,18 @@ pub(super) fn machine() -> Result<String> {
 fn token(process: HANDLE) -> Result<Handle> {
     let mut token = null_mut();
     ensure!(
+        // SAFETY: `token` is a valid out-pointer.
         unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } != 0,
         "Cannot inspect identity token"
     );
     Ok(Handle(token))
 }
 fn token_info<T: Copy>(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Result<T> {
+    // SAFETY: every `T` used here is a plain-data Windows struct for which all-zero bytes are valid.
     let mut v: T = unsafe { zeroed() };
     let mut needed = 0;
     ensure!(
+        // SAFETY: `v` is writable for `size_of::<T>()` bytes.
         unsafe {
             GetTokenInformation(
                 token,
@@ -163,6 +182,7 @@ fn token_info<T: Copy>(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Result<
 }
 fn user_sid(token: HANDLE) -> Result<String> {
     let mut needed = 0;
+    // SAFETY: a null buffer with size 0 only queries the needed length.
     unsafe {
         GetTokenInformation(token, TokenUser, null_mut(), 0, &mut needed);
     }
@@ -174,6 +194,7 @@ fn user_sid(token: HANDLE) -> Result<String> {
     let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
     let size = (buffer.len() * 8) as u32;
     ensure!(
+        // SAFETY: `buffer` is writable for `size` bytes.
         unsafe {
             GetTokenInformation(
                 token,
@@ -185,23 +206,27 @@ fn user_sid(token: HANDLE) -> Result<String> {
         } != 0,
         "Cannot inspect token SID"
     );
+    // SAFETY: the buffer is 8-byte aligned and was filled with a TOKEN_USER by the call above.
     let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
     let mut text = null_mut();
     ensure!(
+        // SAFETY: `user.User.Sid` is valid for the buffer's lifetime and `text` is a valid out-pointer.
         unsafe {
             windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW(
                 user.User.Sid,
                 &mut text,
             )
-        } != 0,
+        } != 0 && !text.is_null(),
         "Cannot format token SID"
     );
     let _text = storage::Local(text.cast());
     let mut n = 0;
+    // SAFETY: `text` is non-null and NUL-terminated; the scan stops at the first NUL.
     while n < 256 && unsafe { *text.add(n) } != 0 {
         n += 1;
     }
     ensure!(n > 0 && n < 256, "Invalid SID length");
+    // SAFETY: the slice covers the `n` units scanned above.
     Ok(String::from_utf16(unsafe {
         std::slice::from_raw_parts(text, n)
     })?)
@@ -211,15 +236,19 @@ fn binding(win: &Path) -> Result<Binding> {
         cfg!(target_arch = "x86_64") && crate::platform::is_elevated()?,
         "Elevated Windows x64 required"
     );
+    // SAFETY: SYSTEM_INFO is plain data and all-zero bytes are valid.
     let mut system: SYSTEM_INFO = unsafe { zeroed() };
+    // SAFETY: `system` is a valid out-structure.
     unsafe {
         GetNativeSystemInfo(&mut system);
     }
     ensure!(
+        // SAFETY: the call above filled the architecture union member.
         unsafe { system.Anonymous.Anonymous.wProcessorArchitecture }
             == PROCESSOR_ARCHITECTURE_AMD64,
         "Patching requires native AMD64 Windows, not an emulated process"
     );
+    // SAFETY: GetCurrentProcess has no preconditions.
     let current = token(unsafe { GetCurrentProcess() })?;
     let ty: TOKEN_ELEVATION_TYPE = token_info(current.0, TokenElevationType)?;
     ensure!(ty == TokenElevationTypeFull, "Interactive split-token administrator required; service/over-the-shoulder elevation unsupported");
@@ -233,6 +262,7 @@ fn binding(win: &Path) -> Result<Binding> {
     );
     let mut current_session = 0;
     ensure!(
+        // SAFETY: the out-pointer is valid.
         unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut current_session) } != 0
             && current_session != 0,
         "Interactive session required"
@@ -243,25 +273,30 @@ fn binding(win: &Path) -> Result<Binding> {
             && token_info::<u32>(linked.0, TokenSessionId)? == current_session,
         "Token session mismatch"
     );
+    // SAFETY: GetShellWindow has no preconditions.
     let shell_window = unsafe { GetShellWindow() };
     ensure!(!shell_window.is_null(), "Interactive shell unavailable");
     let mut pid = 0;
     ensure!(
+        // SAFETY: the out-pointer is valid.
         unsafe { GetWindowThreadProcessId(shell_window, &mut pid) } != 0 && pid != 0,
         "Shell identity unavailable"
     );
     let mut shell_session = 0;
     ensure!(
+        // SAFETY: the out-pointer is valid.
         unsafe { ProcessIdToSessionId(pid, &mut shell_session) } != 0
             && shell_session == current_session,
         "Different original-user session"
     );
+    // SAFETY: OpenProcess has no pointer arguments.
     let shell = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     ensure!(!shell.is_null(), "Cannot inspect interactive shell");
     let shell = Handle(shell);
     let mut path = vec![0u16; 32768];
     let mut n = path.len() as u32;
     ensure!(
+        // SAFETY: `path` is writable for the length in `n`.
         unsafe { QueryFullProcessImageNameW(shell.0, 0, path.as_mut_ptr(), &mut n) } != 0,
         "Cannot establish shell executable"
     );
@@ -281,7 +316,9 @@ fn binding(win: &Path) -> Result<Binding> {
     );
     let mut current_shell_pid = 0;
     ensure!(
+        // SAFETY: GetShellWindow has no preconditions.
         unsafe { GetShellWindow() } == shell_window
+            // SAFETY: the out-pointer is valid.
             && unsafe { GetWindowThreadProcessId(shell_window, &mut current_shell_pid) } != 0
             && current_shell_pid == pid,
         "Interactive shell changed during identity validation"
@@ -461,9 +498,13 @@ impl core::Backend for Backend {
     }
 }
 fn identity(handle: HANDLE, pid: u32) -> Result<ProcessIdentity> {
-    let (mut created, mut exit, mut kernel, mut user): (FILETIME, FILETIME, FILETIME, FILETIME) =
-        unsafe { zeroed() };
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
     ensure!(
+        // SAFETY: `handle` is a live process handle and all four out-pointers are valid.
         unsafe { GetProcessTimes(handle, &mut created, &mut exit, &mut kernel, &mut user) } != 0,
         "Cannot identify patching process"
     );
@@ -474,6 +515,7 @@ fn identity(handle: HANDLE, pid: u32) -> Result<ProcessIdentity> {
     })
 }
 fn alive(expected: &ProcessIdentity) -> Result<bool> {
+    // SAFETY: OpenProcess has no pointer arguments.
     let h = unsafe {
         OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION | 0x0010_0000,
@@ -483,6 +525,7 @@ fn alive(expected: &ProcessIdentity) -> Result<bool> {
     };
     if h.is_null() {
         ensure!(
+            // SAFETY: GetLastError has no preconditions.
             unsafe { GetLastError() } == ERROR_INVALID_PARAMETER,
             "Cannot establish previous process exit"
         );
@@ -492,6 +535,7 @@ fn alive(expected: &ProcessIdentity) -> Result<bool> {
     if identity(h.0, expected.pid)? != *expected {
         return Ok(false);
     }
+    // SAFETY: `h` is a live process handle.
     let status = unsafe { WaitForSingleObject(h.0, 0) };
     ensure!(
         matches!(status, WAIT_OBJECT_0 | WAIT_TIMEOUT),
@@ -507,6 +551,7 @@ fn drain(
 ) -> Result<()> {
     for _ in 0..16 {
         let mut available = 0;
+        // SAFETY: the handle is a live pipe and every out-pointer is valid or null as the call allows.
         if unsafe {
             PeekNamedPipe(
                 reader.as_raw_handle(),
@@ -519,6 +564,7 @@ fn drain(
         } == 0
         {
             ensure!(
+                // SAFETY: GetLastError has no preconditions.
                 unsafe { GetLastError() } == ERROR_BROKEN_PIPE,
                 "Patching output pipe failed"
             );

@@ -31,6 +31,7 @@ foreach ($m in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility'
 
 fn windows_dir() -> Result<PathBuf> {
     let mut buffer = vec![0u16; 32768];
+    // SAFETY: `buffer` is writable for the length passed.
     let count = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
     ensure!(
         count > 0 && count < buffer.len(),
