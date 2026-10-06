@@ -49,20 +49,23 @@ impl std::fmt::Display for ToolError {
 
 impl std::error::Error for ToolError {}
 
-/// True when `kind` is the error itself, a wrapped cause, or attached as context.
-fn has_kind(error: &anyhow::Error, kind: ToolError) -> bool {
-    error.downcast_ref::<ToolError>() == Some(&kind)
-        || error
-            .chain()
-            .any(|cause| cause.downcast_ref::<ToolError>() == Some(&kind))
-}
-
-pub fn is_not_here_error(error: &anyhow::Error) -> bool {
-    has_kind(error, ToolError::NotHere)
-}
-
-pub fn is_offline_error(error: &anyhow::Error) -> bool {
-    has_kind(error, ToolError::Offline)
+impl ToolError {
+    /// The failure kind carried by `error` itself, a wrapped cause, or attached context. Offline wins when both are present.
+    pub fn of(error: &anyhow::Error) -> Option<Self> {
+        let has = |kind| {
+            error.downcast_ref::<Self>() == Some(&kind)
+                || error
+                    .chain()
+                    .any(|cause| cause.downcast_ref::<Self>() == Some(&kind))
+        };
+        if has(Self::Offline) {
+            Some(Self::Offline)
+        } else if has(Self::NotHere) {
+            Some(Self::NotHere)
+        } else {
+            None
+        }
+    }
 }
 
 pub fn is_offline_code(code: u32) -> bool {
@@ -831,9 +834,9 @@ mod tests {
             assert!(!is_offline_code(code), "{code:#x}");
         }
         let error = anyhow::Error::new(ToolError::Offline).context("Install Bitwarden");
-        assert!(is_offline_error(&error));
-        assert!(!is_offline_error(&anyhow::anyhow!("hash mismatch")));
-        assert!(!is_not_here_error(&error));
+        assert!(ToolError::of(&error) == Some(ToolError::Offline));
+        assert_eq!(ToolError::of(&anyhow::anyhow!("hash mismatch")), None);
+        assert_ne!(ToolError::of(&error), Some(ToolError::NotHere));
     }
 
     #[test]
@@ -841,9 +844,16 @@ mod tests {
         use anyhow::Context;
         let refused = Err::<(), _>(anyhow::anyhow!("not the desktop user")).context(ToolError::NotHere);
         let refused = refused.unwrap_err();
-        assert!(is_not_here_error(&refused));
-        assert!(!is_offline_error(&refused));
-        assert!(!is_not_here_error(&anyhow::anyhow!("hash mismatch")));
+        assert_eq!(ToolError::of(&refused), Some(ToolError::NotHere));
+            }
+
+    #[test]
+    fn offline_wins_when_both_kinds_are_present() {
+        use anyhow::Context;
+        let both = Err::<(), _>(anyhow::Error::new(ToolError::Offline))
+            .context(ToolError::NotHere)
+            .unwrap_err();
+        assert_eq!(ToolError::of(&both), Some(ToolError::Offline));
     }
 
     #[test]
@@ -853,14 +863,13 @@ mod tests {
             .context(ToolError::NotHere)
             .context("Install Bitwarden")
             .unwrap_err();
-        assert!(is_not_here_error(&as_context));
+        assert_eq!(ToolError::of(&as_context), Some(ToolError::NotHere));
         let as_cause = anyhow::Error::new(ToolError::NotHere).context("Check Bitwarden");
-        assert!(is_not_here_error(&as_cause));
-        assert!(!is_offline_error(&as_cause));
-        let offline_context = Err::<(), _>(anyhow::anyhow!("dns"))
+        assert_eq!(ToolError::of(&as_cause), Some(ToolError::NotHere));
+                let offline_context = Err::<(), _>(anyhow::anyhow!("dns"))
             .context(ToolError::Offline)
             .unwrap_err();
-        assert!(is_offline_error(&offline_context));
+        assert_eq!(ToolError::of(&offline_context), Some(ToolError::Offline));
         assert_eq!(ToolError::Offline.to_string(), "network_unreachable");
         assert_eq!(ToolError::NotHere.to_string(), "not_available_for_this_account");
     }
