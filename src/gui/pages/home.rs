@@ -314,7 +314,7 @@ fn protected_labels(report: &Report) -> (usize, Vec<&'static str>) {
     let mut labels: Vec<&'static str> = Vec::new();
     for r in &report.results {
         let a = advice::for_outcome(r);
-        if a.group == Group::Protected {
+        if a.group == Group::Protected && advice::extra_section(&r.id).is_none() {
             count += 1;
             let label = advice::control_label(&r.id);
             if !labels.contains(&label) {
@@ -766,11 +766,13 @@ mod tests {
             results: vec![
                 outcome("uac.enabled", "compliant"),
                 outcome("uac.consent", "attention"),
+                outcome("ai.paint", "compliant"),
             ],
             ..Report::default()
         };
         assert_eq!(score::to_check(&report).len(), 1);
-        assert_eq!(protected_labels(&report).0, 1);
+        assert_eq!(protected_labels(&report).0, 1, "a switched-on extra is not counted");
+        assert_eq!(protected_labels(&report).0, Score::of(&report).protected);
     }
 
     fn update_flag(state: &mut State) {
