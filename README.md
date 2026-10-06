@@ -7,7 +7,7 @@
 
 Security, privacy and cleanup for Windows, all in one app.
 
-Secblitz checks your Windows PC, tells you in plain language what needs fixing, and fixes it when you say yes. You don't need to know anything about computers.
+Secblitz checks your Windows PC, tells you what needs fixing and why, and fixes it when you say yes. You don't need to know anything about computers.
 
 [**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](#security) · [Contributing](#contributing)
 
@@ -89,7 +89,7 @@ On Windows, `scripts/build-release.ps1` runs the same tests, lint and build with
 
 **House rules**
 
-- **Plain words.** The app is for people who don't know what a firewall profile is. No acronyms, no fear, no em dashes in user-facing text.
+- **No jargon.** The app is for people who don't know what a firewall profile is. No acronyms, no fear, no em dashes in user-facing text.
 - **Every check explains itself.** A new check needs its what it is / if it's off / if you turn it on text in [`src/explain/`](src/explain/).
 - **Every string in six languages.** Add translations to [`src/i18n.rs`](src/i18n.rs), or drop them in [`i18n-pending/`](i18n-pending/) if you only speak some of them.
 - **Reversible or read-only.** A change Secblitz makes must record what it replaced and be undoable, or be clearly labeled as one-way before the user says yes.
