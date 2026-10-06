@@ -266,6 +266,7 @@ pub fn fade_palette(
         warn: f(p.warn),
         bad: f(p.bad),
         neutral: f(p.neutral),
+        accent: f(p.accent),
         good_text: f(p.good_text),
         warn_text: f(p.warn_text),
         bad_text: f(p.bad_text),
