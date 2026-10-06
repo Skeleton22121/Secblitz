@@ -34,7 +34,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Items to fix now say what turning them on protects you from, and their explanations use calmer words.
 - Clean up apps no longer ticks any app for you. You choose what to remove.
 - When Windows Update is busy, fixes say so and offer to try again, instead of asking you to restart.
-- **Smoother, faster screens.** Pages slide in gently, buttons no longer get colored outlines, and the app redraws less, so it feels quicker. Checking again shows the full checking screen with live progress, and when a check, fix or removal finishes, the bar completes before the result fades in.
+- **Smoother, faster screens.** Pages slide in gently, buttons and search boxes no longer get colored outlines, and the app redraws less, so it feels quicker. Checking again shows the full checking screen with live progress, and when a check, fix or removal finishes, the bar completes before the result fades in.
 
 ### Fixed
 - **Secblitz no longer hides the Administrator account you are signed in with.** Hiding the built-in Administrator account is only offered when you use a different account, so you can always sign back in.
