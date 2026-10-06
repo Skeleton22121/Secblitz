@@ -2091,6 +2091,20 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["Back to how it was before Secblitz", "Como estaba antes de Secblitz", "Comme avant Secblitz", "Wieder wie vor Secblitz", "Como era antes do Secblitz", "Come prima di Secblitz"],
     // Merged from i18n-pending (checks, explanations, GUI follow-ups).
     ["Putting everything back", "Dejando todo como estaba", "Remise en état de tout", "Alles wird zurückgesetzt", "Voltando tudo ao que era antes", "Rimetto tutto com'era"],
+    ["Ad", "Anuncio", "Publicité", "Werbung", "Anúncio", "Annuncio"],
+    ["Tracker", "Rastreador", "Traqueur", "Tracker", "Rastreador", "Tracker"],
+    ["Scam website", "Sitio web fraudulento", "Site d’arnaque", "Betrugswebsite", "Site de golpe", "Sito truffa"],
+    ["Web page", "Página web", "Page web", "Webseite", "Página da web", "Pagina web"],
+    ["Your PC", "Tu PC", "Votre PC", "Dein PC", "Seu PC", "Il tuo PC"],
+    ["The internet", "Internet", "Internet", "Das Internet", "A internet", "Internet"],
+    ["Web protection is on", "La protección web está activada", "La protection web est activée", "Webschutz ist an", "A proteção da web está ativada", "La protezione web è attiva"],
+    ["Web protection is not blocking", "La protección web no está bloqueando nada", "La protection web ne bloque rien", "Webschutz blockiert gerade nichts", "A proteção da web não está bloqueando nada", "La protezione web non sta bloccando nulla"],
+    ["AD", "AD", "PUB", "AD", "AD", "AD"],
+    ["Web protection is off", "La protección web está desactivada", "La protection web est désactivée", "Webschutz ist aus", "A proteção da web está desativada", "La protezione web è disattivata"],
+    ["Ads, trackers and dangerous websites can load.", "Los anuncios, los rastreadores y los sitios web peligrosos pueden cargarse.", "Les publicités, les traqueurs et les sites web dangereux peuvent se charger.", "Werbung, Tracker und gefährliche Websites können geladen werden.", "Anúncios, rastreadores e sites perigosos podem ser carregados.", "Annunci, tracker e siti web pericolosi possono essere caricati."],
+    ["Nothing is being blocked for now.", "Por ahora no se está bloqueando nada.", "Rien n’est bloqué pour le moment.", "Im Moment wird nichts blockiert.", "Nada está sendo bloqueado por enquanto.", "Per ora non viene bloccato nulla."],
+    ["Not working right now", "No funciona en este momento", "Ne fonctionne pas pour le moment", "Funktioniert gerade nicht", "Não está funcionando agora", "Al momento non funziona"],
+    ["Blocking starts as soon as the lists are ready.", "El bloqueo empieza en cuanto las listas estén preparadas.", "Le blocage commence dès que les listes sont prêtes.", "Das Blockieren beginnt, sobald die Listen bereit sind.", "O bloqueio começa assim que as listas estiverem prontas.", "Il blocco inizia appena gli elenchi sono pronti."],
 ];
 
 // Each row is English, Spanish, French, German, Portuguese.
@@ -4059,6 +4073,7 @@ mod tests {
                 include_str!("gui/pages/settings.rs"),
             ),
             ("gui/pages/debloat.rs", include_str!("gui/pages/debloat.rs")),
+            ("gui/pages/web.rs", include_str!("gui/pages/web.rs")),
             ("gui/pages/tools.rs", include_str!("gui/pages/tools.rs")),
             (
                 "gui/pages/tools/view.rs",

@@ -93,6 +93,7 @@ pub mod shield_fill;
 pub mod stage;
 pub mod start_menu;
 pub mod svg;
+pub mod web_globe;
 
 pub use glyph::Glyph;
 pub use live::{Live, Step, SETTLED_AGE};

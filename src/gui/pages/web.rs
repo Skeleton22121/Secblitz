@@ -1,6 +1,11 @@
 //! "Web protection": three switches that block ads, trackers and dangerous
 //! websites, a plain status line, a one-hour pause and today's counts.
 //!
+//! The page opens with a picture of what is happening (the hairline globe
+//! sending traffic to the PC, with the dome that stops ads when protection
+//! is on), the status in words, today's counts and the pause, resume or try
+//! again button beside it.
+//!
 //! Everything that touches the PC (reading the files, asking Windows about the
 //! filter, changing the switches) runs on a worker thread. While the page is
 //! on screen it reads the current state every two seconds. A copy of Secblitz
@@ -10,14 +15,15 @@ use crate::explain;
 use crate::gui::icons::Icon;
 use crate::gui::pages::home;
 use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::widgets::hairline::{web_globe, Plate};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
 use crate::i18n::Lang;
-use iced::widget::{column, container, space};
-use iced::{Element, Length, Padding, Subscription, Task};
+use iced::widget::{column, container, row, space};
+use iced::{Alignment, Element, Length, Padding, Subscription, Task};
 use secblitz::filter::config::{self, Config, ErrorCode, State as ListState, Status};
 use secblitz::filter::control::ServiceState;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type El<'a> = Element<'a, Message>;
 
@@ -87,6 +93,9 @@ pub struct State {
     /// Bumped by every change; a read or an answer from an older one is dropped.
     generation: u32,
     open: Vec<Switch>,
+    /// What the picture shows and when that began (its transitions run from
+    /// there).
+    look: Option<(web_globe::Guard, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +172,38 @@ pub fn status_action(line: Line) -> Option<StatusAction> {
         Line::Paused(_) => Some(StatusAction::Resume),
         Line::NotWorking => Some(StatusAction::Retry),
         Line::On | Line::GettingReady => Some(StatusAction::Pause),
+    }
+}
+
+/// The status line for a snapshot.
+fn current_line(snapshot: &Snapshot) -> Line {
+    status_line(
+        &snapshot.config,
+        snapshot.status.as_ref(),
+        snapshot.service,
+        snapshot.now,
+    )
+}
+
+/// What the picture shows for a status line.
+pub fn guard_of(line: Line) -> web_globe::Guard {
+    use web_globe::Guard;
+    match line {
+        Line::On => Guard::On,
+        Line::GettingReady => Guard::Starting,
+        Line::Paused(_) => Guard::Paused,
+        Line::Off => Guard::Off,
+        Line::NotWorking => Guard::Broken,
+    }
+}
+
+/// Remember what the picture shows; a new state restarts its clock, the
+/// same state keeps it (so a poll every two seconds does not replay the
+/// transition).
+fn note_look(state: &mut State, snapshot: &Snapshot, now: Instant) {
+    let guard = guard_of(current_line(snapshot));
+    if state.look.map(|(g, _)| g) != Some(guard) {
+        state.look = Some((guard, now));
     }
 }
 
@@ -312,6 +353,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             let suggest = suggests(&snapshot);
+            note_look(state, &snapshot, Instant::now());
             state.snapshot = Some(*snapshot);
             Task::done(Message::Home(home::Msg::WebSuggest(suggest)))
         }
@@ -503,6 +545,28 @@ fn line_text(ctx: &Ctx, line: Line) -> String {
     }
 }
 
+/// The title and one-line explanation beside the picture.
+fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
+    match line {
+        Line::On => (ctx.t("Web protection is on"), None),
+        Line::GettingReady => (
+            ctx.t("Getting block lists ready"),
+            Some(ctx.t("Blocking starts as soon as the lists are ready.")),
+        ),
+        Line::Paused(_) => (
+            line_text(ctx, line),
+            Some(ctx.t("Nothing is being blocked for now.")),
+        ),
+        Line::Off => (
+            ctx.t("Web protection is off"),
+            Some(ctx.t("Ads, trackers and dangerous websites can load.")),
+        ),
+        // The status row below already says the internet still works; the
+        // region shows the reason and what to do instead (see `hero`).
+        Line::NotWorking => (ctx.t("Not working right now"), None),
+    }
+}
+
 fn line_look(line: Line) -> (Icon, Tone) {
     match line {
         Line::On => (Icon::CheckCircle, Tone::Good),
@@ -598,65 +662,99 @@ fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Sna
     column(rows).width(Length::Fill).into()
 }
 
-fn status_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
+fn status_rows<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
     let p = ctx.palette;
-    let line = status_line(
-        &snapshot.config,
-        snapshot.status.as_ref(),
-        snapshot.service,
-        snapshot.now,
-    );
+    let line = current_line(snapshot);
     let (icon, tone) = line_look(line);
-    let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
-    let working = matches!(state.busy, Some(Busy::Pause | Busy::Resume | Busy::Retry));
-    let button: El<'a> = match status_action(line) {
-        None => space::horizontal().width(0).into(),
-        Some(action) => {
-            let (label, msg) = match action {
-                StatusAction::Resume => ("Resume now", Msg::Resume),
-                StatusAction::Retry => ("Try again", Msg::Retry),
-                StatusAction::Pause => ("Pause for 1 hour", Msg::Pause),
-            };
-            widgets::action(
-                p,
-                ButtonKind::Secondary,
-                ctx.t(label),
-                None,
-                enabled.then_some(wrap(msg)),
-            )
-        }
-    };
     let head = widgets::row_item_tinted(
         p,
         Some(icon),
         Some(tone),
         line_text(ctx, line),
         None,
-        button,
+        space::horizontal().width(0),
         None,
     );
-    let hint = problem_hint(snapshot, line).map(|h| under(vec![widgets::small(p, ctx.t(h))]));
-    let mut rows: Vec<El<'a>> = vec![if working {
-        column![head, under(vec![progress::indeterminate(p, Tone::Brand)])]
-            .width(Length::Fill)
-            .into()
-    } else {
-        head
-    }];
-    if let Some(hint) = hint {
-        rows.push(hint);
+    // The problem hint sits in the region at the top, next to the button
+    // that answers it.
+    vec![head]
+}
+
+/// The pause, resume or try again button for the status, with a bar under
+/// it while that change runs. `None` when the status offers no action.
+fn status_button<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    snapshot: &Snapshot,
+    line: Line,
+) -> Option<El<'a>> {
+    let p = ctx.palette;
+    let (label, msg) = match status_action(line)? {
+        StatusAction::Resume => ("Resume now", Msg::Resume),
+        StatusAction::Retry => ("Try again", Msg::Retry),
+        StatusAction::Pause => ("Pause for 1 hour", Msg::Pause),
+    };
+    let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
+    let button = widgets::action(
+        p,
+        ButtonKind::Secondary,
+        ctx.t(label),
+        None,
+        enabled.then_some(wrap(msg)),
+    );
+    let working = matches!(state.busy, Some(Busy::Pause | Busy::Resume | Busy::Retry));
+    let mut col = column![button].spacing(theme::S2);
+    if working {
+        col = col.push(progress::indeterminate(p, Tone::Brand));
     }
-    if let Some(counts) = blocked_today(snapshot) {
-        rows.push(widgets::row_item(
-            p,
-            Some(Icon::ShieldCheck),
-            blocked_text(ctx, counts),
-            None,
-            space::horizontal().width(0),
-            None,
-        ));
+    Some(container(col).padding(Padding::default().top(theme::S2)).into())
+}
+
+/// The region at the top: the picture of what web protection is doing, and
+/// beside it the status in words, today's counts and the status button.
+fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
+    let p = ctx.palette;
+    let line = current_line(snapshot);
+    let (guard, since) = state
+        .look
+        .unwrap_or_else(|| (guard_of(line), Instant::now()));
+    let counts = blocked_today(snapshot);
+    let picture = web_globe::web_globe(
+        p,
+        Plate::Surface,
+        guard,
+        since,
+        since,
+        counts,
+        web_globe::Labels::new(|k| ctx.t(k)),
+    );
+    let (title, sub) = hero_text(ctx, line);
+    let mut words = column![widgets::h2(p, title)].spacing(theme::S1);
+    if let Some(sub) = sub {
+        words = words.push(widgets::muted(p, sub));
     }
-    rows
+    // What went wrong and what to do, right above "Try again" (installed
+    // copies only, like the button).
+    if snapshot.installed {
+        if let Some(hint) = problem_hint(snapshot, line) {
+            words = words.push(widgets::muted(p, ctx.t(hint)));
+        }
+    }
+    if let Some(counts) = counts {
+        words = words.push(widgets::small(p, blocked_text(ctx, counts)));
+    }
+    if snapshot.installed {
+        if let Some(button) = status_button(state, ctx, snapshot, line) {
+            words = words.push(button);
+        }
+    }
+    widgets::region(
+        p,
+        row![picture, words.width(Length::Fill)]
+            .spacing(theme::S6)
+            .align_y(Alignment::Center),
+    )
+    .into()
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
@@ -670,6 +768,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let Some(snapshot) = state.snapshot.as_ref() else {
         return page.push(widgets::muted(p, ctx.t("Checking…"))).into();
     };
+    page = page.push(hero(state, ctx, snapshot));
     if !snapshot.installed {
         page = page.push(widgets::inline_notice(
             p,
@@ -694,7 +793,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ctx.t("Status"),
             None,
             None,
-            status_rows(state, ctx, snapshot),
+            status_rows(ctx, snapshot),
         ));
     }
     page.push(widgets::small(
@@ -905,6 +1004,30 @@ mod tests {
         };
         Switch::Ads.set(&mut c, true);
         assert!(Switch::Ads.get(&c) && Switch::Tracking.get(&c) && !Switch::Dangerous.get(&c));
+    }
+
+    #[test]
+    fn picture_follows_the_status_and_keeps_its_clock() {
+        use web_globe::Guard;
+        assert_eq!(guard_of(Line::On), Guard::On);
+        assert_eq!(guard_of(Line::Off), Guard::Off);
+        assert_eq!(guard_of(Line::Paused(NOW)), Guard::Paused);
+        assert_eq!(guard_of(Line::GettingReady), Guard::Starting);
+        assert_eq!(guard_of(Line::NotWorking), Guard::Broken);
+        assert!(Guard::On.blocks() && !Guard::Starting.blocks());
+
+        let mut state = State::default();
+        let t0 = Instant::now();
+        let on = snapshot(config(true), Some(healthy()), true);
+        note_look(&mut state, &on, t0);
+        assert_eq!(state.look, Some((Guard::On, t0)));
+        // The next poll says the same: the picture's clock stays.
+        note_look(&mut state, &on, t0 + Duration::from_secs(2));
+        assert_eq!(state.look, Some((Guard::On, t0)));
+        // Turned off: a new state from now.
+        let t1 = t0 + Duration::from_secs(4);
+        note_look(&mut state, &snapshot(config(false), None, true), t1);
+        assert_eq!(state.look, Some((Guard::Off, t1)));
     }
 
     #[test]

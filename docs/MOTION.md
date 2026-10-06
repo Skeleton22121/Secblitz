@@ -67,6 +67,7 @@ Rule of thumb: nothing the user triggers directly takes longer than `NORMAL`.
 | `count_up`, `count_up_int` | Numbers beside the ring | Same tween, rounded |
 | `appear::slide_in` | Toast | Slides up 12 px on `DECELERATE` in `NORMAL`; on dismissal or time-out slides back down on `ACCELERATE` in `FAST`, then is removed |
 | `pulse_dot` | Status dot for live protection | One soft halo every 2.4 s, peak alpha 0.28 |
+| `hairline::web_globe` | Top of the Web protection page | A turning globe sends traffic to the PC; a dome stops ads, trackers and scam sites when protection is on. Flows for 12 s after it appears, changes state or is pointed at, then rests. See "Web protection globe" below |
 
 Security and antivirus dashboards commonly use the same four moments (scan
 sweep, indeterminate ring, check draw-in on completion, number count-up). We
@@ -373,3 +374,52 @@ Colours: greys for lines and plates, accent only while working, then good,
 warn or bad for the result, cross-faded over 0.45 s. Reduced motion: the
 working loops show one still frame, results appear finished, no tilt, ripple,
 shake or pulse; hover names and dragging still work.
+### Web protection globe (`hairline::web_globe`)
+
+The hairline drawing at the top of the Web protection page, 250 by 200 px
+in a region, beside the status in words, today's counts and the pause,
+resume or try again button. It draws from the part of the prototype's 320
+by 256 unit box the picture fills (x 32 to 322, y 28 to 252, with 8 units
+of room for the tilt), so it sits centred in its 250 by 200 px.
+
+| State | What it shows |
+| --- | --- |
+| On | A green dome over the PC with a ticked shield on top. Ads and trackers (amber) and scam sites (red) stop at the dome, get a cross stamped on them over 0.25 s, then fall away and fade (from 0.35 s, 0.6 s). A short green arc flashes on the dome where each one hit (0.6 s). Web pages (grey) go through and fade into the screen. Turning on draws the dome in from the left over 0.7 s on `DECELERATE`, the tick follows (0.45 to 0.85 s), and a big pulse leaves the crest. |
+| Getting ready | A dashed blue dome whose dashes march along, a plain blue shield. Nothing is stopped yet. |
+| Paused | A dashed grey dome with pause bars on the shield. Traffic drifts at 0.45 speed; ads land on the screen. |
+| Not working | An amber dome with an exclamation mark that flickers while the traffic flows and rests dimmed (70 %) when quiet. Ads land on the screen. |
+| Off | No dome. Ads reach the screen and sit there 1.6 s before fading. |
+
+Other changes cross-fade the old dome out and the new one in over 0.4 s on
+`STANDARD`.
+
+- Globe: blue (work in progress) disc, three latitudes and six great
+  circles whose facing halves turn at 0.5 rad/s, as one path. Traffic: dots
+  on three quadratic lanes at 0.42 of a lane per second, one every 0.45 to
+  0.8 s, at most eight. Lanes are 2-on 5-off dashes drawn by hand (the two
+  renderers read dash offsets differently) that flow toward the PC.
+- Interactive: drag the globe sideways to spin it (0.06 rad/s per unit,
+  easing back at 1.2/s). Hover the globe, the PC, the dome's shield or any
+  dot for its name; a hovered dot grows 1.3x and slows down so it is easy to
+  catch. While protection is on, click a flying ad, tracker or scam site to
+  block it by hand (stamp, fall, dome flash). A click on the globe spins it,
+  on the shield sends a big pulse, elsewhere a small one. Pointer tilt on
+  three layers (1.5, 3 and 5 units).
+- Real data: when the page's blocked counts go up while protection is on,
+  that many ads, trackers or scam sites (two per kind per poll, five
+  waiting at most) fly in and get stopped. While the drawing rests only one
+  gets in every 10 s at most (the most serious kind that went up, older
+  ones dropped), so steady browsing does not keep the page drawing. The
+  rest of the traffic is illustrative.
+- Layers: the dome's tint lies under the lanes, so the lanes stay visible
+  all the way to the screen. Grey parts (web pages, the paused shield) are
+  filled with the plate. Ripples from the shield or a clicked dot start
+  where the tilted front layer shows them.
+- Frames: it asks for frames itself (no page subscription) while awake,
+  while dots are still on their way, while the globe coasts to a stop and
+  during transitions; then nothing until the pointer comes back, the state
+  changes or a real block arrives.
+- Reduced motion: one still picture per state (an ad stopped at the dome,
+  or one sitting on the screen), no tilt, no pulses. Hover names and clicks
+  still work: a clicked ad is stamped at once and stays, a dragged globe
+  turns with the pointer and does not coast.
