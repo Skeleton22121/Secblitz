@@ -133,7 +133,7 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         .and_then(|o| super::fixes::items_line(ctx, o));
     let impact_line = (!impact.is_empty())
         .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
-    let consequence = crate::advice::is_choice(id)
+    let consequence = crate::advice::is_choice_check_id(id)
         .then(|| crate::advice::choice_consequence(id))
         .filter(|c| !c.is_empty())
         .map(|c| ctx.t(c));

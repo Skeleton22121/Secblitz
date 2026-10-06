@@ -283,7 +283,7 @@ fn split(report: &Report, available: &[String], items: &mut [ToCheck]) -> (Vec<S
     let candidates = crate::app::flow::candidates(report, available);
     let part = |item: &ToCheck| match item {
         ToCheck::Control(r) if recommended.contains(&r.id) => 0,
-        ToCheck::Control(r) if candidates.contains(&r.id) && advice::is_choice(&r.id) => 1,
+        ToCheck::Control(r) if candidates.contains(&r.id) && advice::is_choice_check_id(&r.id) => 1,
         _ => 2,
     };
     items.sort_by_key(|item| part(item));
@@ -808,7 +808,7 @@ mod tests {
         let (ids, split) = split(&report, &available, &mut items);
         assert_eq!(split.fixable + split.choices + split.manual, items.len());
         assert_eq!(ids.len(), split.fixable);
-        assert!(ids.iter().all(|id| !advice::is_choice(id)));
+        assert!(ids.iter().all(|id| !advice::is_choice_check_id(id)));
         let lead: Vec<&str> = items
             .iter()
             .take(ids.len())
