@@ -80,6 +80,7 @@ pub mod parts;
 pub mod pointer;
 pub mod stage;
 pub mod svg;
+pub mod web_globe;
 
 pub use glyph::Glyph;
 pub use live::{Live, Step, SETTLED_AGE};

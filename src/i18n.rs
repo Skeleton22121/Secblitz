@@ -2068,6 +2068,22 @@ const MAINTENANCE_TEXT: &[[&str; 6]] = &[
     ["{title}: this could not be put back, so it was left as it is. Restart your PC and try again. If it still does not work, you can leave it as it is.", "{title}: no se pudo restaurar, así que se dejó como estaba. Reinicia tu PC e inténtalo de nuevo. Si sigue sin funcionar, puedes dejarlo como está.", "{title} : n'a pas pu être rétabli et reste tel quel. Redémarrez votre PC et réessayez. Si cela ne fonctionne toujours pas, vous pouvez le laisser tel quel.", "{title}: Das ließ sich nicht zurücksetzen und blieb deshalb unverändert. Starte Deinen PC neu und versuche es noch einmal. Wenn es weiterhin nicht klappt, kannst Du es so lassen.", "{title}: não foi possível restaurar, então foi deixado como estava. Reinicie o PC e tente de novo. Se ainda não funcionar, você pode deixar como está.", "{title}: non è stato possibile ripristinarlo, quindi è rimasto com'era. Riavvia il PC e riprova. Se continua a non funzionare, puoi lasciarlo com'è."],
     ["{name} could not be brought back. Try again later, or get it again from the Microsoft Store.", "{name} no se pudo recuperar. Inténtalo más tarde o vuelve a obtenerla desde Microsoft Store.", "{name} n'a pas pu être récupérée. Réessayez plus tard ou réinstallez-la depuis le Microsoft Store.", "{name} ließ sich nicht zurückholen. Versuche es später noch einmal oder hole die App erneut aus dem Microsoft Store.", "Não foi possível trazer {name} de volta. Tente de novo mais tarde ou baixe o app de novo pela Microsoft Store.", "Non è stato possibile recuperare {name}. Riprova più tardi oppure scaricala di nuovo dal Microsoft Store."],
     ["Web protection could not be turned off. Close Secblitz, open it again and try once more. If it still does not work, check for a Secblitz update.", "No se pudo desactivar la protección web. Cierra Secblitz, ábrelo de nuevo e inténtalo otra vez. Si sigue sin funcionar, busca una actualización de Secblitz.", "La protection web n'a pas pu être désactivée. Fermez Secblitz, rouvrez-le et réessayez. Si cela ne fonctionne toujours pas, recherchez une mise à jour de Secblitz.", "Der Webschutz ließ sich nicht ausschalten. Schließe Secblitz, öffne es erneut und versuche es noch einmal. Wenn es weiterhin nicht klappt, suche nach einem Secblitz-Update.", "Não foi possível desativar a proteção da web. Feche o Secblitz, abra-o de novo e tente mais uma vez. Se ainda não funcionar, procure uma atualização do Secblitz.", "Non è stato possibile disattivare la protezione web. Chiudi Secblitz, riaprilo e riprova. Se continua a non funzionare, cerca un aggiornamento di Secblitz."],
+    // Merged from i18n-pending (checks, explanations, GUI follow-ups).
+    ["Ad", "Anuncio", "Publicité", "Werbung", "Anúncio", "Annuncio"],
+    ["Tracker", "Rastreador", "Traqueur", "Tracker", "Rastreador", "Tracker"],
+    ["Scam website", "Sitio web fraudulento", "Site d’arnaque", "Betrugswebsite", "Site de golpe", "Sito truffa"],
+    ["Web page", "Página web", "Page web", "Webseite", "Página da web", "Pagina web"],
+    ["Your PC", "Tu PC", "Votre PC", "Dein PC", "Seu PC", "Il tuo PC"],
+    ["The internet", "Internet", "Internet", "Das Internet", "A internet", "Internet"],
+    ["Web protection is on", "La protección web está activada", "La protection web est activée", "Webschutz ist an", "A proteção da web está ativada", "La protezione web è attiva"],
+    ["Web protection is not blocking", "La protección web no está bloqueando nada", "La protection web ne bloque rien", "Webschutz blockiert gerade nichts", "A proteção da web não está bloqueando nada", "La protezione web non sta bloccando nulla"],
+    ["AD", "AD", "PUB", "AD", "AD", "AD"],
+    ["Web protection is off", "La protección web está desactivada", "La protection web est désactivée", "Webschutz ist aus", "A proteção da web está desativada", "La protezione web è disattivata"],
+    ["Ads, trackers and dangerous websites can load.", "Los anuncios, los rastreadores y los sitios web peligrosos pueden cargarse.", "Les publicités, les traqueurs et les sites web dangereux peuvent se charger.", "Werbung, Tracker und gefährliche Websites können geladen werden.", "Anúncios, rastreadores e sites perigosos podem ser carregados.", "Annunci, tracker e siti web pericolosi possono essere caricati."],
+    ["Nothing is being blocked for now.", "Por ahora no se está bloqueando nada.", "Rien n’est bloqué pour le moment.", "Im Moment wird nichts blockiert.", "Nada está sendo bloqueado por enquanto.", "Per ora non viene bloccato nulla."],
+    ["Not working right now", "No funciona en este momento", "Ne fonctionne pas pour le moment", "Funktioniert gerade nicht", "Não está funcionando agora", "Al momento non funziona"],
+    ["Your internet still works, but nothing is being blocked.", "Tu internet sigue funcionando, pero no se está bloqueando nada.", "Votre internet fonctionne toujours, mais rien n’est bloqué.", "Dein Internet funktioniert weiter, aber es wird nichts blockiert.", "Sua internet continua funcionando, mas nada está sendo bloqueado.", "Internet continua a funzionare, ma non viene bloccato nulla."],
+    ["Blocking starts as soon as the lists are ready.", "El bloqueo empieza en cuanto las listas estén preparadas.", "Le blocage commence dès que les listes sont prêtes.", "Das Blockieren beginnt, sobald die Listen bereit sind.", "O bloqueio começa assim que as listas estiverem prontas.", "Il blocco inizia appena gli elenchi sono pronti."],
 ];
 
 // Each row is English, Spanish, French, German, Portuguese.
@@ -4036,6 +4052,7 @@ mod tests {
                 include_str!("gui/pages/settings.rs"),
             ),
             ("gui/pages/debloat.rs", include_str!("gui/pages/debloat.rs")),
+            ("gui/pages/web.rs", include_str!("gui/pages/web.rs")),
             ("gui/pages/tools.rs", include_str!("gui/pages/tools.rs")),
             (
                 "gui/pages/tools/view.rs",
