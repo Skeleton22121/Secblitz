@@ -852,9 +852,22 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
 
 fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     let p = ctx.palette;
+    // "We can fix this" is only said when the Protection page offers the fix now;
+    // otherwise (managed PC, unsafe case, item the fix skips) the person gets steps to take.
+    let fix_offered = tip.fix
+        && tip.fix_rule.as_deref().is_some_and(|id| {
+            ctx.report
+                .as_deref()
+                .is_some_and(|r| logic::fix_offered(r, id))
+        });
+    let advice = if tip.fix && !fix_offered {
+        tip.manual
+    } else {
+        tip.advice
+    };
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
-        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
+        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
     // One compact action: the usual scan (after its own confirmation), or the
@@ -867,7 +880,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
         _ if tip.restart => secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart))),
-        _ if tip.fix => widgets::action(
+        _ if fix_offered => widgets::action(
             p,
             ButtonKind::Secondary,
             ctx.t("Review fix"),

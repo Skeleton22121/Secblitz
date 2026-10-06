@@ -556,12 +556,6 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: Secblitz cannot tell who is signed in" => {
             "We could not tell which account is signed in, so we leave this alone."
         }
-        "Not offered: a background program file could not be found" => {
-            "A background program's file is missing, so we leave this alone."
-        }
-        "Not offered: another program could be started first" => {
-            "Another program could be started first, so we leave this alone."
-        }
         "Not offered: the hosts file could not be found" => {
             "The hosts file is missing, so there is nothing for us to change."
         }
@@ -570,9 +564,6 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: the hosts file uses a format we cannot keep exactly" => {
             "The hosts file is saved in a format we can't keep exactly, so we leave it alone."
-        }
-        "Not offered: the hosts file is locked against changes" => {
-            "Windows has locked the hosts file against changes, so we leave it alone."
         }
         "Not offered: too many items to switch off safely at once" => {
             "There are too many to switch off safely at once, so we leave this alone."
@@ -1023,12 +1014,9 @@ mod tests {
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
-            "Not offered: a background program file could not be found",
-            "Not offered: another program could be started first",
             "Not offered: the hosts file could not be found",
             "Not offered: the hosts file is too large to change safely",
             "Not offered: the hosts file uses a format we cannot keep exactly",
-            "Not offered: the hosts file is locked against changes",
             "Not offered: too many items to switch off safely at once",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
@@ -1054,7 +1042,7 @@ mod tests {
                 assert!(line.ends_with('.') && line.len() < 100, "{piece}");
             }
         }
-        assert!(found >= 7, "{found}");
+        assert!(found >= 4, "{found}");
     }
 
     #[test]

@@ -339,15 +339,31 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
 fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
     items
         .iter()
-        .map(|item| {
-            let kind = match item.kind.as_str() {
-                "service" => "Background program",
-                "rule" => "Firewall rule",
-                "startup" => "Start-up entry",
-                "task" => "Scheduled task",
-                _ => "Hosts file line",
-            };
-            format!("{}: {}", ctx.t(kind), item.name)
+        .map(|item| match item.kind.as_str() {
+            // Items a fix leaves alone say why and what to do instead.
+            "skip_missing" => format!(
+                "{}: {}. {}",
+                ctx.t("Left alone"),
+                item.name,
+                ctx.t("Its program file could not be found.")
+            ),
+            "skip_shadow" => format!(
+                "{}: {}. {}",
+                ctx.t("Left alone"),
+                item.name,
+                ctx.t("A file that could be started instead was found. Run a virus scan from the Tools page.")
+            ),
+            "more" => format!("{}: {}", ctx.t("More items not listed"), item.name),
+            kind => {
+                let kind = match kind {
+                    "service" => "Background program",
+                    "rule" => "Firewall rule",
+                    "startup" => "Start-up entry",
+                    "task" => "Scheduled task",
+                    _ => "Hosts file line",
+                };
+                format!("{}: {}", ctx.t(kind), item.name)
+            }
         })
         .collect()
 }

@@ -14,8 +14,12 @@ $hHostsUpdate = 'windowsupdate\.com\z|(^|\.)update\.microsoft\.com\z|(^|\.)downl
 $hHostsNote = '# turned off by Secblitz '
 $hHostsMaxBytes = 131072
 $hStartupMax = 48
-$hLabelLimit = 24
+$hLabelLimit = 48
 $script:hLabels = @{}
+$script:hLeft = @()
+$script:hMe = $null
+$script:hUnquotedCache = $null
+$script:hStartupCache = $null
 
 # ---- Secblitz-owned undo state
 function HStateSub() { return ('SOFTWARE\Secblitz\HardeningUndo\' + [string]$spec.id) }
@@ -49,11 +53,12 @@ function HSha256Hex([byte[]]$bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()) } finally { $sha.Dispose() }
 }
-function HLabel([string]$name, [string]$text) {
+function HClean([string]$text) {
     $clean = ($text -replace '[\x00-\x1f\x7f]', ' ').Trim()
     if ($clean.Length -gt 120) { $clean = $clean.Substring(0, 120) }
-    $script:hLabels[$name] = $clean
+    return $clean
 }
+function HLabel([string]$name, [string]$text) { $script:hLabels[$name] = (HClean $text) }
 function HLabelKind([string]$name) {
     switch -CaseSensitive ([string]$spec.source) {
         'UnquotedServices' { return 'service' }
@@ -65,14 +70,19 @@ function HLabelKind([string]$name) {
 }
 function HLabelList($slice) {
     # The exact items a fix would change, for the row's details (display only).
+    # Items that are left alone follow, then how many more are not listed.
     $out = @()
+    $more = 0
     foreach ($name in @($slice.Keys | Sort-Object)) {
         if ($null -eq $slice[$name] -or [int64]$slice[$name] -ne 1 -or !$script:hLabels.ContainsKey($name)) { continue }
         $kind = HLabelKind $name
         if ($kind -eq '') { continue }
-        $out += @{ kind = $kind; name = [string]$script:hLabels[$name] }
-        if ($out.Count -ge $hLabelLimit) { break }
+        foreach ($text in @($script:hLabels[$name])) {
+            if ($out.Count -lt $hLabelLimit) { $out += @{ kind = $kind; name = [string]$text } } else { $more++ }
+        }
     }
+    foreach ($left in @($script:hLeft | Select-Object -First 8)) { $out += $left }
+    if ($more -gt 0) { $out += @{ kind = 'more'; name = [string]$more } }
     return $out
 }
 
@@ -106,12 +116,12 @@ function HUnquotedSplit([string]$raw) {
 }
 function HUnquotedProblem([string]$exe) {
     # $null when quoting is safe, otherwise the reason it is not offered.
-    if (![IO.File]::Exists($exe)) { return 'Not offered: a background program file could not be found' }
+    if (![IO.File]::Exists($exe)) { return 'A background program file could not be found' }
     $at = $exe.IndexOf(' ')
     while ($at -ge 0) {
         $candidate = $exe.Substring(0, $at)
         foreach ($path in @(($candidate + '.exe'), $candidate)) {
-            if ($path -cne $exe -and [IO.File]::Exists($path)) { return 'Not offered: another program could be started first' }
+            if ($path -cne $exe -and [IO.File]::Exists($path)) { return 'Another program could be started first' }
         }
         $at = $exe.IndexOf(' ', $at + 1)
     }
@@ -152,10 +162,27 @@ function HUnquotedEntries() {
     } finally { $root.Dispose() }
     return $out
 }
+function HUnquotedEntriesOnce() {
+    # One scan per run: a fix of several services must not rescan for each one.
+    if ($null -eq $script:hUnquotedCache) { $script:hUnquotedCache = @(HUnquotedEntries) }
+    return $script:hUnquotedCache
+}
 function HReadUnquoted() {
     $out = @{}
     $script:hLabels = @{}
-    foreach ($e in @(HUnquotedEntries)) { $out[$e.name] = 1; HLabel $e.name ($e.name + ' (' + $e.exe + ')') }
+    $script:hLeft = @()
+    $script:hUnquotedCache = $null
+    foreach ($e in @(HUnquotedEntries)) {
+        # A service whose file is missing, or that could be shadowed by another
+        # file, is left alone and named in the details; the others are still fixed.
+        if ($null -ne $e.problem) {
+            $kind = $(if ($e.problem -like '*could not be found*') { 'skip_missing' } else { 'skip_shadow' })
+            $script:hLeft += @{ kind = $kind; name = (HClean $e.name) }
+            continue
+        }
+        $out[$e.name] = 1
+        HLabel $e.name ($e.name + ' (' + $e.exe + ')')
+    }
     foreach ($name in @(HStateNames)) {
         if ($out.ContainsKey($name) -or !(HNameOk $name)) { continue }
         $st = HStateGet $name
@@ -174,7 +201,7 @@ function HSetUnquoted([string]$name, $v) {
     if (!(HNameOk $name) -or $null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid background program state' }
     $path = (HServicesRoot) + '\' + $name
     if ([int]$v -eq 0) {
-        $entry = @(HUnquotedEntries | Where-Object { $_.name -ceq $name })
+        $entry = @(HUnquotedEntriesOnce | Where-Object { $_.name -ceq $name })
         if ($entry.Count -ne 1) { throw 'The background program no longer needs a change' }
         $e = $entry[0]
         if ($null -ne $e.problem) { throw $e.problem }
@@ -197,11 +224,21 @@ function HSetUnquoted([string]$name, $v) {
     } finally { $key.Dispose() }
     HStateRemove $name
 }
-function HUnquotedPreflight() {
-    foreach ($e in @(HUnquotedEntries)) { if ($null -ne $e.problem) { throw $e.problem } }
-}
 
 # ---- firewall.user_dir_inbound_allow
+function HFirewallProgramOf($rule, $programs) {
+    # The program filters are read once for all rules (one call per rule is very
+    # slow with hundreds of rules). A rule missing from that list is asked directly.
+    foreach ($key in @([string]$rule.InstanceID, [string]$rule.Name)) {
+        if ($key -ne '' -and $programs.ContainsKey($key)) { return [string]$programs[$key] }
+    }
+    return ([string]@($rule | Get-NetFirewallApplicationFilter)[0].Program)
+}
+function HFirewallPrograms() {
+    $map = @{}
+    foreach ($f in @(Get-NetFirewallApplicationFilter -All -PolicyStore PersistentStore -ErrorAction Stop)) { $map[[string]$f.InstanceID] = [string]$f.Program }
+    return $map
+}
 function HReadUserDirFirewall() {
     Load 'NetSecurity'
     $out = @{}
@@ -210,10 +247,10 @@ function HReadUserDirFirewall() {
     try { $rules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Enabled True -Direction Inbound -Action Allow -ErrorAction Stop) }
     catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }; $rules = @() }
     if ($rules.Count -gt 2048) { throw 'Too many firewall rules to check' }
+    $programs = $(if ($rules.Count -gt 0) { HFirewallPrograms } else { @{} })
     foreach ($rule in $rules) {
         $name = [string]$rule.Name
-        $filter = $rule | Get-NetFirewallApplicationFilter
-        $program = ([string]@($filter)[0].Program)
+        $program = HFirewallProgramOf $rule $programs
         if ($program -eq '' -or $program -ceq 'Any') { continue }
         if ($program.ToLowerInvariant() -cnotmatch $hUserDirPattern) { continue }
         if (!(HNameOk $name)) { continue }
@@ -241,8 +278,11 @@ function HSetUserDirFirewall([string]$name, $v) {
     $found = @(Get-NetFirewallRule -PolicyStore PersistentStore -Name $name -ErrorAction Stop)
     if ($found.Count -ne 1) { throw 'The firewall rule was not found exactly once' }
     if ([int]$v -eq 0) {
-        # Only a rule that is still enabled and still flagged is switched off.
-        if (!(HReadUserDirFirewall).ContainsKey($name)) { throw 'The firewall rule no longer needs a change' }
+        # Only this one rule is checked: it must still be an enabled inbound allow rule for a program in a personal folder.
+        $rule = $found[0]
+        $program = ([string]@($rule | Get-NetFirewallApplicationFilter)[0].Program)
+        $flagged = ([string]$rule.Enabled -ceq 'True' -and [string]$rule.Direction -ceq 'Inbound' -and [string]$rule.Action -ceq 'Allow' -and $program -ne '' -and $program -cne 'Any' -and $program.ToLowerInvariant() -cmatch $hUserDirPattern)
+        if (!$flagged) { throw 'The firewall rule no longer needs a change' }
         HStateSet $name @{ was = 'enabled' }
         try { Set-NetFirewallRule -PolicyStore PersistentStore -Name $name -Enabled False -ErrorAction Stop }
         catch { HStateRemove $name; throw }
@@ -260,12 +300,18 @@ function HHostsBytes() {
     $p = HHostsPath
     if (![IO.File]::Exists($p)) { return $null }
     if ((New-Object IO.FileInfo $p).Length -gt 4194304) { throw 'The hosts file is too large to read' }
-    return [byte[]][IO.File]::ReadAllBytes($p)
+    return ,[byte[]][IO.File]::ReadAllBytes($p)
 }
 function HHostsPlain([byte[]]$bytes) {
-    # ASCII-compatible text only (UTF-8 included): changing it keeps every other byte as it was.
+    # ASCII-compatible text with Windows or Unix line ends only (UTF-8 included):
+    # changing it keeps every other byte as it was. UTF-16, NUL bytes and a lone
+    # carriage return (which the Tools check reads as a line end) are not kept exactly.
     if ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) { return $false }
-    return ([Array]::IndexOf($bytes, [byte]0) -lt 0)
+    if ([Array]::IndexOf($bytes, [byte]0) -ge 0) { return $false }
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        if ($bytes[$i] -eq 13 -and ($i + 1 -ge $bytes.Length -or $bytes[$i + 1] -ne 10)) { return $false }
+    }
+    return $true
 }
 function HHostsLineFlag([string]$line) {
     # Same test as the Tools security check (probes.ps1, HostsFile).
@@ -286,20 +332,30 @@ function HHostsLineFlag([string]$line) {
     return $broad
 }
 function HHostsText([byte[]]$bytes) { return [Text.Encoding]::GetEncoding(28591).GetString($bytes) }
+function HHostsBom() { return ([string][char]0xEF + [char]0xBB + [char]0xBF) }
 function HHostsFlaggedLines([byte[]]$bytes) {
     $out = @()
-    $bom = [string][char]0xEF + [char]0xBB + [char]0xBF
+    $bom = HHostsBom
+    $first = $true
     foreach ($raw in @((HHostsText $bytes) -split "`n")) {
         $line = $raw.TrimEnd([char]13)
-        if ($line.StartsWith($bom, [StringComparison]::Ordinal)) { $line = $line.Substring(3) }
+        # A byte order mark can only sit at the very start of the file.
+        if ($first -and $line.StartsWith($bom, [StringComparison]::Ordinal)) { $line = $line.Substring(3) }
+        $first = $false
         if (HHostsLineFlag $line) { $out += $line }
     }
     return $out
 }
+function HHostsFlaggedOther() {
+    # Same decoding as the Tools check, for files we cannot rewrite exactly (UTF-16, lone CR).
+    $out = @()
+    foreach ($line in @([IO.File]::ReadAllLines((HHostsPath)))) { if (HHostsLineFlag $line) { $out += $line } }
+    return $out
+}
 function HHostsFix([byte[]]$bytes) {
     # Comment out only the flagged lines; every other byte stays exactly as it was.
-    $bom = [string][char]0xEF + [char]0xBB + [char]0xBF
-    $lines = @((HHostsText $bytes) -split "`n", -1)
+    $bom = HHostsBom
+    $lines = @((HHostsText $bytes) -split "`n")
     $done = @()
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $raw = $lines[$i]
@@ -310,21 +366,24 @@ function HHostsFix([byte[]]$bytes) {
         if (HHostsLineFlag $raw) { $raw = $hHostsNote + $raw }
         $done += ($head + $raw + $cr)
     }
-    return [byte[]][Text.Encoding]::GetEncoding(28591).GetBytes(($done -join "`n"))
+    return ,[byte[]][Text.Encoding]::GetEncoding(28591).GetBytes(($done -join "`n"))
 }
+function HHostsReadOnly() { return (([int][IO.File]::GetAttributes((HHostsPath)) -band 1) -ne 0) }
 function HReadHosts() {
     $out = @{}
     $script:hLabels = @{}
     $bytes = HHostsBytes
     if ($null -eq $bytes) { return $out }
-    $flagged = @(HHostsFlaggedLines $bytes)
+    $plain = HHostsPlain $bytes
+    $flagged = $(if ($plain) { @(HHostsFlaggedLines $bytes) } else { @(HHostsFlaggedOther) })
     if ($flagged.Count -gt 0) {
+        # Not offered (by the preflight) when the file is in a format we cannot keep exactly.
         $out['hosts'] = 1
-        HLabel 'hosts' (($flagged | Select-Object -First 3) -join ' ; ')
+        $script:hLabels['hosts'] = @($flagged | ForEach-Object { HClean $_ } | Where-Object { $_ -ne '' })
         return $out
     }
     $st = HStateGet 'hosts'
-    if ($null -ne $st) { $out['hosts'] = $(if ((HSha256Hex $bytes) -ceq [string]$st.f) { 0 } else { 2 }) }
+    if ($null -ne $st) { $out['hosts'] = $(if ((HSha256Hex $bytes) -ceq [string]$st.f -and !(HHostsReadOnly)) { 0 } else { 2 }) }
     return $out
 }
 function HHostsWrite([byte[]]$bytes) {
@@ -337,6 +396,12 @@ function HHostsWrite([byte[]]$bytes) {
         $fs.Flush($true)
     } finally { $fs.Dispose() }
 }
+function HHostsSetReadOnly([bool]$on) {
+    $p = HHostsPath
+    $attrs = [int][IO.File]::GetAttributes($p)
+    $attrs = $(if ($on) { $attrs -bor 1 } else { $attrs -band (-bnot 1) })
+    [IO.File]::SetAttributes($p, [IO.FileAttributes]$attrs)
+}
 function HFlushDns() {
     # Best effort: the next lookup would pick the change up anyway.
     try { Load 'DnsClient'; Clear-DnsClientCache -ErrorAction Stop } catch { }
@@ -346,18 +411,28 @@ function HSetHosts([string]$name, $v) {
     $current = HHostsBytes
     if ($null -eq $current) { throw 'The hosts file was not found' }
     if ([int]$v -eq 0) {
-        if (@(HHostsFlaggedLines $current).Count -eq 0) { throw 'The hosts file no longer needs a change' }
+        if (!(HHostsPlain $current) -or @(HHostsFlaggedLines $current).Count -eq 0) { throw 'The hosts file no longer needs a change' }
         $fixed = HHostsFix $current
-        HStateSet 'hosts' @{ o = [Convert]::ToBase64String($current); f = (HSha256Hex $fixed) }
-        try { HHostsWrite $fixed }
-        catch { try { HHostsWrite $current } catch { }; HStateRemove 'hosts'; throw }
+        $ro = HHostsReadOnly
+        HStateSet 'hosts' @{ o = [Convert]::ToBase64String($current); f = (HSha256Hex $fixed); ro = $ro }
+        try {
+            # A read-only mark is cleared for the change and put back by undo.
+            if ($ro) { HHostsSetReadOnly $false }
+            HHostsWrite $fixed
+        } catch {
+            try { HHostsWrite $current } catch { }
+            try { if ($ro) { HHostsSetReadOnly $true } } catch { }
+            HStateRemove 'hosts'
+            throw
+        }
         HFlushDns
         return
     }
     $st = HStateGet 'hosts'
     if ($null -eq $st) { throw 'Secblitz no longer has the saved original of the hosts file' }
-    if ((HSha256Hex $current) -cne [string]$st.f) { throw 'The hosts file changed again; it was left alone' }
+    if ((HSha256Hex $current) -cne [string]$st.f -or (HHostsReadOnly)) { throw 'The hosts file changed again; it was left alone' }
     HHostsWrite ([Convert]::FromBase64String([string]$st.o))
+    if ($st.ro -eq $true) { HHostsSetReadOnly $true }
     HStateRemove 'hosts'
     HFlushDns
 }
@@ -366,7 +441,6 @@ function HHostsPreflight() {
     if ($null -eq $bytes) { throw 'Not offered: the hosts file could not be found' }
     if ($bytes.Length -gt $hHostsMaxBytes) { throw 'Not offered: the hosts file is too large to change safely' }
     if (!(HHostsPlain $bytes)) { throw 'Not offered: the hosts file uses a format we cannot keep exactly' }
-    if (((New-Object IO.FileInfo (HHostsPath)).Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) { throw 'Not offered: the hosts file is locked against changes' }
 }
 
 # ---- persistence.run_and_tasks
@@ -419,24 +493,47 @@ function HStartupRisky([string]$command, [string]$exePath, [bool]$startupFolder)
     return ($status -cne 'Valid')
 }
 function HApprovedBytes($root, [string]$name) {
-    # $null when the entry has no on/off record; otherwise the exact bytes.
+    # $null when the entry has no on/off record; the text 'odd' when the record is
+    # not binary (such an entry is left alone); otherwise the exact bytes.
     $key = $root.hive.OpenSubKey($root.approved, $false)
     if ($null -eq $key) { return $null }
     try {
         if ($key.GetValueNames() -cnotcontains $name) { return $null }
-        if ($key.GetValueKind($name) -ne [Microsoft.Win32.RegistryValueKind]::Binary) { throw 'A start-up on/off record is not in the usual format' }
-        return [byte[]]$key.GetValue($name)
+        if ($key.GetValueKind($name) -ne [Microsoft.Win32.RegistryValueKind]::Binary) { return 'odd' }
+        return ,[byte[]]$key.GetValue($name)
     } finally { $key.Dispose() }
 }
+function HInteractiveIsMe() {
+    # The per-user start-up lists are only touched when this elevated process runs
+    # as the person signed in at the screen; otherwise it would be another profile.
+    if ($null -ne $script:hMe) { return [bool]$script:hMe }
+    $script:hMe = $false
+    try {
+        Load 'CimCmdlets'
+        $who = [string](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+        if ($who -ne '') {
+            $sid = (New-Object Security.Principal.NTAccount($who)).Translate([Security.Principal.SecurityIdentifier]).Value
+            $script:hMe = ($sid -ceq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        }
+    } catch { $script:hMe = $false }
+    return [bool]$script:hMe
+}
+function HIsUserKind([string]$kind) { return ($kind -ceq 'run-user' -or $kind -ceq 'folder-user') }
 function HApprovedEnabled($bytes) {
     # Task Manager marks an entry off with an odd first byte (3); anything else runs.
     if ($null -eq $bytes) { return $true }
     if ($bytes.Length -lt 4) { return $false }
     return (($bytes[0] -band 1) -eq 0)
 }
+function HStartupEntriesOnce() {
+    # One scan per run: a fix of several items must not rescan everything for each one.
+    if ($null -eq $script:hStartupCache) { $script:hStartupCache = @(HStartupEntries) }
+    return $script:hStartupCache
+}
 function HStartupEntries() {
     $out = @()
     foreach ($kind in @('run-machine', 'run-machine32', 'run-user')) {
+        if ((HIsUserKind $kind) -and !(HInteractiveIsMe)) { continue }
         $root = HStartupRoot $kind
         $key = $root.hive.OpenSubKey($root.run, $false)
         if ($null -eq $key) { continue }
@@ -448,12 +545,14 @@ function HStartupEntries() {
                 if ($value -isnot [string] -or $value.Length -ge 2048 -or $valueName -eq '') { continue }
                 $name = $kind + ':' + $valueName
                 if (!(HNameOk $name) -or !(HStartupRisky $value '' $false)) { continue }
-                if (!(HApprovedEnabled (HApprovedBytes $root $valueName))) { continue }
+                $approved = HApprovedBytes $root $valueName
+                if ($approved -is [string] -or !(HApprovedEnabled $approved)) { continue }
                 $out += @{ name = $name; kind = $kind; item = $valueName; label = ($valueName + ' (' + $value + ')') }
             }
         } finally { $key.Dispose() }
     }
     foreach ($kind in @('folder-machine', 'folder-user')) {
+        if ((HIsUserKind $kind) -and !(HInteractiveIsMe)) { continue }
         $root = HStartupRoot $kind
         $dir = [string]$root.dir
         if ([string]::IsNullOrEmpty($dir) -or -not [IO.Directory]::Exists($dir)) { continue }
@@ -469,7 +568,8 @@ function HStartupEntries() {
             } else { $risky = HStartupRisky $file $file $true }
             $name = $kind + ':' + $leaf
             if (!$risky -or !(HNameOk $name)) { continue }
-            if (!(HApprovedEnabled (HApprovedBytes $root $leaf))) { continue }
+            $approved = HApprovedBytes $root $leaf
+            if ($approved -is [string] -or !(HApprovedEnabled $approved)) { continue }
             $out += @{ name = $name; kind = $kind; item = $leaf; label = $leaf }
         }
     }
@@ -504,6 +604,7 @@ function HStartupTaskState([string]$name) {
 function HReadStartup() {
     $out = @{}
     $script:hLabels = @{}
+    $script:hStartupCache = $null
     foreach ($e in @(HStartupEntries)) { $out[$e.name] = 1; HLabel $e.name $e.label }
     foreach ($name in @(HStateNames)) {
         if ($out.ContainsKey($name) -or !(HNameOk $name)) { continue }
@@ -511,8 +612,10 @@ function HReadStartup() {
         if ($null -eq $st) { continue }
         if ($name.StartsWith('task:')) { $out[$name] = $(if ((HStartupTaskState $name) -ceq 'Disabled') { 0 } else { 2 }); continue }
         $kind = $name.Substring(0, $name.IndexOf(':'))
+        # Another account's lists are never read as if they were this person's.
+        if ((HIsUserKind $kind) -and !(HInteractiveIsMe)) { $out[$name] = 2; continue }
         $current = HApprovedBytes (HStartupRoot $kind) $name.Substring($kind.Length + 1)
-        $out[$name] = $(if ($null -ne $current -and [Convert]::ToBase64String($current) -ceq [string]$st.d) { 0 } else { 2 })
+        $out[$name] = $(if ($current -is [byte[]] -and [Convert]::ToBase64String($current) -ceq [string]$st.d) { 0 } else { 2 })
     }
     if ($out.Count -gt 256) { throw 'Too many start-up items to handle at once' }
     return $out
@@ -527,7 +630,7 @@ function HSetStartup([string]$name, $v) {
         $parts = HTaskParts $name
         Load 'ScheduledTasks'
         if ([int]$v -eq 0) {
-            if (@(HStartupEntries | Where-Object { $_.name -ceq $name }).Count -ne 1) { throw 'The scheduled task no longer needs a change' }
+            if (@(HStartupEntriesOnce | Where-Object { $_.name -ceq $name }).Count -ne 1) { throw 'The scheduled task no longer needs a change' }
             HStateSet $name @{ was = 'enabled' }
             try { $null = Disable-ScheduledTask -TaskPath $parts.path -TaskName $parts.leaf -ErrorAction Stop }
             catch { HStateRemove $name; throw }
@@ -541,10 +644,12 @@ function HSetStartup([string]$name, $v) {
     }
     $kind = $name.Substring(0, $name.IndexOf(':'))
     $item = $name.Substring($kind.Length + 1)
+    if ((HIsUserKind $kind) -and !(HInteractiveIsMe)) { throw 'The start-up entry belongs to another account; it was left alone' }
     $root = HStartupRoot $kind
     $original = HApprovedBytes $root $item
+    if ($original -is [string]) { throw 'The start-up entry has an unusual on/off record; it was left alone' }
     if ([int]$v -eq 0) {
-        if (@(HStartupEntries | Where-Object { $_.name -ceq $name }).Count -ne 1) { throw 'The start-up entry no longer needs a change' }
+        if (@(HStartupEntriesOnce | Where-Object { $_.name -ceq $name }).Count -ne 1) { throw 'The start-up entry no longer needs a change' }
         [byte[]]$off = @(3, 0, 0, 0) + [BitConverter]::GetBytes([DateTime]::UtcNow.ToFileTimeUtc())
         HStateSet $name @{ o = $(if ($null -eq $original) { $null } else { [Convert]::ToBase64String($original) }); d = [Convert]::ToBase64String($off) }
         try { HSetApproved $root $item $off }

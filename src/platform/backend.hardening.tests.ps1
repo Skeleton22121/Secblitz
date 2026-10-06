@@ -849,8 +849,9 @@ Assert ((CallLog) -ceq 'remove:EnableSmartScreen') "policy value removed: $(Call
 $gateJson = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
 function HandledJson([string]$id, [string]$source) { return ('{"id":"' + $id + '","source":"' + $source + '","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0,2],"absentSafe":false,"fix":0,"max":2}],' + $gateJson + '}') }
 MakeSpec (HandledJson 'services.unquoted_paths' 'UnquotedServices')
-foreach ($ok in @('Spooler','My Service','svc.name$1')) { Assert (HNameOk $ok) "service name $ok" }
-foreach ($bad in @('','a"b',' lead','trail ','x/y',('s' * 65))) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }
+foreach ($ok in @('Spooler','My Service','svc.name$1','Intel(R) Update {1}+x','App#2,b&c')) { Assert (HNameOk $ok) "service name $ok" }
+foreach ($bad in @('','a"b',' lead','trail ','x/y','x\y','a*b','a?b','a[1]',("t`tab"),('s' * 257))) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }
+Assert (HNameOk ('s' * 256)) 'a 256 character service name is accepted'
 MakeSpec (HandledJson 'firewall.user_dir_inbound_allow' 'UserDirFirewall')
 Assert (HNameOk 'My app (inbound)') 'firewall rule name'
 foreach ($bad in @('','a"b','wild*card','x[1]',' pad',("t`tab"),('r' * 201))) { Assert (!(HNameOk $bad)) "firewall name accepted: $bad" }
@@ -880,11 +881,22 @@ Assert ($bomFixed[0] -eq 0xEF -and $bomFixed[1] -eq 0xBB -and $bomFixed[2] -eq 0
 Assert (HHostsPlain $original) 'plain text accepted'
 Assert (!(HHostsPlain ([byte[]]@(0xFF, 0xFE, 0x31, 0x00)))) 'UTF-16 refused'
 Assert (!(HHostsPlain ([byte[]]@(0x31, 0x00, 0x32)))) 'NUL bytes refused'
+Assert (!(HHostsPlain $latin.GetBytes("a`rb`n"))) 'a lone carriage return is refused'
+Assert (!(HHostsPlain $latin.GetBytes("a`r"))) 'a trailing lone carriage return is refused'
+Assert (HHostsPlain $latin.GetBytes("a`r`nb`n")) 'CRLF and LF are accepted'
+# a byte order mark only counts at the very start of the file
+$midBom = [byte[]](@($latin.GetBytes("127.0.0.1 localhost`n")) + @(0xEF, 0xBB, 0xBF) + @($latin.GetBytes("1.2.3.4 www.paypal.com`n")))
+Assert (@(HHostsFlaggedLines $midBom).Count -eq 0) 'a mid-file BOM line is not read as flagged'
+Assert (@(HHostsFlaggedLines (HHostsFix $midBom)).Count -eq 0) 'fix and reader agree on a mid-file BOM line'
 
 # hosts: read, fix, undo, and a change in between (state and file are doubles)
 function HHostsBytes { if ($null -eq $script:hostsFile) { return $null }; return [byte[]]$script:hostsFile }
 function HHostsWrite([byte[]]$bytes) { $script:hostsWrites++; if ($script:hostsFail) { throw 'fixture write failure' }; $script:hostsFile = [byte[]]$bytes }
 function HFlushDns { $script:dnsFlushes++ }
+function HHostsReadOnly { return [bool]$script:hostsRo }
+function HHostsSetReadOnly([bool]$on) { $script:hostsRo = $on }
+function HHostsFlaggedOther { return @('1.2.3.4 www.paypal.com') }
+$script:hostsRo = $false
 function HStateGet([string]$name) { if ($script:undoState.ContainsKey($name)) { return $script:undoState[$name] }; return $null }
 function HStateSet([string]$name, $data) { $script:undoState[$name] = $data }
 function HStateRemove([string]$name) { $script:undoState.Remove($name) }
@@ -907,6 +919,21 @@ Assert ((HReadHosts)['hosts'] -eq 2) 'a file changed since reads 2'
 $before = [Convert]::ToBase64String($script:hostsFile)
 Reject { HSetHosts 'hosts' 1 } 'changed again'
 Assert ([Convert]::ToBase64String($script:hostsFile) -ceq $before) 'a changed hosts file is left alone on undo'
+# a read-only hosts file: the mark is cleared for the change and put back by undo
+$script:undoState = @{}; $script:hostsFile = $original; $script:hostsRo = $true
+HSetHosts 'hosts' 0
+Assert (!$script:hostsRo) 'the read-only mark is cleared for the change'
+Assert ((HReadHosts)['hosts'] -eq 0) 'fixed and unlocked reads 0'
+$script:hostsRo = $true
+Assert ((HReadHosts)['hosts'] -eq 2) 'a read-only mark added since reads 2'
+Reject { HSetHosts 'hosts' 1 } 'changed again'
+$script:hostsRo = $false
+HSetHosts 'hosts' 1
+Assert ($script:hostsRo -and [Convert]::ToBase64String($script:hostsFile) -ceq [Convert]::ToBase64String($original)) 'undo restores the bytes and the read-only mark'
+# UTF-16 is read the way the Tools check reads it: flagged, then Not offered
+$script:undoState = @{}; $script:hostsRo = $false
+$script:hostsFile = [byte[]]@(0xFF, 0xFE, 0x31, 0x00)
+Assert ((HReadHosts)['hosts'] -eq 1) 'a UTF-16 hosts file with a redirect reads 1'
 # a failed write is rolled back and leaves no saved state
 $script:undoState = @{}; $script:hostsFile = $original; $script:hostsFail = $true
 Reject { HSetHosts 'hosts' 0 } 'fixture write failure'
@@ -929,5 +956,6 @@ Assert (HApprovedEnabled $null) 'no record means on'
 Assert (HApprovedEnabled ([byte[]]@(2,0,0,0,0,0,0,0,0,0,0,0))) 'even first byte means on'
 Assert (!(HApprovedEnabled ([byte[]]@(3,0,0,0,0,0,0,0,0,0,0,0)))) 'odd first byte means off'
 Assert (!(HApprovedEnabled ([byte[]]@(2,0)))) 'a short record is treated as off, never overwritten'
+Assert (HIsUserKind 'run-user' -and HIsUserKind 'folder-user' -and !(HIsUserKind 'run-machine') -and !(HIsUserKind 'folder-machine')) 'only per-user kinds depend on who is signed in'
 
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

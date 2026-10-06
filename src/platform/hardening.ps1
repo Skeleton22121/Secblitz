@@ -24,7 +24,7 @@ function HNameOk([string]$name) {
     if ($spec.source -ceq 'NetbiosAdapters') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
     if ($spec.source -ceq 'LegacyServices') { return ((HServiceNames) -ccontains $name) }
     if ($spec.source -ceq 'DefenderExclusions') { return (HExclusionNameOk $name) }
-    if ($spec.source -ceq 'UnquotedServices') { return ($name -cmatch '^[A-Za-z0-9_.$ -]{1,64}$' -and $name.Trim() -ceq $name) }
+    if ($spec.source -ceq 'UnquotedServices') { return ($name.Length -ge 1 -and $name.Length -le 256 -and $name -cnotmatch '[\x00-\x1f\x7f-\x9f"\\/*?\[\]]' -and $name.Trim() -ceq $name) }
     if ($spec.source -ceq 'UserDirFirewall') { return ($name.Length -ge 1 -and $name.Length -le 200 -and $name -cnotmatch '[\x00-\x1f\x7f"*?\[\]]' -and $name.Trim() -ceq $name) }
     if ($spec.source -ceq 'HostsFile') { return ($name -ceq 'hosts') }
     if ($spec.source -ceq 'StartupItems') {
@@ -484,7 +484,6 @@ function HPreflight() {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
             if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
         }
-        'services.unquoted_paths' { HUnquotedPreflight }
         'net.hosts_file' { HHostsPreflight }
         'persistence.run_and_tasks' { HStartupPreflight }
         'session.lock_on_wake' {
@@ -564,6 +563,7 @@ function HNetbiosPreflight() {
 # --------------------------------------------------------------- observe
 function HObserve() {
     $script:hLabels = @{}
+    $script:hLeft = @()
     $slice = HRead
     $o = @{ value = @{ items = $slice }; eligible = $true; reason = 'Eligible unmanaged local preference' }
     try {

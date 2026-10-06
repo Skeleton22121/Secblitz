@@ -29,10 +29,11 @@ pub struct ActionResult {
 #[path = "actions/windows.rs"]
 mod windows;
 
-/// SHUTDOWN_RESTART: restart, do not power off. No force flags: programs with
-/// unsaved work can still ask to stay open.
+/// SHUTDOWN_RESTART (0x4) | SHUTDOWN_INSTALL_UPDATES (0x40): restart, do not
+/// power off, and install updates that wait for the restart. No force flags:
+/// programs with unsaved work can still ask to stay open.
 #[cfg(any(windows, test))]
-const RESTART_FLAGS: u32 = 0x0000_0004;
+const RESTART_FLAGS: u32 = 0x0000_0004 | 0x0000_0040;
 /// SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_SECURITYFIX |
 /// SHTDN_REASON_FLAG_PLANNED: a planned restart for a security update.
 #[cfg(any(windows, test))]
@@ -142,7 +143,8 @@ mod tests {
     fn restart_is_a_planned_security_fix_restart_that_forces_nothing() {
         // SHUTDOWN_RESTART only: no SHUTDOWN_FORCE_OTHERS (0x1), FORCE_SELF (0x2)
         // or power-off flags, so unsaved work can still stop the restart.
-        assert_eq!(RESTART_FLAGS, 0x4);
+        assert_eq!(RESTART_FLAGS, 0x44);
+        assert_eq!(RESTART_FLAGS & 0x3, 0, "no force flags");
         assert_eq!(RESTART_REASON & 0x8000_0000, 0x8000_0000, "planned");
         assert_eq!(RESTART_REASON & 0x00FF_0000, 0x0002_0000, "operating system");
         assert_eq!(RESTART_REASON & 0xFFFF, 0x12, "security fix");

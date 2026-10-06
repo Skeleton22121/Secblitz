@@ -62,8 +62,19 @@ pub struct ItemLabel {
 }
 
 impl ItemLabel {
-    pub const KINDS: [&'static str; 5] = ["service", "rule", "startup", "task", "hosts"];
-    pub const MAX_ITEMS: usize = 24;
+    pub const KINDS: [&'static str; 8] = [
+        "service",
+        "rule",
+        "startup",
+        "task",
+        "hosts",
+        // Items a fix leaves alone (named in the details), and how many more
+        // items exist than are listed.
+        "skip_missing",
+        "skip_shadow",
+        "more",
+    ];
+    pub const MAX_ITEMS: usize = 64;
     pub const MAX_NAME: usize = 120;
 
     /// Backend text is untrusted display data: keep only known kinds, strip

@@ -1289,6 +1289,27 @@ pub fn rule_fix(rule_id: &str) -> bool {
     )
 }
 
+/// What the person can do by hand when the fix is not on offer (managed PC,
+/// an unsafe case, or an item the fix does not handle).
+pub fn rule_manual(rule_id: &str) -> &'static str {
+    match rule_id {
+        "services.unquoted_paths" => "A background program has a risky setup. Run a virus scan from this page, then ask someone you trust to look at it.",
+        "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.",
+        "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
+        "persistence.run_and_tasks" => "Open Task Manager, Startup apps, and switch off ones you don't know.",
+        _ => "",
+    }
+}
+
+/// True when the Protection page really offers this fix right now (it is
+/// waiting for the person's choice), so "Review fix" leads somewhere useful.
+pub fn fix_offered(report: &secblitz::engine::Report, rule_id: &str) -> bool {
+    report
+        .results
+        .iter()
+        .any(|r| r.id == rule_id && r.status == "attention")
+}
+
 /// The one check whose tip offers "Restart now" (after its own confirmation).
 pub fn rule_restart(rule_id: &str) -> bool {
     rule_id == "update.reboot_overdue"
@@ -1316,8 +1337,12 @@ pub struct Tip {
     pub open: Option<secblitz::actions::Action>,
     /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
-    /// A `Look` tip Secblitz can fix: "Review fix" opens the Protection page.
+    /// A `Look` tip Secblitz can fix: "Review fix" opens the Protection page
+    /// when that page offers the fix. `fix_rule` is the check it is about.
     pub fix: bool,
+    pub fix_rule: Option<String>,
+    /// Plain steps to take by hand when the fix is not on offer.
+    pub manual: &'static str,
     /// A `Look` tip that a restart finishes: "Restart now" asks first.
     pub restart: bool,
     /// Check id whose plain-language explanation the row can open: the first
@@ -1424,6 +1449,8 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             },
             scan: look && scan,
             fix: look && fix,
+            fix_rule: lead.filter(|id| look && rule_fix(id)).map(str::to_owned),
+            manual: lead.filter(|id| look && rule_fix(id)).map_or("", rule_manual),
             restart: look && restart,
         });
     }
@@ -2002,6 +2029,42 @@ mod tests {
         // A manual-only problem keeps its manual advice and offers no fix.
         let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
         assert!(!tip.fix && !tip.restart);
+    }
+
+    #[test]
+    fn review_fix_is_only_said_when_the_protection_page_offers_it() {
+        use secblitz::engine::{Outcome, Report};
+        let report = |status: &str| Report {
+            transaction: None,
+            results: vec![Outcome {
+                id: "net.hosts_file".into(),
+                status: status.into(),
+                ..Outcome::default()
+            }],
+            findings: vec![],
+            readiness: None,
+        };
+        assert!(fix_offered(&report("attention"), "net.hosts_file"));
+        // Managed, not offered or already protected: no promise of a fix.
+        for status in ["skipped", "ok", "conflict", "pending"] {
+            assert!(!fix_offered(&report(status), "net.hosts_file"), "{status}");
+        }
+        assert!(!fix_offered(&report("attention"), "services.unquoted_paths"));
+        // Every fixable check has plain steps to take by hand instead.
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            let manual = rule_manual(id);
+            assert!(!manual.is_empty() && !manual.contains("We can"), "{id}");
+            assert!(!manual.contains('\u{2014}'), "{id}");
+        }
+        assert!(rule_manual("persistence.run_and_tasks").contains("Task Manager"));
+        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.run_and_tasks"]);
+        assert_eq!(tip.fix_rule.as_deref(), Some("persistence.run_and_tasks"));
+        assert_eq!(tip.manual, rule_manual("persistence.run_and_tasks"));
     }
 
     #[test]
