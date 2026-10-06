@@ -56,7 +56,7 @@ pub static CATALOG: &[App] = &[
     ),
     app(
         "Microsoft.MicrosoftOfficeHub",
-        "Microsoft 365 offers",
+        "Microsoft 365 Copilot app",
         Group::Recommended,
         None,
     ),
@@ -141,7 +141,12 @@ pub static CATALOG: &[App] = &[
         Group::Sponsored,
         None,
     ),
-    app("Duolingo-*", "Duolingo", Group::Sponsored, None),
+    app(
+        "D5EA27B7.Duolingo-LearnLanguagesforFree",
+        "Duolingo",
+        Group::Sponsored,
+        None,
+    ),
     app("ROBLOXCORPORATION.ROBLOX", "Roblox", Group::Sponsored, None),
     app("9E2F88E3.Twitter", "X (Twitter)", Group::Sponsored, None),
     app(
@@ -295,7 +300,123 @@ pub static CATALOG: &[App] = &[
         Group::Gaming,
         None,
     ),
+    app(
+        "Microsoft.BingFinance",
+        "Finance",
+        Group::Recommended,
+        None,
+    ),
+    app("Microsoft.BingSports", "Sports", Group::Recommended, None),
+    app("Microsoft.BingTravel", "Travel", Group::Recommended, None),
+    app(
+        "Microsoft.BingFoodAndDrink",
+        "Food and Drink",
+        Group::Recommended,
+        None,
+    ),
+    app(
+        "Microsoft.BingHealthAndFitness",
+        "Health and Fitness",
+        Group::Recommended,
+        None,
+    ),
+    app(
+        "Microsoft.BingTranslator",
+        "Translator",
+        Group::Recommended,
+        None,
+    ),
+    app("Microsoft.News", "Microsoft News", Group::Recommended, None),
+    app(
+        "Microsoft.PCManager",
+        "PC Manager",
+        Group::Recommended,
+        None,
+    ),
+    app(
+        "Microsoft.Microsoft3DViewer",
+        "3D Viewer",
+        Group::Recommended,
+        None,
+    ),
+    app("Microsoft.MSPaint", "Paint 3D", Group::Recommended, None),
+    app(
+        "Microsoft.OneConnect",
+        "Mobile Plans",
+        Group::Recommended,
+        None,
+    ),
+    app("Microsoft.Office.Sway", "Sway", Group::Recommended, None),
+    app(
+        "Microsoft.MicrosoftPowerBIForWindows",
+        "Power BI",
+        Group::Recommended,
+        None,
+    ),
+    app(
+        "Microsoft.Office.OneNote",
+        "OneNote for Windows 10",
+        Group::Recommended,
+        None,
+    ),
+    app(
+        "Microsoft.M365Companions",
+        "Microsoft 365 Companions",
+        Group::Recommended,
+        None,
+    ),
+    app(
+        "Microsoft.WidgetsPlatformRuntime",
+        "Widgets engine",
+        Group::Promotions,
+        None,
+    ),
+    app(
+        "microsoft.windowscommunicationsapps",
+        "Mail and Calendar (older version)",
+        Group::Promotions,
+        None,
+    ),
+    app(
+        "MicrosoftCorporationII.MicrosoftFamily",
+        "Family Safety",
+        Group::Utilities,
+        None,
+    ),
 ];
+
+/// A short plain line shown under an app's name when there is something
+/// worth knowing before removing it.
+pub fn note(family: &str) -> Option<&'static str> {
+    Some(match family {
+        "Microsoft.MicrosoftOfficeHub" => {
+            "Removing this may change what the Copilot key on your keyboard opens."
+        }
+        "MicrosoftWindows.Client.WebExperience" | "Microsoft.WidgetsPlatformRuntime" => {
+            "Widgets stops working everywhere, including on the lock screen. Tick Widgets and Widgets engine together."
+        }
+        "microsoft.windowscommunicationsapps" => {
+            "Microsoft stopped supporting this app at the end of 2024. Remove it only if you use another mail app."
+        }
+        "MicrosoftCorporationII.MicrosoftFamily" => {
+            "Parents may use this to manage family screen time. Leave it alone if you use Family features."
+        }
+        "Microsoft.MSPaint" => "This is Paint 3D. The normal Paint app stays on your PC.",
+        "Microsoft.Office.OneNote" => {
+            "If you still keep notes in this older app, check them before you remove it."
+        }
+        "Microsoft.M365Companions" => {
+            "If your work or school manages this PC, it may put this app back."
+        }
+        "Microsoft.BingFinance"
+        | "Microsoft.BingSports"
+        | "Microsoft.BingTravel"
+        | "Microsoft.BingFoodAndDrink"
+        | "Microsoft.BingHealthAndFitness"
+        | "Microsoft.BingTranslator" => "An older Microsoft app that has mostly been retired.",
+        _ => return None,
+    })
+}
 
 pub fn matches(pattern: &str, package: &str) -> bool {
     match pattern.strip_suffix('*') {

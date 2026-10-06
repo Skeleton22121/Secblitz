@@ -368,6 +368,11 @@ fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
             Icon::Package,
             ctx.t("Stop Windows from adding suggested apps again"),
         ),
+        Setting::LockScreenTips
+        | Setting::StartSettingsTips
+        | Setting::ExplorerAds
+        | Setting::SearchWebResults
+        | Setting::GameBarPopups => super::debloat::ads::label(ctx, setting),
     }
 }
 

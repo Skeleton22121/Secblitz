@@ -275,6 +275,39 @@ mod tests {
     }
 
     #[test]
+    fn every_app_name_and_note_in_the_catalog_is_translated() {
+        let known: std::collections::HashSet<_> = all_keys().collect();
+        let mut missing = Vec::new();
+        for app in secblitz::debloat::catalog() {
+            let added_later = secblitz::debloat::catalog()
+                .iter()
+                .position(|a| a.family == app.family)
+                .is_some_and(|i| i >= 56 || app.family == "Microsoft.MicrosoftOfficeHub");
+            if added_later && !known.contains(app.name) {
+                missing.push(app.name);
+            }
+            if let Some(note) = secblitz::debloat::note(app.family) {
+                if !known.contains(note) {
+                    missing.push(note);
+                }
+            }
+        }
+        assert!(missing.is_empty(), "untranslated apps: {missing:#?}");
+    }
+
+    #[test]
+    fn the_ads_and_tips_switches_are_translated_in_all_six_languages() {
+        let known: std::collections::HashSet<_> = all_keys().collect();
+        for setting in secblitz::user_settings::Setting::ADS_AND_TIPS {
+            let e = secblitz::explain::for_check(setting.id()).expect("explainer");
+            for line in [e.what, e.risk, e.change] {
+                assert!(known.contains(line), "{line}");
+            }
+            assert!(known.contains(crate::uninstall::personal_title(setting.id())));
+        }
+    }
+
+    #[test]
     fn permission_evidence_and_identifiers_survive_all_languages() {
         for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
             for control in secblitz::permissions::controls() {

@@ -8,6 +8,7 @@ use iced::advanced::widget::Tree;
 use iced::advanced::{mouse, renderer};
 use iced::Rectangle;
 use secblitz::engine::Outcome;
+use secblitz::user_settings::Setting;
 use std::time::Instant;
 
 const SIZE: iced::Size = iced::Size::new(1100.0, 720.0);
@@ -278,6 +279,166 @@ fn both_pages_lay_out_with_a_search_active_and_with_nothing_found() {
             assert!(node.size().width > 0.0 && node.size().height > 0.0, "{page:?} {typed:?}");
         }
     }
+}
+
+fn ads(app: &mut App, msg: debloat::ads::Msg) {
+    drop(app.update(Message::Debloat(debloat::Msg::Ads(msg))));
+}
+
+fn on_ads_tab() -> App {
+    let mut app = app();
+    app.page = Page::Debloat;
+    app.ctx.helper = Helper::Ready;
+    drop(app.update(Message::Debloat(debloat::Msg::SetTab(debloat::Tab::Ads))));
+    app
+}
+
+fn answer_all(app: &mut App, reply: crate::broker::Reply) {
+    for setting in Setting::ADS_AND_TIPS {
+        ads(app, debloat::ads::Msg::Reported(setting, Ok(reply)));
+    }
+}
+
+#[test]
+fn the_ads_and_tips_tab_shows_five_switches_and_none_is_on_until_asked() {
+    use crate::broker::Reply;
+    let mut app = on_ads_tab();
+    for setting in Setting::ADS_AND_TIPS {
+        assert_eq!(debloat::ads_shown_as(&app.debloat, setting), "idle");
+    }
+    drop(app.view());
+    answer_all(&mut app, Reply::NeedsAttention);
+    for setting in Setting::ADS_AND_TIPS {
+        assert_eq!(debloat::ads_shown_as(&app.debloat, setting), "off");
+    }
+    drop(app.view());
+    assert!(!debloat::shows_search(&app.debloat), "the app search belongs to the Apps tab");
+    assert!(debloat::footer(&app.debloat, &app.ctx).is_none(), "no Remove bar on this tab");
+}
+
+#[test]
+fn a_switch_only_changes_when_the_person_flips_it() {
+    use crate::broker::Reply;
+    let mut app = on_ads_tab();
+    answer_all(&mut app, Reply::NeedsAttention);
+    let lock = Setting::LockScreenTips;
+    ads(&mut app, debloat::ads::Msg::Toggle(lock, false));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "off", "off stays off");
+    ads(&mut app, debloat::ads::Msg::Toggle(lock, true));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "working");
+    for other in Setting::ADS_AND_TIPS.into_iter().filter(|s| *s != lock) {
+        assert_eq!(debloat::ads_shown_as(&app.debloat, other), "off");
+    }
+    drop(app.view());
+    ads(&mut app, debloat::ads::Msg::Changed(lock, Ok(Reply::Done)));
+    ads(&mut app, debloat::ads::Msg::Reported(lock, Ok(Reply::SafeByUs)));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "on, can be switched back");
+    ads(&mut app, debloat::ads::Msg::Toggle(lock, false));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "working", "undo starts");
+    ads(&mut app, debloat::ads::Msg::Changed(lock, Ok(Reply::Done)));
+    ads(&mut app, debloat::ads::Msg::Reported(lock, Ok(Reply::NeedsAttention)));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, lock), "off");
+}
+
+#[test]
+fn a_switch_that_was_already_on_without_secblitz_cannot_be_flipped() {
+    use crate::broker::Reply;
+    let mut app = on_ads_tab();
+    let game = Setting::GameBarPopups;
+    ads(&mut app, debloat::ads::Msg::Reported(game, Ok(Reply::Safe)));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, game), "on");
+    ads(&mut app, debloat::ads::Msg::Toggle(game, false));
+    ads(&mut app, debloat::ads::Msg::Toggle(game, true));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, game), "on");
+    drop(app.view());
+}
+
+#[test]
+fn an_unreadable_or_unavailable_answer_is_shown_calmly_and_cannot_be_flipped() {
+    use crate::broker::Reply;
+    let mut app = on_ads_tab();
+    let web = Setting::SearchWebResults;
+    ads(&mut app, debloat::ads::Msg::Reported(web, Err("unavailable".into())));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, web), "unknown");
+    ads(&mut app, debloat::ads::Msg::Toggle(web, true));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, web), "unknown");
+    ads(&mut app, debloat::ads::Msg::Reported(web, Ok(Reply::NeedsAttention)));
+    ads(&mut app, debloat::ads::Msg::Toggle(web, true));
+    ads(&mut app, debloat::ads::Msg::Changed(web, Ok(Reply::Unavailable)));
+    ads(&mut app, debloat::ads::Msg::Reported(web, Ok(Reply::NeedsAttention)));
+    assert_eq!(debloat::ads_shown_as(&app.debloat, web), "off", "a refused change leaves it off");
+    drop(app.view());
+}
+
+#[test]
+fn without_the_helper_the_tab_explains_instead_of_offering_switches() {
+    let mut app = on_ads_tab();
+    app.ctx.helper = Helper::Reopen;
+    drop(app.view());
+    for setting in Setting::ADS_AND_TIPS {
+        assert_eq!(debloat::ads_shown_as(&app.debloat, setting), "idle");
+    }
+}
+
+#[test]
+fn the_apps_tab_keeps_its_search_after_a_visit_to_ads_and_tips() {
+    use crate::broker::Reply;
+    let mut app = on_ads_tab();
+    drop(app.update(Message::Debloat(debloat::Msg::SetTab(debloat::Tab::Apps))));
+    type_into_clean_up(&mut app, "xbox");
+    let found = debloat::visible_apps(&app.debloat, &app.ctx);
+    assert!(!found.is_empty());
+    drop(app.update(Message::Debloat(debloat::Msg::SetTab(debloat::Tab::Ads))));
+    answer_all(&mut app, Reply::NeedsAttention);
+    drop(app.view());
+    drop(app.update(Message::Debloat(debloat::Msg::SetTab(debloat::Tab::Apps))));
+    assert!(debloat::shows_search(&app.debloat));
+    assert_eq!(debloat::visible_apps(&app.debloat, &app.ctx), found);
+    assert!(debloat::selected_apps(&app.debloat).is_empty(), "nothing is ticked by a visit");
+}
+
+#[test]
+fn the_ads_and_tips_tab_lays_out_in_every_language_with_details_open() {
+    use crate::broker::Reply;
+    let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        theme::REGULAR,
+        14.0.into(),
+        Some("tiny-skia"),
+    ))
+    .expect("tiny-skia renderer");
+    let mut app = on_ads_tab();
+    app.enter_t = 1.0;
+    for setting in Setting::ADS_AND_TIPS {
+        ads(&mut app, debloat::ads::Msg::ToggleDetail(setting));
+    }
+    for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
+        app.ctx.lang = lang;
+        for reply in [Reply::NeedsAttention, Reply::SafeByUs, Reply::Safe, Reply::Unknown] {
+            answer_all(&mut app, reply);
+            let mut element = app.view();
+            let mut tree = Tree::new(&element);
+            let node = element
+                .as_widget_mut()
+                .layout(&mut tree, &renderer, &Limits::new(iced::Size::ZERO, SIZE));
+            assert!(node.size().width > 0.0 && node.size().height > 0.0, "{lang:?} {reply:?}");
+        }
+    }
+}
+
+#[test]
+fn every_new_app_in_the_catalog_has_a_row_on_the_apps_tab() {
+    let mut app = app();
+    app.page = Page::Debloat;
+    let shown = debloat::visible_apps(&app.debloat, &app.ctx);
+    let catalog = secblitz::debloat::catalog();
+    for family in ["Microsoft.WidgetsPlatformRuntime", "microsoft.windowscommunicationsapps", "MicrosoftCorporationII.MicrosoftFamily"] {
+        let index = catalog.iter().position(|a| a.family == family).unwrap() as u16;
+        assert!(shown.contains(&index), "{family}");
+    }
+    assert!(debloat::selected_apps(&app.debloat).is_empty());
+    drop(app.view());
+    type_into_clean_up(&mut app, "copilot");
+    assert!(!debloat::visible_apps(&app.debloat, &app.ctx).is_empty());
 }
 
 #[test]

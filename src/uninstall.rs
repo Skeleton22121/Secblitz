@@ -69,6 +69,11 @@ pub(crate) fn personal_title(id: &str) -> &'static str {
         "privacy.tailored_experiences" => "Tailored tips and ads",
         "office.internet_macros" => "Office macros from the internet",
         "debloat.suggested_apps" => "Suggested apps in Start",
+        "debloat.lockscreen_tips" => "Tips on the lock screen",
+        "debloat.start_settings_tips" => "Suggestions in Start and Settings",
+        "debloat.explorer_ads" => "Ads in File Explorer",
+        "debloat.search_web" => "Web results in Start search",
+        "debloat.gamebar_popups" => "Game Bar pop-ups",
         _ => WINDOWS_SETTINGS,
     }
 }
@@ -467,6 +472,11 @@ mod tests {
             "Tailored tips and ads",
             "Office macros from the internet",
             "Suggested apps in Start",
+            "Tips on the lock screen",
+            "Suggestions in Start and Settings",
+            "Ads in File Explorer",
+            "Web results in Start search",
+            "Game Bar pop-ups",
         ];
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/i18n-pending/a4.tsv");
         let pending = std::fs::read_to_string(path).ok();
