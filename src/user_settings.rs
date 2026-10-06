@@ -432,6 +432,9 @@ pub enum Outcome {
     Failed,
     /// Not offered here: managed PC, nothing to change, or nothing to undo.
     Blocked,
+    /// Undo only: the person (or something else) changed the value after
+    /// Secblitz did, so it was left exactly as it is.
+    ChangedSince,
 }
 
 fn write_prior(reg: &mut dyn Registry, t: &Target, prior: Option<u32>) -> Result<()> {
@@ -460,6 +463,43 @@ fn restore(reg: &mut dyn Registry, setting: Setting, priors: &[Prior]) -> bool {
         ok &= write_prior(reg, t, p.prior).is_ok() && matches_prior(reg, t, p.prior);
     }
     ok
+}
+
+/// What undo found for each recorded value.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Undone {
+    /// Every value that is still ours is back (or already was).
+    ok: bool,
+    /// At least one value was changed by someone else and left alone.
+    drifted: bool,
+}
+
+/// Put back only values that still hold what Secblitz wrote (`safe`). A value
+/// that already equals the recorded prior is fine; anything else was changed
+/// since, and is never overwritten.
+fn restore_unless_changed(reg: &mut dyn Registry, setting: Setting, priors: &[Prior]) -> Undone {
+    let all = targets(setting);
+    let mut out = Undone {
+        ok: true,
+        drifted: false,
+    };
+    for p in priors {
+        let Some(t) = all.get(p.i) else {
+            out.ok = false;
+            continue;
+        };
+        if matches_prior(reg, t, p.prior) {
+            continue;
+        }
+        match reg.get(Hive::CurrentUser, &t.key, t.name) {
+            Ok(Value::Dword(v)) if v == t.safe => {
+                out.ok &= write_prior(reg, t, p.prior).is_ok() && matches_prior(reg, t, p.prior);
+            }
+            Ok(_) => out.drifted = true,
+            Err(_) => out.ok = false,
+        }
+    }
+    out
 }
 
 pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome {
@@ -493,6 +533,20 @@ pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcom
     }
     // Journal first: if it cannot be saved, nothing is changed.
     let mut stored = load_journal(journal);
+    // An earlier run (even one cut short) may have already moved other values
+    // of this setting to safe. Their original values stay on record, so one
+    // undo still puts everything back.
+    if let Some(earlier) = stored.settings.get(setting.id()) {
+        for old in earlier {
+            let still_ours = all.get(old.i).is_some_and(|t| {
+                matches!(reg.get(Hive::CurrentUser, &t.key, t.name), Ok(Value::Dword(v)) if v == t.safe)
+            });
+            if still_ours && !priors.iter().any(|p| p.i == old.i) {
+                priors.push(old.clone());
+            }
+        }
+        priors.sort_by_key(|p| p.i);
+    }
     stored
         .settings
         .insert(setting.id().to_owned(), priors.clone());
@@ -531,18 +585,27 @@ pub fn undo(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome
         let _ = save_journal(journal, &mut stored);
         return Outcome::Blocked;
     }
-    if !restore(reg, setting, &priors) {
+    let undone = restore_unless_changed(reg, setting, &priors);
+    if !undone.ok {
         return Outcome::Failed;
     }
     stored.settings.remove(setting.id());
     if save_journal(journal, &mut stored).is_err() {
         // The value is back; a stale journal entry only offers a second undo.
-        return Outcome::Done;
+        return if undone.drifted {
+            Outcome::ChangedSince
+        } else {
+            Outcome::Done
+        };
     }
     if setting == Setting::ShowExtensions {
         reg.notify_file_view_changed();
     }
-    Outcome::Done
+    if undone.drifted {
+        Outcome::ChangedSince
+    } else {
+        Outcome::Done
+    }
 }
 
 /// Settings Secblitz changed and can still put back, in [`Setting::ALL`] order.
@@ -931,6 +994,72 @@ mod tests {
             undo(&mut reg, &path, Setting::ShowExtensions),
             Outcome::Blocked
         );
+    }
+
+    #[test]
+    fn undo_leaves_a_value_changed_since_alone_and_says_so() {
+        let (_d, path) = journal();
+        let mut reg = Fake::default();
+        reg.put(Setting::ShowExtensions, 0, Some(1));
+        assert_eq!(apply(&mut reg, &path, Setting::ShowExtensions), Outcome::Done);
+        // The person changed it again by hand (to something we did not write).
+        reg.put(Setting::ShowExtensions, 0, Some(7));
+        assert_eq!(
+            undo(&mut reg, &path, Setting::ShowExtensions),
+            Outcome::ChangedSince
+        );
+        assert_eq!(reg.read(Setting::ShowExtensions, 0), Value::Dword(7));
+        // The stale record is gone, so it never claims the value is ours.
+        assert!(!load_journal(&path).settings.contains_key("files.show_extensions"));
+        assert_eq!(
+            undo(&mut reg, &path, Setting::ShowExtensions),
+            Outcome::Blocked
+        );
+        // Deleted by hand after we set it: also left alone.
+        reg.put(Setting::TailoredExperiences, 0, Some(1));
+        assert_eq!(apply(&mut reg, &path, Setting::TailoredExperiences), Outcome::Done);
+        reg.put(Setting::TailoredExperiences, 0, None);
+        assert_eq!(
+            undo(&mut reg, &path, Setting::TailoredExperiences),
+            Outcome::ChangedSince
+        );
+        assert_eq!(reg.read(Setting::TailoredExperiences, 0), Value::Absent);
+    }
+
+    #[test]
+    fn a_second_apply_keeps_the_first_runs_originals_on_record() {
+        let (_d, path) = journal();
+        let mut reg = Fake::default();
+        let n = targets(Setting::SuggestedApps).len();
+        for i in 0..n {
+            reg.put(Setting::SuggestedApps, i, Some(1));
+        }
+        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        // One suggestion is switched back on by hand, then Secblitz runs again.
+        reg.put(Setting::SuggestedApps, 3, Some(1));
+        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        assert_eq!(undo(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        for i in 0..n {
+            assert_eq!(reg.read(Setting::SuggestedApps, i), Value::Dword(1), "{i}");
+        }
+    }
+
+    #[test]
+    fn undo_with_one_value_changed_restores_the_others() {
+        let (_d, path) = journal();
+        let mut reg = Fake::default();
+        for i in 0..targets(Setting::SuggestedApps).len() {
+            reg.put(Setting::SuggestedApps, i, Some(1));
+        }
+        assert_eq!(apply(&mut reg, &path, Setting::SuggestedApps), Outcome::Done);
+        reg.put(Setting::SuggestedApps, 2, Some(1)); // set back on by hand
+        assert_eq!(
+            undo(&mut reg, &path, Setting::SuggestedApps),
+            Outcome::Done
+        );
+        for i in 0..targets(Setting::SuggestedApps).len() {
+            assert_eq!(reg.read(Setting::SuggestedApps, i), Value::Dword(1));
+        }
     }
 
     #[test]

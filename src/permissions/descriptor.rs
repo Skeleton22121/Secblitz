@@ -9,6 +9,11 @@ pub(super) struct Assessment {
     pub candidates: Vec<String>,
     pub complex: bool,
     pub unrestricted: bool,
+    /// Set only when something that could GRANT access was not understood
+    /// (unknown descriptor flags, callback/object/unknown allow-type ACEs).
+    /// Deny, audit, inherited and extra-mask ACEs never widen access, so they
+    /// make `complex` true but leave this false.
+    pub unevaluated_grant: bool,
 }
 
 fn word(bytes: &[u8], at: usize) -> Result<u16> {
@@ -61,6 +66,7 @@ pub(super) fn assess(sd: &[u8]) -> Result<Assessment> {
     // An advisory DACL-only query need not include owner/group. Unknown control
     // semantics must still never produce the ordinary no-candidate result.
     result.complex = control & !(0x8000 | 0x0004 | 0x0008 | 0x0400 | 0x1000) != 0;
+    // No control flag can grant access: a missing DACL is handled below.
     if control & 4 == 0 || offset == 0 {
         result.unrestricted = true;
         return Ok(result);
@@ -87,6 +93,12 @@ pub(super) fn assess(sd: &[u8]) -> Result<Assessment> {
         // Denies, inheritance, object/callback/conditional ACEs are not evaluated.
         if ace[0] != 0 || ace[1] != 0 {
             result.complex = true;
+        }
+        // Types that can grant access but are not evaluated here: compound (4),
+        // object (5), callback (9), callback object (11) and anything unknown. Deny (1, 6,
+        // 10, 12) and audit/alarm/label types only ever narrow or observe.
+        if matches!(ace[0], 4 | 5 | 9 | 11) || ace[0] > 0x13 {
+            result.unevaluated_grant = true;
         }
         if matches!(ace[0], 0 | 1) {
             let mask = dword(ace, 4)?;
@@ -162,6 +174,27 @@ mod tests {
         let a = assess(&sd(&[(0, 8, 2, &[11]), (9, 0, 2, &[11])])).unwrap();
         assert!(a.complex);
         assert!(a.candidates.is_empty());
+    }
+    #[test]
+    fn deny_inherited_and_extra_mask_aces_are_not_unevaluated_grants() {
+        // A DACL with a deny, an inherited ACE and an extra mask bit is
+        // understood well enough to say no risky grant exists.
+        let a = assess(&sd(&[
+            (1, 0, 2, &[11]),
+            (0, 16, 0x20019, &[11]),
+            (0, 0, 0x0100_0001, &[32, 544]),
+        ]))
+        .unwrap();
+        assert!(a.complex && !a.unevaluated_grant && a.candidates.is_empty());
+        // A callback allow ACE could grant anything, so it stays unknown.
+        assert!(assess(&sd(&[(9, 0, 1, &[11])])).unwrap().unevaluated_grant);
+        let mut flags = sd(&[]);
+        flags[3] |= 1;
+        // An unknown control flag cannot grant access by itself.
+        let a = assess(&flags).unwrap();
+        assert!(a.complex && !a.unevaluated_grant);
+        // A compound allow ACE could grant access too.
+        assert!(assess(&sd(&[(4, 0, 1, &[11])])).unwrap().unevaluated_grant);
     }
     #[test]
     fn null_and_empty_dacl_differ_and_malformed_data_fails_closed() {

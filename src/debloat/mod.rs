@@ -270,6 +270,7 @@ pub(crate) fn validate_indices(indices: &[u16]) -> Result<Vec<u16>> {
 
 /// Core of `remove`, with the PowerShell call injected so it is testable.
 /// `installed` is a fresh inventory; every package is re-validated here.
+#[cfg(test)]
 pub(crate) fn remove_with(
     indices: &[u16],
     installed: &[Installed],
@@ -277,12 +278,38 @@ pub(crate) fn remove_with(
     run: &dyn Fn(&str) -> PackageOutcome,
     emit: &dyn Fn(Progress),
 ) -> Result<Batch> {
+    remove_with_checkpoint(indices, installed, backup, run, emit, &|_| Ok(()))
+}
+
+/// Same, and `checkpoint` sees the batch after every app, so the record of
+/// what is already removed is never lost if the run is cut short.
+pub(crate) fn remove_with_checkpoint(
+    indices: &[u16],
+    installed: &[Installed],
+    backup: &dyn Fn(&Installed) -> std::result::Result<(), Kept>,
+    run: &dyn Fn(&str) -> PackageOutcome,
+    emit: &dyn Fn(Progress),
+    checkpoint: &dyn Fn(&Batch) -> Result<()>,
+) -> Result<Batch> {
     let indices = validate_indices(indices)?;
     let mut batch = Batch {
         t: now(),
         ..Batch::default()
     };
+    let mut stopped = false;
     for index in indices {
+        if stopped {
+            // The way back could not be saved, so nothing more is removed.
+            batch.failed.push(Failure {
+                index,
+                reason: "The list of removed apps could not be saved".into(),
+            });
+            emit(Progress::Finished(
+                index,
+                ItemResult::Failed("The list of removed apps could not be saved".into()),
+            ));
+            continue;
+        }
         let packages: Vec<&Installed> = installed
             .iter()
             .filter(|p| p.index == index)
@@ -334,6 +361,7 @@ pub(crate) fn remove_with(
             ItemResult::Removed
         };
         batch.removed.append(&mut removed);
+        stopped = checkpoint(&batch).is_err();
         emit(Progress::Finished(index, result));
     }
     Ok(batch)
@@ -377,9 +405,19 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     let backup = |_: &Installed| -> std::result::Result<(), Kept> {
         Err(Kept::NoCopy("Only available on Windows".into()))
     };
-    let batch = remove_with(&indices, &installed, &backup, &run, emit)?;
-    if !batch.removed.is_empty() || !batch.skipped.is_empty() || !batch.failed.is_empty() {
-        let _ = journal::append(&batch);
+    let recordable =
+        |b: &Batch| !b.removed.is_empty() || !b.skipped.is_empty() || !b.failed.is_empty();
+    // The record is saved after every app (replacing this run's own line), so
+    // an app that is already gone is always on the list, even if the run stops.
+    let checkpoint = |b: &Batch| -> Result<()> {
+        if recordable(b) {
+            journal::upsert(b)?;
+        }
+        Ok(())
+    };
+    let batch = remove_with_checkpoint(&indices, &installed, &backup, &run, emit, &checkpoint)?;
+    if recordable(&batch) {
+        journal::upsert(&batch)?;
     }
     Ok(batch)
 }

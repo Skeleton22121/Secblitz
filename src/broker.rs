@@ -66,6 +66,8 @@ pub enum Reply {
     UpdateAvailable,
     /// Still running (a Store download).
     Working,
+    /// Undo found the value changed since Secblitz set it, and left it alone.
+    ChangedSince,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -82,6 +84,7 @@ impl Reply {
             HandleResult::Outcome(Outcome::Done) => Reply::Done,
             HandleResult::Outcome(Outcome::Failed) => Reply::Failed,
             HandleResult::Outcome(Outcome::Blocked) => Reply::Unavailable,
+            HandleResult::Outcome(Outcome::ChangedSince) => Reply::ChangedSince,
         }
     }
 
@@ -99,6 +102,7 @@ impl Reply {
             Reply::Unknown => 10,
             Reply::UpdateAvailable => 11,
             Reply::Working => 12,
+            Reply::ChangedSince => 13,
         }
     }
     pub fn decode(byte: u8) -> Option<Self> {
@@ -115,6 +119,7 @@ impl Reply {
             10 => Reply::Unknown,
             11 => Reply::UpdateAvailable,
             12 => Reply::Working,
+            13 => Reply::ChangedSince,
             _ => return None,
         })
     }
@@ -590,10 +595,11 @@ mod tests {
             Reply::Unknown,
             Reply::UpdateAvailable,
             Reply::Working,
+            Reply::ChangedSince,
         ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
-        for byte in [0u8, 13, 14, 100, 255] {
+        for byte in [0u8, 14, 15, 100, 255] {
             assert_eq!(Reply::decode(byte), None);
         }
     }
@@ -619,6 +625,10 @@ mod tests {
             Reply::Unavailable
         );
         assert_eq!(Reply::from_result(H::Outcome(Outcome::Done)), Reply::Done);
+        assert_eq!(
+            Reply::from_result(H::Outcome(Outcome::ChangedSince)),
+            Reply::ChangedSince
+        );
     }
 
     #[test]
