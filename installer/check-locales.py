@@ -6,7 +6,7 @@ import re
 INSTALL_KEYS = ("Monitor", "Failed", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon")
 # The keep-or-put-back question and its results, shown by the uninstaller.
 REMOVE_KEYS = ("RemoveTitle", "RemoveQuestion", "KeepChoice", "KeepDetail", "PutBackChoice",
-               "PutBackDetail", "RemoveNote", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft")
+               "PutBackDetail", "RemoveNote", "WebStops", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft")
 
 
 def check(source):

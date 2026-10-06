@@ -130,6 +130,12 @@ fr.RemoveNote=Les mises à jour Windows, les analyses antivirus et les applicati
 de.RemoveNote=Windows-Updates, Virenscans und mit Secblitz installierte Apps bleiben erhalten.
 pt.RemoveNote=As atualizações do Windows, as verificações de vírus e os apps que você instalou com o Secblitz permanecem.
 it.RemoveNote=Gli aggiornamenti di Windows, le scansioni antivirus e le app installate con Secblitz restano.
+en.WebStops=Web protection stops too, because it is part of Secblitz.
+es.WebStops=La protección web también se detiene, porque forma parte de Secblitz.
+fr.WebStops=La protection web s’arrête aussi, car elle fait partie de Secblitz.
+de.WebStops=Der Webschutz endet ebenfalls, weil er Teil von Secblitz ist.
+pt.WebStops=A proteção da web também para, porque faz parte do Secblitz.
+it.WebStops=Anche la protezione web si ferma, perché fa parte di Secblitz.
 en.PuttingBack=Putting your settings back
 es.PuttingBack=Restaurando tus ajustes
 fr.PuttingBack=Rétablissement de vos paramètres
@@ -528,11 +534,20 @@ begin
   Result.Caption := Text;
 end;
 
+{ A web protection switch is on. Only true/false values hold "true". }
+function WebProtectionOn: Boolean;
+var
+  Config: AnsiString;
+begin
+  Result := LoadStringFromFile(ExpandConstant('{commonappdata}\Secblitz\Filter\config.json'), Config)
+    and (Pos('true', String(Config)) > 0);
+end;
+
 { The one question. False means Cancel: nothing has been touched yet. }
 function AskRemoveChoice(var PutBack: Boolean): Boolean;
 var
   Form: TSetupForm;
-  Question, KeepDetail, PutDetail, Note: TNewStaticText;
+  Question, KeepDetail, PutDetail, Note, WebNote: TNewStaticText;
   KeepChoice, PutChoice: TNewRadioButton;
   RemoveButton, CancelButton: TNewButton;
   Top: Integer;
@@ -554,6 +569,10 @@ begin
     Top := PutDetail.Top + PutDetail.Height + ScaleY(16);
     Note := AddText(Form, Top, 0, CustomMessage('RemoveNote'), False);
     Top := Note.Top + Note.Height + ScaleY(18);
+    if WebProtectionOn then begin
+      WebNote := AddText(Form, Top - ScaleY(12), 0, CustomMessage('WebStops'), False);
+      Top := WebNote.Top + WebNote.Height + ScaleY(18);
+    end;
 
     CancelButton := TNewButton.Create(Form);
     CancelButton.Parent := Form;
