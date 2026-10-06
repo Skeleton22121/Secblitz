@@ -143,7 +143,7 @@ fn assemble(profile: Profile, context: &Context, mut probes: Vec<Diagnostic>) ->
         Omission::new(Scope::OriginalUser, "User settings", "Per-user software, backup settings, VPN connections, browser policies, proxy/PAC settings and other profiles are not inspected."),
         Omission::new(Scope::Machine, "Permissions", "Fixed-service broad-principal ACE audit only; no token AccessCheck, filesystem-wide audit or proof of exploitability."),
         Omission::new(Scope::Machine, "Detect-only checks", "Hosts file, Defender exclusions and threats, shares, firewall rules, services and accounts are reduced to counts and fixed categories on the device; no paths, names, host entries, SSIDs or file contents are collected, and nothing is changed."),
-        Omission::new(Scope::Machine, "Exposure","Local configuration and TCP listeners do not prove remote reachability; firewall, upstream NAT, credentials and group nesting may alter effective access."),
+        Omission::new(Scope::Machine, "Exposure","Local configuration does not prove remote reachability; firewall, upstream NAT, credentials and group nesting may alter effective access."),
     ];
     let browsers = probes
         .iter()

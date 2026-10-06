@@ -208,7 +208,6 @@ Every control reuses the domain, MDM/enrollment, policy, RSOP and local-policy-a
 | Remote Desktop | Incoming preference; not NLA/listener/Internet exposure proof |
 | SMB1 | Feature state; not negotiated signing/dialect assessment |
 | SmartScreen | Guidance, no comprehensive effective browser probe |
-| Local accounts | PasswordRequired flag count, not password presence/strength/reuse |
 | Memory integrity | HVCI configured/running; driver compatibility untested |
 | Management and mutation eligibility | UAC-family authority probe, not all-control authorization |
 | Automatic logon | AutoAdminLogon plus DefaultPassword name presence only; no secret value reads |

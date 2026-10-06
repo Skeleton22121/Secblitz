@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn every_existing_check_has_an_explanation() {
-        assert!(script_finding_titles().len() >= 13);
+        assert!(script_finding_titles().len() >= 12);
         assert!(rule_ids().len() >= 70);
         let ids = every_id();
         assert!(

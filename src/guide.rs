@@ -251,15 +251,6 @@ static SECURE_BOOT: Guide = g(
         "Turn on Secure Boot, often under Boot or Security. Menus differ by PC maker. Save and exit.",
     ],
 );
-static ACCOUNTS: Guide = Guide {
-    page: Page::OtherUsers,
-    alt: Some(Page::SignIn),
-    steps: &[
-        "Look at each account listed. Before removing one, copy any files its owner needs, as removing it deletes its files.",
-        "Open Sign-in options, choose Password, then Change, and set a strong password.",
-        "Give every account its own password.",
-    ],
-};
 static AUTOLOGON: Guide = g(
     Page::SignIn,
     &[
@@ -398,7 +389,6 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
         "vbs.kernel_stack_protection" => &KERNEL_STACK,
         "Device encryption" => &ENCRYPTION,
         "Secure Boot" => &SECURE_BOOT,
-        "Local accounts" => &ACCOUNTS,
         "accounts.autologon" | "Automatic logon" => &AUTOLOGON,
         "remote_desktop.disabled" | "Remote Desktop" | "remote.rdp" => &REMOTE_DESKTOP,
         "smb1.disabled" | "SMB1" | "smb.v1" => &SMB1,
@@ -446,7 +436,6 @@ mod tests {
         "Memory integrity",
         "Device encryption",
         "Secure Boot",
-        "Local accounts",
         "accounts.autologon",
         "Automatic logon",
         "remote_desktop.disabled",
@@ -575,7 +564,6 @@ mod tests {
         assert!(guide("remote_desktop.disabled").unwrap().steps[0].contains("Stop here"));
         assert!(guide("smb1.disabled").unwrap().steps[0].contains("leave it on"));
         assert!(guide("Secure Boot").unwrap().steps[0].contains("recovery key"));
-        assert!(guide("Local accounts").unwrap().steps[0].contains("deletes its files"));
         assert!(guide("net.wifi_security").unwrap().steps[0].contains("Not your own network"));
     }
 
