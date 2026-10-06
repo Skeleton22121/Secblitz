@@ -72,6 +72,7 @@ pub struct Summary {
     pub not_done: Vec<(String, String)>,
     pub unverified: bool,
     pub restart: bool,
+    pub failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -94,6 +95,11 @@ pub const REASON_STILL_OPEN: &str =
     "This still needs attention after the fix. Restart your PC and check again.";
 pub const REASON_KEPT: &str = "We kept your current setting to stay safe. Nothing needs doing.";
 
+pub const REASON_DISK: &str = "Your disk is full or can't be written to right now, so Secblitz can't save changes safely. Free up some space, then check again.";
+pub const REASON_BUSY: &str = "Secblitz is finishing another job, like an update or a repair. Wait for it to finish, then try again.";
+pub const NOTICE_DISK_READ_ONLY: &str = "Your disk can't be written to right now, so fixes will wait.";
+pub const NOTICE_DISK_FULL: &str = "Your disk is full, so fixes will wait. Free up some space, then check again.";
+
 pub const FAILURE_GENERAL: &str = "Something went wrong and nothing was changed. Close Secblitz and open it again. If it keeps happening, restart your PC or check for a Secblitz update.";
 pub const COULDNT_READ: &str = "We couldn't read this from Windows. Check again in a moment. If it keeps happening, restart your PC.";
 pub const NOT_DONE: &str = "This change did not go through. Restart your PC, then try again.";
@@ -104,6 +110,10 @@ pub fn plain_failure(raw: &str) -> &'static str {
         "Another Secblitz window is already making changes. Close it, wait a moment, then try again."
     } else if r.contains("revert the active transaction") {
         REASON_UNDO_FIRST
+    } else if r.contains("deferred:") {
+        REASON_BUSY
+    } else if r.contains("readiness blocks") {
+        REASON_DISK
     } else if r.contains("journal") || r.contains("transaction completion") {
         "Secblitz can't read its record of your earlier changes, so it stopped to stay safe. Restart your PC and try again. If it keeps happening, check for a Secblitz update."
     } else if r.contains("administrator") || r.contains("elevat") || r.contains("split-token") {
@@ -117,6 +127,28 @@ pub fn plain_failure(raw: &str) -> &'static str {
     } else {
         FAILURE_GENERAL
     }
+}
+
+/// Whether waiting and trying again can clear a refusal from the pre-flight check.
+pub fn can_retry(raw: &str) -> bool {
+    let r = raw.to_ascii_lowercase();
+    r.contains("holds the journal lock") || r.contains("another secblitz") || r.contains("deferred:")
+}
+
+/// The sentence that replaces the fix buttons when the last check found the disk unable to take changes.
+pub fn repairs_blocked(report: &Report) -> Option<&'static str> {
+    use secblitz::model::Probe;
+    let r = report.readiness.as_ref()?;
+    if !r.blocks_repairs() {
+        return None;
+    }
+    let read_only = matches!(&r.system_volume, Probe::Known(v) if v.read_only)
+        || matches!(&r.journal_volume, Probe::Known(v) if v.read_only);
+    Some(if read_only {
+        NOTICE_DISK_READ_ONLY
+    } else {
+        NOTICE_DISK_FULL
+    })
 }
 
 pub fn plain_detail(status: &str, a: &advice::Advice) -> (&'static str, &'static str) {
@@ -139,6 +171,8 @@ fn reason(status: &str, detail: &str, id: &str) -> &'static str {
         REASON_UNDO_FIRST
     } else if detail.to_ascii_lowercase().contains("restart") {
         REASON_RESTART
+    } else if status == "skipped" && detail.contains("readiness blocks") {
+        REASON_DISK
     } else if status == "skipped" {
         REASON_KEPT
     } else {
@@ -201,7 +235,8 @@ pub fn summarize(
                 s.after_restart = later;
             }
         }
-        (None, Err(_)) => {
+        (None, Err(e)) => {
+            s.failure = Some(plain_failure(e).to_owned());
             s.kind = SummaryKind::Failed;
             return s;
         }
@@ -559,6 +594,67 @@ mod tests {
     }
 
     #[test]
+    fn refusals_from_the_pre_flight_get_their_own_plain_line() {
+        assert_eq!(
+            plain_failure("Deferred: a Windows servicing process is active"),
+            REASON_BUSY
+        );
+        assert_eq!(
+            plain_failure("Repair readiness blocks new changes"),
+            REASON_DISK
+        );
+        assert!(can_retry("Deferred: updater installation requires completion"));
+        assert!(can_retry("Another Secblitz operation holds the journal lock"));
+        assert!(!can_retry("Repair readiness blocks new changes"));
+        assert!(!can_retry("Revert the active transaction before applying again"));
+    }
+
+    #[test]
+    fn a_full_disk_is_never_reported_as_a_kept_setting() {
+        let r = rep(vec![out(
+            "defender.realtime",
+            "skipped",
+            "Repair readiness blocks new changes",
+        )]);
+        let s = summarize(Some(&ids(&["defender.realtime"])), Ok(&r), Ok(&r));
+        assert_eq!(s.not_done[0].1, REASON_DISK);
+    }
+
+    #[test]
+    fn a_failed_undo_says_why() {
+        let s = summarize(None, Err("Another Secblitz operation holds the journal lock"), Err("x"));
+        assert_eq!(s.kind, SummaryKind::Failed);
+        assert!(s.failure.unwrap().contains("Close it"));
+    }
+
+    #[test]
+    fn blocked_repairs_name_the_disk_problem() {
+        use secblitz::model::{Probe, Readiness, VolumeReadiness};
+        let with = |readiness| Report {
+            readiness: Some(readiness),
+            ..Report::default()
+        };
+        assert_eq!(repairs_blocked(&Report::default()), None);
+        assert_eq!(repairs_blocked(&with(Readiness::default())), None);
+        let vol = |bytes, read_only| {
+            Probe::Known(VolumeReadiness {
+                available_bytes: bytes,
+                read_only,
+            })
+        };
+        let ro = Readiness {
+            system_volume: vol(5, true),
+            ..Default::default()
+        };
+        assert_eq!(repairs_blocked(&with(ro)), Some(NOTICE_DISK_READ_ONLY));
+        let full = Readiness {
+            journal_volume: vol(0, false),
+            ..Default::default()
+        };
+        assert_eq!(repairs_blocked(&with(full)), Some(NOTICE_DISK_FULL));
+    }
+
+    #[test]
     fn every_plain_message_is_translated() {
         use crate::i18n::Lang;
         let raws = [
@@ -569,6 +665,8 @@ mod tests {
             "engine stopped",
             "Select at least one fix",
             "Revert the active transaction",
+            "Deferred: a Windows servicing process is active",
+            "Repair readiness blocks new changes",
             "anything else",
         ];
         let mut all: Vec<&str> = raws.iter().map(|r| plain_failure(r)).collect();
@@ -580,6 +678,10 @@ mod tests {
             REASON_CHANGED,
             REASON_STILL_OPEN,
             REASON_KEPT,
+            REASON_DISK,
+            REASON_BUSY,
+            NOTICE_DISK_READ_ONLY,
+            NOTICE_DISK_FULL,
             FAILURE_GENERAL,
             COULDNT_READ,
             NOT_DONE,
