@@ -69,6 +69,11 @@ pub struct Palette {
     pub warn: Color,
     pub bad: Color,
     pub neutral: Color,
+    /// Blue that marks work in progress inside drawings only (the hairline
+    /// illustrations): a lens looking, a switch turning on, water filling.
+    /// Never for buttons, text or status; those keep the neutral brand and
+    /// good, warn and bad.
+    pub accent: Color,
     /// Darker (light mode) variants of good/warn/bad for small text, >= 4.5:1.
     pub good_text: Color,
     pub warn_text: Color,
@@ -112,6 +117,7 @@ pub const LIGHT: Palette = Palette {
     warn: rgb(0xD97706),
     bad: rgb(0xDC2626),
     neutral: rgb(0x71717A),
+    accent: rgb(0x2563EB),
     good_text: rgb(0x15803D),
     warn_text: rgb(0xB45309),
     bad_text: rgb(0xB91C1C),
@@ -147,6 +153,7 @@ pub const DARK: Palette = Palette {
     warn: rgb(0xF59E0B),
     bad: rgb(0xEF4444),
     neutral: rgb(0xA1A1AA),
+    accent: rgb(0x60A5FA),
     good_text: rgb(0x22C55E),
     warn_text: rgb(0xF59E0B),
     bad_text: rgb(0xEF4444),
