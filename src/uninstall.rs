@@ -6,6 +6,7 @@ use anyhow::Result;
 use secblitz::debloat::suggested::Undo;
 use secblitz::debloat::RestoreAll;
 use secblitz::engine::Outcome as SettingOutcome;
+use secblitz::model::CheckStatus;
 use serde::Serialize;
 
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
@@ -91,8 +92,8 @@ pub fn left_line(left: &Left, lang: Lang) -> String {
 }
 
 
-pub fn left_reason_from_status(status: &str) -> LeftReason {
-    if status == "conflict" {
+pub fn left_reason_from_status(status: &CheckStatus) -> LeftReason {
+    if *status == CheckStatus::Conflict {
         LeftReason::ChangedSince
     } else {
         LeftReason::NotPossible
@@ -101,9 +102,9 @@ pub fn left_reason_from_status(status: &str) -> LeftReason {
 
 fn fold_settings(results: &[SettingOutcome], summary: &mut Summary) {
     for r in results {
-        match r.status.as_str() {
-            "restored" => summary.restored += 1,
-            "unchanged" => {}
+        match &r.status {
+            CheckStatus::Restored => summary.restored += 1,
+            CheckStatus::Unchanged => {}
             other => summary.left.push(Left::Setting {
                 title: r.title.clone(),
                 reason: left_reason_from_status(other),
@@ -331,11 +332,11 @@ mod tests {
 
     const ALL_LANGS: [Lang; 6] = [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It];
 
-    fn outcome(title: &str, status: &str) -> SettingOutcome {
+    fn outcome(title: &str, status: CheckStatus) -> SettingOutcome {
         SettingOutcome {
             id: "x".into(),
             title: title.into(),
-            status: status.into(),
+            status,
             ..Default::default()
         }
     }
@@ -367,11 +368,11 @@ mod tests {
     #[test]
     fn left_reason_from_status_maps_conflict_and_the_rest() {
         assert_eq!(
-            left_reason_from_status("conflict"),
+            left_reason_from_status(&CheckStatus::Conflict),
             LeftReason::ChangedSince
         );
-        assert_eq!(left_reason_from_status("skipped"), LeftReason::NotPossible);
-        assert_eq!(left_reason_from_status("failed"), LeftReason::NotPossible);
+        assert_eq!(left_reason_from_status(&CheckStatus::Skipped), LeftReason::NotPossible);
+        assert_eq!(left_reason_from_status(&CheckStatus::Other("failed".into())), LeftReason::NotPossible);
     }
 
     #[test]
@@ -501,10 +502,10 @@ mod tests {
         let mut s = Summary::default();
         fold_settings(
             &[
-                outcome("A", "restored"),
-                outcome("B", "unchanged"),
-                outcome("C", "conflict"),
-                outcome("D", "skipped"),
+                outcome("A", CheckStatus::Restored),
+                outcome("B", CheckStatus::Unchanged),
+                outcome("C", CheckStatus::Conflict),
+                outcome("D", CheckStatus::Skipped),
             ],
             &mut s,
         );

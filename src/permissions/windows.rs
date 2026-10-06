@@ -3,7 +3,7 @@ use super::{
     repair_target, service_name,
     state::{trusted_owner, State},
 };
-use crate::model::Finding;
+use crate::model::{CheckStatus, Finding};
 use crate::model::Observation;
 use anyhow::{ensure, Result};
 use serde_json::Value;
@@ -309,7 +309,7 @@ fn inspect(manager: &Handle, name: &str) -> Result<Finding> {
         Err(e) if e.raw_os_error() == Some(1060) => {
             return Ok(Finding {
                 title,
-                status: "info".into(),
+                status: CheckStatus::Info,
                 detail: "Service is not installed; no DACL assessed.".into(),
             })
         }
@@ -359,7 +359,7 @@ pub(super) fn audit() -> Vec<Finding> {
             };
             result.unwrap_or_else(|error| Finding {
                 title: format!("Service permissions: {name}"),
-                status: "unknown".into(),
+                status: CheckStatus::Unknown,
                 detail: format!("DACL could not be assessed: {error}. No change made."),
             })
         })

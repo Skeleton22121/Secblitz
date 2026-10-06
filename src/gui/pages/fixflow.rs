@@ -1,5 +1,6 @@
 //! Fix / undo flow drawn over any page: review sheet → working → result.
 use super::fixes::row_text;
+use secblitz::model::CheckStatus;
 use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
 use crate::app::history::{self as log, Entry, Kind};
@@ -447,7 +448,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 let applied: Vec<String> = report
                     .results
                     .iter()
-                    .filter(|r| r.status == "applied" && attempted.contains(&r.id))
+                    .filter(|r| r.status == CheckStatus::Applied && attempted.contains(&r.id))
                     .map(|r| r.id.clone())
                     .collect();
                 state
@@ -523,9 +524,9 @@ fn technical_lines(
             for r in &report.results {
                 if attempted.is_empty() || attempted.contains(&r.id) {
                     let a = crate::advice::for_outcome(r);
-                    let (status, next) = if r.status == "error" {
+                    let (status, next) = if r.status == CheckStatus::Error {
                         ("Not done", flow::NOT_DONE)
-                    } else if r.status == "skipped" && r.detail.contains("readiness blocks") {
+                    } else if r.status == CheckStatus::Skipped && r.detail.contains("readiness blocks") {
                         ("Not done", flow::REASON_DISK)
                     } else {
                         flow::plain_detail(&r.status, &a)

@@ -54,7 +54,7 @@ fn open(dir: &std::path::Path, value: &Rc<RefCell<Value>>) -> Engine {
 }
 
 fn status_of(report: &Report) -> &str {
-    &report.results[0].status
+    report.results[0].status.as_str()
 }
 
 #[test]

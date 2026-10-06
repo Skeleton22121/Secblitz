@@ -3,6 +3,7 @@ use super::rules::{
     rule_advice, rule_fix, rule_fix_advice, rule_open, rule_remove_threats, rule_restart, rule_scan,
 };
 use secblitz::diagnostics as diag;
+use secblitz::model::CheckStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TipProfile {
@@ -311,7 +312,7 @@ pub fn tip_fix<'r>(
         }
     } else if a.step == crate::advice::NextStep::Restart {
         TipFix::Restart(a.next)
-    } else if secblitz::vbs::is_vbs_check_id(control) && row.status == "compliant" {
+    } else if secblitz::vbs::is_vbs_check_id(control) && row.status == CheckStatus::Compliant {
         TipFix::Restart(core_restart_advice(control))
     } else {
         TipFix::Manual
@@ -899,7 +900,7 @@ mod tests {
         let mut pending = protection(id, "attention", "Eligible");
         pending.findings.push(secblitz::model::Finding {
             title: "x".into(),
-            status: "pending".into(),
+            status: CheckStatus::Pending,
             detail: String::new(),
         });
         assert_eq!(tip_fix(&tip, Some(&pending), &all), TipFix::Manual);

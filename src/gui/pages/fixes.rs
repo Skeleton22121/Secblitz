@@ -1,5 +1,6 @@
 //! Protection page: every check grouped, attention rows selectable.
 use crate::advice::{self, Group, NextStep};
+use secblitz::model::CheckStatus;
 use crate::app::flow;
 use crate::app::score::{self, Class};
 use crate::broker::Reply;
@@ -152,7 +153,7 @@ fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) ->
     }
 }
 
-fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
+fn tech_line(status: &CheckStatus, a: &advice::Advice, lang: Lang) -> String {
     let (st, next) = crate::app::flow::plain_detail(status, a);
     format!("{} · {}", lang.t(st), lang.t(next))
 }
@@ -1030,8 +1031,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("We couldn't refresh the check. You're seeing the last result we could confirm."),
         ));
     }
-    if report.results.iter().any(|r| r.status == "pending")
-        || report.findings.iter().any(|f| f.status == "pending")
+    if report.results.iter().any(|r| r.status == CheckStatus::Pending)
+        || report.findings.iter().any(|f| f.status == CheckStatus::Pending)
     {
         body = body.push(unfinished_change(ctx));
     }
@@ -1353,7 +1354,7 @@ mod tests {
         };
         let outcome = |id: &str, items: Vec<ItemLabel>| secblitz::engine::Outcome {
             id: id.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             items,
             ..secblitz::engine::Outcome::default()
         };
@@ -1382,7 +1383,7 @@ mod tests {
         ] {
             let r = secblitz::engine::Outcome {
                 id: id.into(),
-                status: "skipped".into(),
+                status: CheckStatus::Skipped,
                 detail: detail.clone(),
                 ..secblitz::engine::Outcome::default()
             };
@@ -1392,7 +1393,7 @@ mod tests {
             assert!(guide::guide_not_offered(id, &detail).is_some(), "{detail}");
             assert_eq!(other_line(Bucket::GoodToKnow, true, &a), (None, a.next), "{detail}");
         }
-        let a = advice::for_finding("SMB1", "attention", "");
+        let a = advice::for_finding("SMB1", &CheckStatus::Attention, "");
         assert_eq!(
             other_line(Bucket::Look, true, &a),
             (Some("Turning it on protects you from:"), a.impact)
@@ -1409,19 +1410,19 @@ mod tests {
             ("Management and mutation eligibility", Some(Page::WorkAccounts)),
             ("Service permissions: BITS", None),
         ] {
-            let a = advice::for_finding(title, "info", "");
+            let a = advice::for_finding(title, &CheckStatus::Info, "");
             assert_eq!(
                 other_page(Bucket::GoodToKnow, (title, true), None, a.step),
                 page,
                 "{title}"
             );
         }
-        let a = advice::for_control("accounts.autologon", "skipped", "");
+        let a = advice::for_control("accounts.autologon", &CheckStatus::Skipped, "");
         assert_eq!(
             other_page(Bucket::GoodToKnow, ("accounts.autologon", false), None, a.step),
             None
         );
-        let a = advice::for_finding("Windows updates", "info", "");
+        let a = advice::for_finding("Windows updates", &CheckStatus::Info, "");
         assert_eq!(
             other_page(Bucket::Managed, ("Windows updates", true), None, a.step),
             None

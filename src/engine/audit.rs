@@ -3,15 +3,15 @@
 use super::catalog::assessment_status;
 use super::journal::{State, Transaction};
 use super::{Engine, Outcome, Report, READ_BATCH};
-use crate::model::{Control, Finding, Observation, Readiness};
+use crate::model::{CheckStatus, Control, Finding, Observation, Readiness};
 use anyhow::Result;
 
 impl Engine {
-    pub(super) fn outcome(c: &Control, status: &str, detail: impl Into<String>) -> Outcome {
+    pub(super) fn outcome(c: &Control, status: CheckStatus, detail: impl Into<String>) -> Outcome {
         Outcome {
             id: c.id.clone(),
             title: c.title.clone(),
-            status: status.into(),
+            status,
             detail: detail.into(),
             ..Outcome::default()
         }
@@ -19,7 +19,7 @@ impl Engine {
 
     pub(super) fn observed_outcome(
         c: &Control,
-        status: &str,
+        status: CheckStatus,
         detail: impl Into<String>,
         observation: &Observation,
     ) -> Outcome {
@@ -44,7 +44,7 @@ impl Engine {
         let mut found = self.backend.findings().unwrap_or_else(|e| {
             vec![Finding {
                 title: "Assessment unavailable".into(),
-                status: "unknown".into(),
+                status: CheckStatus::Unknown,
                 detail: format!("Findings could not be collected: {e:#}"),
             }]
         });
@@ -101,7 +101,7 @@ impl Engine {
         let pending = tx.incomplete();
         Finding {
             title: "Journal recovery".into(),
-            status: if pending { "pending" } else { "info" }.into(),
+            status: if pending { CheckStatus::Pending } else { CheckStatus::Info },
             detail: if pending {
                 format!("Transaction {} has incomplete apply or rollback; use revert to resolve its recorded preferences before applying again.", tx.name)
             } else {
@@ -129,9 +129,9 @@ impl Engine {
                 let result = match observed {
                     Ok(o) => match assessment_status(&c.id, &o) {
                         Ok(status) => Self::observed_outcome(c, status, &o.reason, &o),
-                        Err(e) => Self::observed_outcome(c, "error", format!("{e:#}"), &o),
+                        Err(e) => Self::observed_outcome(c, CheckStatus::Error, format!("{e:#}"), &o),
                     },
-                    Err(e) => Self::outcome(c, "error", format!("{e:#}")),
+                    Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
                 };
                 report.push(result, &mut callback);
             }

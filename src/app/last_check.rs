@@ -80,13 +80,14 @@ pub fn boot_time(now: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use secblitz::engine::Outcome;
+    use secblitz::model::CheckStatus;
 
     fn report() -> Report {
         Report {
             results: vec![Outcome {
                 id: "defender.realtime".into(),
                 title: "Live virus protection".into(),
-                status: "compliant".into(),
+                status: CheckStatus::Compliant,
                 detail: "On".into(),
                 ..Default::default()
             }],
@@ -116,6 +117,23 @@ mod tests {
         assert!(load(dir.path(), "S-1-5-21-2", 1100, 900).is_none());
         assert!(load(dir.path(), "S-1-5-21-1", 1000 + FRESH_SECONDS, 900).is_none());
         assert!(load(dir.path(), "S-1-5-21-1", 1100, 1050).is_none());
+    }
+
+    #[test]
+    fn a_saved_check_with_an_unrecognised_status_still_loads_and_keeps_its_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = format!(
+            r#"{{"version":"{}","user":"S-1","at":1000,"report":{{"transaction":null,"results":[{{"id":"a","title":"A","status":"attention","detail":"d"}},{{"id":"b","title":"B","status":"from_a_newer_build","detail":"d"}}],"findings":[{{"title":"F","status":"review","detail":"d"}}]}}}}"#,
+            env!("CARGO_PKG_VERSION")
+        );
+        std::fs::write(dir.path().join(FILE), text).unwrap();
+        let (back, _) = load(dir.path(), "S-1", 1100, 900).unwrap();
+        assert_eq!(back.results[0].status, CheckStatus::Attention);
+        assert_eq!(back.results[1].status, CheckStatus::Other("from_a_newer_build".into()));
+        assert_eq!(back.findings[0].status, CheckStatus::Review);
+        save(dir.path(), "S-1", 1000, &back).unwrap();
+        let again = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(again.contains(r#""status":"from_a_newer_build""#));
     }
 
     #[test]
