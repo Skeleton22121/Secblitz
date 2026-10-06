@@ -1,0 +1,8 @@
+{"kind":"header","schema":1,"machine":"machine-a","transaction":"00000000000000000001-2788d7d6-be06-42d2-8e86-63675ae115d6","sequence":1}
+{"kind":"prepare","id":"firewall.public.inbound","before":"Allow"}
+{"kind":"applied","id":"firewall.public.inbound"}
+{"kind":"sealed"}
+{"kind":"reverting"}
+{"kind":"restore_pending","id":"firewall.public.inbound"}
+{"kind":"restored","id":"firewall.public.inbound"}
+{"kind":"reverted"}
