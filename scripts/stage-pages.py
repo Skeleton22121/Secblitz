@@ -47,6 +47,7 @@ HISTORICAL = (
     "secblitz-0.6.0-windows-x64-setup.exe", "secblitz-0.6.0-windows-x64.exe",
     "secblitz-0.6.1-windows-x64-setup.exe", "secblitz-0.6.1-windows-x64.exe",
     "secblitz-0.7.0-windows-x64-setup.exe", "secblitz-0.7.0-windows-x64.exe",
+    "secblitz-0.8.0-windows-x64-setup.exe", "secblitz-0.8.0-windows-x64.exe",
 )
 
 
