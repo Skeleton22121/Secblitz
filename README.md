@@ -1,8 +1,9 @@
 <div align="center">
 
-# Secblitz
-
-**A safer PC, without the headaches.**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.webp">
+  <img src="docs/banner-light.webp" width="900" alt="Secblitz. A safer PC, without the headaches.">
+</picture>
 
 Security, privacy and cleanup for Windows, all in one app.
 
