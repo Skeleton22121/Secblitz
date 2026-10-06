@@ -33,6 +33,7 @@ const KEEP_TITLE: &str = "Keep my PC as it is now";
 const KEEP_HELP: &str = "Your protection stays on. Apps you removed stay removed; you can reinstall them from the Microsoft Store.";
 const PUT_BACK_TITLE: &str = "Put everything back the way it was";
 const STAY_NOTE: &str = "Windows updates, virus scans and apps you installed with Secblitz stay.";
+const WEB_STOPS: &str = "Web protection stops too, because it is part of Secblitz.";
 const KEEP_DELETES_COPIES: &str = "The saved copies of removed apps are deleted to free space, so those apps can then only come back from the Microsoft Store.";
 const OWN_ACCOUNT_ONLY: &str =
     "Personal settings are put back for your account only. Other accounts on this PC keep theirs.";
@@ -131,6 +132,12 @@ pub fn counts(plan: Option<&Plan>, safe: &[Setting]) -> Option<Counts> {
             + usize::from(plan.suggested && !safe.contains(&Setting::SuggestedApps)),
         apps: plan.apps_with_copy + plan.apps_store_only,
     })
+}
+
+/// Said under both choices while web protection is on: "keep my PC as it is"
+/// does not keep it, so the person is not surprised by ads coming back.
+pub fn web_note(plan: Option<&Plan>) -> Option<&'static str> {
+    plan.is_some_and(|p| p.web_on).then_some(WEB_STOPS)
 }
 
 /// Is there anything the "put back" choice would do?
@@ -911,6 +918,9 @@ fn choose_sheet<'a>(
     }
     col = col.push(options);
     col = col.push(widgets::small(p, ctx.t(STAY_NOTE)));
+    if let Some(note) = web_note(plan.as_ref()) {
+        col = col.push(widgets::small(p, ctx.t(note)));
+    }
     let copies = plan.as_ref().is_some_and(|pl| pl.apps_with_copy > 0);
     let store_only = plan.as_ref().is_some_and(|pl| pl.apps_store_only > 0);
     match choice {
@@ -1096,7 +1106,19 @@ mod tests {
             apps_with_copy: copy,
             apps_store_only: store,
             suggested,
+            web_on: false,
         }
+    }
+
+    #[test]
+    fn web_note_only_while_web_protection_is_on() {
+        assert_eq!(web_note(None), None);
+        assert_eq!(web_note(Some(&plan(3, 0, 0, false))), None);
+        let on = Plan {
+            web_on: true,
+            ..plan(0, 0, 0, false)
+        };
+        assert_eq!(web_note(Some(&on)), Some(WEB_STOPS));
     }
 
     fn loading(installed: bool) -> State {
@@ -1381,6 +1403,7 @@ mod tests {
             KEEP_HELP,
             PUT_BACK_TITLE,
             STAY_NOTE,
+            WEB_STOPS,
             KEEP_DELETES_COPIES,
             OWN_ACCOUNT_ONLY,
             STORE_NEEDS_INTERNET,

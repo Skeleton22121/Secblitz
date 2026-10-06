@@ -20,6 +20,8 @@ pub struct Plan {
     pub apps_with_copy: usize,
     pub apps_store_only: usize,
     pub suggested: bool,
+    /// A web protection switch is on. It stops with Secblitz whatever the choice.
+    pub web_on: bool,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,6 +189,8 @@ pub fn plan() -> Result<Plan> {
         suggested: suggested::journal_path()
             .map(|p| suggested::recorded(&p))
             .unwrap_or(false),
+        web_on: secblitz::filter::config::config_path()
+            .is_ok_and(|p| secblitz::filter::config::load_config(&p).any_on()),
     })
 }
 
