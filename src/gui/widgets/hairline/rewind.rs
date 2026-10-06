@@ -8,7 +8,7 @@ use super::svg::{PathData, Seg};
 use crate::gui::theme::{mix, Palette};
 use crate::gui::widgets::anim::{self, DECELERATE, STANDARD};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
+use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Size, Theme, Vector};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::time::Instant;
 
@@ -78,10 +78,7 @@ pub struct Rewind {
 
 impl Rewind {
     pub fn view<'a, M: 'a>(self) -> Element<'a, M> {
-        canvas::Canvas::new(self)
-            .width(Length::Fixed(SIZE.width))
-            .height(Length::Fixed(SIZE.height))
-            .into()
+        super::fixed_canvas(self, SIZE)
     }
 
     fn busy(&self, st: &State, age: f32) -> bool {
@@ -595,12 +592,11 @@ fn badge_mark(run: Run) -> PathData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::MOTION_LOCK;
-    use crate::gui::widgets::hairline::Parallax;
+    use crate::gui::widgets::hairline::parallax::Parallax;
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
-    use iced::window;
     use std::time::Duration;
 
     const BOUNDS: Rectangle = Rectangle {
@@ -622,14 +618,7 @@ mod tests {
         }
     }
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     fn px(p: Point) -> Point {
         Stage::fit(UNITS, BOUNDS.size()).point(p)
@@ -693,8 +682,7 @@ mod tests {
 
     #[test]
     fn spins_back_then_rests_at_ten_past_ten_and_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
@@ -725,13 +713,11 @@ mod tests {
         assert!(st.m <= before && close(wrap(st.m - M0), 0.0) && close(wrap(st.h - H0), 0.0));
         assert!(close(wrap(st.ring), 0.0));
         assert!(frames as f32 * 0.016 >= BADGE_END - 0.05);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn dragging_turns_the_hands_without_a_jump_and_they_come_back() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let done = prog(Run::Done, None, t0);
         let mut st = State::default();
@@ -786,13 +772,11 @@ mod tests {
             Program::<()>::update(&done, &mut st, &frame(clock), BOUNDS, mouse::Cursor::Unavailable);
         }
         assert!(st.ease.is_none() && close(wrap(st.m - M0), 0.0));
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn a_drag_through_the_centre_does_not_swing_the_hands() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let done = prog(Run::Done, None, t0);
         let mut st = State::default();
@@ -810,13 +794,11 @@ mod tests {
             assert!(close(st.m, M0), "jumped at step {i}: {}", st.m - M0);
         }
         assert!(st.held && st.grab.is_some());
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn clicks_beside_the_clock_make_no_ring() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let working = prog(Run::Working, Some(0.2), t0);
         let mut st = State::default();
@@ -834,13 +816,11 @@ mod tests {
         assert!(!st.live.pulses.alive() && st.spin == 0.0);
         click(&mut st, px(C));
         assert!(st.live.pulses.alive() && st.spin > 0.0);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn a_tracked_arrow_stays_a_track_through_the_result() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
@@ -868,13 +848,11 @@ mod tests {
         clock += Duration::from_millis(16);
         Program::<()>::update(&again, &mut st, &frame(clock), BOUNDS, off);
         assert!(!st.tracked && st.fill.value == 0.0);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_rests_at_once() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let mut st = State::default();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
@@ -896,6 +874,5 @@ mod tests {
         )));
         assert!(close(wrap(st.m - M0), 0.0) && st.ease.is_none());
         assert_eq!(still_pose(Run::Done, &st), (M0, H0, 0.0));
-        anim::set_reduced_override(None);
     }
 }

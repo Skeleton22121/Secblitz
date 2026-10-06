@@ -399,6 +399,11 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     column![header, spacer, page].into()
 }
 
+pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    state.visited = true;
+    refresh(ctx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,10 +442,4 @@ mod tests {
         assert_eq!(d.latest, Some((4, 5)));
         assert_eq!(d.points.len(), 2);
     }
-}
-
-#[allow(clippy::items_after_test_module)]
-pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    state.visited = true;
-    refresh(ctx)
 }

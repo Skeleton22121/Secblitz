@@ -1,6 +1,6 @@
 //! Web protection: a turning globe sends traffic down to your PC.
 use super::motion::{lerp, phase, Spring};
-use super::parts::monitor;
+use super::parts::{monitor, Monitor};
 use super::pointer::{Area, Gesture, Hotspots, Layer, Spot};
 use super::stage::{pt, stroke, tint, Ink, Plate, Stage, W_ACCENT, W_LINE, W_PART, W_THICK};
 use super::svg::{PathData, Seg};
@@ -9,7 +9,7 @@ use crate::gui::theme::{self, Palette};
 use crate::gui::widgets::anim::{self, DECELERATE, STANDARD};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry, Path, Text};
 use iced::widget::text::{LineHeight, Shaping};
-use iced::{mouse, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size, Theme};
+use iced::{mouse, Color, Element, Pixels, Point, Rectangle, Renderer, Size, Theme};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::LazyLock;
 use std::time::Instant;
@@ -628,38 +628,20 @@ impl State {
 }
 
 
-struct WebGlobe {
-    p: Palette,
-    plate: Plate,
-    guard: Guard,
-    changed: Instant,
-    now: Instant,
-    blocked: Option<[u64; 3]>,
-    labels: Labels,
+pub struct WebGlobe {
+    pub p: Palette,
+    pub plate: Plate,
+    pub guard: Guard,
+    pub changed: Instant,
+    pub now: Instant,
+    pub blocked: Option<[u64; 3]>,
+    pub labels: Labels,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn web_globe<'a, M: 'a>(
-    p: Palette,
-    plate: Plate,
-    guard: Guard,
-    changed: Instant,
-    now: Instant,
-    blocked: Option<[u64; 3]>,
-    labels: Labels,
-) -> Element<'a, M> {
-    canvas::Canvas::new(WebGlobe {
-        p,
-        plate,
-        guard,
-        changed,
-        now,
-        blocked,
-        labels,
-    })
-    .width(Length::Fixed(SIZE.width))
-    .height(Length::Fixed(SIZE.height))
-    .into()
+impl WebGlobe {
+    pub fn view<'a, M: 'a>(self) -> Element<'a, M> {
+        super::fixed_canvas(self, SIZE)
+    }
 }
 
 fn spots(guard: Guard, st: &State) -> Hotspots<Part> {
@@ -847,7 +829,19 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
 
         draw_globe(&mut f, &mid, &ink, st.spin);
-        monitor(&mut f, &mid, &ink, MON_CX, MON_TOP, MON_W, MON_H, ink.plate, 1.0);
+        monitor(
+            &mut f,
+            &mid,
+            &ink,
+            &Monitor {
+                cx: MON_CX,
+                top: MON_TOP,
+                w: MON_W,
+                h: MON_H,
+                screen: ink.plate,
+                alpha: 1.0,
+            },
+        );
 
         for d in &domes {
             draw_dome(&mut f, &front, &ink, d, st);
@@ -868,10 +862,10 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
 
         let pulse = dome_look(self.guard, &ink).map_or(ink.line, |l| l.0);
-        st.live.pulses.draw(&mut f, &stage, pulse);
-        st.live.draw_tooltip(&mut f, &self.p, &stage, &spots(self.guard, st), |id| {
-            self.label(st, id)
-        });
+        st.live
+            .draw_overlay(&mut f, &self.p, &stage, pulse, &spots(self.guard, st), |id| {
+                self.label(st, id)
+            });
         vec![f.into_geometry()]
     }
 
@@ -1088,10 +1082,10 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::MOTION_LOCK;
-    use crate::gui::widgets::hairline::Parallax;
-    use iced::{window, Vector};
+    use crate::gui::widgets::hairline::parallax::Parallax;
+    use iced::Vector;
     use std::time::Duration;
 
     const BOUNDS: Rectangle = Rectangle {
@@ -1113,14 +1107,7 @@ mod tests {
         }
     }
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     fn run(p: &WebGlobe, st: &mut State, e: &Event, cursor: mouse::Cursor) -> Option<Action<()>> {
         canvas::Program::<()>::update(p, st, e, BOUNDS, cursor)
@@ -1214,7 +1201,7 @@ mod tests {
         assert!((fade[0].weight + fade[1].weight - 1.0).abs() < 1e-4);
         assert_eq!(dome_states(Guard::Paused, Some(Guard::On), 1.0).len(), 1);
         assert!(dome_states(Guard::Off, Some(Guard::On), 1.0).is_empty());
-        let settled = dome_states(Guard::On, None, super::super::SETTLED_AGE);
+        let settled = dome_states(Guard::On, None, super::super::live::SETTLED_AGE);
         assert_eq!(settled[0].outline, 1.0);
     }
 
@@ -1311,8 +1298,7 @@ mod tests {
 
     #[test]
     fn drag_on_the_globe_spins_it_and_clicks_block_by_hand() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let p = prog(Guard::On, t0);
         let mut st = State::default();
@@ -1380,13 +1366,11 @@ mod tests {
         run(&off_prog, &mut st, &down, at(ad));
         run(&off_prog, &mut st, &up, at(ad));
         assert_eq!(st.items[0].phase, Phase::Go);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn traffic_rests_after_a_while_and_wakes_for_the_pointer() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let p = prog(Guard::On, t0);
         let mut st = State::default();
@@ -1431,13 +1415,11 @@ mod tests {
         }
         assert!(stopped && frames > 30);
         assert!(!st.awake());
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_is_one_still_picture_that_still_answers() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let p = prog(Guard::On, t0);
         let mut st = State::default();
@@ -1473,6 +1455,5 @@ mod tests {
         let paused = prog(Guard::Paused, t0 + Duration::from_secs(1));
         run(&paused, &mut st, &frame(t0 + Duration::from_secs(1)), off);
         assert_eq!(st.items, still_items(Guard::Paused));
-        anim::set_reduced_override(None);
     }
 }

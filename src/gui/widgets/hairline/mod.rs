@@ -14,37 +14,39 @@ pub mod svg;
 pub mod web_globe;
 
 pub use glyph::Glyph;
-pub use live::{Live, Step, SETTLED_AGE};
-pub use motion::{lerp, phase, Pulses, Spring, MAX_DT, PULSE_BIG, PULSE_LIFE, PULSE_SMALL};
-pub use parallax::{Parallax, DEPTHS};
-pub use parts::{badge, laptop, monitor, shield_mark, BadgeLook, Mark, ShieldLook};
-pub use pointer::{
-    interaction, label_width, tooltip, tooltip_rect, Area, Gesture, Hotspots, Layer, Pointer,
-    Spot, CLICK_SLOP, TIP_SIZE,
-};
+pub use live::Live;
 pub use rewind::Rewind;
 pub use shield_fill::{Run, ShieldFill};
-pub use stage::{
-    pt, stroke, tint, tint_by, Ink, Meaning, Plate, Sketch, Stage, TINT, W_ACCENT, W_FAINT,
-    W_INK, W_LINE, W_MARK, W_PART, W_THICK,
-};
-pub use svg::{ParseError, PathData, Seg};
+pub use stage::Plate;
 
-#[allow(unused_imports)]
-use crate::gui::theme::Palette;
-#[allow(unused_imports)]
-use crate::gui::widgets::anim;
+#[cfg(test)]
+mod testing;
+
+/// A drawing shown at exactly `size` logical pixels.
+pub fn fixed_canvas<'a, M: 'a>(
+    drawing: impl iced::widget::canvas::Program<M> + 'a,
+    size: iced::Size,
+) -> iced::Element<'a, M> {
+    iced::widget::canvas::Canvas::new(drawing)
+        .width(iced::Length::Fixed(size.width))
+        .height(iced::Length::Fixed(size.height))
+        .into()
+}
 
 #[cfg(test)]
 mod example {
     //! A complete tiny drawing: a badge with a shield that pulses while
     //! working and draws a tick in when done. Never shown; it proves the
     //! pieces fit and pins how `update` asks for frames.
-    use super::*;
-    use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::{self, DECELERATE, MOTION_LOCK};
+    use super::stage::{pt, stroke, Ink, Meaning, Stage, W_ACCENT, W_PART};
+    use super::testing::{frame, wants_frame};
+    use super::{Glyph, Live, Plate};
+    use super::motion::{phase, Spring};
+    use super::pointer::{Hotspots, Layer};
+    use crate::gui::theme::{Palette, LIGHT};
+    use crate::gui::widgets::anim::{self, DECELERATE};
     use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
-    use iced::{mouse, window, Point, Rectangle, Renderer, Size, Theme};
+    use iced::{mouse, Point, Rectangle, Renderer, Size, Theme};
     use std::time::{Duration, Instant};
 
     const UNITS: Size = Size::new(120.0, 96.0);
@@ -137,27 +139,27 @@ mod example {
             let back = st.live.layer(&stage, Layer::Back);
             let front = st.live.layer(&stage, Layer::Front);
 
-            f.stroke(&back.ellipse(CENTRE, 40.0, 32.0), ink.lo());
+            f.stroke(&back.circle(CENTRE, 40.0), ink.lo());
             if self.status == Status::Working {
                 let e = DECELERATE.at((t / 2.0).fract());
                 f.stroke(
                     &back.circle(CENTRE, R + 24.0 * e),
-                    ink.accent_line(ink.accent).with_color(ink.accent.scale_alpha(1.0 - e)),
+                    stroke(ink.accent, W_ACCENT).with_color(ink.accent.scale_alpha(1.0 - e)),
                 );
             }
             let color = match self.status {
                 Status::Done => ink.of(Meaning::Done),
-                Status::Working => ink.of(Meaning::Working),
+                Status::Working => ink.accent,
                 Status::Idle => ink.line,
             };
             let scale = 1.0 + 0.06 * st.pop.value;
-            let look = BadgeLook {
-                color,
-                scale,
-                glow: if st.live.hover.is_some() { 0.9 } else { 0.0 },
-                ..BadgeLook::new(&ink)
-            };
-            badge(&mut f, &front, &ink, Glyph::Shield, CENTRE, R, &look);
+            let disc = front.circle(CENTRE, R * scale);
+            f.fill(&disc, ink.tint(color));
+            f.stroke(&disc, stroke(color, W_PART));
+            f.stroke(
+                &front.icon(Glyph::Shield, CENTRE, R * scale * 1.15),
+                stroke(color, W_PART),
+            );
             let r = R * scale;
             if self.status == Status::Done {
                 let drawn = Glyph::Tick
@@ -189,9 +191,6 @@ mod example {
         height: 192.0,
     };
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
     fn tick(
         st: &mut State,
@@ -203,15 +202,10 @@ mod example {
         canvas::Program::update(prog, st, &frame(*clock), BOUNDS, cursor)
     }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     #[test]
     fn example_drawing_hovers_clicks_and_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let prog = Beacon {
             p: LIGHT,
@@ -301,13 +295,11 @@ mod example {
         }
         let secs = frames as f32 * 0.016;
         assert!((secs - DONE_END).abs() < 0.1, "{secs}");
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn example_drawing_is_still_under_reduced_motion() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let prog = Beacon {
             p: LIGHT,
@@ -326,7 +318,7 @@ mod example {
             over
         )));
         assert_eq!(st.live.ambient(t0, STILL), STILL);
-        assert_eq!(st.live.age(t0, t0), SETTLED_AGE);
+        assert_eq!(st.live.age(t0, t0), super::live::SETTLED_AGE);
         let moved = Event::Mouse(mouse::Event::CursorMoved {
             position: Point::new(120.0, 96.0),
         });
@@ -348,6 +340,5 @@ mod example {
         canvas::Program::update(&prog, &mut st, &up, BOUNDS, over);
         assert!(st.live.pointer.was_click);
         assert!(!st.pop.moving() && !st.live.pulses.alive());
-        anim::set_reduced_override(None);
     }
 }

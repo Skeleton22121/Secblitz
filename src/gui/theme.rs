@@ -1,5 +1,4 @@
 //! Design tokens: colours, type scale, spacing, radii and fonts.
-#![allow(dead_code)]
 
 use iced::font::{Family, Weight};
 use iced::{Color, Font, Theme};
@@ -211,7 +210,6 @@ pub const S10: f32 = 40.0;
 
 pub const CONTROL: f32 = 36.0;
 pub const CONTROL_SMALL: f32 = 28.0;
-pub const ROW: f32 = 48.0;
 pub const ROW_ITEM: f32 = 56.0;
 pub const ICON_ROW: f32 = 20.0;
 pub const MENU_ROW: f32 = 32.0;
@@ -219,8 +217,6 @@ pub const CONTENT_MAX: f32 = 560.0;
 pub const WINDOW_MIN_WIDTH: f32 = 880.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 600.0;
 pub const CHECK: f32 = 18.0;
-pub const SETTING_ROW: f32 = ROW + S2;
-pub const CARD_BODY_MIN: f32 = ROW * 2.0;
 pub const DOT: f32 = 8.0;
 pub const HAIRLINE: f32 = 1.0;
 pub const MAX_READABLE: f32 = 420.0;
@@ -260,3 +256,38 @@ pub const FONT_FILES: [&[u8]; 4] = [
     include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf"),
     include_bytes!("../../assets/fonts/IBMPlexSans-Bold.ttf"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mix_blends_and_clamps_the_amount() {
+        let (a, b) = (Color::from_rgb(0.0, 0.2, 1.0), Color::from_rgb(1.0, 0.6, 0.0));
+        assert_eq!(mix(a, b, 0.0), a);
+        assert_eq!(mix(a, b, 1.0), b);
+        assert_eq!(mix(a, b, -3.0), a);
+        assert_eq!(mix(a, b, 9.0), b);
+        let mid = mix(a, b, 0.5);
+        assert!((mid.r - 0.5).abs() < 1e-6 && (mid.g - 0.4).abs() < 1e-6 && (mid.b - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn palette_follows_the_mode() {
+        assert_eq!(Palette::of(Mode::Light), LIGHT);
+        assert_eq!(Palette::of(Mode::Dark), DARK);
+        assert_ne!(LIGHT.bg, DARK.bg);
+    }
+
+    #[test]
+    fn tints_are_see_through_versions_of_the_tone() {
+        for p in [LIGHT, DARK] {
+            for tone in [Tone::Good, Tone::Warn, Tone::Bad, Tone::Neutral, Tone::Brand] {
+                let t = p.tint(tone);
+                assert!(t.a > 0.0 && t.a < 0.2);
+                assert_eq!((t.r, t.g, t.b), (p.tone(tone).r, p.tone(tone).g, p.tone(tone).b));
+            }
+        }
+        assert!(DARK.tint(Tone::Good).a > LIGHT.tint(Tone::Good).a);
+    }
+}

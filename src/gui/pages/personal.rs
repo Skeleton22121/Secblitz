@@ -1,4 +1,4 @@
-//! "Your account" and "App updates" settings.
+//! Per-account settings and updates for the apps the user installed, not Windows apps or Secblitz.
 use crate::broker::{Reply, Request};
 use crate::explain;
 use crate::gui::icons::Icon;
@@ -8,8 +8,8 @@ use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{Ctx, Message};
 use crate::user_apps::APPS;
 use crate::user_settings::{Op, Setting};
-use iced::widget::{column, container, space};
-use iced::{Element, Length, Padding, Task};
+use iced::widget::{column, space};
+use iced::{Element, Length, Task};
 
 type El<'a> = Element<'a, Message>;
 
@@ -259,18 +259,6 @@ fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
     widgets::action(p, ButtonKind::Secondary, label, None, msg.map(wrap))
 }
 
-fn under<'a>(items: Vec<El<'a>>) -> El<'a> {
-    container(column(items).spacing(theme::S2).width(Length::Fill))
-        .padding(Padding {
-            top: 0.0,
-            right: theme::S4,
-            bottom: theme::S2,
-            left: theme::S4 + theme::ICON_ROW + theme::S4,
-        })
-        .width(Length::Fill)
-        .into()
-}
-
 fn block<'a>(head: El<'a>, extra: Option<El<'a>>) -> El<'a> {
     match extra {
         Some(e) => column![head, e].width(Length::Fill).into(),
@@ -287,7 +275,7 @@ fn explainer<'a>(state: &State, ctx: &Ctx, id: &str, detail: Detail) -> Option<E
         line(p, ctx.t("If you turn it on"), ctx.t(e.change)),
     ]
     .spacing(theme::S2);
-    Some(under(vec![widgets::expander(
+    Some(widgets::under_row(vec![widgets::expander(
         p,
         ctx.t("More details"),
         state.open.contains(&detail),
@@ -443,7 +431,7 @@ fn apps_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 space::horizontal().width(0),
                 None,
             ),
-            Some(under(vec![progress::indeterminate(p, Tone::Brand)])),
+            Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
         )),
         Apps::Failed(why) => rows.push(widgets::row_item_tinted(
             p,
@@ -514,7 +502,7 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
                 space::horizontal().width(0),
                 None,
             ),
-            Some(under(vec![progress::indeterminate(p, Tone::Brand)])),
+            Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
         ),
         AppCell::Updated => widgets::row_item_tinted(
             p,

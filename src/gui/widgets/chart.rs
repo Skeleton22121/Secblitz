@@ -35,14 +35,6 @@ pub fn monotone_tangents(ys: &[f32]) -> Vec<f32> {
     m
 }
 
-pub fn hermite(y0: f32, y1: f32, m0: f32, m1: f32, u: f32) -> f32 {
-    let (u2, u3) = (u * u, u * u * u);
-    (2.0 * u3 - 3.0 * u2 + 1.0) * y0
-        + (u3 - 2.0 * u2 + u) * m0
-        + (-2.0 * u3 + 3.0 * u2) * y1
-        + (u3 - u2) * m1
-}
-
 pub fn y_domain(values: impl Iterator<Item = f32>) -> (f32, f32) {
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for v in values {
@@ -456,6 +448,14 @@ pub fn trend<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hermite(y0: f32, y1: f32, m0: f32, m1: f32, u: f32) -> f32 {
+        let (u2, u3) = (u * u, u * u * u);
+        (2.0 * u3 - 3.0 * u2 + 1.0) * y0
+            + (u3 - 2.0 * u2 + u) * m0
+            + (-2.0 * u3 + 3.0 * u2) * y1
+            + (u3 - u2) * m1
+    }
 
     fn sample(ys: &[f32], per: usize) -> Vec<f32> {
         let m = monotone_tangents(ys);

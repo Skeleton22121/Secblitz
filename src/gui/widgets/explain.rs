@@ -4,8 +4,8 @@ use crate::explain::{self, Explainer};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
 use crate::gui::{Ctx, Message};
-use iced::widget::{column, container, row, space};
-use iced::{Background, Border, Element, Length};
+use iced::widget::{column, row, space};
+use iced::{Element, Length};
 
 pub fn key(scope: &str, id: &str) -> String {
     format!("{scope}:{id}")
@@ -47,7 +47,8 @@ fn lines<'a>(ctx: &Ctx, e: Explainer, report_only: bool) -> Element<'a, Message>
     } else {
         ctx.t("If you turn it on")
     };
-    container(
+    super::well(
+        p,
         column![
             block(p, ctx.t("What it is"), ctx.t(e.what)),
             block(p, ctx.t("If it's off"), ctx.t(e.risk)),
@@ -55,16 +56,6 @@ fn lines<'a>(ctx: &Ctx, e: Explainer, report_only: bool) -> Element<'a, Message>
         ]
         .spacing(theme::S3),
     )
-    .padding(theme::S3)
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-        background: Some(Background::Color(p.surface_alt)),
-        border: Border {
-            radius: theme::R.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    })
     .into()
 }
 
@@ -105,5 +96,21 @@ pub fn with_disclosure<'a>(
     match panel(ctx, scope, id, report_only, lead_indent) {
         Some(inset) => column![line, inset].spacing(theme::S1).into(),
         None => line.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_pair_the_page_with_the_check() {
+        assert_eq!(key("fixes", "firewall.on"), "fixes:firewall.on");
+        assert_ne!(key("fixes", "a"), key("home", "a"));
+    }
+
+    #[test]
+    fn the_panel_lines_up_with_row_text() {
+        assert_eq!(INDENT, theme::S4 + theme::ICON_ROW + theme::S4);
     }
 }
