@@ -844,4 +844,202 @@ $script:calls = @()
 HSetSmartScreen (HDef 'EnableSmartScreen') $null
 Assert ((CallLog) -ceq 'remove:EnableSmartScreen') "policy value removed: $(CallLog)"
 
+# ---- accounts.stale_enabled (old accounts: switched off, never deleted)
+$staleJson = '{"id":"accounts.stale_enabled","source":"StaleAccounts","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
+MakeSpec $staleJson
+$bob = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+$amy = 'S-1-5-21-1111111111-2222222222-3333333333-1002'
+$me = 'S-1-5-21-1111111111-2222222222-3333333333-1003'
+$adm = 'S-1-5-21-1111111111-2222222222-3333333333-500'
+foreach ($ok in @($bob, 'S-1-5-21-1-2-3-1000', 'S-1-5-21-1-2-3-4294967295')) { Assert (HNameOk $ok) "account $ok" }
+foreach ($bad in @('', 'Bob', 'S-1-5-21-1-2-3-500', 'S-1-5-21-1-2-3-501', 'S-1-5-21-1-2-3-503', 'S-1-5-21-1-2-3-504', 'S-1-5-21-1-2-3-999', 'S-1-5-21-1-2-3-01001', 'S-1-5-21-1-2-3', 'S-1-5-21-1-2-3-1001-5', 'S-1-5-32-544', 'S-1-1-0', 's-1-5-21-1-2-3-1001', "S-1-5-21-1-2-3-1001'; calc", 'S-1-5-21-1-2-3-4294967296', "S-1-5-21-1-2-3-1001`n")) { Assert (!(HNameOk $bad)) "account name accepted: $bad" }
+function U([string]$sid, [bool]$enabled, $last) { [pscustomobject]@{ SID = [pscustomobject]@{ Value = $sid }; Enabled = $enabled; LastLogon = $last } }
+$old = (Get-Date).AddDays(-400); $recent = (Get-Date).AddDays(-10)
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent), (U $adm $true $old), (U 'S-1-5-21-1111111111-2222222222-3333333333-1004' $false $old), (U 'S-1-5-21-1111111111-2222222222-3333333333-1005' $true $null), (U 'S-1-5-21-1111111111-2222222222-3333333333-501' $true $old))
+function Get-LocalUser { param($SID, $ErrorAction)
+    if ($null -eq $SID) { return $script:users }
+    $s = if ($SID -is [string]) { $SID } else { [string]$SID.Value }
+    $f = @($script:users | Where-Object { $_.SID.Value -ceq $s })
+    if ($f.Count -eq 0) { $e = [Management.Automation.ErrorRecord]::new([Exception]::new('not found'), 'UserNotFound', [Management.Automation.ErrorCategory]::ObjectNotFound, $s); throw $e }
+    return $f[0]
+}
+$script:inUse = @{ $me = $true }
+$script:inUseFails = $false
+function HAccountsInUse { if ($script:inUseFails) { throw 'sessions unreadable' }; return $script:inUse.Clone() }
+$script:admins = @($me, $bob)
+function HEnabledAdminSids { if ($script:adminsFail) { throw 'group unreadable' }; return @($script:admins) }
+$script:adminsFail = $false
+$script:hWanted = @{}
+$r = HReadStale
+Assert ($r.Count -eq 2 -and $r[$bob] -eq 1 -and $r[$amy] -eq 1) 'only enabled, user-created accounts idle for 180 days are listed (never built-ins, new, disabled or never-signed-in ones)'
+$script:inUse = @{ $me = $true; $bob = $true }
+$r = HReadStale
+Assert ($r.Count -eq 1 -and $r[$amy] -eq 1) 'an account that is signed in or runs a service is never listed'
+$script:inUseFails = $true
+$r = HReadStale
+Assert ($r.Count -eq 2) 'unreadable sessions still list candidates (the preflight then refuses)'
+$script:inUseFails = $false; $script:inUse = @{ $me = $true }
+$script:hWanted = @{ $bob = 1; 'S-1-5-21-1111111111-2222222222-3333333333-1099' = 0 }
+$script:users = @((U $bob $false $old), (U $amy $true $old))
+$r = HReadStale
+Assert ($r[$bob] -eq 0 -and $r['S-1-5-21-1111111111-2222222222-3333333333-1099'] -eq 0 -and $r[$amy] -eq 1) 'a switched-off account reads as 0, never dropped'
+$script:hWanted = @{}
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent), (U $adm $true $old))
+# Preflight: sessions must be readable, and an administrator must stay.
+HStalePreflight
+$script:inUseFails = $true
+Reject { HStalePreflight } 'Not offered: Secblitz cannot tell who is signed in'
+$script:inUseFails = $false
+$script:admins = @($bob); $script:inUse = @{ $me = $true }
+Reject { HStalePreflight } 'Not offered: no other administrator account is enabled'
+$script:admins = @($bob, $adm)
+Reject { HStalePreflight } 'Not offered: no other administrator account is enabled'
+$script:admins = @($bob, $me)
+HStalePreflight
+$script:adminsFail = $true
+Reject { HStalePreflight } 'could be confirmed'
+$script:adminsFail = $false
+$script:admins = @($me, $amy)
+HStalePreflight
+# Writers: Disable-LocalUser / Enable-LocalUser only, with the checks repeated at write time.
+$script:calls = @()
+function Disable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('disable', $SID) }
+function Enable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('enable', $SID) }
+$script:admins = @($me, $bob)
+HSetStale $bob 0
+HSetStale $bob 1
+Assert ((CallLog) -ceq 'disable:S-1-5-21-1111111111-2222222222-3333333333-1001,enable:S-1-5-21-1111111111-2222222222-3333333333-1001') "stale writer: $(CallLog)"
+$script:calls = @()
+$script:inUse = @{ $me = $true; $bob = $true }
+Reject { HSetStale $bob 0 } 'in use'
+$script:inUse = @{ $me = $true }
+$script:admins = @($bob)
+Reject { HSetStale $bob 0 } 'last administrator'
+$script:admins = @($bob, $adm)
+Reject { HSetStale $bob 0 } 'last administrator'
+Reject { HSetStale 'S-1-5-21-1-2-3-500' 0 } 'Invalid account'
+Reject { HSetStale 'Bob' 0 } 'Invalid account'
+Reject { HSetStale $bob 2 } 'Invalid account'
+Reject { HSetStale $bob $null } 'Invalid account'
+Reject { HSetStale 'S-1-5-21-1111111111-2222222222-3333333333-1077' 0 } 'no longer exists'
+HSetStale 'S-1-5-21-1111111111-2222222222-3333333333-1077' 1
+Assert ($script:calls.Count -eq 0) 'nothing is written for a refused or deleted account'
+Assert (HItemGone 'S-1-5-21-1111111111-2222222222-3333333333-1077') 'a deleted account is gone'
+Assert (!(HItemGone $bob)) 'an existing account is not gone'
+Assert (!(HVerified $bob 0 1)) 'switched-off account does not verify as restored'
+Assert (HVerified 'S-1-5-21-1111111111-2222222222-3333333333-1077' 0 1) 'undo of a deleted account is complete'
+Assert (!(HVerified 'S-1-5-21-1111111111-2222222222-3333333333-1077' 1 0)) 'a deleted account never verifies a switch-off'
+# Whole write transition through HWrite with the real reader.
+${function:HRead} = $realHRead
+function HSet([string]$name, $v) { if ($spec.source -ceq 'StaleAccounts') { HSetStale $name $v } else { HSetShare $name $v } }
+$script:preflightFails = $false; $script:blocked = $false
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent))
+$script:calls = @(); $script:admins = @($me)
+$script:inUse = @{ $me = $true }
+function Disable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('disable', $SID); ($script:users | Where-Object { $_.SID.Value -ceq $SID }).Enabled = $false }
+function Enable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('enable', $SID); ($script:users | Where-Object { $_.SID.Value -ceq $SID }).Enabled = $true }
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":0,`"$amy`":0}}")
+Assert ((CallLog) -ceq "disable:$bob,disable:$amy" -and !$script:users[0].Enabled -and !$script:users[1].Enabled -and $script:users[2].Enabled) "both old accounts were switched off, my own was not: $(CallLog)"
+$script:calls = @()
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":1,`"$amy`":1}}")
+Assert ((CallLog) -ceq "enable:$bob,enable:$amy" -and $script:users[0].Enabled -and $script:users[1].Enabled) "undo switched them back on: $(CallLog)"
+# An account that signed in meanwhile is not in the list any more: nothing is written.
+$script:calls = @(); $script:users = @((U $bob $true $recent), (U $me $true $recent))
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":0}}")
+Assert ($script:calls.Count -eq 0) 'no write for an account that is no longer old'
+# Undo after the person deleted the account: nothing to put back, and that is fine.
+$script:calls = @(); $script:users = @((U $me $true $recent))
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":1}}")
+Assert ($script:calls.Count -eq 0) 'undo of a deleted account writes nothing and succeeds'
+
+# ---- smb.shares_exposed (broad Change/Full entries on shared folders)
+$shareJson = '{"id":"smb.shares_exposed","source":"ShareGrants","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
+MakeSpec $shareJson
+foreach ($ok in @('Photos|S-1-1-0|Change', 'Work files|S-1-5-32-546|Full', 'Public|S-1-5-7|Change', 'Fotos für alle|S-1-1-0|Full')) { Assert (HNameOk $ok) "share entry $ok" }
+foreach ($bad in @('', 'C$|S-1-1-0|Full', 'ADMIN$|S-1-1-0|Full', 'IPC$|S-1-1-0|Change', 'print$|S-1-1-0|Full', 'Photos|S-1-5-11|Change', 'Photos|S-1-1-0|Read', 'Photos|S-1-1-0|change', 'Photos|Everyone|Change', 'Photos|S-1-1-0', 'Photos|S-1-1-0|Change|x', '|S-1-1-0|Change', ' Photos|S-1-1-0|Change', 'Pho"tos|S-1-1-0|Change', "Pho'tos|S-1-1-0|Change", "Pho`ntos|S-1-1-0|Change", 'Pho\tos|S-1-1-0|Change', 'Pho:tos|S-1-1-0|Change', "Photos|S-1-1-0|Change`n", ('x' * 81) + '|S-1-1-0|Full')) { Assert (!(HNameOk $bad)) "share entry accepted: $bad" }
+function HAccountOfSid([string]$sid) { switch ($sid) { 'S-1-1-0' { return 'Everyone' } 'S-1-5-7' { return 'NT AUTHORITY\ANONYMOUS LOGON' } 'S-1-5-32-546' { return 'BUILTIN\Guests' } }; throw 'unexpected SID' }
+function Sh([string]$name, [bool]$special = $false) { [pscustomobject]@{ Name = $name; Special = $special } }
+function Ac([string]$account, [string]$right, [string]$type = 'Allow') { [pscustomobject]@{ AccountName = $account; AccessRight = $right; AccessControlType = $type } }
+$script:shares = @((Sh 'Photos'), (Sh 'Work files'), (Sh 'Music'), (Sh 'Locked'), (Sh 'C$' $true), (Sh 'Hidden$'), (Sh 'Weird''name'))
+$script:acl = @{
+    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'))
+    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'), (Ac 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
+    'Music' = @((Ac 'Everyone' 'Read'), (Ac 'PC\Bob' 'Full'))
+    'Locked' = @((Ac 'Everyone' 'Change' 'Deny'), (Ac 'PC\Amy' 'Read'))
+    'C$' = @((Ac 'Everyone' 'Full'))
+    'Hidden$' = @((Ac 'Everyone' 'Full'))
+    'Weird''name' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Read'))
+}
+function Get-SmbShare { param($Name, $ErrorAction); if ($Name) { return @($script:shares | Where-Object { $_.Name -ceq $Name }) }; return $script:shares }
+function Get-SmbShareAccess { param($Name, $ErrorAction); if ($script:acl.ContainsKey($Name)) { return $script:acl[$Name] }; return @() }
+$script:hWanted = @{}
+$r = HReadShares
+Assert ($r.Count -eq 2 -and $r['Photos|S-1-1-0|Change'] -eq 1 -and $r['Work files|S-1-5-32-546|Full'] -eq 1) 'only Everyone, Anonymous or Guests with Change or Full on a user-created share are listed (not Read, Deny, built-in, hidden or odd names)'
+Assert (HAnyUnsafe $r) 'a broad entry is unsafe'
+$script:hWanted = @{ 'Photos|S-1-1-0|Change' = 1; 'Gone|S-1-1-0|Full' = 1 }
+$script:acl['Photos'] = @((Ac 'BUILTIN\Administrators' 'Full'))
+$r = HReadShares
+Assert ($r['Photos|S-1-1-0|Change'] -eq 0 -and $r['Gone|S-1-1-0|Full'] -eq 0) 'a removed entry reads as 0, never dropped'
+$script:hWanted = @{}
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'))
+$script:shares = @($script:shares[0..6]) + @((Sh 'Extra1'))
+HSharesPreflight
+Assert $true 'folders that keep another allowed entry pass the preflight'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'))
+Reject { HSharesPreflight } 'Not offered: a shared folder would be left with no one who can open it'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'PC\Amy' 'Read' 'Deny'))
+Reject { HSharesPreflight } 'no one who can open it'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'))
+$script:acl['Work files'] = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
+HSharesPreflight
+Assert $true 'a broad Read entry that stays counts as someone who can open it'
+# Writers: Revoke / Grant only, exactly the recorded entry.
+$script:calls = @()
+$script:rows = @{}
+function Revoke-SmbShareAccess { param($Name, $AccountName, [switch]$Force, $ErrorAction); $script:calls += ,@('revoke', $Name, $AccountName); $script:acl[$Name] = @($script:acl[$Name] | Where-Object { $_.AccountName -ine $AccountName }) }
+function Grant-SmbShareAccess { param($Name, $AccountName, $AccessRight, [switch]$Force, $ErrorAction); $script:calls += ,@('grant', $Name, $AccountName, $AccessRight); $script:acl[$Name] = @($script:acl[$Name]) + @((Ac $AccountName ([string]$AccessRight))) }
+$script:acl['Work files'] = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+HSetShare 'Photos|S-1-1-0|Change' 0
+HSetShare 'Photos|S-1-1-0|Change' 1
+Assert ((CallLog) -ceq 'revoke:Photos:Everyone,grant:Photos:Everyone:Change') "share writer: $(CallLog)"
+Assert (@($script:acl['Photos']).Count -eq 2 -and @($script:acl['Photos'] | Where-Object { $_.AccountName -ceq 'BUILTIN\Administrators' }).Count -eq 1) 'the other entries are untouched'
+$script:calls = @()
+Reject { HSetShare 'Photos|S-1-1-0|Full' 0 } 'entry changed'
+Reject { HSetShare 'Photos|S-1-5-7|Change' 0 } 'entry changed'
+Reject { HSetShare 'Photos|S-1-1-0|Change' 2 } 'Invalid shared folder state'
+Reject { HSetShare 'Photos|S-1-1-0|Change' $null } 'Invalid shared folder state'
+Reject { HSetShare 'C$|S-1-1-0|Full' 0 } 'Unknown hardening item'
+Reject { HSetShare 'Photos|S-1-5-11|Change' 0 } 'Unknown hardening item'
+Reject { HSetShare 'Missing|S-1-1-0|Change' 0 } 'no longer exists'
+HSetShare 'Missing|S-1-1-0|Change' 1
+$script:acl['Locked'] = @((Ac 'Everyone' 'Change'))
+Reject { HSetShare 'Locked|S-1-1-0|Change' 0 } 'no one who can open it'
+$script:acl['Locked'] = @((Ac 'Everyone' 'Read'), (Ac 'PC\Amy' 'Read'))
+Reject { HSetShare 'Locked|S-1-1-0|Change' 1 } 'left alone'
+Assert ($script:calls.Count -eq 0) 'nothing is written for a refused change'
+$script:acl['Locked'] = @((Ac 'Everyone' 'Change'), (Ac 'PC\Amy' 'Read'))
+HSetShare 'Locked|S-1-1-0|Change' 1
+Assert ($script:calls.Count -eq 0) 'putting back an entry that is already there writes nothing'
+Assert (HItemGone 'Missing|S-1-1-0|Change') 'a removed share is gone'
+Assert (!(HItemGone 'Photos|S-1-1-0|Change')) 'an existing share is not gone'
+Assert (HVerified 'Missing|S-1-1-0|Change' 0 1) 'undo of a removed share is complete'
+Assert (!(HVerified 'Photos|S-1-1-0|Change' 0 1)) 'a missing entry on an existing share does not verify as restored'
+# Whole write transition through HWrite with the real reader.
+$script:calls = @(); $script:hWanted = @{}
+$script:shares = @((Sh 'Photos'), (Sh 'Work files'))
+$script:acl = @{
+    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'))
+    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+}
+HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}')
+Assert ((CallLog) -ceq 'revoke:Photos:Everyone,revoke:Work files:BUILTIN\Guests' -and @($script:acl['Photos']).Count -eq 1 -and @($script:acl['Work files']).Count -eq 1) "both broad entries removed: $(CallLog)"
+$script:calls = @()
+HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":1,"Work files|S-1-5-32-546|Full":1}}')
+Assert ((CallLog) -ceq 'grant:Photos:Everyone:Change,grant:Work files:BUILTIN\Guests:Full' -and @($script:acl['Photos']).Count -eq 2 -and @($script:acl['Work files']).Count -eq 2) "undo put both entries back: $(CallLog)"
+# A folder that would be left empty blocks the repair before anything is written.
+$script:calls = @()
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'))
+Reject { HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}') } 'Not offered'
+Assert ($script:calls.Count -eq 0) 'no entry was removed from any folder'
+
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

@@ -112,6 +112,15 @@ pub fn run(action: Action) -> Result<ActionResult> {
     })
 }
 
+pub use crate::platform::ThreatRemoval;
+
+/// Blocking, explicitly confirmed: ask Defender to remove the threats it has
+/// found. What Defender removes goes to quarantine, where Windows Security can
+/// restore it. Only Defender's own counts are returned, never a claim of safety.
+pub fn remove_threats() -> Result<ThreatRemoval> {
+    crate::platform::remove_threats()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

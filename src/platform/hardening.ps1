@@ -24,6 +24,8 @@ function HNameOk([string]$name) {
     if ($spec.source -ceq 'NetbiosAdapters') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
     if ($spec.source -ceq 'LegacyServices') { return ((HServiceNames) -ccontains $name) }
     if ($spec.source -ceq 'DefenderExclusions') { return (HExclusionNameOk $name) }
+    if ($spec.source -ceq 'StaleAccounts') { return (HStaleNameOk $name) }
+    if ($spec.source -ceq 'ShareGrants') { return (HShareNameOk $name) }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -298,6 +300,8 @@ function HRead() {
         'UpdatePause' { return (HReadPause) }
         'SmartScreen' { return (HReadSmartScreen) }
         'DefenderExclusions' { return (HReadExclusions) }
+        'StaleAccounts' { return (HReadStale) }
+        'ShareGrants' { return (HReadShares) }
     }
     throw 'Unknown hardening source'
 }
@@ -448,6 +452,8 @@ function HPreflight() {
             }
         }
         'net.netbios' { HNetbiosPreflight }
+        'accounts.stale_enabled' { HStalePreflight }
+        'smb.shares_exposed' { HSharesPreflight }
         'accounts.builtin_administrator' {
             Load 'Microsoft.PowerShell.LocalAccounts'
             $other = $false
@@ -690,6 +696,8 @@ function HSet([string]$name, $v) {
         'UpdatePause' { HSetPause $def $v }
         'SmartScreen' { HSetSmartScreen $def $v }
         'DefenderExclusions' { HSetExclusion $name $v }
+        'StaleAccounts' { HSetStale $name $v }
+        'ShareGrants' { HSetShare $name $v }
         default { throw 'Unknown hardening source' }
     }
 }
@@ -701,6 +709,9 @@ function HSet([string]$name, $v) {
 # ====================================================================
 function HVerified([string]$name, $have, $want) {
     if (HEq $have $want) { return $true }
+    # An account or shared folder the person deleted since the fix has nothing
+    # left to put back: undo is complete.
+    if (($spec.source -ceq 'StaleAccounts' -or $spec.source -ceq 'ShareGrants') -and $null -ne $want -and [int64]$want -eq 1 -and (HItemGone $name)) { return $true }
     # An update pause that already ended cannot be put back: nothing is in force.
     if ($spec.source -ceq 'UpdatePause' -and $null -ne $want -and $null -ne $have -and [int64]$have -eq 0 -and !(HPauseWantedActive)) { return $true }
     return $false
@@ -1025,6 +1036,234 @@ function HSetExclusion([string]$name, $v) {
         'ext' { if ($add) { Add-MpPreference -ExclusionExtension $p.value } else { Remove-MpPreference -ExclusionExtension $p.value } }
         'proc' { if ($add) { Add-MpPreference -ExclusionProcess $p.value } else { Remove-MpPreference -ExclusionProcess $p.value } }
     }
+}
+
+# ---- accounts.stale_enabled (name = account SID, 1 = switched on, 0 = switched off)
+# Only user-created local accounts (RID 1000 and up) that are switched on and
+# have not signed in for 180 days. Nothing is ever deleted: the repair is
+# Disable-LocalUser and undo is Enable-LocalUser.
+function HStaleNameOk([string]$name) {
+    $m = [regex]::Match($name, '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-([1-9][0-9]{3,9})\z')
+    if (!$m.Success) { return $false }
+    $rid = [int64]$m.Groups[1].Value
+    return ($rid -ge 1000 -and $rid -le 4294967295)
+}
+function HCurrentSid() {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    if ($null -eq $me) { throw 'The signed-in account cannot be identified' }
+    return [string]$me.Value
+}
+function HSidOfAccount([string]$account) {
+    return ([Security.Principal.NTAccount]$account).Translate([Security.Principal.SecurityIdentifier]).Value
+}
+function HAccountOfSid([string]$sid) {
+    return ([Security.Principal.SecurityIdentifier]$sid).Translate([Security.Principal.NTAccount]).Value
+}
+function HAccountsInUse() {
+    # SIDs that must not be switched off: the account running this, every
+    # account with a live sign-in session, and every account a service runs as.
+    # Any doubt throws: the caller then treats the whole control as not offered.
+    Load 'CimCmdlets'
+    $inUse = @{}
+    $inUse[(HCurrentSid)] = $true
+    $live = @{}
+    foreach ($s in @(Get-CimInstance -ClassName Win32_LogonSession)) { $live[[string]$s.LogonId] = $true }
+    foreach ($l in @(Get-CimInstance -ClassName Win32_LoggedOnUser)) {
+        if (!$live.ContainsKey([string]$l.Dependent.LogonId)) { continue }
+        # Only local accounts can be switched off here; system sessions
+        # (SYSTEM, window manager, font driver) belong to other domains.
+        if ([string]$l.Antecedent.Domain -ine $env:COMPUTERNAME) { continue }
+        $who = ([string]$l.Antecedent.Domain) + '\' + ([string]$l.Antecedent.Name)
+        $inUse[(HSidOfAccount $who)] = $true
+    }
+    $console = [string](Get-CimInstance -ClassName Win32_ComputerSystem).UserName
+    if ($console) { $inUse[(HSidOfAccount $console)] = $true }
+    foreach ($svc in @(Get-CimInstance -ClassName Win32_Service)) {
+        $start = [string]$svc.StartName
+        if (!$start -or $start -cmatch '^(LocalSystem|NT AUTHORITY\\|NT SERVICE\\)') { continue }
+        if ($start.StartsWith('.\')) { $start = $env:COMPUTERNAME + $start.Substring(1) }
+        try { $inUse[(HSidOfAccount $start)] = $true } catch { }
+    }
+    return $inUse
+}
+function HStaleAccounts() {
+    Load 'Microsoft.PowerShell.LocalAccounts'
+    $cut = (Get-Date).AddDays(-180)
+    $out = @()
+    foreach ($u in @(Get-LocalUser)) {
+        if ($u.Enabled -ne $true) { continue }
+        if (!(HStaleNameOk ([string]$u.SID.Value))) { continue }
+        if ($null -eq $u.LastLogon -or $u.LastLogon -ge $cut) { continue }
+        $out += $u
+    }
+    return $out
+}
+function HEnabledAdminSids() {
+    Load 'Microsoft.PowerShell.LocalAccounts'
+    $out = @()
+    foreach ($m in @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop)) {
+        $sid = [string]$m.SID.Value
+        if ([string]$m.ObjectClass -cne 'User' -or $sid -cnotmatch '^S-1-5-21-[0-9-]+$') { continue }
+        if ((Get-LocalUser -SID $m.SID -ErrorAction Stop).Enabled -eq $true) { $out += $sid }
+    }
+    return $out
+}
+function HReadStale() {
+    $out = @{}
+    try { $skip = HAccountsInUse } catch {
+        # Unreadable: list nothing the running account could be. The preflight
+        # then refuses the repair with a plain reason.
+        $skip = @{}
+        try { $skip[(HCurrentSid)] = $true } catch { }
+    }
+    foreach ($u in @(HStaleAccounts)) {
+        $sid = [string]$u.SID.Value
+        if ($skip.ContainsKey($sid)) { continue }
+        $out[$sid] = 1
+    }
+    # A switched-off account is simply no longer listed: that is the safe state "0".
+    foreach ($name in @(HWantedNames)) { if (!$out.ContainsKey($name)) { $out[$name] = 0 } }
+    if ($out.Count -gt 256) { throw 'Too many old accounts to handle at once' }
+    return $out
+}
+function HStalePreflight() {
+    try { $inUse = HAccountsInUse } catch { throw 'Not offered: Secblitz cannot tell who is signed in' }
+    $candidates = @(HStaleAccounts | ForEach-Object { [string]$_.SID.Value } | Where-Object { !$inUse.ContainsKey($_) })
+    if ($candidates.Count -eq 0) { return }
+    try { $admins = @(HEnabledAdminSids) } catch { throw 'Not offered: no other administrator account could be confirmed' }
+    $leaving = @($admins | Where-Object { $candidates -ccontains $_ })
+    if ($leaving.Count -gt 0) {
+        # Someone who can actually sign in as an administrator must stay (the
+        # built-in Administrator account does not count).
+        $staying = @($admins | Where-Object { ($candidates -cnotcontains $_) -and ($_ -cnotmatch '-500$') })
+        if ($staying.Count -eq 0) { throw 'Not offered: no other administrator account is enabled' }
+    }
+}
+function HSetStale([string]$sid, $v) {
+    if (!(HStaleNameOk $sid) -or $null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid account state' }
+    Load 'Microsoft.PowerShell.LocalAccounts'
+    $user = $null
+    try { $user = Get-LocalUser -SID $sid -ErrorAction Stop }
+    catch {
+        if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }
+        # Deleted since the fix: there is nothing to switch back on.
+        if ([int]$v -eq 1) { return }
+        throw 'The account no longer exists; nothing was changed'
+    }
+    if ([int]$v -eq 1) { Enable-LocalUser -SID $sid -ErrorAction Stop; return }
+    # Re-check at the moment of the write, whatever was true when it was offered.
+    $inUse = HAccountsInUse
+    if ($inUse.ContainsKey($sid)) { throw 'This account is in use; nothing was changed' }
+    $admins = @(HEnabledAdminSids)
+    if (($admins -ccontains $sid) -and @($admins | Where-Object { $_ -cne $sid -and $_ -cnotmatch '-500$' }).Count -eq 0) { throw 'This is the last administrator account; nothing was changed' }
+    Disable-LocalUser -SID $sid -ErrorAction Stop
+}
+
+# ---- smb.shares_exposed (name = "share|SID|right", 1 = entry present, 0 = removed)
+# One name per broad entry (Everyone, Anonymous logon or Guests with Change or
+# Full) on a user-created share. The repair removes just that entry with
+# Revoke-SmbShareAccess; undo grants the same right back. Other entries,
+# administrative shares and the share itself are never touched.
+function HShareParts([string]$name) {
+    if ($name -cnotmatch '^[^\x00-\x1f\x7f"/\\\[\]:|<>+=;,?*'']{1,80}\|(S-1-1-0|S-1-5-7|S-1-5-32-546)\|(Change|Full)\z') { return $null }
+    $parts = $name.Split('|')
+    if ($parts.Count -ne 3 -or $parts[0].EndsWith('$') -or $parts[0].Trim() -cne $parts[0]) { return $null }
+    return @{ share = $parts[0]; sid = $parts[1]; right = $parts[2] }
+}
+function HShareNameOk([string]$name) { return ($null -ne (HShareParts $name)) }
+function HBroadAccounts() {
+    $map = @{}
+    foreach ($sid in @('S-1-1-0', 'S-1-5-7', 'S-1-5-32-546')) {
+        $map[$sid] = HAccountOfSid $sid
+    }
+    return $map
+}
+function HBroadShareEntries() {
+    Load 'SmbShare'
+    $broad = HBroadAccounts
+    $found = @()
+    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { -not $_.Special })
+    if ($shares.Count -gt 64) { throw 'Too many shared folders to handle at once' }
+    foreach ($share in $shares) {
+        $shareName = [string]$share.Name
+        if ($shareName.EndsWith('$')) { continue }
+        foreach ($access in @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop)) {
+            if ([string]$access.AccessControlType -cne 'Allow') { continue }
+            $right = [string]$access.AccessRight
+            if (@('Change', 'Full') -cnotcontains $right) { continue }
+            foreach ($sid in @($broad.Keys)) {
+                if ([string]$access.AccountName -ine [string]$broad[$sid]) { continue }
+                $item = $shareName + '|' + $sid + '|' + $right
+                if (HShareNameOk $item) { $found += @{ name = $item; share = $shareName } }
+            }
+        }
+    }
+    return $found
+}
+function HReadShares() {
+    $out = @{}
+    foreach ($e in @(HBroadShareEntries)) { $out[$e.name] = 1 }
+    # A removed entry is simply no longer listed: that is the safe state "0".
+    foreach ($name in @(HWantedNames)) { if (!$out.ContainsKey($name)) { $out[$name] = 0 } }
+    if ($out.Count -gt 256) { throw 'Too many shared folder entries to handle at once' }
+    return $out
+}
+function HSharesPreflight() {
+    Load 'SmbShare'
+    $broad = HBroadAccounts
+    $removing = @{}
+    $entries = @(HBroadShareEntries)
+    foreach ($e in $entries) { $removing[$e.name] = $true }
+    foreach ($shareName in @($entries | ForEach-Object { $_.share } | Sort-Object -Unique)) {
+        $left = @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop | Where-Object {
+            if ([string]$_.AccessControlType -cne 'Allow') { return $false }
+            foreach ($sid in @($broad.Keys)) {
+                if ([string]$_.AccountName -ieq [string]$broad[$sid] -and $removing.ContainsKey($shareName + '|' + $sid + '|' + [string]$_.AccessRight)) { return $false }
+            }
+            return $true
+        })
+        if ($left.Count -eq 0) { throw 'Not offered: a shared folder would be left with no one who can open it' }
+    }
+}
+function HSetShare([string]$name, $v) {
+    $p = HShareParts $name
+    if ($null -eq $p) { throw 'Unknown hardening item' }
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid shared folder state' }
+    Load 'SmbShare'
+    $share = @(Get-SmbShare -Name $p.share -ErrorAction SilentlyContinue)
+    if ($share.Count -eq 0) {
+        # Removed since the fix: there is nothing to put back.
+        if ([int]$v -eq 1) { return }
+        throw 'The shared folder no longer exists; nothing was changed'
+    }
+    if ($share[0].Special -eq $true) { throw 'Built-in shares are never changed' }
+    $account = [string](HBroadAccounts)[$p.sid]
+    $rows = @(Get-SmbShareAccess -Name $p.share -ErrorAction Stop)
+    $mine = @($rows | Where-Object { [string]$_.AccountName -ieq $account -and [string]$_.AccessControlType -ceq 'Allow' })
+    if ([int]$v -eq 0) {
+        if (@($mine | Where-Object { [string]$_.AccessRight -ceq $p.right }).Count -ne 1) { throw 'The shared folder entry changed; nothing was changed' }
+        # Never leave a folder that nobody can open.
+        $left = @($rows | Where-Object { [string]$_.AccessControlType -ceq 'Allow' -and [string]$_.AccountName -ine $account })
+        if ($left.Count -eq 0) { throw 'Not offered: a shared folder would be left with no one who can open it' }
+        $null = Revoke-SmbShareAccess -Name $p.share -AccountName $account -Force -ErrorAction Stop
+        return
+    }
+    if ($mine.Count -gt 0) {
+        if (@($mine | Where-Object { [string]$_.AccessRight -ceq $p.right }).Count -eq $mine.Count) { return }
+        throw 'The shared folder entry changed; it was left alone'
+    }
+    $null = Grant-SmbShareAccess -Name $p.share -AccountName $account -AccessRight $p.right -Force -ErrorAction Stop
+}
+function HItemGone([string]$name) {
+    if ($spec.source -ceq 'StaleAccounts') {
+        Load 'Microsoft.PowerShell.LocalAccounts'
+        try { $null = Get-LocalUser -SID $name -ErrorAction Stop; return $false }
+        catch { if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return $true }; throw }
+    }
+    $p = HShareParts $name
+    if ($null -eq $p) { return $false }
+    Load 'SmbShare'
+    return (@(Get-SmbShare -Name $p.share -ErrorAction SilentlyContinue).Count -eq 0)
 }
 
 function HParseInput($inputValue) {

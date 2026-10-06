@@ -29,6 +29,7 @@ pub use view::{modal, view};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
     Scan,
+    RemoveThreats,
     DefenderUpdate,
     Repair(RepairKind),
     InstallUpdates,
@@ -83,6 +84,7 @@ fn request_for(action: actions::Action) -> Option<broker::Request> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
     Scan,
+    Threats,
     Defender,
     Repair,
     Updates,
@@ -101,6 +103,10 @@ pub enum Msg {
     CloseSheet,
     Confirm,
     ScanDone(Result<(), String>),
+    ThreatsDone(Result<actions::ThreatRemoval, String>),
+    ClearThreats,
+    /// Look over the Protection fix that solves a health tip.
+    SeeFix(&'static str),
     DefenderDone(Result<(), String>),
     ClearScan,
     ClearDefender,
@@ -212,6 +218,7 @@ pub struct Password {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
     Scan,
+    Threats,
     Defender,
     Repair,
     Updates,
@@ -225,6 +232,7 @@ const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 pub struct State {
     sheet: Option<Sheet>,
     scan: Run<Result<(), String>>,
+    threats: Run<Result<actions::ThreatRemoval, String>>,
     defender: Run<Result<(), String>>,
     repair: Repair,
     updates: Updates,
@@ -272,6 +280,7 @@ impl Default for State {
         Self {
             sheet: None,
             scan: Run::Idle,
+            threats: Run::Idle,
             defender: Run::Idle,
             repair: Repair::Idle,
             updates: Updates::Idle,
@@ -362,6 +371,30 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.scan = Run::Done(r);
             state.finish(Slot::Scan);
             Task::none()
+        }
+        Msg::ThreatsDone(r) => {
+            state.threats = Run::Done(r);
+            state.finish(Slot::Threats);
+            Task::none()
+        }
+        Msg::ClearThreats => {
+            state.threats = Run::Idle;
+            state.close_detail(Detail::Threats);
+            Task::none()
+        }
+        Msg::SeeFix(id) => {
+            // The review sheet opens right here when the latest check already
+            // offers the fix; otherwise the Protection page shows where it stands.
+            let offered = ctx.report.as_deref().is_some_and(|report| {
+                crate::app::flow::candidates(report, &ctx.catalog.available)
+                    .iter()
+                    .any(|c| c == id)
+            });
+            Task::done(if offered {
+                Message::ReviewFixes(vec![id.to_owned()])
+            } else {
+                Message::Navigate(crate::gui::Page::Fixes)
+            })
         }
         Msg::DefenderDone(r) => {
             state.defender = Run::Done(r);
@@ -646,6 +679,7 @@ impl State {
     /// A row shows the working spinner: a job of unknown length is running.
     fn spinning(&self) -> bool {
         matches!(self.scan, Run::Working)
+            || matches!(self.threats, Run::Working)
             || matches!(self.defender, Run::Working)
             || matches!(self.bitwarden, Run::Working)
             || matches!(self.updates, Updates::Looking)
@@ -680,6 +714,13 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                         .map_err(plain)
                 }),
                 |r| tools(Msg::ScanDone(r)),
+            )
+        }
+        Sheet::RemoveThreats => {
+            state.threats = Run::Working;
+            Task::perform(
+                blocking(|| actions::remove_threats().map_err(plain)),
+                |r| tools(Msg::ThreatsDone(r)),
             )
         }
         Sheet::DefenderUpdate => {
