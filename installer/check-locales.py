@@ -3,7 +3,8 @@ import pathlib
 import re
 
 
-INSTALL_KEYS = ("Monitor", "Failed", "FixedFolder", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon")
+INSTALL_KEYS = ("Monitor", "Failed", "FixedFolder", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon",
+                "PrivacyTitle", "PrivacySubtitle", "PrivacyText")
 REMOVE_KEYS = ("RemoveTitle", "RemoveQuestion", "KeepChoice", "KeepDetail", "PutBackChoice",
                "PutBackDetail", "RemoveNote", "WebStops", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft", "RemoveFailed")
 
@@ -84,6 +85,8 @@ def check(source):
     assert "PreviousHasUpdatePreference := RegQueryDWordValue(HKLM64, 'Software\\Secblitz', 'AutoUpdatesEnabled', Enabled);" in initialize[0]
     assert 'PreviousAutoUpdatesEnabled := True;' in initialize[0]
     assert 'if PreviousHasUpdatePreference then PreviousAutoUpdatesEnabled := Enabled <> 0;' in initialize[0]
+    assert re.search(r"PrivacyPage := CreateOutputMsgPage\(wpWelcome, CustomMessage\('PrivacyTitle'\),\s*"
+                     r"CustomMessage\('PrivacySubtitle'\), CustomMessage\('PrivacyText'\)\);", initialize[0])
     assert code.count('GetPreviousData(') == 1, 'Do not reread replaced uninstall data'
     for function, cached in (('DesktopDefault', 'PreviousDesktopSelected'),
                              ('AutoUpdatesDefault', 'PreviousAutoUpdatesEnabled'),
@@ -172,6 +175,7 @@ def regression_checks(source):
         (r'SetupMutex=Global\SecblitzSetup', ''),
         ('Check: AutoUpdatesDefault', 'Check: AutoUpdatesOptedOut'),
         ('procedure InitializeWizard;', 'procedure TooLate;'),
+        ("CreateOutputMsgPage(wpWelcome", "CreateOutputMsgPage(wpFinished"),
         ('Result := PreviousDesktopSelected;', 'Result := True;'),
         ('Result := PreviousAutoUpdatesEnabled;', 'Result := True;'),
         ('Result := PreviousHasUpdatePreference;', 'Result := True;'),

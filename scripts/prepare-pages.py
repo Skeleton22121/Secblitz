@@ -191,6 +191,22 @@ def verify_not_found_page(site):
     print("Static 404 page and root-relative assets verified.")
 
 
+def verify_privacy_page(site):
+    page = SiteReferences()
+    page.feed((site / "privacy.html").read_text(encoding="utf-8"))
+    for reference in page.references:
+        url = urlsplit(reference)
+        if url.scheme or url.netloc:
+            if url.scheme not in {"https", "mailto"}:
+                raise ValueError("privacy page may only link to https or mailto addresses")
+            continue
+        if url.path == "/":
+            continue
+        if not url.path.startswith("/") or not (site / local_reference(url.path)).is_file():
+            raise ValueError("privacy page references must be root-relative and exist")
+    print("Privacy page references verified.")
+
+
 def verify_migration_redirects(site, origin):
     """Keep legacy updater requests direct while allowing the two website redirects."""
     redirects = site / "_redirects"
@@ -291,6 +307,8 @@ def main():
     verify_site_references(site, effective_origin, expected, payload)
     if (site / "404.html").exists():
         verify_not_found_page(site)
+    if (site / "privacy.html").exists():
+        verify_privacy_page(site)
     verify_migration_redirects(site, effective_origin)
     if origin:
         (ROOT / "assets/update-origin.txt").write_text(origin + "\n", encoding="utf-8")
