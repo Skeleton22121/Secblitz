@@ -149,6 +149,33 @@ impl Reply {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Request {
+    /// Requests that open a Windows page or window for the person to look at.
+    pub fn opens_window(self) -> bool {
+        matches!(
+            self,
+            Request::OpenWindowsUpdate
+                | Request::OpenWindowsSecurity
+                | Request::OpenEncryption
+                | Request::OpenSignIn
+                | Request::OpenTamperProtection
+                | Request::OpenProtectionHistory
+                | Request::OpenProtectionHistoryList
+                | Request::OpenNetwork
+                | Request::OpenAppBrowserControl
+                | Request::OpenOptionalFeatures
+                | Request::OpenAccounts
+                | Request::OpenCoreIsolation
+                | Request::OpenFirewall
+                | Request::OpenDeviceSecurity
+                | Request::OpenWorkAccounts
+                | Request::OpenRecovery
+                | Request::OpenRemoteDesktop
+                | Request::OpenFindMyDevice
+                | Request::OpenBitLocker
+                | Request::OpenWifi
+        )
+    }
+
     pub fn encode(self) -> [u8; 3] {
         let (kind, arg) = match self {
             Request::OpenWindowsUpdate => (1, 0),
@@ -581,6 +608,14 @@ mod tests {
     fn requests_round_trip() {
         for request in all() {
             assert_eq!(Request::decode_with(request.encode(), 100), Some(request));
+        }
+    }
+
+    #[test]
+    fn only_page_requests_bring_a_window_forward() {
+        for request in all() {
+            let page = format!("{request:?}").starts_with("Open");
+            assert_eq!(request.opens_window(), page, "{request:?}");
         }
     }
 
