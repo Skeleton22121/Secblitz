@@ -14,6 +14,7 @@ use iced::{
 use std::time::{Duration, Instant};
 
 const PRESS_SCALE: f32 = 0.03;
+const HOVER: Duration = Duration::from_millis(110);
 const DOWN: Duration = anim::FASTER;
 const UP: Duration = Duration::from_millis(220);
 pub const SCALE_MAX_WIDTH: f32 = 260.0;
@@ -382,7 +383,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
         }
 
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
-            let a = st.hover.step(*now, anim::FAST, |t| anim::STANDARD.at(t));
+            let a = st.hover.step(*now, HOVER, |t| anim::STANDARD.at(t));
             let b = if st.press.to > 0.5 {
                 st.press.step(*now, DOWN, |t| anim::DECELERATE.at(t))
             } else {

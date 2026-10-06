@@ -7,6 +7,7 @@ use crate::app::worker::{self, Job, Phase};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim::{self, Clock, Tween};
+use crate::gui::widgets::handoff;
 use crate::gui::widgets::controls::{scroll_style, scrollbar};
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::{self, progress, ButtonKind};
@@ -32,6 +33,7 @@ pub struct State {
     undo_note: Option<String>,
     undo_count: usize,
     checking: bool,
+    held: Option<Held>,
 }
 
 impl Default for State {
@@ -48,8 +50,18 @@ impl Default for State {
             undo_note: None,
             undo_count: 0,
             checking: false,
+            held: None,
         }
     }
+}
+
+/// A finished result kept back for a moment so the progress can settle.
+#[derive(Debug)]
+struct Held {
+    at: Instant,
+    undo: bool,
+    summary: Summary,
+    technical: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -242,6 +254,7 @@ pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 }
 
 fn close(state: &mut State) {
+    state.held = None;
     state.stage = Stage::Closed;
     state.bar = None;
     state.checking = false;
@@ -270,6 +283,15 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Frame(at) => {
             state.now = at;
             state.frames_seen = true;
+            if state
+                .held
+                .as_ref()
+                .is_some_and(|h| at.saturating_duration_since(h.at) >= handoff::sheet_hold())
+            {
+                if let Some(h) = state.held.take() {
+                    show_result(state, h.undo, h.summary, h.technical);
+                }
+            }
             Task::none()
         }
         Msg::UndoInfo(found) => {
@@ -432,7 +454,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                     .batches
                     .extend(secblitz::vbs::split_batches(&applied));
             }
-            show_result(state, false, summary, technical);
+            finish(state, false, summary, technical);
             ctx.busy = false;
         }
         E::Undone { result, verify } if *undo => {
@@ -450,7 +472,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             if !summary.done.is_empty() {
                 state.batches.pop();
             }
-            show_result(state, true, summary, technical);
+            finish(state, true, summary, technical);
             ctx.busy = false;
         }
         _ => {}
@@ -458,10 +480,29 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
     Task::none()
 }
 
+fn finish(state: &mut State, undo: bool, summary: Summary, technical: Vec<String>) {
+    let hold = handoff::sheet_hold();
+    if hold.is_zero() || !state.frames_seen {
+        show_result(state, undo, summary, technical);
+        return;
+    }
+    let now = Instant::now();
+    if let Some(bar) = &mut state.bar {
+        bar.retarget(now, 1.0);
+    }
+    state.held = Some(Held {
+        at: now,
+        undo,
+        summary,
+        technical,
+    });
+}
+
 fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<String>) {
     state.now = Instant::now();
     state.since = state.now;
     state.bar = None;
+    state.held = None;
     state.stage = Stage::Result {
         undo,
         summary,
@@ -529,13 +570,9 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
             summary,
             technical,
             show_technical,
-        } => Some(result_view(
-            state,
-            ctx,
-            *undo,
-            summary,
-            technical,
-            *show_technical,
+        } => Some(widgets::appear::settle(
+            result_view(state, ctx, *undo, summary, technical, *show_technical),
+            ctx.palette.surface,
         )),
     }
 }
@@ -840,7 +877,8 @@ fn working_view<'a>(
     } else {
         ctx.t("Fixing your PC…")
     };
-    let verifying = phase == Some(Phase::Verifying);
+    let settled = state.held.is_some();
+    let verifying = phase == Some(Phase::Verifying) || settled;
     let share = work_share(planned(state, undo), items.len(), verifying);
     let mut c = column![
         art(state, ctx, undo, Run::Working, share),
@@ -886,15 +924,16 @@ fn working_view<'a>(
             list = list.push(step(p, mark, r.name.clone(), active));
         }
     }
+    let last = match &state.held {
+        Some(h) => anim::check_draw(MARK, p.good, state.progress(h.at)),
+        None if verifying => spin(MARK),
+        None => waiting_mark(p),
+    };
     list = list.push(step(
         p,
-        if verifying {
-            spin(MARK)
-        } else {
-            waiting_mark(p)
-        },
+        last,
         ctx.t("Checking the result"),
-        verifying,
+        verifying && !settled,
     ));
     c.push(below_art(p, list.into())).into()
 }

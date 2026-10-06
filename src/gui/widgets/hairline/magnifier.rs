@@ -73,6 +73,8 @@ const TIP_SPRING: (f32, f32) = (320.0, 34.0);
 pub enum Status {
     Ready,
     Checking,
+    /// The check has ended: every row ticked, the glass at rest.
+    Done,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -620,7 +622,7 @@ impl Magnifier {
     }
 
     fn bob_amount(&self, st: &State, now: Instant) -> f32 {
-        if self.working() || anim::reduced() {
+        if self.working() || self.status == Status::Done || anim::reduced() {
             return 0.0;
         }
         match st.active.or(st.live.born) {
@@ -636,7 +638,7 @@ impl Magnifier {
         let ptr = &st.live.pointer;
         let over = ptr.inside && leads(ptr.at);
         match (self.status, self.progress) {
-            (Status::Ready, _) => {
+            (Status::Ready | Status::Done, _) => {
                 let rest = REST + bob(t, self.bob_amount(st, now));
                 if over {
                     let to = lead(ptr.at);
@@ -658,13 +660,18 @@ impl Magnifier {
     }
 
     fn sync_rows(&self, st: &mut State, now: Instant) {
-        match (self.status, self.progress) {
+        let progress = if self.status == Status::Done {
+            Some(1.0)
+        } else {
+            self.progress
+        };
+        match (self.status, progress) {
             (Status::Ready, _) => {
                 for r in &mut st.rows {
                     r.seen = None;
                 }
             }
-            (Status::Checking, Some(p)) => {
+            (Status::Checking | Status::Done, Some(p)) => {
                 let (_, done) = rows_at(p);
                 let mut fresh = 0u32;
                 let stagger = if anim::reduced() {
@@ -683,7 +690,7 @@ impl Magnifier {
                     }
                 }
             }
-            (Status::Checking, None) => {
+            (Status::Checking | Status::Done, None) => {
                 let age = st.live.age(self.changed, self.now);
                 let lens = st.lens();
                 for (i, r) in st.rows.iter_mut().enumerate() {

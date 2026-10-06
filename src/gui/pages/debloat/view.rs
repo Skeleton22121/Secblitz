@@ -67,7 +67,10 @@ pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>>
         Sheet::None => None,
         Sheet::Review => Some(review_sheet(state, ctx)),
         Sheet::Working(items) => Some(working_sheet(state, items, ctx)),
-        Sheet::Done(done) => Some(result_sheet(state, done, ctx)),
+        Sheet::Done(done) => Some(widgets::appear::settle(
+            result_sheet(state, done, ctx),
+            pal(ctx).surface,
+        )),
         Sheet::Delete(index) => Some(delete_sheet(*index, ctx)),
     }
 }

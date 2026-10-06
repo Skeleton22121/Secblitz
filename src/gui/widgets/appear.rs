@@ -1,10 +1,13 @@
-//! One-shot "slide in" for small overlays such as toasts.
+//! One-shot appearances: toasts sliding in, pages and sheets easing in.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{tree, Operation, Tree};
 use iced::advanced::{overlay, Clipboard, Shell, Widget};
-use iced::{mouse, window, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
-use std::time::Instant;
+use iced::{
+    mouse, window, Border, Color, Element, Event, Length, Rectangle, Renderer, Shadow, Size, Theme,
+    Transformation, Vector,
+};
+use std::time::{Duration, Instant};
 
 use super::anim;
 
@@ -201,8 +204,31 @@ pub fn slide_in<'a, Message: 'a>(
 }
 
 
-pub const ENTER: std::time::Duration = std::time::Duration::from_millis(220);
-pub const ENTER_RISE: f32 = 12.0;
+pub const ENTER: Duration = Duration::from_millis(180);
+pub const ENTER_RISE: f32 = 8.0;
+const ENTER_VEIL: f32 = 0.7;
+
+pub const POP_IN: Duration = Duration::from_millis(180);
+pub const POP_FROM: f32 = 0.98;
+const STAGGER: Duration = Duration::from_millis(30);
+const STAGGER_STEPS: usize = 3;
+
+/// How a page or sheet looks part way through appearing: how far it still
+/// has to rise, its size, and how much of the surface behind it still covers it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Look {
+    pub rise: f32,
+    pub scale: f32,
+    pub veil: f32,
+}
+
+impl Look {
+    pub const SETTLED: Look = Look {
+        rise: 0.0,
+        scale: 1.0,
+        veil: 0.0,
+    };
+}
 
 /// Progress (0..1, decelerated) of a page entrance that began at `start`.
 /// Returns 1 under reduced motion.
@@ -214,56 +240,87 @@ pub fn enter_progress(start: Instant, now: Instant) -> f32 {
     anim::DECELERATE.at(t)
 }
 
-pub fn fade_palette(
-    p: &crate::gui::theme::Palette,
-    to: iced::Color,
-    t: f32,
-) -> crate::gui::theme::Palette {
-    use crate::gui::theme::mix;
+pub fn page_look(t: f32) -> Look {
+    let k = 1.0 - t.clamp(0.0, 1.0);
+    Look {
+        rise: ENTER_RISE * k,
+        scale: 1.0,
+        veil: ENTER_VEIL * k,
+    }
+}
+
+/// A page fading out in place, ending exactly where [`page_look`] starts.
+pub fn leave_look(t: f32) -> Look {
+    Look {
+        rise: 0.0,
+        scale: 1.0,
+        veil: ENTER_VEIL * anim::ACCELERATE.at(t),
+    }
+}
+
+pub fn pop_progress(start: Instant, now: Instant) -> f32 {
+    if anim::reduced() {
+        return 1.0;
+    }
+    let t = now.saturating_duration_since(start).as_secs_f32() / POP_IN.as_secs_f32();
+    anim::DECELERATE.at(t)
+}
+
+pub fn pop_look(t: f32) -> Look {
     let t = t.clamp(0.0, 1.0);
-    if t >= 1.0 {
-        return *p;
-    }
-    let f = |c: iced::Color| mix(to, c, t);
-    crate::gui::theme::Palette {
-        surface: f(p.surface),
-        surface_alt: f(p.surface_alt),
-        border: f(p.border),
-        border_strong: f(p.border_strong),
-        hover: f(p.hover),
-        hover_strong: f(p.hover_strong),
-        pressed: f(p.pressed),
-        selected: f(p.selected),
-        focus_ring: f(p.focus_ring),
-        disabled_bg: f(p.disabled_bg),
-        disabled_fg: f(p.disabled_fg),
-        text: f(p.text),
-        text_muted: f(p.text_muted),
-        brand: f(p.brand),
-        on_brand: f(p.on_brand),
-        brand_hover: f(p.brand_hover),
-        brand_pressed: f(p.brand_pressed),
-        good: f(p.good),
-        warn: f(p.warn),
-        bad: f(p.bad),
-        neutral: f(p.neutral),
-        accent: f(p.accent),
-        good_text: f(p.good_text),
-        warn_text: f(p.warn_text),
-        bad_text: f(p.bad_text),
-        danger: f(p.danger),
-        danger_hover: f(p.danger_hover),
-        danger_pressed: f(p.danger_pressed),
-        ..*p
+    Look {
+        rise: 0.0,
+        scale: POP_FROM + (1.0 - POP_FROM) * t,
+        veil: 1.0 - t,
     }
 }
 
-struct Lift<'a, Message> {
+fn about(look: Look, bounds: Rectangle) -> Transformation {
+    let c = bounds.center();
+    Transformation::translate(c.x, c.y + look.rise)
+        * Transformation::scale(look.scale)
+        * Transformation::translate(-c.x, -c.y)
+}
+
+/// Lays `color` at `amount` over `bounds`, kept inside `viewport` because a new
+/// layer is not clipped by the one it sits in.
+fn veil_over(
+    renderer: &mut Renderer,
+    bounds: Rectangle,
+    viewport: &Rectangle,
+    color: Color,
+    amount: f32,
+    radius: f32,
+) {
+    let Some(bounds) = bounds.intersection(viewport) else {
+        return;
+    };
+    if amount < 0.004 {
+        return;
+    }
+    renderer.with_layer(bounds, |renderer| {
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds,
+                border: Border {
+                    radius: radius.into(),
+                    ..Border::default()
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            color.scale_alpha(amount.clamp(0.0, 1.0)),
+        );
+    });
+}
+
+struct Enter<'a, Message> {
     content: Element<'a, Message>,
-    dy: f32,
+    look: Look,
+    veil: Color,
 }
 
-impl<Message> Widget<Message, Theme, Renderer> for Lift<'_, Message> {
+impl<Message> Widget<Message, Theme, Renderer> for Enter<'_, Message> {
     fn tag(&self) -> tree::Tag {
         self.content.as_widget().tag()
     }
@@ -295,17 +352,19 @@ impl<Message> Widget<Message, Theme, Renderer> for Lift<'_, Message> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        if self.dy.abs() < 0.25 {
+        if self.look == Look::SETTLED {
             self.content
                 .as_widget()
                 .draw(tree, renderer, theme, style, layout, cursor, viewport);
-        } else {
-            renderer.with_translation(Vector::new(0.0, self.dy), |renderer| {
-                self.content
-                    .as_widget()
-                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
-            });
+            return;
         }
+        let bounds = layout.bounds();
+        renderer.with_transformation(about(self.look, bounds), |renderer| {
+            self.content
+                .as_widget()
+                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+            veil_over(renderer, bounds, viewport, self.veil, self.look.veil, 0.0);
+        });
     }
     fn operate(
         &mut self,
@@ -359,40 +418,299 @@ impl<Message> Widget<Message, Theme, Renderer> for Lift<'_, Message> {
     }
 }
 
-pub fn lift<'a, Message: 'a>(
+/// `content` drawn part way through appearing, as `look` says, with `veil`
+/// (the colour of the surface behind it) laid over it to fade it in.
+pub fn enter<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
-    dy: f32,
+    look: Look,
+    veil: Color,
 ) -> Element<'a, Message> {
-    Element::new(Lift {
+    Element::new(Enter {
         content: content.into(),
-        dy,
+        look,
+        veil,
+    })
+}
+
+#[derive(Default)]
+struct PopState {
+    start: Option<Instant>,
+}
+
+struct Pop<'a, Message> {
+    content: Element<'a, Message>,
+    /// Drawn behind a sheet's panel; `None` when the content simply eases in.
+    scrim: Option<Color>,
+    veil: Color,
+    radius: f32,
+    delay: Duration,
+}
+
+impl<Message> Widget<Message, Theme, Renderer> for Pop<'_, Message> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<PopState>()
+    }
+    fn state(&self) -> tree::State {
+        tree::State::new(PopState::default())
+    }
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&[&self.content]);
+    }
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let state = tree.state.downcast_ref::<PopState>();
+        let t = state
+            .start
+            .map_or(0.0, |s| pop_progress(s + self.delay, Instant::now()));
+        let child = &tree.children[0];
+        if let Some(scrim) = self.scrim {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: layout.bounds(),
+                    ..renderer::Quad::default()
+                },
+                scrim.scale_alpha(t),
+            );
+        }
+        let panel = match self.scrim {
+            Some(_) => layout.children().next().map(|l| l.bounds()),
+            None => Some(layout.bounds()),
+        };
+        match panel {
+            Some(panel) if t < 1.0 => {
+                let look = if self.scrim.is_some() {
+                    pop_look(t)
+                } else {
+                    page_look(t)
+                };
+                renderer.with_transformation(about(look, panel), |renderer| {
+                    self.content
+                        .as_widget()
+                        .draw(child, renderer, theme, style, layout, cursor, viewport);
+                    veil_over(renderer, panel, viewport, self.veil, look.veil, self.radius);
+                });
+            }
+            _ => self
+                .content
+                .as_widget()
+                .draw(child, renderer, theme, style, layout, cursor, viewport),
+        }
+    }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            let state = tree.state.downcast_mut::<PopState>();
+            let start = *state.start.get_or_insert(*now);
+            if pop_progress(start + self.delay, *now) < 1.0 {
+                shell.request_redraw();
+            }
+        }
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+/// A full-window layer whose first child is a panel: the first time it is
+/// drawn the scrim fades in while the panel grows from 98% and fades in.
+/// `content` must draw no background of its own.
+pub fn pop<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message>>,
+    scrim: Color,
+    panel: Color,
+    radius: f32,
+) -> Element<'a, Message> {
+    Element::new(Pop {
+        content: content.into(),
+        scrim: Some(scrim),
+        veil: panel,
+        radius,
+        delay: Duration::ZERO,
+    })
+}
+
+/// `content` eases in (a small rise and a fade from `surface`) the first time
+/// it is drawn, for a result replacing a progress view inside a sheet.
+pub fn settle<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message>>,
+    surface: Color,
+) -> Element<'a, Message> {
+    settle_after(content, surface, Duration::ZERO)
+}
+
+/// How long the `index`th card of a page waits before easing in: a short
+/// step each, never more than a few steps in total.
+pub fn stagger_delay(index: usize) -> Duration {
+    STAGGER * index.min(STAGGER_STEPS) as u32
+}
+
+/// [`settle`], starting after `delay`.
+pub fn settle_after<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message>>,
+    surface: Color,
+    delay: Duration,
+) -> Element<'a, Message> {
+    Element::new(Pop {
+        content: content.into(),
+        scrim: None,
+        veil: surface,
+        radius: 0.0,
+        delay,
     })
 }
 
 #[cfg(test)]
 mod enter_tests {
     use super::*;
-    use crate::gui::theme::{DARK, LIGHT};
-
-    #[test]
-    fn fade_endpoints() {
-        for p in [LIGHT, DARK] {
-            assert_eq!(fade_palette(&p, p.bg, 1.0), p);
-            let hidden = fade_palette(&p, p.bg, 0.0);
-            assert_eq!(hidden.text, p.bg);
-            assert_eq!(hidden.bg, p.bg);
-        }
-    }
+    use crate::gui::widgets::anim::forced;
 
     #[test]
     fn enter_progress_is_monotonic() {
+        let _m = forced::set(false);
         let t0 = Instant::now();
         let mut last = -1.0;
         for ms in (0..=250).step_by(10) {
-            let v = enter_progress(t0, t0 + std::time::Duration::from_millis(ms));
+            let v = enter_progress(t0, t0 + Duration::from_millis(ms));
             assert!(v >= last);
             last = v;
         }
-        assert!((last - 1.0).abs() < 1e-4 || anim::reduced());
+        assert!((last - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn page_enters_quickly_with_a_small_rise() {
+        assert!(ENTER >= Duration::from_millis(160) && ENTER <= Duration::from_millis(200));
+        assert_eq!(ENTER_RISE, 8.0);
+        let start = page_look(0.0);
+        assert_eq!(start.rise, ENTER_RISE);
+        assert!((start.veil - ENTER_VEIL).abs() < 1e-6);
+        assert_eq!(page_look(1.0), Look::SETTLED);
+    }
+
+    #[test]
+    fn leaving_ends_where_entering_starts() {
+        assert_eq!(leave_look(0.0).veil, 0.0);
+        assert!((leave_look(1.0).veil - page_look(0.0).veil).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sheets_grow_from_98_percent_and_settle() {
+        let a = pop_look(0.0);
+        assert_eq!((a.scale, a.veil, a.rise), (POP_FROM, 1.0, 0.0));
+        assert_eq!(pop_look(1.0), Look::SETTLED);
+        assert!(POP_IN <= Duration::from_millis(200) && POP_IN >= Duration::from_millis(150));
+    }
+
+    #[test]
+    fn pop_progress_runs_then_settles() {
+        let _m = forced::set(false);
+        let t0 = Instant::now();
+        assert_eq!(pop_progress(t0, t0), 0.0);
+        assert_eq!(pop_progress(t0, t0 + POP_IN), 1.0);
+        let mid = pop_progress(t0, t0 + POP_IN / 2);
+        assert!(mid > 0.5 && mid < 1.0);
+    }
+
+    #[test]
+    fn stagger_is_short_and_capped() {
+        assert_eq!(stagger_delay(0), Duration::ZERO);
+        assert_eq!(stagger_delay(1), STAGGER);
+        assert!(STAGGER <= Duration::from_millis(30));
+        assert_eq!(stagger_delay(3), stagger_delay(40));
+        assert!(stagger_delay(40) + POP_IN < Duration::from_millis(300));
+    }
+
+    #[test]
+    fn reduced_motion_skips_both() {
+        let _m = forced::set(true);
+        let t0 = Instant::now();
+        assert_eq!(enter_progress(t0, t0), 1.0);
+        assert_eq!(pop_progress(t0, t0), 1.0);
     }
 }
