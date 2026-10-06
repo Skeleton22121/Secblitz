@@ -9,6 +9,16 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
+
+### Changed
+- **Checks before it starts.** Fixes, app clean-up, repairs, updates and per-account settings now check what they need before showing any progress. If something is missing, you see why and what to do instead of a progress bar that fails at the end.
+- **"Run as administrator" asks the usual way.** Opening Secblitz with "Run as administrator" now reopens it normally and asks for permission once, so every feature works.
+- Fix details show only what the row above does not already say.
+- The Web protection page no longer repeats its on or off state in a second section.
+- Secblitz is open source under the MIT license. The website and README link to the source code.
+
 ## [0.8.1] - 2026-10-06
 
 ### Fixed
