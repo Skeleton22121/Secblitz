@@ -93,6 +93,13 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "privacy.clipboard_sync" => {
             "What you copy stays on this PC and no longer appears on your other devices."
         }
+        "ai.click_to_do" => "Click to Do stops offering actions on what is on your screen.",
+        "ai.paint" => "Paint's AI drawing tools turn off. Normal drawing works as before.",
+        "ai.notepad" => "Notepad's AI writing tools turn off. Normal typing and saving work as before.",
+        "debloat.widgets_policy" => "The Widgets button and news board go away for everyone on this PC.",
+        "debloat.device_companion_apps" => {
+            "Device pictures and details stop downloading. Your devices still work as before."
+        }
         "defender.exclusions_risky" => {
             "Skipped places are scanned again, so some games or work tools may scan slower."
         }

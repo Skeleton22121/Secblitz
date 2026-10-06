@@ -12,6 +12,16 @@ use labels::control_help;
 use reasons::{managed, not_offered, repair_help};
 use crate::model::CheckStatus;
 
+/// The optional group a choice belongs to. These never count against the score.
+pub fn extra_section(id: &str) -> Option<&'static str> {
+    Some(match id.split_once('.')?.0 {
+        "privacy" => "Privacy extras",
+        "ai" => "AI features",
+        "debloat" => "Less clutter",
+        _ => return None,
+    })
+}
+
 pub fn control_for_finding(title: &str) -> Option<&'static str> {
     Some(match title {
         "Memory integrity" => "vbs.memory_integrity",
@@ -109,7 +119,7 @@ pub fn for_control(id: &str, status: &CheckStatus, detail: &str) -> Advice {
                 a.status = "Your choice";
                 a.next = choice_consequence(id);
                 a.ask = true;
-                a.group = if id.starts_with("privacy.") {
+                a.group = if extra_section(id).is_some() {
                     Group::Information
                 } else {
                     Group::Choice
@@ -403,7 +413,7 @@ mod tests {
                 );
                 assert_eq!(
                     a.group,
-                    if id.starts_with("privacy.") {
+                    if extra_section(id).is_some() {
                         Group::Information
                     } else {
                         Group::Choice
@@ -446,6 +456,9 @@ mod tests {
             "Not offered: the old file-sharing version (SMB1) is still on",
             "Not offered: a shared folder or drive may rely on the old name service",
             "Not offered: Recall is not available on this PC",
+            "Not offered: Paint was not found on this PC",
+            "Not offered: Notepad was not found on this PC",
+            "Not offered: this version of Windows does not have it",
             "Not offered: this setting is not available on Windows Home",
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: printing is busy right now",
@@ -486,6 +499,25 @@ mod tests {
             for_control("lsa.run_as_ppl", &CheckStatus::Skipped, "Not offered: anything").status,
             "Not offered"
         );
+    }
+
+    #[test]
+    fn optional_switches_sit_in_their_own_groups_and_never_count_against_the_score() {
+        for (id, section) in [
+            ("privacy.recall", "Privacy extras"),
+            ("ai.click_to_do", "AI features"),
+            ("ai.paint", "AI features"),
+            ("ai.notepad", "AI features"),
+            ("debloat.widgets_policy", "Less clutter"),
+            ("debloat.device_companion_apps", "Less clutter"),
+        ] {
+            assert_eq!(extra_section(id), Some(section), "{id}");
+            let a = for_control(id, &CheckStatus::Attention, "Eligible");
+            assert_eq!((a.status, a.group, a.ask), ("Your choice", Group::Information, true), "{id}");
+            assert!(a.impact_prefix().starts_with("Why it matters"), "{id}");
+        }
+        assert_eq!(extra_section("uac.enabled"), None);
+        assert_eq!(extra_section("findings"), None);
     }
 
     #[test]
