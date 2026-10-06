@@ -367,7 +367,7 @@ pub static CATALOG: &[App] = &[
     ),
     app(
         "Microsoft.WidgetsPlatformRuntime",
-        "Widgets engine",
+        "Widgets helper",
         Group::Promotions,
         None,
     ),
@@ -393,7 +393,7 @@ pub fn note(family: &str) -> Option<&'static str> {
             "Removing this may change what the Copilot key on your keyboard opens."
         }
         "MicrosoftWindows.Client.WebExperience" | "Microsoft.WidgetsPlatformRuntime" => {
-            "Widgets stops working everywhere, including on the lock screen. Tick Widgets and Widgets engine together."
+            "Widgets stop working everywhere, including on the lock screen. Tick Widgets and Widgets helper together."
         }
         "microsoft.windowscommunicationsapps" => {
             "Microsoft stopped supporting this app at the end of 2024. Remove it only if you use another mail app."
