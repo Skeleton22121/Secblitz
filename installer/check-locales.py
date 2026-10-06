@@ -149,7 +149,9 @@ def uninstall_contract(code):
     assert text.index('usAppMutexCheck') < text.index('PrepareRemoval') < text.index('usUninstall') \
         < text.index('if UninstallPutBack then') < text.index('PutEverythingBack;') \
         < text.index("Maintain('RemoveFilter')") < text.index('CleanUserData;') < text.index('usPostUninstall') \
-        < text.index("Maintain('Purge')")
+        < text.index("Maintain('Purge')") < text.index("RemoveDir(ExpandConstant('{app}'))")
+    # Only an empty program folder is removed; never anything a person put there.
+    assert 'DelTree' not in code
     # Each part has its own guard, so one failure never skips the rest.
     removal = text[text.index('usUninstall'):text.index('usPostUninstall')]
     for part in ('PutEverythingBack;', "if not Maintain('RemoveFilter')", 'CleanUserData;'):
@@ -208,6 +210,7 @@ def regression_checks(source):
         mutations.append(source + f'\n[{section}]\nType: filesandordirs; Name: "{{app}}"\n')
     mutations.append(source.replace('Name: "{app}\\Status"', 'Name: "{app}"'))
     mutations.append(source.replace('Type: dirifempty; Name: "{app}"', 'Type: filesandordirs; Name: "{app}"'))
+    mutations.append(source.replace("not RemoveDir(ExpandConstant('{app}'))", "not DelTree(ExpandConstant('{app}'), True, True, True)"))
     for mutated in mutations:
         try:
             check(mutated)
