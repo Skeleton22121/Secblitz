@@ -69,6 +69,8 @@ pub struct Summary {
     pub kind: SummaryKind,
     pub protected_now: Vec<String>,
     pub after_restart: Vec<String>,
+    /// What the person is no longer protected from after settings were put back.
+    pub less_protected: Vec<String>,
     pub done: Vec<String>,
     pub not_done: Vec<(String, String)>,
     pub unverified: bool,
@@ -95,6 +97,11 @@ pub const REASON_CHANGED: &str =
 pub const REASON_STILL_OPEN: &str =
     "This still needs attention after the fix. Restart your PC and check again.";
 pub const REASON_KEPT: &str = "We kept your current setting to stay safe. Nothing needs doing.";
+pub const REASON_LEFT_AS_IS: &str =
+    "It has changed since Secblitz set it, so we left it as it is. Nothing needs doing.";
+pub const REASON_NOTHING: &str = "Nothing is recorded to put back for this setting.";
+pub const REASON_NEEDS_OTHER: &str =
+    "Another protection that is still on needs this one, so we left it as it is.";
 
 pub const REASON_DISK: &str = "Your disk is full or can't be written to right now, so Secblitz can't save changes safely. Free up some space, then check again.";
 pub const REASON_BUSY: &str = "Secblitz is finishing another job, like an update or a repair. Wait for it to finish, then try again.";
@@ -196,6 +203,20 @@ fn reason(status: &CheckStatus, detail: &str, id: &str) -> &'static str {
     }
 }
 
+/// What a person is told for one chosen setting that was not put back.
+fn chosen_reason(r: &secblitz::engine::Outcome) -> &'static str {
+    let detail = r.detail.as_str();
+    if r.status == CheckStatus::Conflict {
+        REASON_LEFT_AS_IS
+    } else if r.status == CheckStatus::Skipped && detail.starts_with("Nothing recorded") {
+        REASON_NOTHING
+    } else if r.status == CheckStatus::Skipped && detail == "Another protection needs this one" {
+        REASON_NEEDS_OTHER
+    } else {
+        reason(&r.status, detail, &r.id)
+    }
+}
+
 fn restart_needed(r: &secblitz::engine::Outcome) -> bool {
     advice::for_control(&r.id, &r.status, &r.detail).step == NextStep::Restart
 }
@@ -269,6 +290,68 @@ pub fn summarize(
                         .push((r.id.clone(), reason(&r.status, &r.detail, &r.id).to_owned())),
                 }
             }
+        }
+    }
+    s.kind = if s.done.is_empty() {
+        SummaryKind::Failed
+    } else if s.not_done.is_empty() {
+        SummaryKind::Success
+    } else {
+        SummaryKind::Partial
+    };
+    s
+}
+
+/// Windows only keeps stack protection on while memory integrity is on, so putting memory integrity back brings stack protection with it when that can be put back too. The flag says a protection was added.
+pub fn with_dependents(mut chosen: Vec<String>, undoable: &[String]) -> (Vec<String>, bool) {
+    use secblitz::vbs::{MEMORY_INTEGRITY, STACK_PROTECTION};
+    let has = |list: &[String], id: &str| list.iter().any(|i| i == id);
+    if has(&chosen, MEMORY_INTEGRITY)
+        && !has(&chosen, STACK_PROTECTION)
+        && has(undoable, STACK_PROTECTION)
+    {
+        chosen.push(STACK_PROTECTION.to_owned());
+        return (chosen, true);
+    }
+    (chosen, false)
+}
+
+/// The result of putting back chosen settings: each one is either back the way it was or left as it is, with a plain reason.
+pub fn summarize_chosen(
+    chosen: &[String],
+    result: Result<&Report, &str>,
+    verify: Result<&Report, &str>,
+) -> Summary {
+    let mut s = Summary {
+        unverified: verify.is_err(),
+        ..Summary::default()
+    };
+    match result {
+        Err(e) => {
+            let why = plain_failure(e);
+            s.not_done = chosen
+                .iter()
+                .map(|id| (id.clone(), why.to_owned()))
+                .collect();
+        }
+        Ok(report) => {
+            for id in chosen {
+                match report.results.iter().find(|r| r.id == *id) {
+                    Some(r) if r.status == CheckStatus::Restored => {
+                        s.restart |= restart_needed(r);
+                        s.done.push(id.clone());
+                    }
+                    Some(r) if r.status == CheckStatus::Unchanged => s.done.push(id.clone()),
+                    Some(r) => s.not_done.push((id.clone(), chosen_reason(r).to_owned())),
+                    None => s.not_done.push((id.clone(), REASON_NOTHING.to_owned())),
+                }
+            }
+        }
+    }
+    for id in &s.done {
+        let impact = advice::control_impact(id);
+        if !impact.is_empty() && !s.less_protected.iter().any(|k| k == impact) {
+            s.less_protected.push(impact.to_owned());
         }
     }
     s.kind = if s.done.is_empty() {
@@ -559,6 +642,94 @@ mod tests {
     }
 
     #[test]
+    fn chosen_settings_put_back_are_done_and_say_what_is_less_protected() {
+        let chosen = ids(&["uac.enabled", "defender.ioav"]);
+        let result = rep(vec![
+            out("uac.enabled", "restored", "Original preference restored"),
+            out("defender.ioav", "unchanged", "Original preference already present"),
+        ]);
+        let s = summarize_chosen(&chosen, Ok(&result), Ok(&rep(vec![])));
+        assert_eq!(s.kind, SummaryKind::Success);
+        assert_eq!(s.done, chosen);
+        assert!(s.not_done.is_empty() && !s.unverified && !s.restart);
+        assert!(s.protected_now.is_empty() && s.after_restart.is_empty());
+        let impacts: Vec<&str> = chosen.iter().map(|i| advice::control_impact(i)).collect();
+        assert!(impacts.iter().all(|i| !i.is_empty()));
+        assert_eq!(s.less_protected, impacts);
+    }
+
+    #[test]
+    fn chosen_settings_left_as_they_are_get_plain_reasons() {
+        let chosen = ids(&["uac.enabled", "uac.consent", "defender.ioav", "defender.archive", "lsa.restrict_anonymous_sam"]);
+        let result = rep(vec![
+            out("uac.enabled", "conflict", "Preference differs from both target and before image; no write performed"),
+            out("uac.consent", "skipped", "Nothing recorded to put back"),
+            out("defender.ioav", "skipped", "Another protection needs this one"),
+            out("defender.archive", "restored", "Original preference restored; restart required"),
+        ]);
+        let s = summarize_chosen(&chosen, Ok(&result), Ok(&rep(vec![])));
+        assert_eq!(s.kind, SummaryKind::Partial);
+        assert_eq!(s.done, ids(&["defender.archive"]));
+        assert!(s.restart);
+        assert_eq!(
+            s.not_done,
+            vec![
+                ("uac.enabled".to_owned(), REASON_LEFT_AS_IS.to_owned()),
+                ("uac.consent".to_owned(), REASON_NOTHING.to_owned()),
+                ("defender.ioav".to_owned(), REASON_NEEDS_OTHER.to_owned()),
+                ("lsa.restrict_anonymous_sam".to_owned(), REASON_NOTHING.to_owned()),
+            ]
+        );
+        assert_eq!(s.less_protected.len(), 1);
+    }
+
+    #[test]
+    fn memory_integrity_brings_stack_protection_when_that_can_be_put_back() {
+        use secblitz::vbs::{MEMORY_INTEGRITY, STACK_PROTECTION};
+        let both = ids(&[MEMORY_INTEGRITY, STACK_PROTECTION]);
+        assert_eq!(
+            with_dependents(ids(&[MEMORY_INTEGRITY]), &both),
+            (both.clone(), true)
+        );
+        assert_eq!(
+            with_dependents(ids(&[MEMORY_INTEGRITY, STACK_PROTECTION]), &both),
+            (both.clone(), false)
+        );
+        assert_eq!(
+            with_dependents(ids(&[MEMORY_INTEGRITY]), &ids(&[MEMORY_INTEGRITY])),
+            (ids(&[MEMORY_INTEGRITY]), false)
+        );
+        assert_eq!(
+            with_dependents(ids(&[STACK_PROTECTION]), &both),
+            (ids(&[STACK_PROTECTION]), false)
+        );
+    }
+
+    #[test]
+    fn a_failed_chosen_undo_changes_nothing_and_says_why() {
+        let chosen = ids(&["uac.enabled"]);
+        let s = summarize_chosen(&chosen, Err("Another Secblitz operation holds the journal lock"), Err("x"));
+        assert_eq!(s.kind, SummaryKind::Failed);
+        assert!(s.done.is_empty() && s.less_protected.is_empty() && s.unverified);
+        assert!(s.not_done[0].1.contains("Close it"));
+        let s = summarize_chosen(&chosen, Err("boom 0xdead"), Ok(&rep(vec![])));
+        assert_eq!(s.not_done[0].1, FAILURE_GENERAL);
+        assert!(!format!("{s:?}").contains("0xdead"));
+    }
+
+    #[test]
+    fn managed_and_unfinished_chosen_settings_use_the_shared_reasons() {
+        let chosen = ids(&["uac.consent", "uac.enabled"]);
+        let result = rep(vec![
+            out("uac.consent", "skipped", "Domain-managed machine: assessment only"),
+            out("uac.enabled", "skipped", "Revert the active transaction before undoing chosen controls"),
+        ]);
+        let s = summarize_chosen(&chosen, Ok(&result), Ok(&rep(vec![])));
+        assert_eq!(s.not_done[0].1, REASON_MANAGED);
+        assert_eq!(s.not_done[1].1, REASON_UNDO_FIRST);
+    }
+
+    #[test]
     fn known_raw_failures_get_a_friendly_fix() {
         assert!(plain_failure("Another Secblitz operation holds the journal lock")
             .contains("Close it"));
@@ -704,6 +875,9 @@ mod tests {
             REASON_CHANGED,
             REASON_STILL_OPEN,
             REASON_KEPT,
+            REASON_LEFT_AS_IS,
+            REASON_NOTHING,
+            REASON_NEEDS_OTHER,
             REASON_DISK,
             REASON_BUSY,
             REASON_EARLIER,

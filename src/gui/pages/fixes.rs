@@ -35,6 +35,8 @@ const INDENT_PLAIN: f32 = theme::S4 + theme::ICON_ROW + theme::S4;
 pub struct State {
     synced_at: Option<u64>,
     selected: HashSet<String>,
+    /// Settings Secblitz changed that the person ticked to put back. Never filled for them.
+    undo_selected: HashSet<String>,
     expanded: HashSet<String>,
     open_protected: bool,
     open_cant: bool,
@@ -56,6 +58,7 @@ impl Default for State {
         Self {
             synced_at: None,
             selected: HashSet::new(),
+            undo_selected: HashSet::new(),
             expanded: HashSet::new(),
             open_protected: false,
             open_cant: false,
@@ -79,6 +82,11 @@ pub enum Msg {
     Toggle(String),
     SelectAll,
     SelectNone,
+    ToggleUndo(String),
+    UndoSelectAll,
+    UndoSelectNone,
+    /// Opens the group of protected settings, with the ones Secblitz changed first.
+    FocusUndo,
     Expand(String),
     ShowProtected,
     ToggleCant,
@@ -179,6 +187,8 @@ struct Prot {
     id: String,
     name: String,
     line: String,
+    /// Secblitz changed this setting and can put it back.
+    undoable: bool,
     hay: Haystack,
 }
 
@@ -310,6 +320,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 id: r.id.clone(),
                 name,
                 line,
+                undoable: r.undoable,
                 hay,
             });
             continue;
@@ -347,6 +358,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             },
         ));
     }
+    rows.protected.sort_by_key(|r| !r.undoable);
     for f in &report.findings {
         if score::finding_has_fix(report, f) {
             continue;
@@ -559,6 +571,12 @@ fn sync(state: &mut State, ctx: &Ctx) {
             .into_iter()
             .collect();
         state.expanded.clear();
+        let undoable = |id: &String| {
+            ctx.report
+                .as_deref()
+                .is_some_and(|r| r.results.iter().any(|o| o.id == *id && o.undoable))
+        };
+        state.undo_selected.retain(undoable);
     }
 }
 
@@ -599,6 +617,28 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 state.selected.remove(&id);
             }
         }
+        Msg::ToggleUndo(id) => {
+            if !state.undo_selected.remove(&id) && undoable_ids(state, ctx).contains(&id) {
+                state.undo_selected.insert(id);
+            }
+        }
+        Msg::UndoSelectAll if !searching(state) => {
+            state.undo_selected = undoable_ids(state, ctx).into_iter().collect();
+        }
+        Msg::UndoSelectAll => {
+            let shown = visible_undoable(state, ctx);
+            state.undo_selected.extend(shown);
+        }
+        Msg::UndoSelectNone if !searching(state) => state.undo_selected.clear(),
+        Msg::UndoSelectNone => {
+            for id in visible_undoable(state, ctx) {
+                state.undo_selected.remove(&id);
+            }
+        }
+        Msg::FocusUndo => {
+            state.search.clear();
+            state.open_protected = true;
+        }
         Msg::Search(text) => state.search = text,
         Msg::ClearSearch => {
             state.search.clear();
@@ -628,6 +668,59 @@ fn visible_candidates(state: &State, ctx: &Ctx) -> Vec<String> {
     let rows = &cache.as_ref().expect("filled by ensure").rows;
     let shown = rows.shown(&Query::new(&state.search));
     shown.selectable().map(str::to_owned).collect()
+}
+
+/// The protected settings Secblitz changed, whatever the search says.
+fn undoable_ids(state: &State, ctx: &Ctx) -> Vec<String> {
+    let Some(report) = ctx.report.as_ref() else {
+        return Vec::new();
+    };
+    ensure(state, ctx, report);
+    let cache = state.cache.borrow();
+    let rows = &cache.as_ref().expect("filled by ensure").rows;
+    rows.protected
+        .iter()
+        .filter(|r| r.undoable)
+        .map(|r| r.id.clone())
+        .collect()
+}
+
+/// The same, limited to the rows that match the search.
+fn visible_undoable(state: &State, ctx: &Ctx) -> Vec<String> {
+    let Some(report) = ctx.report.as_ref() else {
+        return Vec::new();
+    };
+    ensure(state, ctx, report);
+    let cache = state.cache.borrow();
+    let rows = &cache.as_ref().expect("filled by ensure").rows;
+    rows.shown(&Query::new(&state.search))
+        .protected
+        .iter()
+        .filter(|r| r.undoable)
+        .map(|r| r.id.clone())
+        .collect()
+}
+
+#[cfg(test)]
+pub fn undo_selected_ids(state: &State) -> Vec<String> {
+    let mut ids: Vec<String> = state.undo_selected.iter().cloned().collect();
+    ids.sort();
+    ids
+}
+
+#[cfg(test)]
+pub fn shown_undoable(state: &State, ctx: &Ctx) -> Vec<String> {
+    visible_undoable(state, ctx)
+}
+
+#[cfg(test)]
+pub fn all_undoable(state: &State, ctx: &Ctx) -> Vec<String> {
+    undoable_ids(state, ctx)
+}
+
+#[cfg(test)]
+pub fn open_protected(state: &State) -> bool {
+    state.open_protected
 }
 
 /// The keys of every row on screen, section by section.
@@ -1013,6 +1106,46 @@ fn protected_row<'a>(ctx: &Ctx, r: &Prot) -> Element<'a, Message> {
     widgets::explain::with_disclosure(ctx, "fixes", &r.id, false, INDENT_PLAIN, head)
 }
 
+fn undoable_row<'a>(ctx: &Ctx, r: &Prot, checked: bool, tag: &str) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
+    let toggle = Message::Fixes(Msg::ToggleUndo(r.id.clone()));
+    let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
+    if let Some(t) = widgets::explain::toggle(ctx, "fixes", &r.id) {
+        tools = tools.push(t);
+    }
+    tools = tools.push(widgets::action(
+        p,
+        ButtonKind::Ghost,
+        ctx.t("Undo…"),
+        Some(Icon::Undo),
+        ready.then(|| Message::ReviewUndoSome(vec![r.id.clone()])),
+    ));
+    let head = line(
+        Some(widgets::checkbox(
+            p,
+            CheckState::from(checked),
+            None,
+            Some(toggle.clone()),
+        )),
+        widgets::row_item_tinted(
+            p,
+            Some(Icon::Check),
+            Some(Tone::Good),
+            r.name.clone(),
+            Some(r.line.clone()),
+            widgets::tag(p, Some(Icon::Wrench), tag.to_owned()),
+            Some(toggle),
+        ),
+        tools.into(),
+    );
+    let mut rows = column![head].spacing(theme::S1);
+    if let Some(inset) = widgets::explain::panel(ctx, "fixes", &r.id, false, INDENT) {
+        rows = rows.push(inset);
+    }
+    rows.into()
+}
+
 fn more<'a>(ctx: &Ctx, total: usize, all: bool, msg: Msg) -> Option<Element<'a, Message>> {
     (total > FIRST_ROWS).then(|| {
         let label = if all {
@@ -1210,7 +1343,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let mut groups = attention_groups(state, ctx, report, rows, &shown);
     groups.extend(other_groups(state, ctx, &shown));
     if !shown.protected.is_empty() {
-        groups.push(protected_group(state, ctx, &shown));
+        groups.push(protected_group(state, ctx, rows, &shown));
     }
     if !query.is_empty() && shown.is_empty() {
         body = body.push(widgets::region(p, no_matches(ctx, &state.search)));
@@ -1486,12 +1619,42 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, shown: &Shown) -> Vec<Elemen
     groups
 }
 
-fn protected_group<'a>(state: &State, ctx: &Ctx, shown: &Shown) -> Element<'a, Message> {
+fn protected_group<'a>(
+    state: &State,
+    ctx: &Ctx,
+    rows: &Rows,
+    shown: &Shown,
+) -> Element<'a, Message> {
+    let p = ctx.palette;
     let narrowed = searching(state);
+    let undoable: Vec<&Prot> = rows.protected.iter().filter(|r| r.undoable).collect();
+    let chosen: Vec<String> = undoable
+        .iter()
+        .filter(|r| state.undo_selected.contains(&r.id))
+        .map(|r| r.id.clone())
+        .collect();
+    let n = chosen.len();
+    let tag = ctx.t("Changed by Secblitz");
     let visible = widgets::limited(&shown.protected, FIRST_ROWS, state.all_protected || narrowed);
     let mut list = column![].spacing(theme::S1);
+    let offers_undo = shown.protected.iter().any(|r| r.undoable);
+    if offers_undo && (state.open_protected || narrowed) {
+        list = list
+            .push(widgets::muted(
+                p,
+                ctx.t("You can put any setting Secblitz changed back the way it was."),
+            ))
+            .push(widgets::small(
+                p,
+                ctx.t("Personal settings you changed are on the Tools page."),
+            ));
+    }
     for r in visible {
-        list = list.push(protected_row(ctx, r));
+        list = list.push(if r.undoable {
+            undoable_row(ctx, r, state.undo_selected.contains(&r.id), &tag)
+        } else {
+            protected_row(ctx, r)
+        });
     }
     if let Some(m) = more(
         ctx,
@@ -1503,12 +1666,59 @@ fn protected_group<'a>(state: &State, ctx: &Ctx, shown: &Shown) -> Element<'a, M
     {
         list = list.push(m);
     }
-    widgets::collapsible(
-        ctx.palette,
+    let mut summary = count_text(ctx, shown.protected.len());
+    if n > 0 {
+        let on_screen: HashSet<&str> = shown
+            .protected
+            .iter()
+            .filter(|r| r.undoable)
+            .map(|r| r.id.as_str())
+            .collect();
+        let hidden = chosen.iter().filter(|id| !on_screen.contains(id.as_str())).count();
+        let picked = if narrowed && hidden > 0 {
+            ctx.t("{n} selected, {k} hidden by search")
+                .replace("{n}", &n.to_string())
+                .replace("{k}", &hidden.to_string())
+        } else if n == 1 {
+            ctx.t("1 selected")
+        } else {
+            ctx.t("{n} selected").replace("{n}", &n.to_string())
+        };
+        summary = format!("{summary} · {picked}");
+    }
+    let trailing = offers_undo.then(|| {
+        let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
+        let every_shown_chosen = shown
+            .protected
+            .iter()
+            .filter(|r| r.undoable)
+            .all(|r| state.undo_selected.contains(&r.id));
+        let select = if (narrowed && every_shown_chosen) || (!narrowed && n == undoable.len()) {
+            (Icon::X, ctx.t("Select none"), Message::Fixes(Msg::UndoSelectNone))
+        } else {
+            (Icon::Check, ctx.t("Select all"), Message::Fixes(Msg::UndoSelectAll))
+        };
+        row![
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Undo selected"),
+                Some(Icon::Undo),
+                (ready && n > 0).then(|| Message::ReviewUndoSome(chosen.clone())),
+            ),
+            widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
+        ]
+        .spacing(theme::S1)
+        .align_y(Alignment::Center)
+        .into()
+    });
+    widgets::collapsible_with(
+        p,
         ctx.t("Protected"),
-        Some(count_text(ctx, shown.protected.len())),
+        Some(summary),
         state.open_protected || narrowed,
         Message::Fixes(Msg::ShowProtected),
+        trailing,
         list,
     )
 }
