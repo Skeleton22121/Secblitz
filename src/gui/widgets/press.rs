@@ -94,7 +94,6 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Track {
     pub value: f32,

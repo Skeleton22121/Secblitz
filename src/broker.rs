@@ -377,13 +377,10 @@ impl Client {
     pub fn send(&self, request: Request) -> anyhow::Result<Reply> {
         #[cfg(windows)]
         {
-            let mut pipe = self
-                .inner
-                .lock()
-                .map_err(|e| {
-                    eprintln!("{e}");
-                    anyhow::anyhow!("broker unavailable")
-                })?;
+            let mut pipe = self.inner.lock().map_err(|e| {
+                eprintln!("{e}");
+                anyhow::anyhow!("broker unavailable")
+            })?;
             let byte = pipe.round_trip(request.encode(), request.timeout())?;
             Reply::decode(byte).ok_or_else(|| anyhow::anyhow!("invalid broker reply"))
         }
@@ -673,7 +670,10 @@ mod tests {
             for (op, op_byte) in [(Op::Query, 0), (Op::Apply, 1), (Op::Undo, 2)] {
                 let request = Request::UserSetting(setting, op);
                 assert_eq!(request.encode(), [13, byte, op_byte]);
-                assert_eq!(Request::decode_with([13, byte, op_byte], 100), Some(request));
+                assert_eq!(
+                    Request::decode_with([13, byte, op_byte], 100),
+                    Some(request)
+                );
             }
         }
         assert_eq!(expected.map(|(s, _)| s), Setting::ADS_AND_TIPS);

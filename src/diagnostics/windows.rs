@@ -287,8 +287,8 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
         )
     };
     let application = wide(&exe)?;
-    let mut pins =
-        crate::operations::pin_system_executable(&exe).map_err(because(UnknownReason::Unavailable))?;
+    let mut pins = crate::operations::pin_system_executable(&exe)
+        .map_err(because(UnknownReason::Unavailable))?;
     if native_tool(id).is_none() {
         for module in modules(id) {
             let relative = if module == "Microsoft.PowerShell.LocalAccounts" {

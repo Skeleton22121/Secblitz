@@ -89,7 +89,10 @@ impl Engine {
             if !crate::vbs::restarted_since(written, Some(boot)) {
                 return false;
             }
-            let own_batch = tx.entries.iter().all(|e| e.id == id || e.state == State::Restored);
+            let own_batch = tx
+                .entries
+                .iter()
+                .all(|e| e.id == id || e.state == State::Restored);
             if own_batch && newest.is_some_and(|n| n.sequence == tx.sequence) {
                 f.detail = format!("{}. {}", crate::vbs::UNDO_READY, f.detail);
             }
@@ -101,7 +104,11 @@ impl Engine {
         let pending = tx.incomplete();
         Finding {
             title: "Journal recovery".into(),
-            status: if pending { CheckStatus::Pending } else { CheckStatus::Info },
+            status: if pending {
+                CheckStatus::Pending
+            } else {
+                CheckStatus::Info
+            },
             detail: if pending {
                 format!("Transaction {} has incomplete apply or rollback; use revert to resolve its recorded preferences before applying again.", tx.name)
             } else {
@@ -133,7 +140,10 @@ impl Engine {
         self.audit_with_progress(|_| {})
     }
 
-    pub fn audit_with_progress(&mut self, mut callback: impl FnMut(Progress<'_>)) -> Result<Report> {
+    pub fn audit_with_progress(
+        &mut self,
+        mut callback: impl FnMut(Progress<'_>),
+    ) -> Result<Report> {
         let _lock = self.lock()?;
         let transactions = self.load()?;
         let active = transactions.iter().rev().find(|t| !t.reverted);
@@ -158,7 +168,9 @@ impl Engine {
                 let mut result = match observed {
                     Ok(o) => match assessment_status(&c.id, &o) {
                         Ok(status) => Self::observed_outcome(c, status, &o.reason, &o),
-                        Err(e) => Self::observed_outcome(c, CheckStatus::Error, format!("{e:#}"), &o),
+                        Err(e) => {
+                            Self::observed_outcome(c, CheckStatus::Error, format!("{e:#}"), &o)
+                        }
                     },
                     Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
                 };

@@ -150,7 +150,8 @@ fn choose_sheet<'a>(
             col = col.push(widgets::inline_notice(
                 p,
                 Tone::Warn,
-                ctx.t(limit_key(ctx.helper, limit)).replace("{n}", &n.to_string()),
+                ctx.t(limit_key(ctx.helper, limit))
+                    .replace("{n}", &n.to_string()),
             ));
         }
     }
@@ -241,19 +242,11 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
             ),
             StepState::Working => (anim::spinner(20.0, p.text, spin), ctx.t(STEP_RUNNING)),
             StepState::Done(true, at) => (
-                anim::check_draw(
-                    18.0,
-                    p.good,
-                    anim::slow_progress(at, state.now),
-                ),
+                anim::check_draw(18.0, p.good, anim::slow_progress(at, state.now)),
                 ctx.t(STEP_DONE),
             ),
             StepState::Done(false, at) => (
-                anim::warn_draw(
-                    18.0,
-                    p.warn,
-                    anim::slow_progress(at, state.now),
-                ),
+                anim::warn_draw(18.0, p.warn, anim::slow_progress(at, state.now)),
                 ctx.t(STEP_PARTLY),
             ),
         };
@@ -280,8 +273,8 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
 }
 
 fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: Instant) -> El<'a> {
-    let mut col = column![rewind_art(ctx, p, result_run(lines), None, at, state.now)]
-        .spacing(theme::S3);
+    let mut col =
+        column![rewind_art(ctx, p, result_run(lines), None, at, state.now)].spacing(theme::S3);
     if lines.is_empty() {
         col = col
             .push(widgets::h2_centred(p, ctx.t(RESULT_DONE_TITLE)))

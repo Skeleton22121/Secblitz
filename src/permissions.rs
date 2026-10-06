@@ -103,9 +103,11 @@ impl Backend for PermissionBackend {
                 if ours(id) {
                     observe(id)
                 } else {
-                    delegated
-                        .next()
-                        .unwrap_or_else(|| Err(anyhow::anyhow!("Some details for a check could not be read.")))
+                    delegated.next().unwrap_or_else(|| {
+                        Err(anyhow::anyhow!(
+                            "Some details for a check could not be read."
+                        ))
+                    })
                 }
             })
             .collect()

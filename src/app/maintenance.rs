@@ -13,8 +13,8 @@ pub use updates::*;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::errors::assert_no_dev_terms;
+    use super::*;
     use secblitz::diagnostics as diag;
     use secblitz::operations::OperationKind as Op;
 

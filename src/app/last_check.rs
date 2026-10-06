@@ -51,10 +51,8 @@ pub fn save(dir: &Path, user: &str, at: u64, report: &Report) -> anyhow::Result<
 pub fn load(dir: &Path, user: &str, now: u64, boot: u64) -> Option<(Report, u64)> {
     let data = std::fs::read(dir.join(FILE)).ok()?;
     let saved: Saved = serde_json::from_slice(&data).ok()?;
-    (saved.version == env!("CARGO_PKG_VERSION")
-        && saved.user == user
-        && fresh(saved.at, now, boot))
-    .then_some((saved.report, saved.at))
+    (saved.version == env!("CARGO_PKG_VERSION") && saved.user == user && fresh(saved.at, now, boot))
+        .then_some((saved.report, saved.at))
 }
 
 pub fn forget(dir: &Path) {
@@ -129,7 +127,10 @@ mod tests {
         std::fs::write(dir.path().join(FILE), text).unwrap();
         let (back, _) = load(dir.path(), "S-1", 1100, 900).unwrap();
         assert_eq!(back.results[0].status, CheckStatus::Attention);
-        assert_eq!(back.results[1].status, CheckStatus::Other("from_a_newer_build".into()));
+        assert_eq!(
+            back.results[1].status,
+            CheckStatus::Other("from_a_newer_build".into())
+        );
         assert_eq!(back.findings[0].status, CheckStatus::Review);
         save(dir.path(), "S-1", 1000, &back).unwrap();
         let again = std::fs::read_to_string(dir.path().join(FILE)).unwrap();

@@ -29,8 +29,8 @@ use windows_sys::Win32::{
 };
 
 use super::control::ServiceState;
-use crate::platform::security::{descriptor, error, sid, wide, wide_str, Local};
 use super::{config, SERVICE_NAME};
+use crate::platform::security::{descriptor, error, sid, wide, wide_str, Local};
 
 const ACCOUNT: &str = r"NT AUTHORITY\LocalService";
 const DISPLAY_NAME: &str = "Secblitz web protection";
@@ -74,7 +74,6 @@ extern "system" {
 }
 
 const NEEDS_ADMIN: &str = "Web protection setup needs administrator rights";
-
 
 fn local_path(path: &Path) -> Result<&str> {
     let text = path.to_str().context("Non-Unicode Windows path")?;
@@ -130,7 +129,6 @@ fn installed_binary() -> Result<PathBuf> {
 fn command(binary: &Path) -> Result<String> {
     Ok(format!("\"{}\" filter run", local_path(binary)?))
 }
-
 
 fn open(path: &Path, access: u32, creation: u32) -> Result<File> {
     let path = wide(path)?;
@@ -493,7 +491,6 @@ pub fn remove_dir() -> Result<()> {
     drop(pin);
     std::fs::remove_dir_all(&filter).context("Remove the web protection folder")
 }
-
 
 fn manager(access: ServiceManagerAccess) -> Result<ServiceManager> {
     Ok(ServiceManager::local_computer(None::<&str>, access)?)

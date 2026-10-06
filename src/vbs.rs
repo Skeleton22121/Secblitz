@@ -65,7 +65,11 @@ pub fn boot_from_detail(detail: &str) -> Option<i64> {
 
 pub fn split_batches(ids: &[String]) -> Vec<Vec<String>> {
     let mut batches = Vec::new();
-    let ordinary: Vec<String> = ids.iter().filter(|i| !is_vbs_check_id(i)).cloned().collect();
+    let ordinary: Vec<String> = ids
+        .iter()
+        .filter(|i| !is_vbs_check_id(i))
+        .cloned()
+        .collect();
     if !ordinary.is_empty() {
         batches.push(ordinary);
     }
@@ -179,9 +183,9 @@ pub fn driver_files(services: &[ServiceRow], loaded: &[String], windows: &str) -
         };
         match path {
             Some(path) => push(&service.name, path),
-            None => out.unresolved.push(
-                safe_name(&service.name).unwrap_or_else(|| "driver".into()),
-            ),
+            None => out
+                .unresolved
+                .push(safe_name(&service.name).unwrap_or_else(|| "driver".into())),
         }
     }
     // Loaded modules include .exe and .dll files (the kernel itself): only
@@ -216,10 +220,7 @@ pub struct Scan {
 
 /// Scan every driver whose image exists. A missing file is not a problem (the
 /// driver cannot load); one that cannot be read is reported, never assumed fine.
-pub fn scan_files(
-    files: &[DriverFile],
-    read: &dyn Fn(&str) -> std::io::Result<Vec<u8>>,
-) -> Scan {
+pub fn scan_files(files: &[DriverFile], read: &dyn Fn(&str) -> std::io::Result<Vec<u8>>) -> Scan {
     let mut scan = Scan::default();
     for file in files {
         match read(&file.path) {
@@ -477,7 +478,10 @@ mod tests {
             ),
             (r"C:\Tools\a.sys.exe", None),
             (r"\Windows\System32\drivers\a.sys", None),
-            (r"\SYSTEMROOT\SYSTEM32\A.SYS", Some(r"C:\Windows\SYSTEM32\A.SYS")),
+            (
+                r"\SYSTEMROOT\SYSTEM32\A.SYS",
+                Some(r"C:\Windows\SYSTEM32\A.SYS"),
+            ),
             (r"\Device\HarddiskVolume3\a.sys", None),
             (r"C:\a.exe", None),
             (r"C:\x\..\a.sys", None),
@@ -516,7 +520,11 @@ mod tests {
         // A configured driver whose file cannot be located is never skipped
         // quietly: it is listed so the check says "could not check".
         assert_eq!(list.unresolved, ["odd"]);
-        let odd = driver_files(&[svc("bad name;", 1, 3, Some(r"\Device\x\a.sys"))], &[], r"C:\Windows");
+        let odd = driver_files(
+            &[svc("bad name;", 1, 3, Some(r"\Device\x\a.sys"))],
+            &[],
+            r"C:\Windows",
+        );
         assert_eq!(odd.unresolved, ["driver"]);
     }
 
@@ -600,12 +608,18 @@ mod tests {
         ] {
             let mut f = supported();
             set(&mut f);
-            assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), no(LOCKED));
+            assert_eq!(
+                decide_with(MEMORY_INTEGRITY, &f, false, clean()),
+                no(LOCKED)
+            );
         }
         let mut f = supported();
         f.lock_vbs = Some(0);
         f.lock_hvci = Some(0);
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, false, clean()),
+            Decision::Offer
+        );
     }
 
     #[test]
@@ -638,11 +652,17 @@ mod tests {
         let mut f = supported();
         f.virt_firmware = None;
         f.hypervisor_vendor = Some(MICROSOFT_HV.into());
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, false, clean()),
+            Decision::Offer
+        );
         let mut f = supported();
         f.virt_firmware = None;
         f.vbs_status = Some(2);
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, false, clean()),
+            Decision::Offer
+        );
     }
 
     #[test]
@@ -654,7 +674,10 @@ mod tests {
             Scan::default()
         });
         assert_eq!(d, no(NOT_SUPPORTED));
-        assert!(!ran, "the scan must not run when the hardware already rules it out");
+        assert!(
+            !ran,
+            "the scan must not run when the hardware already rules it out"
+        );
 
         let scan = Scan {
             flagged: vec![
@@ -713,27 +736,51 @@ mod tests {
             decide_with(STACK_PROTECTION, &f, false, clean()),
             no(NO_SHADOW_STACKS)
         );
-        assert_eq!(decide_with(STACK_PROTECTION, &f, true, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &f, true, clean()),
+            Decision::Offer
+        );
         let mut old = f.clone();
         old.build = Some(19045);
-        assert_eq!(decide_with(STACK_PROTECTION, &old, true, clean()), no(OLD_WINDOWS));
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &old, true, clean()),
+            no(OLD_WINDOWS)
+        );
         old.build = Some(STACK_PROTECTION_BUILD);
-        assert_eq!(decide_with(STACK_PROTECTION, &old, true, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &old, true, clean()),
+            Decision::Offer
+        );
         let mut locked = f.clone();
         locked.lock_stack = Some(1);
-        assert_eq!(decide_with(STACK_PROTECTION, &locked, true, clean()), no(LOCKED));
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &locked, true, clean()),
+            no(LOCKED)
+        );
         let mut locked = f.clone();
         locked.lock_vbs = Some(1);
-        assert_eq!(decide_with(STACK_PROTECTION, &locked, true, clean()), no(LOCKED));
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &locked, true, clean()),
+            no(LOCKED)
+        );
         let mut other = f.clone();
         other.lock_hvci = Some(1);
-        assert_eq!(decide_with(STACK_PROTECTION, &other, true, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &other, true, clean()),
+            Decision::Offer
+        );
         let mut on = f.clone();
         on.running = vec![2, 5];
-        assert_eq!(decide_with(STACK_PROTECTION, &on, true, clean()), no(ALREADY_ON));
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &on, true, clean()),
+            no(ALREADY_ON)
+        );
         let mut audit = f;
         audit.running = vec![2, 6];
-        assert_eq!(decide_with(STACK_PROTECTION, &audit, true, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(STACK_PROTECTION, &audit, true, clean()),
+            Decision::Offer
+        );
         let mut ran = false;
         let mut g = supported();
         g.running = vec![2];
@@ -759,12 +806,19 @@ mod tests {
         let mut f = supported();
         f.enabled_hvci = Some(1);
         f.boot_unix = Some(1000);
-        f.blocked = vec!["bad.sys".into(), "not ok;rm.sys".into(), "second.sys".into()];
+        f.blocked = vec![
+            "bad.sys".into(),
+            "not ok;rm.sys".into(),
+            "second.sys".into(),
+        ];
         let out = verification(&f);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].title, MEMORY_INTEGRITY_NOT_RUNNING);
         assert_eq!(out[0].status, CheckStatus::Attention);
-        assert_eq!(blocked_names(&out[0].detail).unwrap(), "bad.sys, second.sys");
+        assert_eq!(
+            blocked_names(&out[0].detail).unwrap(),
+            "bad.sys, second.sys"
+        );
         assert_eq!(boot_from_detail(&out[0].detail), Some(1000));
         assert_eq!(finding_control(&out[0].title), Some(MEMORY_INTEGRITY));
         f.blocked.clear();
@@ -822,25 +876,43 @@ mod tests {
         ] {
             let mut f = supported();
             set(&mut f);
-            assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(SET_BY_HAND));
+            assert_eq!(
+                decide_with(MEMORY_INTEGRITY, &f, true, clean()),
+                no(SET_BY_HAND)
+            );
             f.running = vec![2];
-            assert_eq!(decide_with(STACK_PROTECTION, &f, true, clean()), no(SET_BY_HAND));
+            assert_eq!(
+                decide_with(STACK_PROTECTION, &f, true, clean()),
+                no(SET_BY_HAND)
+            );
         }
         let mut f = supported();
         f.require_platform = Some(3);
         f.available = vec![1, 2];
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(NOT_SUPPORTED));
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, true, clean()),
+            no(NOT_SUPPORTED)
+        );
         f.available = vec![1, 2, 3];
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, true, clean()),
+            Decision::Offer
+        );
         let mut f = supported();
         f.required = vec![1, 2, 4];
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(NOT_SUPPORTED));
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, true, clean()),
+            no(NOT_SUPPORTED)
+        );
         let mut f = supported();
         f.mandatory = Some(0);
         f.enable_vbs = Some(1);
         f.require_platform = Some(1);
         f.required = vec![1, 2];
-        assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), Decision::Offer);
+        assert_eq!(
+            decide_with(MEMORY_INTEGRITY, &f, true, clean()),
+            Decision::Offer
+        );
     }
 
     #[test]

@@ -2,8 +2,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod app;
 mod broker;
-mod guide;
 mod gui;
+mod guide;
 mod i18n;
 mod launcher;
 mod tray;
@@ -695,8 +695,17 @@ mod tests {
         ] {
             assert!(rc.contains(&line), "secblitz.rc lacks {line}");
         }
-        for name in ["CompanyName", "FileDescription", "ProductName", "OriginalFilename", "LegalCopyright"] {
-            assert!(rc.contains(&format!("VALUE \"{name}\"")), "secblitz.rc lacks {name}");
+        for name in [
+            "CompanyName",
+            "FileDescription",
+            "ProductName",
+            "OriginalFilename",
+            "LegalCopyright",
+        ] {
+            assert!(
+                rc.contains(&format!("VALUE \"{name}\"")),
+                "secblitz.rc lacks {name}"
+            );
         }
         let manifest = include_str!("../assets/secblitz.manifest");
         assert!(

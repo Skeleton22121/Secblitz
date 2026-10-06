@@ -1,30 +1,30 @@
 //! The Secblitz window (iced, CPU renderer).
-pub mod icons;
-pub mod pages;
 #[cfg(test)]
 mod bench;
+pub mod icons;
+pub mod pages;
 mod persist;
 pub mod render;
 mod tasks;
 pub mod theme;
-mod window;
 pub mod widgets;
+mod window;
 
 use crate::app::{self, score::Score, worker};
 use crate::i18n::Lang;
-use secblitz::model::CheckStatus;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
 use pages::{debloat, fixes, fixflow, history, home, settings, tools, web};
 use secblitz::engine::Report;
+use secblitz::model::CheckStatus;
 use std::path::PathBuf;
 use std::sync::Arc;
 use theme::{Palette, Tone};
 
+use persist::{forget_check, persist, Cache};
 pub use persist::{save_prefs, wait_persisted};
 pub use tasks::{blocking, blocking_stream};
-use persist::{forget_check, persist, Cache};
 use window::window_icon;
 
 #[derive(Debug, Clone)]
@@ -197,9 +197,7 @@ impl Ctx {
         // has the focus (the person just clicked), so it may hand that on.
         #[cfg(windows)]
         if request.opens_window() {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                AllowSetForegroundWindow, ASFW_ANY,
-            };
+            use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
             // SAFETY: plain Win32 call with no pointers.
             unsafe { AllowSetForegroundWindow(ASFW_ANY) };
         }
@@ -405,7 +403,10 @@ impl App {
         let web_state = web::on_enter(&mut app.web, &mut app.ctx);
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
-        (app, Task::batch([opened, first_check, enter, web_state, pending]))
+        (
+            app,
+            Task::batch([opened, first_check, enter, web_state, pending]),
+        )
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -537,15 +538,15 @@ impl App {
                 } else {
                     crate::guide::failure_text(self.ctx.lang, page)
                 };
-                self.update(Message::Toast(text, if ok { Tone::Good } else { Tone::Warn }))
+                self.update(Message::Toast(
+                    text,
+                    if ok { Tone::Good } else { Tone::Warn },
+                ))
             }
             Message::WindowFocus(focused) => {
                 self.focused = focused;
                 let idle = self.ctx.checking.is_none() && !self.ctx.busy;
-                if self
-                    .recheck
-                    .focus(focused, std::time::Instant::now(), idle)
-                {
+                if self.recheck.focus(focused, std::time::Instant::now(), idle) {
                     self.update(Message::CheckNow)
                 } else {
                     Task::none()
@@ -671,7 +672,9 @@ impl App {
                         .iter()
                         .filter(|id| {
                             r.results.iter().any(|o| {
-                                o.id == **id && (o.status == CheckStatus::Applied || o.status == CheckStatus::Unchanged)
+                                o.id == **id
+                                    && (o.status == CheckStatus::Applied
+                                        || o.status == CheckStatus::Unchanged)
                             })
                         })
                         .count(),
@@ -736,8 +739,7 @@ impl App {
                 );
             }
             Err(e) => {
-                self.ctx.check_error =
-                    Some(self.ctx.t(crate::launcher::friendly_check_problem(e)));
+                self.ctx.check_error = Some(self.ctx.t(crate::launcher::friendly_check_problem(e)));
                 let entry = if operation && n > 0 {
                     self.ctx
                         .report
@@ -1260,7 +1262,10 @@ mod recheck_tests {
         let mut r = Recheck::default();
         assert!(!r.focus(true, t0, true), "nothing opened yet");
         r.arm(t0, true);
-        assert!(!r.focus(true, t0, true), "focus before leaving does nothing");
+        assert!(
+            !r.focus(true, t0, true),
+            "focus before leaving does nothing"
+        );
         assert!(!r.focus(false, t0, true));
         assert!(r.focus(true, t0 + Duration::from_secs(60), true));
         assert!(
@@ -1285,10 +1290,16 @@ mod recheck_tests {
         r.arm(t0, true);
         assert!(!r.focus(false, t0, true));
         assert!(!r.focus(true, t0 + Duration::from_secs(5), false), "busy");
-        assert!(r.focus(true, t0 + Duration::from_secs(9), true), "still armed");
+        assert!(
+            r.focus(true, t0 + Duration::from_secs(9), true),
+            "still armed"
+        );
         r.arm(t0, true);
         assert!(!r.focus(false, t0, true));
         assert!(!r.focus(true, t0 + RECHECK_WINDOW + Duration::from_secs(1), true));
-        assert!(!r.focus(true, t0 + Duration::from_secs(5), true), "disarmed");
+        assert!(
+            !r.focus(true, t0 + Duration::from_secs(5), true),
+            "disarmed"
+        );
     }
 }

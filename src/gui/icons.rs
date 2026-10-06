@@ -1,7 +1,6 @@
 //! Icon set: Microsoft Fluent UI System Icons, 24px (MIT license, see
 //! assets/ICONS-LICENSE.txt). https://github.com/microsoft/fluentui-system-icons
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
     Shield,

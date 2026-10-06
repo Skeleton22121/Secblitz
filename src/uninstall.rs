@@ -2,12 +2,12 @@
 //! uninstaller commands, which can first undo the changes Secblitz made.
 #![allow(dead_code)] // the GUI part of Remove Secblitz uses the rest
 use crate::i18n::Lang;
-use secblitz::user_settings::{Outcome as UserOutcome, Setting};
 use anyhow::Result;
 use secblitz::debloat::suggested::Undo;
 use secblitz::debloat::RestoreAll;
 use secblitz::engine::Outcome as SettingOutcome;
 use secblitz::model::CheckStatus;
+use secblitz::user_settings::{Outcome as UserOutcome, Setting};
 use serde::Serialize;
 
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
@@ -48,11 +48,12 @@ pub enum Step {
     Suggested,
 }
 
-
-const SETTING_CHANGED: &str = "{title}: it has changed since Secblitz set it, so it was left as it is. No action is needed.";
+const SETTING_CHANGED: &str =
+    "{title}: it has changed since Secblitz set it, so it was left as it is. No action is needed.";
 const SETTING_MACHINE_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is. Restart your PC and try again. If it still does not work, you can leave it as it is.";
 const SETTING_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is. You can change it yourself in Windows Settings.";
-const APP_FAILED: &str = "{name} could not be brought back. Try again later, or get it again from the Microsoft Store.";
+const APP_FAILED: &str =
+    "{name} could not be brought back. Try again later, or get it again from the Microsoft Store.";
 const APP_NEEDS_STORE: &str =
     "{name} could not be brought back. You can get it again from the Microsoft Store.";
 const SUGGESTED_OLDER: &str =
@@ -96,7 +97,6 @@ pub fn left_line(left: &Left, lang: Lang) -> String {
         Left::SuggestedChangedSince => lang.t(SUGGESTED_CHANGED),
     }
 }
-
 
 pub fn left_reason_from_status(status: &CheckStatus) -> LeftReason {
     if *status == CheckStatus::Conflict {
@@ -156,7 +156,6 @@ fn fold_user(results: Vec<(Setting, UserOutcome)>) -> Summary {
     }
     summary
 }
-
 
 #[cfg(windows)]
 fn open_engine() -> Result<secblitz::engine::Engine> {
@@ -231,7 +230,6 @@ pub fn revert_machine(progress: &dyn Fn(Step, bool)) -> Summary {
     progress(Step::Suggested, summary.left.len() == before);
     summary
 }
-
 
 #[cfg(windows)]
 pub fn revert_user() -> Summary {
@@ -377,8 +375,14 @@ mod tests {
             left_reason_from_status(&CheckStatus::Conflict),
             LeftReason::ChangedSince
         );
-        assert_eq!(left_reason_from_status(&CheckStatus::Skipped), LeftReason::NotPossible);
-        assert_eq!(left_reason_from_status(&CheckStatus::Other("failed".into())), LeftReason::NotPossible);
+        assert_eq!(
+            left_reason_from_status(&CheckStatus::Skipped),
+            LeftReason::NotPossible
+        );
+        assert_eq!(
+            left_reason_from_status(&CheckStatus::Other("failed".into())),
+            LeftReason::NotPossible
+        );
     }
 
     #[test]
@@ -416,7 +420,10 @@ mod tests {
             },
             Lang::En,
         );
-        assert!(machine.contains("Restart your PC and try again"), "{machine}");
+        assert!(
+            machine.contains("Restart your PC and try again"),
+            "{machine}"
+        );
         assert!(!machine.contains("Windows Settings"), "{machine}");
         let changed = left_line(
             &Left::Setting {
@@ -435,7 +442,12 @@ mod tests {
             let line = left_line(&left, Lang::En);
             assert!(line.contains("Windows Settings"), "{line}");
         }
-        let app = left_line(&Left::App { name: "Clipchamp".into() }, Lang::En);
+        let app = left_line(
+            &Left::App {
+                name: "Clipchamp".into(),
+            },
+            Lang::En,
+        );
         assert!(app.contains("Microsoft Store"), "{app}");
         assert!(!app.contains("internet"), "{app}");
         let unknown = left_line(&Left::Personal { id: "x.unknown" }, Lang::En);

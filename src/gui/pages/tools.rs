@@ -17,9 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use view::{modal, view};
 #[cfg(test)]
 pub use view::{closed_summary, section_status, Block, PAGE_ORDER};
+pub use view::{modal, view};
 
 /// What a closed section says about its work, so nothing important is hidden.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,9 +416,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::ThreatsDone(r) => {
             ctx.busy = false;
-            let changed = r
-                .as_ref()
-                .is_ok_and(|t| crate::app::maintenance::threats_result(t) != crate::app::maintenance::ThreatsResult::Stuck);
+            let changed = r.as_ref().is_ok_and(|t| {
+                crate::app::maintenance::threats_result(t)
+                    != crate::app::maintenance::ThreatsResult::Stuck
+            });
             state.threats = Run::Done(r);
             state.finish(Slot::Threats);
             match (&state.tips, changed) {
@@ -736,10 +737,9 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             }
             ctx.busy = true;
             state.threats = Run::Working;
-            Task::perform(
-                blocking(|| actions::remove_threats().map_err(plain)),
-                |r| tools(Msg::ThreatsDone(r)),
-            )
+            Task::perform(blocking(|| actions::remove_threats().map_err(plain)), |r| {
+                tools(Msg::ThreatsDone(r))
+            })
         }
         Sheet::DefenderUpdate => {
             state.defender = Run::Working;
@@ -841,13 +841,19 @@ mod followup_tests {
         let mut state = State::default();
         state.bitwarden_known(&Ok(broker::Reply::NotApplicable));
         assert!(!state.bitwarden_present, "NotApplicable: not present");
-        assert!(!state.bitwarden_not_here, "NotApplicable: not_here is false");
+        assert!(
+            !state.bitwarden_not_here,
+            "NotApplicable: not_here is false"
+        );
 
         let mut state = State::default();
         state.bitwarden_known(&Ok(broker::Reply::Unavailable));
         assert!(state.bitwarden_not_here);
         state.bitwarden_known(&Ok(broker::Reply::Done));
         assert!(state.bitwarden_present, "second call Done: present");
-        assert!(!state.bitwarden_not_here, "second call Done: not_here cleared");
+        assert!(
+            !state.bitwarden_not_here,
+            "second call Done: not_here cleared"
+        );
     }
 }

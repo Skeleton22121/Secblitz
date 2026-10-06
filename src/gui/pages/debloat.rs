@@ -716,7 +716,12 @@ fn allow_suggested(state: &mut State, ctx: &Ctx) -> Task<Message> {
                 secblitz::user_settings::Setting::SuggestedApps,
                 secblitz::user_settings::Op::Undo,
             ),
-            |r| wrap(Msg::SuggestedAllowed(matches!(r, Ok(crate::broker::Reply::Done)))),
+            |r| {
+                wrap(Msg::SuggestedAllowed(matches!(
+                    r,
+                    Ok(crate::broker::Reply::Done)
+                )))
+            },
         ));
     }
     Task::batch(tasks)
@@ -813,9 +818,10 @@ fn store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> 
     }
     state.probing = true;
     state.offline = None;
-    Task::perform(blocking(secblitz::software_install::dns_offline), move |offline| {
-        wrap(Msg::StoreProbed(index, offline))
-    })
+    Task::perform(
+        blocking(secblitz::software_install::dns_offline),
+        move |offline| wrap(Msg::StoreProbed(index, offline)),
+    )
 }
 
 fn start_store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {

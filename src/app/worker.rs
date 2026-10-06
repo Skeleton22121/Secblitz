@@ -313,10 +313,10 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secblitz::engine::ProgressStep;
-    use secblitz::model::CheckStatus;
     use iced::futures::executor::block_on;
     use iced::futures::StreamExt;
+    use secblitz::engine::ProgressStep;
+    use secblitz::model::CheckStatus;
 
     type Log = Arc<std::sync::Mutex<Vec<String>>>;
 
@@ -348,7 +348,10 @@ mod tests {
         }
         fn audit(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
             self.note("audit");
-            progress(Progress::new("a", ProgressStep::Result(CheckStatus::Compliant)));
+            progress(Progress::new(
+                "a",
+                ProgressStep::Result(CheckStatus::Compliant),
+            ));
             if self.fail_audit {
                 anyhow::bail!("audit broke");
             }
@@ -361,7 +364,10 @@ mod tests {
         ) -> anyhow::Result<Report> {
             self.note(format!("apply {}", ids.join(",")));
             for id in ids {
-                progress(Progress::new(id, ProgressStep::Result(CheckStatus::Applied)));
+                progress(Progress::new(
+                    id,
+                    ProgressStep::Result(CheckStatus::Applied),
+                ));
             }
             if self.fail_apply {
                 anyhow::bail!("disk full");
@@ -370,7 +376,10 @@ mod tests {
         }
         fn undo(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
             self.note("undo");
-            progress(Progress::new("a", ProgressStep::Result(CheckStatus::Restored)));
+            progress(Progress::new(
+                "a",
+                ProgressStep::Result(CheckStatus::Restored),
+            ));
             Ok(report("undo"))
         }
         fn undo_selected(
@@ -380,7 +389,10 @@ mod tests {
         ) -> anyhow::Result<Report> {
             self.note(format!("undo_selected {}", ids.join(",")));
             for id in ids {
-                progress(Progress::new(id, ProgressStep::Result(CheckStatus::Restored)));
+                progress(Progress::new(
+                    id,
+                    ProgressStep::Result(CheckStatus::Restored),
+                ));
             }
             if self.fail_apply {
                 anyhow::bail!("disk full");
@@ -460,7 +472,10 @@ mod tests {
                 "audit".to_owned(),
             ]
         );
-        assert!(matches!(events.last(), Some(Event::Applied { result: Ok(_), .. })));
+        assert!(matches!(
+            events.last(),
+            Some(Event::Applied { result: Ok(_), .. })
+        ));
         let (w, log) = worker(false, false);
         collect(&w, Job::Apply(vec!["a".into(), "b".into()]));
         assert_eq!(*log.lock().unwrap(), vec!["apply a,b", "audit"]);
@@ -571,7 +586,10 @@ mod tests {
     fn preflight_answers_without_applying_or_checking() {
         let (w, log) = worker(false, false);
         match collect(&w, Job::Preflight { undo: false }).last() {
-            Some(Event::Preflight { undo: false, result: Ok(()) }) => {}
+            Some(Event::Preflight {
+                undo: false,
+                result: Ok(()),
+            }) => {}
             other => panic!("unexpected {other:?}"),
         }
         let (w, log2) = worker(true, false);

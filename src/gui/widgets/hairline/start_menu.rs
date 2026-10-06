@@ -1,16 +1,14 @@
 //! The Start menu drawing on the Clean up apps sheet.
 use super::glyph::Glyph;
 use super::live::Live;
+use super::live::SETTLED_AGE;
 use super::motion::{phase, Spring};
 use super::parts::Mark;
 use super::pointer::{Hotspots, Layer};
 use super::stage::{pt, stroke, Ink, Meaning, Plate, Stage, W_ACCENT, W_FAINT, W_PART};
 use super::svg::PathData;
-use super::live::SETTLED_AGE;
 use crate::gui::theme::{self, mix, Palette};
-use crate::gui::widgets::anim::{
-    self, ACCELERATE, DECELERATE, EASE_IN_OUT, EMPHASIZED, STANDARD,
-};
+use crate::gui::widgets::anim::{self, ACCELERATE, DECELERATE, EASE_IN_OUT, EMPHASIZED, STANDARD};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry, Text};
 use iced::widget::text::{LineHeight, Shaping};
@@ -168,7 +166,6 @@ pub fn start_menu<'a, M: 'a>(menu: StartMenu) -> Element<'a, M> {
         .height(HEIGHT)
         .into()
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Who {
@@ -339,14 +336,27 @@ pub fn glyph_for(family: &str) -> Glyph {
         (&["xbox", "gamingapp", "roblox", "king.com"], Glyph::Game),
         (&["solitaire"], Glyph::Cards),
         (
-            &["clipchamp", "zunevideo", "disney", "netflix", "primevideo", "tiktok"],
+            &[
+                "clipchamp",
+                "zunevideo",
+                "disney",
+                "netflix",
+                "primevideo",
+                "tiktok",
+            ],
             Glyph::Play,
         ),
         (&["spotify", "zunemusic", "soundrecorder"], Glyph::Music),
         (&["windowscamera", "photos", "adobeexpress"], Glyph::Camera),
         (&["bingnews", "twitter", "webexperience"], Glyph::News),
-        (&["skypeapp", "messaging", "outlook", "communicationsapps"], Glyph::Mail),
-        (&["people", "feedbackhub", "facebook", "teams"], Glyph::Person),
+        (
+            &["skypeapp", "messaging", "outlook", "communicationsapps"],
+            Glyph::Mail,
+        ),
+        (
+            &["people", "feedbackhub", "facebook", "teams"],
+            Glyph::Person,
+        ),
         (
             &["bingsearch", "gethelp", "549981c3f5f10", "copilot", "maps"],
             Glyph::Search,
@@ -362,7 +372,6 @@ pub fn glyph_for(family: &str) -> Glyph {
         .map(|(_, g)| *g)
         .unwrap_or(Glyph::Doc)
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
@@ -451,7 +460,11 @@ impl StartMenu {
     fn mark_delay(&self) -> f32 {
         self.apps
             .iter()
-            .filter_map(|a| a.fate.at().map(|at| rel(at, self.changed) + a.fate.settled()))
+            .filter_map(|a| {
+                a.fate
+                    .at()
+                    .map(|at| rel(at, self.changed) + a.fate.settled())
+            })
             .fold(0.15_f32, f32::max)
             .min(1.6)
     }
@@ -571,8 +584,11 @@ impl StartMenu {
             let hovered = st.live.hover == Some(Part::Tile(i));
             s.sc.aim(if hovered { 1.14 } else { 1.0 });
         }
-        st.mark_sc
-            .aim(if st.live.hover == Some(Part::Mark) { 1.12 } else { 1.0 });
+        st.mark_sc.aim(if st.live.hover == Some(Part::Mark) {
+            1.12
+        } else {
+            1.0
+        });
     }
 }
 
@@ -775,7 +791,6 @@ impl<M> canvas::Program<M> for StartMenu {
     }
 }
 
-
 fn panel(f: &mut Frame, s: &Stage, ink: &Ink, rule: bool) {
     let plate = s.rounded_rect(62.0, 28.0, 196.0, 196.0, 12.0);
     f.fill(&plate, ink.plate);
@@ -785,7 +800,10 @@ fn panel(f: &mut Frame, s: &Stage, ink: &Ink, rule: bool) {
     f.stroke(&s.line(pt(102.0, 51.0), pt(146.0, 51.0)), ink.lo());
     f.stroke(&s.line(pt(80.0, 74.0), pt(106.0, 74.0)), ink.ln2());
     if rule {
-        f.stroke(&s.line(pt(RULE_X.0, RULE_Y), pt(RULE_X.1, RULE_Y)), ink.lo());
+        f.stroke(
+            &s.line(pt(RULE_X.0, RULE_Y), pt(RULE_X.1, RULE_Y)),
+            ink.lo(),
+        );
     }
     f.stroke(&s.line(pt(62.0, 198.0), pt(258.0, 198.0)), ink.lo());
     f.stroke(&s.icon(Glyph::Person, pt(86.0, 211.0), 14.0), ink.ln2());
@@ -960,8 +978,8 @@ fn result_mark(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use std::time::Duration;
 
     fn menu(apps: Vec<Fate>, fillers: usize, outcome: Outcome, t0: Instant) -> StartMenu {
@@ -1010,7 +1028,13 @@ mod tests {
         assert_eq!(s.iter().filter(|w| matches!(w, Who::Filler(_))).count(), 7);
         let s = sequence(20, 9);
         assert_eq!(s.len(), 23);
-        assert_eq!(s[..SLOTS].iter().filter(|w| matches!(w, Who::App(_))).count(), MAX_LIT);
+        assert_eq!(
+            s[..SLOTS]
+                .iter()
+                .filter(|w| matches!(w, Who::App(_)))
+                .count(),
+            MAX_LIT
+        );
         assert_eq!(s[SLOTS..], (6..20).map(Who::App).collect::<Vec<_>>()[..]);
         let apps: Vec<usize> = s
             .iter()
@@ -1058,16 +1082,34 @@ mod tests {
         let sc = m.scene(done + Duration::from_secs(1));
         assert_eq!(sc.places[1], Place::Gone);
         assert_eq!(sc.places[2], Place::Slot(1));
-        assert_eq!(sc.places.iter().filter(|p| matches!(p, Place::Slot(_))).count(), 8);
+        assert_eq!(
+            sc.places
+                .iter()
+                .filter(|p| matches!(p, Place::Slot(_)))
+                .count(),
+            8
+        );
     }
 
     #[test]
     fn poses_end_where_the_fate_says() {
-        let rest = pose(Some(Fate::Refused(Instant::now())), SETTLED_AGE, 0.0, 2, 1.0);
+        let rest = pose(
+            Some(Fate::Refused(Instant::now())),
+            SETTLED_AGE,
+            0.0,
+            2,
+            1.0,
+        );
         assert!(rest.lift.abs() < 1e-3 && rest.rot.abs() < 1e-3);
         assert_eq!((rest.tone, rest.flag, rest.ring), (1.0, 1.0, 1.0));
         assert!(!rest.dashed);
-        let gone = pose(Some(Fate::Removed(Instant::now())), SETTLED_AGE, 0.0, 0, 1.0);
+        let gone = pose(
+            Some(Fate::Removed(Instant::now())),
+            SETTLED_AGE,
+            0.0,
+            0,
+            1.0,
+        );
         assert_eq!(gone.scale, 0.0);
         assert_eq!(gone.spark, None);
         let mid = pose(Some(Fate::Removed(Instant::now())), 0.8, 0.0, 0, 1.0);
@@ -1095,11 +1137,23 @@ mod tests {
         assert_eq!(m.label(Part::Tile(0), &sc), "Suppression de App 0");
         assert_eq!(m.label(Part::Tile(1), &sc), "En attente : App 1");
         assert_eq!(m.label(Part::Tile(2), &sc), "Stay 0");
-        assert_eq!(spots.hit(pt(104.0 + 10.0, 100.0), &still), Some(Part::Tile(0)));
+        assert_eq!(
+            spots.hit(pt(104.0 + 10.0, 100.0), &still),
+            Some(Part::Tile(0))
+        );
         assert_eq!(spots.hit(pt(132.0, 117.0), &still), None);
         assert_eq!(spots.hit(MORE_C, &still), Some(Part::More));
         assert_eq!(m.label(Part::More, &sc), "5 apps de plus");
-        assert_eq!(m.label(Part::More, &Scene { hidden: 1, ..m.scene(t0) }), "1 app de plus");
+        assert_eq!(
+            m.label(
+                Part::More,
+                &Scene {
+                    hidden: 1,
+                    ..m.scene(t0)
+                }
+            ),
+            "1 app de plus"
+        );
         assert_eq!(spots.hit(MARK_C, &still), None);
         let m = menu(
             vec![Fate::Refused(t0), Fate::Stays(t0), Fate::Kept(t0)],
@@ -1124,14 +1178,25 @@ mod tests {
         let sc = m.scene(t0);
         assert_eq!(sc.places[1], Place::Slot(1));
         let spots = m.spots(&sc, false);
-        assert_eq!(spots.hit(slot_centre(1), &crate::gui::widgets::hairline::parallax::Parallax::off()), None);
+        assert_eq!(
+            spots.hit(
+                slot_centre(1),
+                &crate::gui::widgets::hairline::parallax::Parallax::off()
+            ),
+            None
+        );
     }
 
     #[test]
     fn apps_no_longer_installed_shrink_away_quietly() {
         let _m = anim::forced::set(false);
         let t0 = Instant::now();
-        let m = menu(vec![Fate::Absent(t0), Fate::Removed(t0)], 9, Outcome::Removed, t0);
+        let m = menu(
+            vec![Fate::Absent(t0), Fate::Removed(t0)],
+            9,
+            Outcome::Removed,
+            t0,
+        );
         let p = pose(Some(Fate::Absent(t0)), 0.5, 0.0, 1, 1.0);
         assert_eq!((p.lift, p.spark), (0.0, None));
         assert!(p.scale < 1.0 && p.tone == 1.0);
@@ -1189,7 +1254,10 @@ mod tests {
             BOUNDS.size(),
         );
         let disc_bottom = px(MARK_C).y + stage.len(MARK_R);
-        assert!(r.y >= disc_bottom, "{r:?} over the disc ending at {disc_bottom}");
+        assert!(
+            r.y >= disc_bottom,
+            "{r:?} over the disc ending at {disc_bottom}"
+        );
         assert!(r.y + r.height <= BOUNDS.height);
     }
 
@@ -1208,7 +1276,11 @@ mod tests {
             mouse::Cursor::Available(mid),
         );
         assert!(st.live.tilt.x.target.abs() < 0.01);
-        assert!(st.live.tilt.y.target.abs() < 0.01, "{}", st.live.tilt.y.target);
+        assert!(
+            st.live.tilt.y.target.abs() < 0.01,
+            "{}",
+            st.live.tilt.y.target
+        );
     }
 
     #[test]
@@ -1241,7 +1313,10 @@ mod tests {
     #[test]
     fn glyphs_follow_the_app() {
         assert_eq!(glyph_for("Microsoft.XboxGamingOverlay"), Glyph::Game);
-        assert_eq!(glyph_for("Microsoft.MicrosoftSolitaireCollection"), Glyph::Cards);
+        assert_eq!(
+            glyph_for("Microsoft.MicrosoftSolitaireCollection"),
+            Glyph::Cards
+        );
         assert_eq!(glyph_for("Clipchamp.Clipchamp"), Glyph::Play);
         assert_eq!(glyph_for("Microsoft.BingNews"), Glyph::News);
         assert_eq!(glyph_for("Microsoft.OutlookForWindows"), Glyph::Mail);
@@ -1253,7 +1328,6 @@ mod tests {
         }
     }
 
-
     const BOUNDS: Rectangle = Rectangle {
         x: 0.0,
         y: 0.0,
@@ -1261,11 +1335,15 @@ mod tests {
         height: HEIGHT,
     };
 
-
-
     fn tick(st: &mut State, m: &StartMenu, cursor: mouse::Cursor, clock: &mut Instant) -> bool {
         *clock += Duration::from_millis(16);
-        wants_frame(canvas::Program::<()>::update(m, st, &frame(*clock), BOUNDS, cursor))
+        wants_frame(canvas::Program::<()>::update(
+            m,
+            st,
+            &frame(*clock),
+            BOUNDS,
+            cursor,
+        ))
     }
 
     fn px(p: Point) -> Point {

@@ -176,7 +176,11 @@ pub(super) fn web_protection_off() -> bool {
 }
 
 #[cfg(any(windows, test))]
-pub(super) fn put_back_left(setting: Setting, was_ours: bool, reply: Option<Option<&Reply>>) -> Option<Left> {
+pub(super) fn put_back_left(
+    setting: Setting,
+    was_ours: bool,
+    reply: Option<Option<&Reply>>,
+) -> Option<Left> {
     match reply {
         Some(Some(Reply::Done)) => None,
         Some(Some(Reply::ChangedSince)) => Some(Left::Setting {

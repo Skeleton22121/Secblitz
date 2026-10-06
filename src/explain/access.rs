@@ -7,7 +7,11 @@ const fn e(what: &'static str, risk: &'static str, change: &'static str) -> Expl
 }
 
 #[cfg(test)]
-const IDS: &[&str] = &["accounts.autologon", "remote_desktop.disabled", "smb1.disabled"];
+const IDS: &[&str] = &[
+    "accounts.autologon",
+    "remote_desktop.disabled",
+    "smb1.disabled",
+];
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
@@ -41,8 +45,14 @@ mod tests {
             let x = get(id).unwrap_or_else(|| panic!("no explanation for {id}"));
             for (label, line) in [("what", x.what), ("risk", x.risk), ("change", x.change)] {
                 crate::explain::tests::assert_short_sentence(id, label, line);
-                assert!(!line.contains('!') && !line.contains('\u{2014}'), "{id} {label}");
-                assert!(!line.contains("SMB") && !line.contains("RDP"), "{id} {label}");
+                assert!(
+                    !line.contains('!') && !line.contains('\u{2014}'),
+                    "{id} {label}"
+                );
+                assert!(
+                    !line.contains("SMB") && !line.contains("RDP"),
+                    "{id} {label}"
+                );
             }
             assert!(crate::explain::for_check(id).is_some(), "{id}");
         }

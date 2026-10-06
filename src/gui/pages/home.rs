@@ -1,6 +1,5 @@
 //! Home: one hero region (score ring, verdict, one primary, extras in the
 //! overflow menu), then flat row groups; first-run PC-check view.
-use secblitz::advice::{self, Group, NextStep};
 use crate::app::flow;
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
@@ -11,6 +10,7 @@ use crate::gui::widgets::{self, anim, ring, scan, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
 use iced::widget::{column, row};
 use iced::{Alignment, Element, Length, Subscription, Task};
+use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 use secblitz::model::Probe;
 use std::time::Instant;
@@ -187,7 +187,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     assessed(state, ctx, report)
 }
 
-
 fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut seen: Vec<&str> = Vec::new();
@@ -232,7 +231,6 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
     )
 }
 
-
 fn error_card<'a>(
     state: &State,
     ctx: &'a Ctx,
@@ -271,7 +269,6 @@ fn error_card<'a>(
     ));
     widgets::region(p, content).into()
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Split {
@@ -529,7 +526,9 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
                 None,
                 None,
             ));
-    } else if verdict == Verdict::Attention && fixable > 0 && flow::repairs_blocked(report).is_none()
+    } else if verdict == Verdict::Attention
+        && fixable > 0
+        && flow::repairs_blocked(report).is_none()
     {
         buttons = buttons.push(widgets::action(
             p,
@@ -771,7 +770,11 @@ mod tests {
             ..Report::default()
         };
         assert_eq!(score::to_check(&report).len(), 1);
-        assert_eq!(protected_labels(&report).0, 1, "a switched-on extra is not counted");
+        assert_eq!(
+            protected_labels(&report).0,
+            1,
+            "a switched-on extra is not counted"
+        );
         assert_eq!(protected_labels(&report).0, Score::of(&report).protected);
     }
 

@@ -31,7 +31,6 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-
 struct Reader<'a> {
     s: &'a [u8],
     i: usize,
@@ -404,7 +403,11 @@ impl PathData {
                 segs.push(Seg::Move(cur));
             }
             if left >= len {
-                segs.push(if matches!(s, Seg::Close) { Seg::Close } else { seg });
+                segs.push(if matches!(s, Seg::Close) {
+                    Seg::Close
+                } else {
+                    seg
+                });
                 left -= len;
                 cur = seg_end(seg);
                 pen = Some(cur);
@@ -576,7 +579,6 @@ pub(super) fn ellipse_point(c: (f64, f64), r: (f64, f64), phi: f64, t: f64) -> P
     )
 }
 
-
 const STEPS: usize = 16;
 
 fn dist(a: Point, b: Point) -> f32 {
@@ -738,11 +740,18 @@ mod tests {
             )
         );
         let q = PathData::of("M0 0Q5 10 10 0T20 0");
-        assert_eq!(q.segs[2], Seg::Quad(Point::new(15.0, -10.0), Point::new(20.0, 0.0)));
+        assert_eq!(
+            q.segs[2],
+            Seg::Quad(Point::new(15.0, -10.0), Point::new(20.0, 0.0))
+        );
         let s = PathData::of("M0 0L5 0S10 5 10 0");
         assert_eq!(
             s.segs[2],
-            Seg::Cubic(Point::new(5.0, 0.0), Point::new(10.0, 5.0), Point::new(10.0, 0.0))
+            Seg::Cubic(
+                Point::new(5.0, 0.0),
+                Point::new(10.0, 5.0),
+                Point::new(10.0, 0.0)
+            )
         );
     }
 

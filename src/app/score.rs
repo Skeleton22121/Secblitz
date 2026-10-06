@@ -111,7 +111,8 @@ pub fn core_not_running(report: &Report, id: &str) -> bool {
     report.findings.iter().any(|f| {
         (secblitz::vbs::finding_control(&f.title) == Some(id)
             && f.title != secblitz::vbs::DEVICE_BLOCKED)
-            || (advice::control_for_finding(&f.title) == Some(id) && f.status == CheckStatus::Attention)
+            || (advice::control_for_finding(&f.title) == Some(id)
+                && f.status == CheckStatus::Attention)
     })
 }
 
@@ -253,7 +254,11 @@ impl Score {
     pub fn of(report: &Report) -> Self {
         let mut s = Score::default();
         // Optional switches say they are not part of the score, on or off.
-        for r in report.results.iter().filter(|r| advice::extra_section(&r.id).is_none()) {
+        for r in report
+            .results
+            .iter()
+            .filter(|r| advice::extra_section(&r.id).is_none())
+        {
             match classify_in(report, r) {
                 Class::Protected => s.protected += 1,
                 Class::Fixable | Class::Review => s.attention += 1,
@@ -308,13 +313,25 @@ mod tests {
 
     #[test]
     fn optional_switches_never_change_the_score() {
-        let off = rep(vec![out("uac.enabled", "compliant"), out("ai.paint", "attention"), out("privacy.advertising_id", "attention")]);
-        let on = rep(vec![out("uac.enabled", "compliant"), out("ai.paint", "compliant"), out("privacy.advertising_id", "compliant")]);
+        let off = rep(vec![
+            out("uac.enabled", "compliant"),
+            out("ai.paint", "attention"),
+            out("privacy.advertising_id", "attention"),
+        ]);
+        let on = rep(vec![
+            out("uac.enabled", "compliant"),
+            out("ai.paint", "compliant"),
+            out("privacy.advertising_id", "compliant"),
+        ]);
         for report in [&off, &on] {
             let s = Score::of(report);
             assert_eq!((s.protected, s.total), (1, 1));
         }
-        assert_eq!(classify(&on.results[1]), Class::Protected, "still listed with its undo");
+        assert_eq!(
+            classify(&on.results[1]),
+            Class::Protected,
+            "still listed with its undo"
+        );
     }
 
     #[test]
@@ -326,7 +343,10 @@ mod tests {
         };
         let mut report = rep(vec![]);
         report.findings.push(finding.clone());
-        assert!(!finding_has_fix(&report, &finding), "no fix in this report yet");
+        assert!(
+            !finding_has_fix(&report, &finding),
+            "no fix in this report yet"
+        );
         assert_eq!(to_check_count(&report), 1);
         report.results.push(out("smb1.disabled", "compliant"));
         assert!(finding_has_fix(&report, &finding));
@@ -335,7 +355,9 @@ mod tests {
             ..finding
         };
         assert!(!finding_has_fix(&report, &other));
-        assert!(to_check_ids(&report).iter().all(|id| !id.starts_with("finding.")));
+        assert!(to_check_ids(&report)
+            .iter()
+            .all(|id| !id.starts_with("finding.")));
     }
 
     #[test]
@@ -508,7 +530,8 @@ mod tests {
         r.findings.push(secblitz::model::Finding {
             title: "Automatic logon".into(),
             status: CheckStatus::Attention,
-            detail: "AutoAdminLogon enabled=False; Winlogon DefaultPassword value present=True.".into(),
+            detail: "AutoAdminLogon enabled=False; Winlogon DefaultPassword value present=True."
+                .into(),
         });
         assert!(!finding_has_fix(&r, &r.findings[0]));
         assert_eq!(to_check_count(&r), 1);
@@ -516,9 +539,20 @@ mod tests {
             "Not offered: you are connected to this PC from another device right now",
             "Not offered: this PC is set up as a kiosk",
         ] {
-            let id = if reason.contains("kiosk") { "accounts.autologon" } else { "remote_desktop.disabled" };
-            let title = if reason.contains("kiosk") { "Automatic logon" } else { "Remote Desktop" };
-            let mut r = rep(vec![Outcome { detail: reason.into(), ..out(id, "skipped") }]);
+            let id = if reason.contains("kiosk") {
+                "accounts.autologon"
+            } else {
+                "remote_desktop.disabled"
+            };
+            let title = if reason.contains("kiosk") {
+                "Automatic logon"
+            } else {
+                "Remote Desktop"
+            };
+            let mut r = rep(vec![Outcome {
+                detail: reason.into(),
+                ..out(id, "skipped")
+            }]);
             r.findings.push(tip(title));
             assert!(finding_has_fix(&r, &r.findings[0]), "{reason}");
         }
@@ -538,7 +572,10 @@ mod tests {
         for (status, detail) in [
             ("skipped", secblitz::vbs::NOT_SUPPORTED),
             ("skipped", secblitz::vbs::LOCKED),
-            ("skipped", "Not offered: a driver on this PC may not work with it: a.sys"),
+            (
+                "skipped",
+                "Not offered: a driver on this PC may not work with it: a.sys",
+            ),
             ("skipped", "Relevant policy is configured: assessment only"),
             ("unknown", ""),
             ("applied", "Preference applied; restart required"),
@@ -547,11 +584,17 @@ mod tests {
             r.findings.push(tip("Memory integrity"));
             assert!(finding_has_fix(&r, &r.findings[0]), "{status} {detail}");
             assert!(
-                to_check_ids(&r).iter().all(|id| !id.starts_with("finding.")),
+                to_check_ids(&r)
+                    .iter()
+                    .all(|id| !id.starts_with("finding.")),
                 "{status} {detail}"
             );
         }
-        for id in ["accounts.autologon", "remote_desktop.disabled", "smb1.disabled"] {
+        for id in [
+            "accounts.autologon",
+            "remote_desktop.disabled",
+            "smb1.disabled",
+        ] {
             let title = match id {
                 "accounts.autologon" => "Automatic logon",
                 "remote_desktop.disabled" => "Remote Desktop",
@@ -560,14 +603,30 @@ mod tests {
             for (status, detail) in [
                 ("skipped", "Relevant policy is configured: assessment only"),
                 ("unknown", ""),
-                ("skipped", "Not offered: this edition of Windows does not include it"),
+                (
+                    "skipped",
+                    "Not offered: this edition of Windows does not include it",
+                ),
             ] {
                 let mut r = rep(vec![row(id, status, detail)]);
                 r.findings.push(tip(title));
-                assert!(!finding_has_fix(&r, &r.findings[0]), "{id} {status} {detail}");
-                assert_eq!(to_check_ids(&r), vec![format!("finding.{}", title.to_lowercase().replace(' ', "-"))]);
+                assert!(
+                    !finding_has_fix(&r, &r.findings[0]),
+                    "{id} {status} {detail}"
+                );
+                assert_eq!(
+                    to_check_ids(&r),
+                    vec![format!(
+                        "finding.{}",
+                        title.to_lowercase().replace(' ', "-")
+                    )]
+                );
             }
-            let mut r = rep(vec![row(id, "applied", "Preference applied; restart required")]);
+            let mut r = rep(vec![row(
+                id,
+                "applied",
+                "Preference applied; restart required",
+            )]);
             r.findings.push(tip(title));
             assert!(finding_has_fix(&r, &r.findings[0]), "{id}");
         }
@@ -635,7 +694,10 @@ mod tests {
         let mut none = rep(vec![]);
         none.findings.push(find("Memory integrity", "attention"));
         assert!(!waits_for_restart(&none, &none.findings[0]));
-        assert_ne!(finding_advice(&none, &none.findings[0]).next, RESTART_TO_START);
+        assert_ne!(
+            finding_advice(&none, &none.findings[0]).next,
+            RESTART_TO_START
+        );
         r.findings
             .push(find("Memory integrity not running", "attention"));
         assert!(finding_has_fix(&r, &r.findings[0]));
@@ -647,7 +709,8 @@ mod tests {
             .push(find("Kernel stack protection not running", "attention"));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Excluded);
         let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
-        r.findings.push(find("A device may not be working", "attention"));
+        r.findings
+            .push(find("A device may not be working", "attention"));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
         assert_eq!(to_check_count(&r), 1);
         // Running already (not offered because it is on) counts as protected.

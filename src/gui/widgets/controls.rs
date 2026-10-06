@@ -21,7 +21,6 @@ fn line(px: f32) -> LineHeight {
     LineHeight::Absolute(Pixels(px))
 }
 
-
 pub fn dropdown<'a, T>(
     p: Palette,
     options: &'a [T],
@@ -82,7 +81,6 @@ where
         .padding([0.0, theme::S3]);
     arrow(stack![list, chevron])
 }
-
 
 const SLIDE: std::time::Duration = std::time::Duration::from_millis(200);
 const MAX_SEGMENTS: usize = 4;
@@ -361,7 +359,6 @@ where
     })
 }
 
-
 const SWITCH_W: f32 = 40.0;
 const SWITCH_H: f32 = 20.0;
 
@@ -547,7 +544,6 @@ pub fn switch<'a>(
         on_toggle: on_toggle.map(|f| Box::new(f) as Box<dyn Fn(bool) -> Message + 'a>),
     })
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {
@@ -770,7 +766,6 @@ pub fn checkbox<'a>(
     )
 }
 
-
 struct Marker {
     p: Palette,
     pitch: f32,
@@ -910,8 +905,6 @@ pub fn slide_marker<'a>(
     })
 }
 
-
-
 pub fn scroll_style(
     p: Palette,
 ) -> impl Fn(&Theme, iced::widget::scrollable::Status) -> iced::widget::scrollable::Style {
@@ -1001,7 +994,13 @@ pub fn fade_below<'a, M: 'a>(
             ..container::Style::default()
         });
     let list: Element<'a, M> = list.into();
-    stack![list, container(fade).height(Length::Fill).align_bottom(Length::Fill)].into()
+    stack![
+        list,
+        container(fade)
+            .height(Length::Fill)
+            .align_bottom(Length::Fill)
+    ]
+    .into()
 }
 
 const FADE: f32 = 32.0;

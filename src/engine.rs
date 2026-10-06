@@ -85,7 +85,10 @@ pub struct Report {
 
 impl Report {
     fn push(&mut self, result: Outcome, callback: &mut impl FnMut(Progress<'_>)) {
-        callback(Progress::new(&result.id, ProgressStep::Result(result.status.clone())));
+        callback(Progress::new(
+            &result.id,
+            ProgressStep::Result(result.status.clone()),
+        ));
         self.results.push(result);
     }
 

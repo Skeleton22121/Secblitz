@@ -39,9 +39,9 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         return Some(g.page.action());
     }
     match rule_id {
-        "os.feature_release_support"
-        | "boot.secure_boot_certs"
-        | "update.paused" => Some(Action::OpenWindowsUpdate),
+        "os.feature_release_support" | "boot.secure_boot_certs" | "update.paused" => {
+            Some(Action::OpenWindowsUpdate)
+        }
         "defender.tamper_protection" => Some(Action::OpenTamperProtection),
         "defender.threats" | "defender.scan_age" => Some(Action::OpenProtectionHistory),
         "defender.exclusions_risky" => Some(Action::OpenWindowsSecurity),

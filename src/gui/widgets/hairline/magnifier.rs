@@ -12,7 +12,6 @@ use iced::widget::canvas::{self, Action, Event, Frame, Geometry, Path};
 use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Size, Theme, Vector};
 use std::time::{Duration, Instant};
 
-
 const VIEW_AT: Vector = Vector::new(36.0, 10.0);
 pub const VIEW: Size = Size::new(256.0, 188.0);
 pub const COMPACT: f32 = 0.625;
@@ -57,7 +56,6 @@ const LEAD: Rectangle = Rectangle {
     height: SY1 - SY0 + 10.0,
 };
 
-
 const STILL: f32 = 0.9;
 const BOB_HOLD: f32 = 6.0;
 const BOB_FADE: f32 = 1.5;
@@ -67,7 +65,6 @@ const TICK_STAGGER: Duration = Duration::from_millis(150);
 const TICK_DRAW: f32 = 0.35;
 const SWITCH_DONE: (f32, f32) = (0.45, 0.85);
 const TIP_SPRING: (f32, f32) = (320.0, 34.0);
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -103,7 +100,6 @@ impl Magnifier {
     }
 }
 
-
 fn stage_for(bounds: Size) -> Stage {
     Stage::fit(VIEW, bounds).shifted(Vector::new(-VIEW_AT.x, -VIEW_AT.y))
 }
@@ -119,7 +115,13 @@ pub fn rows_at(progress: f32) -> (usize, usize) {
 
 fn spots() -> Hotspots<usize> {
     (0..N).fold(Hotspots::new(), |h, i| {
-        h.rect(i, pt((SX0 + SX1) / 2.0, row_y(i)), SX1 - SX0, ROW_H, Layer::Fixed)
+        h.rect(
+            i,
+            pt((SX0 + SX1) / 2.0, row_y(i)),
+            SX1 - SX0,
+            ROW_H,
+            Layer::Fixed,
+        )
     })
 }
 
@@ -165,7 +167,6 @@ fn tip_at(st: &State, s: &Stage) -> Point {
 fn secs(d: Duration) -> f32 {
     d.as_secs_f32()
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Paint {
@@ -280,7 +281,11 @@ fn screen_prims(ink: &Ink, rows: &[RowLook; N], out: &mut Vec<Prim>) {
     for (i, look) in rows.iter().enumerate() {
         let (glyph, _, len) = ROWS[i];
         let y = row_y(i);
-        let icon = if look.read > 0.5 { ink.accent } else { ink.line };
+        let icon = if look.read > 0.5 {
+            ink.accent
+        } else {
+            ink.line
+        };
         out.push(Prim {
             d: glyph.data().placed(pt(SX0 + 16.0, y), 12.0),
             paint: Paint::Stroke(icon, W_PART),
@@ -356,7 +361,6 @@ fn draw_prim(f: &mut Frame, s: &Stage, prim: &Prim, plate: Color) {
         Paint::Stroke(c, w) => f.stroke(&path, stroke(c, w)),
     }
 }
-
 
 fn flatten(d: &PathData) -> Vec<(Vec<Point>, bool)> {
     let mut out: Vec<(Vec<Point>, bool)> = Vec::new();
@@ -565,7 +569,6 @@ fn draw_zoomed(f: &mut Frame, s: &Stage, prims: &[Prim], c: Point) {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 struct Row {
     seen: Option<Instant>,
@@ -642,7 +645,10 @@ impl Magnifier {
                 let rest = REST + bob(t, self.bob_amount(st, now));
                 if over {
                     let to = lead(ptr.at);
-                    pt(rest.x + (to.x - rest.x) * INVITE, rest.y + (to.y - rest.y) * INVITE)
+                    pt(
+                        rest.x + (to.x - rest.x) * INVITE,
+                        rest.y + (to.y - rest.y) * INVITE,
+                    )
                 } else {
                     rest
                 }
@@ -650,7 +656,10 @@ impl Magnifier {
             (Status::Checking, _) if over => lead(ptr.at),
             (Status::Checking, Some(p)) => {
                 let (focus, _) = rows_at(p);
-                pt(155.0 + 50.0 * (t * 0.9).sin(), row_y(focus) + 2.5 * (t * 1.7).sin())
+                pt(
+                    155.0 + 50.0 * (t * 0.9).sin(),
+                    row_y(focus) + 2.5 * (t * 1.7).sin(),
+                )
             }
             (Status::Checking, None) => pt(
                 138.0 + 46.0 * (t * 0.9).sin(),
@@ -705,7 +714,11 @@ impl Magnifier {
     fn look_again(&self, st: &mut State, i: usize, now: Instant) {
         st.look = Some((i, now));
         if let Some(seen) = &mut st.rows[i].seen {
-            *seen = if anim::reduced() { now } else { now + RELOOK_DELAY };
+            *seen = if anim::reduced() {
+                now
+            } else {
+                now + RELOOK_DELAY
+            };
         }
     }
 
@@ -815,7 +828,11 @@ impl<M> canvas::Program<M> for Magnifier {
             st.lens_x.tick(dt);
             st.lens_y.tick(dt);
             for r in &mut st.rows {
-                r.knob.target = if r.seen.is_some_and(|at| now >= at) { 1.0 } else { 0.0 };
+                r.knob.target = if r.seen.is_some_and(|at| now >= at) {
+                    1.0
+                } else {
+                    0.0
+                };
                 r.knob.tick(dt);
             }
         }
@@ -959,7 +976,10 @@ mod tests {
         assert_eq!(Labels::new(|s| Lang::Fr.t(s)).0[0], "Pare-feu");
         assert_eq!(Labels::new(|s| Lang::De.t(s)).0[4], "Netzwerkfreigabe");
         assert_eq!(Labels::new(|s| Lang::Es.t(s)).0[4], "Uso compartido de red");
-        assert_eq!(Labels::new(|s| Lang::Pt.t(s)).0[3], "Área de Trabalho Remota");
+        assert_eq!(
+            Labels::new(|s| Lang::Pt.t(s)).0[3],
+            "Área de Trabalho Remota"
+        );
         assert_eq!(Labels::new(|s| Lang::It.t(s)).0[3], "Desktop remoto");
     }
 
@@ -1022,7 +1042,12 @@ mod tests {
         assert!(clip_line(&[pt(20.0, 20.0), pt(30.0, 20.0)], c, 10.0).is_empty());
         let inside = clip_line(&[pt(-2.0, 1.0), pt(3.0, 1.0)], c, 10.0);
         assert_eq!(inside, vec![vec![pt(-2.0, 1.0), pt(3.0, 1.0)]]);
-        let sq = [pt(-50.0, -50.0), pt(50.0, -50.0), pt(50.0, 50.0), pt(-50.0, 50.0)];
+        let sq = [
+            pt(-50.0, -50.0),
+            pt(50.0, -50.0),
+            pt(50.0, 50.0),
+            pt(-50.0, 50.0),
+        ];
         let cut = clip_fill(&sq, c, 10.0);
         assert!(cut.len() >= 30);
         assert!(cut.iter().all(|p| (p.x.hypot(p.y) - 10.0).abs() < 0.2));
@@ -1036,7 +1061,10 @@ mod tests {
         let ring = flatten(&circle_d(pt(5.0, 5.0), 3.0));
         assert_eq!(ring.len(), 1);
         assert!(ring[0].1);
-        assert!(ring[0].0.iter().all(|p| ((p.x - 5.0).hypot(p.y - 5.0) - 3.0).abs() < 0.01));
+        assert!(ring[0]
+            .0
+            .iter()
+            .all(|p| ((p.x - 5.0).hypot(p.y - 5.0) - 3.0).abs() < 0.01));
         let wall = flatten(&Glyph::Wall.data().placed(pt(0.0, 0.0), 12.0));
         assert!(wall.len() > 5);
     }
@@ -1134,9 +1162,15 @@ mod tests {
             frames += 1;
             assert!(frames < 1000, "never settled");
         }
-        assert!(st.rows.iter().all(|r| r.seen.is_none() && r.knob.value == 0.0));
+        assert!(st
+            .rows
+            .iter()
+            .all(|r| r.seen.is_none() && r.knob.value == 0.0));
         let secs = frames as f32 * 0.016;
-        assert!(secs > BOB_HOLD && secs < BOB_HOLD + BOB_FADE + 2.0, "{secs}");
+        assert!(
+            secs > BOB_HOLD && secs < BOB_HOLD + BOB_FADE + 2.0,
+            "{secs}"
+        );
         assert!((st.lens().x - REST.x).abs() < 0.01 && (st.lens().y - REST.y).abs() < 0.01);
     }
 
@@ -1160,7 +1194,12 @@ mod tests {
         let over = mouse::Cursor::Available(at);
         assert!(canvas::Program::<()>::update(&m, &mut st, &moved, BOUNDS, over).is_some());
         assert_eq!(st.live.hover, Some(3));
-        assert!(!frame(&mut st, &m, &mut clock, mouse::Cursor::Available(at)));
+        assert!(!frame(
+            &mut st,
+            &m,
+            &mut clock,
+            mouse::Cursor::Available(at)
+        ));
         assert!((st.lens_y.value - (at.y + VIEW_AT.y)).abs() < 0.01);
     }
 
@@ -1209,7 +1248,10 @@ mod tests {
             for plate in [Plate::Bg, Plate::Surface] {
                 let ink = Ink::new(&p, plate);
                 assert!(switch_fills(&ink, 0.0, 0.0).is_empty());
-                assert_eq!(switch_fills(&ink, 1.0, 0.0), vec![ink.tint(ink.accent), ink.accent]);
+                assert_eq!(
+                    switch_fills(&ink, 1.0, 0.0),
+                    vec![ink.tint(ink.accent), ink.accent]
+                );
                 let done = switch_fills(&ink, 1.0, 1.0);
                 assert_eq!(done.len(), 2);
                 let close = |a: Color, b: Color| {
@@ -1244,7 +1286,10 @@ mod tests {
             assert!(m.row_looks(&st, clock).iter().all(|r| r.read == 0.0));
         }
         let secs = frames as f32 * 0.016;
-        assert!(secs > BOB_HOLD && secs < BOB_HOLD + BOB_FADE + 2.0, "{secs}");
+        assert!(
+            secs > BOB_HOLD && secs < BOB_HOLD + BOB_FADE + 2.0,
+            "{secs}"
+        );
         assert_eq!(st.live.hover, Some(0));
         assert!(st.tip_on);
         assert!((st.tip_y.value - (row_y(0) - ROW_H / 2.0 * 0.7)).abs() < 0.01);
@@ -1259,7 +1304,13 @@ mod tests {
         let row = |i: usize| Point::new(150.0 - VIEW_AT.x, row_y(i) - VIEW_AT.y);
         frame(&mut st, &m, &mut clock, mouse::Cursor::Available(row(1)));
         let moved = Event::Mouse(mouse::Event::CursorMoved { position: row(1) });
-        canvas::Program::<()>::update(&m, &mut st, &moved, BOUNDS, mouse::Cursor::Available(row(1)));
+        canvas::Program::<()>::update(
+            &m,
+            &mut st,
+            &moved,
+            BOUNDS,
+            mouse::Cursor::Available(row(1)),
+        );
         for _ in 0..60 {
             frame(&mut st, &m, &mut clock, mouse::Cursor::Available(row(1)));
         }
@@ -1283,7 +1334,10 @@ mod tests {
                     st.tip_y = Spring::new(y);
                     let anchor = s.point(tip_at(&st, &s));
                     let r = super::super::pointer::tooltip_rect(anchor, 90.0, size);
-                    assert!(r.y + r.height <= anchor.y + 0.5, "k {k} row {i}: {r:?} {anchor:?}");
+                    assert!(
+                        r.y + r.height <= anchor.y + 0.5,
+                        "k {k} row {i}: {r:?} {anchor:?}"
+                    );
                 }
             }
         }

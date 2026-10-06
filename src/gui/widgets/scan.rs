@@ -11,7 +11,6 @@ use iced::widget::{column, container, responsive};
 use iced::{mouse, Alignment, Element, Length, Point, Rectangle, Renderer, Theme};
 use std::time::{Duration, Instant};
 
-
 fn hero_scale(height: f32, rest: f32) -> f32 {
     ((height - rest) / magnifier::VIEW.height).clamp(magnifier::COMPACT, magnifier::FULL)
 }
@@ -50,7 +49,6 @@ pub fn ticker_style(depth: f32) -> (f32, f32) {
     }
     (alpha, depth.clamp(0.0, 1.0))
 }
-
 
 const SCREEN_REST: f32 = 64.0 + progress::HEIGHT + TICKER_HEIGHT + 3.0 * theme::S6 + theme::S8;
 
@@ -91,7 +89,8 @@ pub fn checking_screen<'a>(
                 },
             ))
             .max_width(theme::MAX_READABLE),
-            container(status_ticker(p, feed.lines, feed.now, feed.finished)).max_width(theme::MAX_READABLE),
+            container(status_ticker(p, feed.lines, feed.now, feed.finished))
+                .max_width(theme::MAX_READABLE),
         ]
         .spacing(theme::S6)
         .align_x(Alignment::Center)
@@ -100,7 +99,6 @@ pub fn checking_screen<'a>(
     })
     .into()
 }
-
 
 const TICKER_ENTER: Duration = Duration::from_millis(450);
 const ROW: f32 = 26.0;
@@ -198,9 +196,9 @@ pub fn status_ticker<'a>(
         now,
         finished,
     })
-        .width(Length::Fill)
-        .height(Length::Fixed(TICKER_HEIGHT))
-        .into()
+    .width(Length::Fill)
+    .height(Length::Fixed(TICKER_HEIGHT))
+    .into()
 }
 
 #[cfg(test)]

@@ -246,7 +246,6 @@ fn passwords_status(state: &State, ctx: &Ctx) -> Option<Status> {
     }
 }
 
-
 fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
     widgets::action(p, ButtonKind::Secondary, label, None, msg.map(tools))
 }
@@ -413,13 +412,15 @@ fn open_security_entry(ctx: &Ctx) -> Option<MenuEntry> {
 }
 
 fn helper_hint(ctx: &Ctx) -> String {
-    ctx.t(ctx.helper.blocker().unwrap_or(crate::gui::REOPEN_TO_DO_THIS))
+    ctx.t(ctx
+        .helper
+        .blocker()
+        .unwrap_or(crate::gui::REOPEN_TO_DO_THIS))
 }
 
 fn busy_hint(ctx: &Ctx) -> String {
     ctx.t("Another task is running. Please wait for it to finish.")
 }
-
 
 fn virus_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let mut rows = vec![scan_row(state, ctx), defender_row(state, ctx)];
@@ -619,7 +620,6 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         }
     }
 }
-
 
 fn keep_using<'a>(p: Palette, ctx: &Ctx) -> El<'a> {
     widgets::small(
@@ -1036,7 +1036,6 @@ fn count_installing(ctx: &Ctx, n: usize) -> String {
     }
 }
 
-
 fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     if let Tips::Running(profile) = &state.tips {
         return vec![tips_running(ctx, *profile)];
@@ -1123,10 +1122,13 @@ fn tips_lists<'a>(state: &'a State, ctx: &'a Ctx, report: &logic::TipsReport) ->
         .iter()
         .partition(|tip| tip.state != TipState::Good);
     let rows = |tips: &[&logic::Tip]| -> El<'a> {
-        column(tips.iter().map(|tip| tip_row(ctx, tip, scanning, threats_busy)))
-            .spacing(theme::S1)
-            .width(Length::Fill)
-            .into()
+        column(
+            tips.iter()
+                .map(|tip| tip_row(ctx, tip, scanning, threats_busy)),
+        )
+        .spacing(theme::S1)
+        .width(Length::Fill)
+        .into()
     };
     let mut out = Vec::new();
     if !needs.is_empty() {
@@ -1204,8 +1206,8 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
         logic::TipAction::Open(open) => {
-            let label = crate::guide::Page::from_action(open)
-                .map_or("Open", crate::guide::Page::button);
+            let label =
+                crate::guide::Page::from_action(open).map_or("Open", crate::guide::Page::button);
             widgets::action(
                 p,
                 ButtonKind::Secondary,
@@ -1246,7 +1248,6 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         None => head,
     }
 }
-
 
 fn bitwarden_offer_row<'a>(ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
@@ -1363,7 +1364,6 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     }
 }
 
-
 fn settings_rows<'a>(ctx: &'a Ctx) -> Vec<El<'a>> {
     let p = ctx.palette;
     let available = ctx.can_open_pages();
@@ -1403,7 +1403,6 @@ fn settings_rows<'a>(ctx: &'a Ctx) -> Vec<El<'a>> {
         })
         .collect()
 }
-
 
 type SheetText = (Icon, String, Vec<String>, String);
 
@@ -1496,11 +1495,7 @@ fn sheet_text(state: &State, ctx: &Ctx, sheet: Sheet) -> SheetText {
     }
 }
 
-fn install_updates_extra<'a>(
-    state: &'a State,
-    ctx: &'a Ctx,
-    found: &logic::Found,
-) -> Vec<El<'a>> {
+fn install_updates_extra<'a>(state: &'a State, ctx: &'a Ctx, found: &logic::Found) -> Vec<El<'a>> {
     let p = ctx.palette;
     let mut list = column![].spacing(theme::S2);
     for u in found.updates.iter().take(5) {

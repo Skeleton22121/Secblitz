@@ -579,7 +579,14 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     ]
     .spacing(theme::S2);
     if let Some(error) = &ctx.engine_error {
-        details = details.push(widgets::small(p, format!("{}: {}", t("Last problem"), t(crate::app::flow::plain_failure(error)))));
+        details = details.push(widgets::small(
+            p,
+            format!(
+                "{}: {}",
+                t("Last problem"),
+                t(crate::app::flow::plain_failure(error))
+            ),
+        ));
     }
     let about = widgets::collapsible(
         p,

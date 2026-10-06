@@ -1,18 +1,18 @@
 //! Fix / undo flow drawn over any page: review sheet → working → result.
 use super::fixes::row_text;
-use secblitz::model::CheckStatus;
 use crate::app::flow::{self, Summary, SummaryKind};
 use crate::app::worker::{self, Job, Phase};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim::{self, Clock, Tween};
-use crate::gui::widgets::handoff;
 use crate::gui::widgets::controls::{fade_below, more_below, scroll_style, scrollbar};
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
+use crate::gui::widgets::handoff;
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
+use secblitz::model::CheckStatus;
 use std::time::Instant;
 
 const LIST_MAX_HEIGHT: f32 = 300.0;
@@ -191,13 +191,16 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         .as_deref()
         .and_then(|r| r.results.iter().find(|o| o.id == id))
         .and_then(|o| super::fixes::items_line(ctx, o));
-    let impact_line = (!impact.is_empty())
-        .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
+    let impact_line =
+        (!impact.is_empty()).then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
     let consequence = secblitz::advice::is_choice_check_id(id)
         .then(|| secblitz::advice::choice_consequence(id))
         .filter(|c| !c.is_empty())
         .map(|c| ctx.t(c));
-    let lines: Vec<String> = [impact_line, consequence, items].into_iter().flatten().collect();
+    let lines: Vec<String> = [impact_line, consequence, items]
+        .into_iter()
+        .flatten()
+        .collect();
     PlanRow {
         id: id.to_owned(),
         name: ctx.lang.control(id),
@@ -243,8 +246,13 @@ fn undo_row(ctx: &Ctx, id: &str) -> PlanRow {
     PlanRow {
         id: id.to_owned(),
         name: ctx.lang.control(id),
-        line: (!impact.is_empty())
-            .then(|| format!("{} {}", ctx.t("You'll be less protected from:"), ctx.t(impact))),
+        line: (!impact.is_empty()).then(|| {
+            format!(
+                "{} {}",
+                ctx.t("You'll be less protected from:"),
+                ctx.t(impact)
+            )
+        }),
         restart: ctx.catalog.restart.iter().any(|x| x == id),
     }
 }
@@ -294,7 +302,12 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     state.plan = ctx
         .report
         .as_deref()
-        .map(|r| r.undo_next.iter().map(|id| plan_row(ctx, id, false)).collect())
+        .map(|r| {
+            r.undo_next
+                .iter()
+                .map(|id| plan_row(ctx, id, false))
+                .collect()
+        })
         .unwrap_or_default();
     state.stage = Stage::Review {
         ids: Vec::new(),
@@ -447,7 +460,11 @@ fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task
 
 pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Task<Message> {
     use worker::Event as E;
-    if let E::Preflight { undo: asked, result } = event {
+    if let E::Preflight {
+        undo: asked,
+        result,
+    } = event
+    {
         if !state.checking {
             return Task::none();
         }
@@ -623,7 +640,10 @@ fn glide(state: &mut State, now: Instant) -> Task<Message> {
 fn scroll_steps(y: f32) -> Task<Message> {
     iced::widget::operation::scroll_to(
         STEP_LIST,
-        iced::widget::operation::AbsoluteOffset { x: None, y: Some(y) },
+        iced::widget::operation::AbsoluteOffset {
+            x: None,
+            y: Some(y),
+        },
     )
 }
 
@@ -673,7 +693,9 @@ fn technical_lines(
                     let a = secblitz::advice::for_outcome(r);
                     let (status, next) = if r.status == CheckStatus::Error {
                         ("Not done", flow::NOT_DONE)
-                    } else if r.status == CheckStatus::Skipped && r.detail.contains("readiness blocks") {
+                    } else if r.status == CheckStatus::Skipped
+                        && r.detail.contains("readiness blocks")
+                    {
                         ("Not done", flow::REASON_DISK)
                     } else {
                         flow::plain_detail(&r.status, &a)
@@ -699,7 +721,6 @@ fn technical_lines(
     lines
 }
 
-
 pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     match &state.stage {
         Stage::Closed => None,
@@ -709,7 +730,13 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
             undo,
             reason,
             retry,
-        } => Some(blocked_view(ctx, *undo, *undo && !ids.is_empty(), reason, *retry)),
+        } => Some(blocked_view(
+            ctx,
+            *undo,
+            *undo && !ids.is_empty(),
+            reason,
+            *retry,
+        )),
         Stage::Working { undo, phase, items } => {
             Some(working_view(state, ctx, *undo, *phase, items))
         }
@@ -735,11 +762,7 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
     .into()
 }
 
-fn below_art<'a>(
-    state: &State,
-    p: Palette,
-    content: Element<'a, Message>,
-) -> Element<'a, Message> {
+fn below_art<'a>(state: &State, p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
     fade_below(
         scrollable(content)
             .on_scroll(|v| Message::Fix(Msg::ResultList(v)))
@@ -755,9 +778,13 @@ fn below_art<'a>(
 fn step_list<'a>(state: &State, p: Palette, list: Element<'a, Message>) -> Element<'a, Message> {
     fade_below(
         scrollable(
-            container(container(list).width(Length::Fill).max_width(STEP_LIST_WIDTH))
-                .center_x(Length::Fill)
-                .padding([0.0, theme::S3]),
+            container(
+                container(list)
+                    .width(Length::Fill)
+                    .max_width(STEP_LIST_WIDTH),
+            )
+            .center_x(Length::Fill)
+            .padding([0.0, theme::S3]),
         )
         .id(STEP_LIST)
         .on_scroll(|v| Message::Fix(Msg::Steps(v)))
@@ -883,7 +910,8 @@ fn review_view<'a>(
     let title = if chosen && n == 1 {
         ctx.t("Put back 1 setting?")
     } else if chosen {
-        ctx.t("Put back {n} settings?").replace("{n}", &n.to_string())
+        ctx.t("Put back {n} settings?")
+            .replace("{n}", &n.to_string())
     } else if undo {
         ctx.t("Undo your last fixes?")
     } else if n == 1 {
@@ -1159,13 +1187,10 @@ fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
 }
 
 fn marked<'a>(p: Palette, mark: Icon, tone: Tone, s: String) -> Element<'a, Message> {
-    row![
-        widgets::icon(mark, 16.0, p.tone(tone)),
-        widgets::body(p, s)
-    ]
-    .spacing(theme::S2)
-    .align_y(Alignment::Center)
-    .into()
+    row![widgets::icon(mark, 16.0, p.tone(tone)), widgets::body(p, s)]
+        .spacing(theme::S2)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn block<'a>(p: Palette, label: String, lines: Vec<Element<'a, Message>>) -> Element<'a, Message> {
@@ -1384,7 +1409,10 @@ mod tests {
         let now = Instant::now();
         let mut f = Follow::at(now, 0.0, 100.0);
         assert!(f.put_it_at(0.0) && f.put_it_at(1.5) && f.put_it_at(40.0) && f.put_it_at(101.5));
-        assert!(!f.put_it_at(140.0), "the person scrolled somewhere the glide never goes");
+        assert!(
+            !f.put_it_at(140.0),
+            "the person scrolled somewhere the glide never goes"
+        );
         f.before = f.shown;
         f.shown = 30.0;
         f.glide.retarget(now, 60.0);

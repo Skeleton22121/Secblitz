@@ -11,19 +11,18 @@ use std::{
     ptr::{null, null_mut},
     time::Duration,
 };
-use windows_sys::Win32::{
-    System::{
-        ProcessStatus::{EnumDeviceDrivers, GetDeviceDriverFileNameW},
-        Registry::{
-            RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY,
-            HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
-        },
+use windows_sys::Win32::System::{
+    ProcessStatus::{EnumDeviceDrivers, GetDeviceDriverFileNameW},
+    Registry::{
+        RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE,
+        KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
     },
 };
 
 const MEMORY_INTEGRITY_KEY: &str =
     r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
-const STACK_KEY: &str = r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks";
+const STACK_KEY: &str =
+    r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks";
 const SERVICES_KEY: &str = r"SYSTEM\CurrentControlSet\Services";
 
 const NOT_FOUND: u32 = 2;
@@ -81,8 +80,16 @@ fn text(key: &Key, name: &str) -> std::result::Result<Option<String>, ()> {
     let mut kind = 0u32;
     let mut size = 0u32;
     // SAFETY: a null buffer only asks for the size.
-    let status =
-        unsafe { RegQueryValueExW(key.0, name.as_ptr(), null(), &mut kind, null_mut(), &mut size) };
+    let status = unsafe {
+        RegQueryValueExW(
+            key.0,
+            name.as_ptr(),
+            null(),
+            &mut kind,
+            null_mut(),
+            &mut size,
+        )
+    };
     if status == NOT_FOUND {
         return Ok(None);
     }

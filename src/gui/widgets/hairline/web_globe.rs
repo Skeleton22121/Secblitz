@@ -277,7 +277,6 @@ fn seed() -> u32 {
         | 1
 }
 
-
 fn quad(l: &[Point; 3], u: f32) -> Point {
     let v = 1.0 - u;
     pt(
@@ -308,7 +307,10 @@ fn dome_entry(lane: usize) -> f32 {
 
 fn landed_spot(slot: u8) -> Point {
     let s = f32::from(slot % 3);
-    pt(SCR.x + (s - 1.0) * 22.0, SCR.y + (f32::from(slot % 2) * 8.0 - 4.0))
+    pt(
+        SCR.x + (s - 1.0) * 22.0,
+        SCR.y + (f32::from(slot % 2) * 8.0 - 4.0),
+    )
 }
 
 fn dome_arc(rx: f32, ry: f32, a0: f32, a1: f32, n: usize) -> Vec<Point> {
@@ -346,7 +348,11 @@ fn dashed(s: &Stage, pts: &[Point], dash: f32, gap: f32, shift: f32) -> Path {
         let i = cum.partition_point(|c| *c < d).clamp(1, pts.len() - 1);
         let (a, b) = (pts[i - 1], pts[i]);
         let len = cum[i] - cum[i - 1];
-        let t = if len > 0.0 { (d - cum[i - 1]) / len } else { 0.0 };
+        let t = if len > 0.0 {
+            (d - cum[i - 1]) / len
+        } else {
+            0.0
+        };
         pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
     };
     let period = dash + gap;
@@ -377,7 +383,6 @@ fn flicker(t: f32) -> f32 {
 
 static STAMP_PATH: LazyLock<PathData> = LazyLock::new(|| PathData::of("M-7 -7l14 14M7 -7l-14 14"));
 static PAUSE_PATH: LazyLock<PathData> = LazyLock::new(|| PathData::of("M10 9.2v5.4M14 9.2v5.4"));
-
 
 fn still_items(guard: Guard) -> Vec<Item> {
     let page = Item::new(0, Kind::Page, 1, 0.35);
@@ -492,9 +497,7 @@ impl State {
     }
 
     fn flashing(&self) -> bool {
-        self.flashes
-            .iter()
-            .any(|f| self.clock - f.at < FLASH_LIFE)
+        self.flashes.iter().any(|f| self.clock - f.at < FLASH_LIFE)
     }
 
     fn enter(&mut self, guard: Guard, reduced: bool) {
@@ -523,7 +526,13 @@ impl State {
         self.take_counts_at(counts, guard, reduced, Instant::now());
     }
 
-    fn take_counts_at(&mut self, counts: Option<[u64; 3]>, guard: Guard, reduced: bool, now: Instant) {
+    fn take_counts_at(
+        &mut self,
+        counts: Option<[u64; 3]>,
+        guard: Guard,
+        reduced: bool,
+        now: Instant,
+    ) {
         let Some(new) = counts else {
             self.counts = None;
             return;
@@ -531,9 +540,9 @@ impl State {
         if let Some(old) = self.counts {
             if guard.blocks() && !reduced && !self.awake() {
                 let newest = (0..Kind::COUNTED.len()).rev().find(|i| new[*i] > old[*i]);
-                let due = self
-                    .rest_real
-                    .is_none_or(|t| now.saturating_duration_since(t).as_secs_f32() >= REST_REAL_GAP);
+                let due = self.rest_real.is_none_or(|t| {
+                    now.saturating_duration_since(t).as_secs_f32() >= REST_REAL_GAP
+                });
                 if let (Some(i), true) = (newest, due) {
                     self.queue = vec![Kind::COUNTED[i]];
                     self.rest_real = Some(now);
@@ -603,7 +612,11 @@ impl State {
 
     fn snap_grow(&mut self, hover: Option<Part>) {
         for it in &mut self.items {
-            it.grow = if hover == Some(Part::Item(it.id)) { 1.0 } else { 0.0 };
+            it.grow = if hover == Some(Part::Item(it.id)) {
+                1.0
+            } else {
+                0.0
+            };
         }
     }
 
@@ -626,7 +639,6 @@ impl State {
         true
     }
 }
-
 
 pub struct WebGlobe {
     pub p: Palette,
@@ -755,7 +767,9 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
         st.take_counts(self.blocked, self.guard, reduced);
         let stage = Stage::fit(UNITS, bounds.size());
-        let step = st.live.update(event, bounds, cursor, &stage, &spots(self.guard, st));
+        let step = st
+            .live
+            .update(event, bounds, cursor, &stage, &spots(self.guard, st));
         let mut dirty = false;
         if let Some(dt) = step.dt {
             if !reduced {
@@ -862,10 +876,14 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
 
         let pulse = dome_look(self.guard, &ink).map_or(ink.line, |l| l.0);
-        st.live
-            .draw_overlay(&mut f, &self.p, &stage, pulse, &spots(self.guard, st), |id| {
-                self.label(st, id)
-            });
+        st.live.draw_overlay(
+            &mut f,
+            &self.p,
+            &stage,
+            pulse,
+            &spots(self.guard, st),
+            |id| self.label(st, id),
+        );
         vec![f.into_geometry()]
     }
 
@@ -890,7 +908,6 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CrestMark {
@@ -958,7 +975,11 @@ fn draw_dome(f: &mut Frame, s: &Stage, ink: &Ink, d: &DomeDraw, st: &State) {
     };
     let mut alpha = d.weight;
     if d.guard == Guard::Broken {
-        let calm = if anim::reduced() { 0.0 } else { st.level.value.clamp(0.0, 1.0) };
+        let calm = if anim::reduced() {
+            0.0
+        } else {
+            st.level.value.clamp(0.0, 1.0)
+        };
         alpha *= lerp(0.7, 0.2 + 0.8 * flicker(st.clock), calm);
     }
     if alpha <= 0.004 {
@@ -967,19 +988,35 @@ fn draw_dome(f: &mut Frame, s: &Stage, ink: &Ink, d: &DomeDraw, st: &State) {
     let c = color.scale_alpha(alpha);
     let pts = dome_arc(DRX, DRY, PI, TAU, 48);
     if dashes {
-        let shift = if d.guard == Guard::Starting { st.flow * 8.0 } else { 0.0 };
+        let shift = if d.guard == Guard::Starting {
+            st.flow * 8.0
+        } else {
+            0.0
+        };
         f.stroke(&dashed(s, &pts, 4.0, 6.0, shift), stroke(c, W_ACCENT));
     } else if d.outline > 0.001 {
-        f.stroke(&s.shape(&polyline_data(&pts).partial(d.outline)), stroke(c, W_ACCENT));
+        f.stroke(
+            &s.shape(&polyline_data(&pts).partial(d.outline)),
+            stroke(c, W_ACCENT),
+        );
     }
 
-    let crest_a = alpha * if d.guard == Guard::On { (d.outline * 2.5).min(1.0) } else { 1.0 };
+    let crest_a = alpha
+        * if d.guard == Guard::On {
+            (d.outline * 2.5).min(1.0)
+        } else {
+            1.0
+        };
     if crest_a <= 0.004 {
         return;
     }
     let shield = Glyph::Shield.data().placed(CREST, CREST_SIZE);
     let path = s.shape(&shield);
-    let fill = if d.guard == Guard::Paused { ink.plate } else { tint(color, ink.plate) };
+    let fill = if d.guard == Guard::Paused {
+        ink.plate
+    } else {
+        tint(color, ink.plate)
+    };
     f.fill(&path, fill.scale_alpha(crest_a));
     f.stroke(&path, stroke(color.scale_alpha(crest_a), W_LINE));
     if d.guard == Guard::Starting {
@@ -1043,7 +1080,12 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
     let a = it.op;
     let c = kind_color(it.kind, ink);
     let line = stroke(c.scale_alpha(a), W_PART);
-    let fill = if it.kind == Kind::Page { ink.plate } else { tint(c, ink.plate) }.scale_alpha(a);
+    let fill = if it.kind == Kind::Page {
+        ink.plate
+    } else {
+        tint(c, ink.plate)
+    }
+    .scale_alpha(a);
     let body = match it.kind {
         Kind::Ad => l.rounded_rect(-13.0, -9.0, 26.0, 18.0, 3.5),
         Kind::Tracker => l.circle(pt(0.0, 0.0), 9.0),
@@ -1078,13 +1120,12 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
     use crate::gui::widgets::hairline::parallax::Parallax;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use iced::Vector;
     use std::time::Duration;
 
@@ -1107,8 +1148,6 @@ mod tests {
         }
     }
 
-
-
     fn run(p: &WebGlobe, st: &mut State, e: &Event, cursor: mouse::Cursor) -> Option<Action<()>> {
         canvas::Program::<()>::update(p, st, e, BOUNDS, cursor)
     }
@@ -1130,8 +1169,14 @@ mod tests {
         assert_eq!(STAMP_PATH.segs.len(), 4);
         assert_eq!(PAUSE_PATH.segs.len(), 4);
         for lane in 0..LANES.len() {
-            assert!(!in_dome(lane_point(lane, 0.0)), "lane {lane} starts outside");
-            assert!(in_dome(lane_point(lane, 1.0)), "lane {lane} ends under the dome");
+            assert!(
+                !in_dome(lane_point(lane, 0.0)),
+                "lane {lane} starts outside"
+            );
+            assert!(
+                in_dome(lane_point(lane, 1.0)),
+                "lane {lane} ends under the dome"
+            );
             let u = dome_entry(lane);
             assert!(u > 0.2 && u < 1.0, "{u}");
             assert!(in_dome(lane_point(lane, u)) && !in_dome(lane_point(lane, u - 0.01)));
@@ -1185,7 +1230,10 @@ mod tests {
         assert_eq!(dome_look(Guard::On, &ink).unwrap().0, LIGHT.good);
         assert_eq!(dome_look(Guard::Starting, &ink).unwrap().0, LIGHT.accent);
         assert_eq!(dome_look(Guard::Broken, &ink).unwrap().0, LIGHT.warn);
-        assert_eq!(dome_look(Guard::Paused, &ink).unwrap(), (LIGHT.text_muted, true, CrestMark::Pause));
+        assert_eq!(
+            dome_look(Guard::Paused, &ink).unwrap(),
+            (LIGHT.text_muted, true, CrestMark::Pause)
+        );
         assert!(dome_look(Guard::Off, &ink).is_none());
 
         let start = dome_states(Guard::On, Some(Guard::Off), 0.0);
@@ -1194,7 +1242,10 @@ mod tests {
         let mid = dome_states(Guard::On, Some(Guard::Off), 0.4);
         assert!(mid[0].outline > 0.5 && mid[0].mark == 0.0);
         let end = dome_states(Guard::On, Some(Guard::Off), TRANSITION_END);
-        assert_eq!((end[0].outline, end[0].fill, end[0].mark, end[0].weight), (1.0, 1.0, 1.0, 1.0));
+        assert_eq!(
+            (end[0].outline, end[0].fill, end[0].mark, end[0].weight),
+            (1.0, 1.0, 1.0, 1.0)
+        );
         let fade = dome_states(Guard::Paused, Some(Guard::On), 0.2);
         assert_eq!(fade.len(), 2);
         assert_eq!(fade[0].guard, Guard::On);
@@ -1231,7 +1282,10 @@ mod tests {
         let tracker = st.items.iter().find(|i| i.kind == Kind::Tracker).unwrap();
         assert_eq!(p.label(&st, Part::Item(tracker.id)), "<Tracker>");
         let paused = prog(Guard::Paused, Instant::now());
-        assert_eq!(paused.label(&st, Part::Dome), "<Web protection is not blocking>");
+        assert_eq!(
+            paused.label(&st, Part::Dome),
+            "<Web protection is not blocking>"
+        );
     }
 
     #[test]
@@ -1261,7 +1315,10 @@ mod tests {
         st.take_counts(Some([10, 5, 0]), Guard::On, false);
         assert!(st.queue.is_empty(), "the first counts are only noted");
         st.take_counts(Some([11, 9, 1]), Guard::On, false);
-        assert_eq!(st.queue, vec![Kind::Ad, Kind::Tracker, Kind::Tracker, Kind::Scam]);
+        assert_eq!(
+            st.queue,
+            vec![Kind::Ad, Kind::Tracker, Kind::Tracker, Kind::Scam]
+        );
         st.queue.clear();
         st.take_counts(Some([0, 0, 0]), Guard::On, false);
         assert!(st.queue.is_empty());
@@ -1390,7 +1447,12 @@ mod tests {
         assert!(!wants_frame(run(&p, &mut st, &frame(clock), off)));
         assert_eq!(st.spin, rested_spin);
 
-        run(&p, &mut st, &moved(proto(160.0, 40.0)), at(proto(160.0, 40.0)));
+        run(
+            &p,
+            &mut st,
+            &moved(proto(160.0, 40.0)),
+            at(proto(160.0, 40.0)),
+        );
         assert!(st.awake());
         clock += Duration::from_millis(16);
         assert!(wants_frame(run(&p, &mut st, &frame(clock), off)));
@@ -1408,8 +1470,14 @@ mod tests {
         clock += Duration::from_millis(16);
         while wants_frame(run(&counted(6), &mut st, &frame(clock), off)) {
             clock += Duration::from_millis(16);
-            stopped |= st.items.iter().any(|i| i.kind == Kind::Ad && i.phase == Phase::Blocked);
-            assert!(st.items.iter().all(|i| i.kind == Kind::Ad), "only the real block flies");
+            stopped |= st
+                .items
+                .iter()
+                .any(|i| i.kind == Kind::Ad && i.phase == Phase::Blocked);
+            assert!(
+                st.items.iter().all(|i| i.kind == Kind::Ad),
+                "only the real block flies"
+            );
             frames += 1;
             assert!(frames < 60 * 10, "never rested");
         }
@@ -1427,7 +1495,12 @@ mod tests {
         assert!(!wants_frame(run(&p, &mut st, &frame(t0), off)));
         assert_eq!(st.items, still_items(Guard::On));
         let spin = st.spin;
-        assert!(!wants_frame(run(&p, &mut st, &frame(t0 + Duration::from_millis(16)), off)));
+        assert!(!wants_frame(run(
+            &p,
+            &mut st,
+            &frame(t0 + Duration::from_millis(16)),
+            off
+        )));
         assert_eq!(st.spin, spin, "no turning");
         assert_eq!(st.live.tilt.layers(), [Vector::ZERO; 3]);
 
@@ -1442,7 +1515,12 @@ mod tests {
         let t = st.item(id).unwrap();
         assert_eq!((t.phase, t.stamp(), t.at), (Phase::Blocked, 1.0, spot));
         assert!(!st.flashing() && !st.live.pulses.alive());
-        assert!(!wants_frame(run(&p, &mut st, &frame(t0 + Duration::from_millis(32)), at(spot))));
+        assert!(!wants_frame(run(
+            &p,
+            &mut st,
+            &frame(t0 + Duration::from_millis(32)),
+            at(spot)
+        )));
 
         run(&p, &mut st, &moved(GC), at(GC));
         run(&p, &mut st, &down, at(GC));
@@ -1450,7 +1528,12 @@ mod tests {
         run(&p, &mut st, &moved(to), at(to));
         assert!((st.spin - (spin + 0.5)).abs() < 1e-3);
         run(&p, &mut st, &up, at(to));
-        assert!(!wants_frame(run(&p, &mut st, &frame(t0 + Duration::from_millis(48)), at(to))));
+        assert!(!wants_frame(run(
+            &p,
+            &mut st,
+            &frame(t0 + Duration::from_millis(48)),
+            at(to)
+        )));
 
         let paused = prog(Guard::Paused, t0 + Duration::from_secs(1));
         run(&paused, &mut st, &frame(t0 + Duration::from_secs(1)), off);

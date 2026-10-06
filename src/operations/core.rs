@@ -917,7 +917,10 @@ fn gate(
         "Elevation and confirmed unmanaged ownership required"
     );
     // One named reason each, so the person is told the step that actually helps.
-    ensure!(!f.reboot_pending, "Deferred: Windows is waiting for a restart");
+    ensure!(
+        !f.reboot_pending,
+        "Deferred: Windows is waiting for a restart"
+    );
     ensure!(!f.busy, "Deferred: Windows servicing is busy");
     ensure!(f.ac, "Deferred: not plugged in");
     ensure!(f.storage_ready, "Deferred: low disk space");

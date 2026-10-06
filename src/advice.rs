@@ -5,12 +5,12 @@ mod impact;
 mod labels;
 mod reasons;
 
+use crate::model::CheckStatus;
 pub use choice::{choice_consequence, is_choice_check_id};
 pub use impact::{control_impact, finding_impact};
-pub use labels::control_label;
 use labels::control_help;
+pub use labels::control_label;
 use reasons::{managed, not_offered, repair_help};
-use crate::model::CheckStatus;
 
 /// The optional group a choice belongs to. These never count against the score.
 pub fn extra_section(id: &str) -> Option<&'static str> {
@@ -80,7 +80,6 @@ impl Advice {
         }
     }
 }
-
 
 fn base(label: &'static str, status: &CheckStatus, help: (&'static str, NextStep)) -> Advice {
     let mut a = Advice {
@@ -206,7 +205,8 @@ pub fn for_control(id: &str, status: &CheckStatus, detail: &str) -> Advice {
         _ => {}
     }
     if (*status == CheckStatus::Applied && detail == "Preference applied; restart required")
-        || (*status == CheckStatus::Restored && detail == "Original preference restored; restart required")
+        || (*status == CheckStatus::Restored
+            && detail == "Original preference restored; restart required")
     {
         a.status = "Restart needed";
         a.group = Group::Choice;
@@ -245,7 +245,11 @@ pub fn for_outcome(outcome: &crate::engine::Outcome) -> Advice {
     if outcome.authority != Some(Authority::Local) || !verified {
         if matches!(
             outcome.status,
-            CheckStatus::Attention | CheckStatus::Compliant | CheckStatus::Ok | CheckStatus::Unchanged | CheckStatus::Applied
+            CheckStatus::Attention
+                | CheckStatus::Compliant
+                | CheckStatus::Ok
+                | CheckStatus::Unchanged
+                | CheckStatus::Applied
         ) {
             a.status = "Couldn't check";
             a.next =
@@ -359,8 +363,12 @@ mod tests {
                 "missing impact for compliant control: {id}"
             );
         }
-        assert!(for_control("unknown.id", &CheckStatus::Attention, "").impact.is_empty());
-        assert!(for_control("findings", &CheckStatus::Attention, "").impact.is_empty());
+        assert!(for_control("unknown.id", &CheckStatus::Attention, "")
+            .impact
+            .is_empty());
+        assert!(for_control("findings", &CheckStatus::Attention, "")
+            .impact
+            .is_empty());
 
         for title in [
             "Windows lifecycle",
@@ -384,7 +392,9 @@ mod tests {
             "Assessment unavailable",
         ] {
             assert!(
-                for_finding(title, &CheckStatus::Attention, "").impact.is_empty(),
+                for_finding(title, &CheckStatus::Attention, "")
+                    .impact
+                    .is_empty(),
                 "unexpected impact for finding: {title}"
             );
         }
@@ -431,7 +441,11 @@ mod tests {
             );
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
             assert_ne!(managed.step, NextStep::Repair);
-            let applied = for_control(id, &CheckStatus::Applied, "Preference applied; restart required");
+            let applied = for_control(
+                id,
+                &CheckStatus::Applied,
+                "Preference applied; restart required",
+            );
             assert_eq!(applied.status, "Restart needed", "{id}");
         }
         assert!(!is_choice_check_id("uac.enabled") && !is_choice_check_id("unknown.id"));
@@ -497,7 +511,12 @@ mod tests {
             assert_ne!(a.step, NextStep::Repair);
         }
         assert_ne!(
-            for_control("lsa.run_as_ppl", &CheckStatus::Skipped, "Not offered: anything").status,
+            for_control(
+                "lsa.run_as_ppl",
+                &CheckStatus::Skipped,
+                "Not offered: anything"
+            )
+            .status,
             "Not offered"
         );
     }
@@ -514,7 +533,11 @@ mod tests {
         ] {
             assert_eq!(extra_section(id), Some(section), "{id}");
             let a = for_control(id, &CheckStatus::Attention, "Eligible");
-            assert_eq!((a.status, a.group, a.ask), ("Your choice", Group::Information, true), "{id}");
+            assert_eq!(
+                (a.status, a.group, a.ask),
+                ("Your choice", Group::Information, true),
+                "{id}"
+            );
             assert!(a.impact_prefix().starts_with("Why it matters"), "{id}");
         }
         assert_eq!(extra_section("uac.enabled"), None);
@@ -530,8 +553,14 @@ mod tests {
         ] {
             assert_eq!(control_for_finding(title), Some(id));
             assert!(crate::hardening::is_hardening_check_id(id));
-            assert_eq!(for_finding(title, &CheckStatus::Attention, "").label, control_label(id));
-            assert_eq!(for_finding(title, &CheckStatus::Attention, "").impact, control_impact(id));
+            assert_eq!(
+                for_finding(title, &CheckStatus::Attention, "").label,
+                control_label(id)
+            );
+            assert_eq!(
+                for_finding(title, &CheckStatus::Attention, "").impact,
+                control_impact(id)
+            );
         }
         assert_eq!(control_for_finding("Secure Boot"), None);
         assert!(choice_consequence("accounts.autologon").contains("password or PIN"));
@@ -542,9 +571,19 @@ mod tests {
     fn core_protection_rows_read_well_when_offered_blocked_or_waiting_for_a_restart() {
         for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
             let a = for_control(id, &CheckStatus::Attention, "Eligible");
-            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
-            assert!(a.next.contains("restart") && a.next.contains("undo"), "{id}");
-            let applied = for_control(id, &CheckStatus::Applied, "Preference applied; restart required");
+            assert_eq!(
+                (a.status, a.step, a.ask),
+                ("Your choice", NextStep::Repair, true)
+            );
+            assert!(
+                a.next.contains("restart") && a.next.contains("undo"),
+                "{id}"
+            );
+            let applied = for_control(
+                id,
+                &CheckStatus::Applied,
+                "Preference applied; restart required",
+            );
             assert_eq!(applied.status, "Restart needed");
             assert_eq!(applied.step, NextStep::Restart);
             for reason in [
@@ -565,7 +604,11 @@ mod tests {
             }
             let on = for_control(id, &CheckStatus::Skipped, crate::vbs::ALREADY_ON);
             assert_eq!((on.status, on.group), ("Good to go", Group::Protected));
-            let m = for_control(id, &CheckStatus::Skipped, "Relevant policy is configured: assessment only");
+            let m = for_control(
+                id,
+                &CheckStatus::Skipped,
+                "Relevant policy is configured: assessment only",
+            );
             assert_eq!(m.status, "Managed elsewhere");
         }
         let driver = for_control(
@@ -573,7 +616,9 @@ mod tests {
             &CheckStatus::Skipped,
             "Not offered: a driver on this PC may not work with it: a.sys",
         );
-        assert!(driver.next.contains("Device security, then Core isolation details"));
+        assert!(driver
+            .next
+            .contains("Device security, then Core isolation details"));
         assert!(!driver.next.contains("a.sys"));
     }
 
@@ -600,7 +645,10 @@ mod tests {
             Some("vbs.memory_integrity")
         );
         assert_eq!(control_for_finding("Memory integrity not running"), None);
-        assert_eq!(control_for_finding("Kernel stack protection not running"), None);
+        assert_eq!(
+            control_for_finding("Kernel stack protection not running"),
+            None
+        );
         assert_eq!(control_for_finding("A device may not be working"), None);
         assert_eq!(control_for_finding("Secure Boot"), None);
     }
@@ -623,8 +671,15 @@ mod tests {
     fn recovery_tools_row_is_a_normal_fix_with_a_plain_reason_when_not_offered() {
         let id = "recovery.winre_enabled";
         let a = for_control(id, &CheckStatus::Attention, "Eligible");
-        assert_eq!((a.status, a.step, a.ask, a.group), ("Can fix", NextStep::Repair, false, Group::Recommended));
-        assert!(a.next.contains("recovery tools") && a.next.len() < 130, "{}", a.next);
+        assert_eq!(
+            (a.status, a.step, a.ask, a.group),
+            ("Can fix", NextStep::Repair, false, Group::Recommended)
+        );
+        assert!(
+            a.next.contains("recovery tools") && a.next.len() < 130,
+            "{}",
+            a.next
+        );
         assert_eq!(a.impact_prefix(), "Turning it on protects you from:");
         assert!(!a.impact.is_empty() && !a.impact.ends_with('.'));
         let ok = for_control(id, &CheckStatus::Compliant, "");
@@ -632,17 +687,34 @@ mod tests {
         let script = include_str!("platform/hardening.ps1");
         let start = script.find("'recovery.winre_enabled' {").unwrap();
         let body = &script[start..start + script[start..].find("\n        }\n").unwrap()];
-        let reasons: Vec<&str> = body.split('\'').filter(|p| p.starts_with("Not offered: ")).collect();
+        let reasons: Vec<&str> = body
+            .split('\'')
+            .filter(|p| p.starts_with("Not offered: "))
+            .collect();
         assert!(!reasons.is_empty());
         for reason in reasons {
             let a = for_control(id, &CheckStatus::Skipped, reason);
-            assert_eq!((a.status, a.group), ("Not offered", Group::Information), "{reason}");
+            assert_eq!(
+                (a.status, a.group),
+                ("Not offered", Group::Information),
+                "{reason}"
+            );
             assert_ne!(a.step, NextStep::Repair);
-            assert!(a.next.ends_with('.') && !a.next.contains('\u{2014}'), "{reason}");
+            assert!(
+                a.next.ends_with('.') && !a.next.contains('\u{2014}'),
+                "{reason}"
+            );
         }
-        let managed = for_control(id, &CheckStatus::Skipped, "Domain-managed machine: assessment only");
+        let managed = for_control(
+            id,
+            &CheckStatus::Skipped,
+            "Domain-managed machine: assessment only",
+        );
         assert_eq!(managed.status, "Managed elsewhere");
-        assert_eq!(for_control(id, &CheckStatus::Conflict, "").step, NextStep::ReviewUndo);
+        assert_eq!(
+            for_control(id, &CheckStatus::Conflict, "").step,
+            NextStep::ReviewUndo
+        );
     }
 
     #[test]
@@ -655,11 +727,21 @@ mod tests {
         ] {
             assert!(is_choice_check_id(id), "{id}");
             let a = for_control(id, &CheckStatus::Attention, "Eligible");
-            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
+            assert_eq!(
+                (a.status, a.step, a.ask),
+                ("Your choice", NextStep::Repair, true)
+            );
             assert!(!a.impact.is_empty() && a.next == choice_consequence(id));
-            let managed = for_control(id, &CheckStatus::Skipped, "Domain-managed machine: assessment only");
+            let managed = for_control(
+                id,
+                &CheckStatus::Skipped,
+                "Domain-managed machine: assessment only",
+            );
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
-            assert_eq!(for_control(id, &CheckStatus::Conflict, "").step, NextStep::ReviewUndo);
+            assert_eq!(
+                for_control(id, &CheckStatus::Conflict, "").step,
+                NextStep::ReviewUndo
+            );
         }
     }
 
@@ -767,8 +849,14 @@ mod tests {
     #[test]
     fn informational_findings_do_not_count_as_problems_or_protection() {
         for title in ["Windows updates", "Journal recovery"] {
-            assert_eq!(for_finding(title, &CheckStatus::Info, "").group, Group::Information);
-            assert_eq!(for_finding(title, &CheckStatus::Pending, "").group, Group::Choice);
+            assert_eq!(
+                for_finding(title, &CheckStatus::Info, "").group,
+                Group::Information
+            );
+            assert_eq!(
+                for_finding(title, &CheckStatus::Pending, "").group,
+                Group::Choice
+            );
         }
     }
 
@@ -780,7 +868,12 @@ mod tests {
             "Service permissions: BITS",
             "Windows updates",
         ] {
-            for status in [CheckStatus::Attention, CheckStatus::Review, CheckStatus::Info, CheckStatus::Unknown] {
+            for status in [
+                CheckStatus::Attention,
+                CheckStatus::Review,
+                CheckStatus::Info,
+                CheckStatus::Unknown,
+            ] {
                 let a = for_finding(title, &status, "Everything is fine; eligible");
                 assert_ne!(a.step, NextStep::Repair);
                 assert_ne!(a.group, Group::Protected);
@@ -841,7 +934,10 @@ mod tests {
         );
         for (status, detail) in [
             (CheckStatus::Restored, "Original preference restored"),
-            (CheckStatus::Unchanged, "Original preference already present"),
+            (
+                CheckStatus::Unchanged,
+                "Original preference already present",
+            ),
             (CheckStatus::Skipped, "new reason"),
         ] {
             assert_eq!(

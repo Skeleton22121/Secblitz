@@ -135,7 +135,6 @@ impl Pointer {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Layer {
     Back,
@@ -249,7 +248,6 @@ impl<Id: Copy + PartialEq> Hotspots<Id> {
     }
 }
 
-
 pub const TIP_SIZE: f32 = 12.0;
 const TIP_PAD_X: f32 = 8.0;
 const TIP_PAD_Y: f32 = 6.0;
@@ -298,12 +296,7 @@ pub fn tooltip_rect(anchor: Point, text_width: f32, canvas: Size) -> Rectangle {
     tooltip_rect_around(anchor, anchor, text_width, canvas)
 }
 
-pub fn tooltip_rect_around(
-    above: Point,
-    below: Point,
-    text_width: f32,
-    canvas: Size,
-) -> Rectangle {
+pub fn tooltip_rect_around(above: Point, below: Point, text_width: f32, canvas: Size) -> Rectangle {
     let w = (text_width + 2.0 * TIP_PAD_X).ceil();
     let h = TIP_SIZE + 2.0 * TIP_PAD_Y;
     let max_x = (canvas.width - w - TIP_MARGIN).max(TIP_MARGIN);
@@ -410,7 +403,10 @@ mod tests {
     fn click_is_a_press_and_release_in_place() {
         let s = stage();
         let mut p = Pointer::default();
-        assert_eq!(p.handle(&mv(110.0, 110.0), B, at(110.0, 110.0), &s), Some(Gesture::Hover));
+        assert_eq!(
+            p.handle(&mv(110.0, 110.0), B, at(110.0, 110.0), &s),
+            Some(Gesture::Hover)
+        );
         assert!(p.inside);
         assert_eq!(p.at, Point::new(50.0, 50.0));
         assert_eq!(
@@ -467,7 +463,10 @@ mod tests {
         assert_eq!(spots.hit(Point::new(50.0, 82.0), &still), Some(3));
         assert_eq!(spots.hit(Point::new(95.0, 82.0), &still), None);
         assert_eq!(spots.hit(Point::new(70.0, 40.0), &still), None);
-        assert_eq!(spots.anchor(1, &still), Some(Point::new(20.0, 20.0 - 14.0 * 0.7)));
+        assert_eq!(
+            spots.anchor(1, &still),
+            Some(Point::new(20.0, 20.0 - 14.0 * 0.7))
+        );
         assert_eq!(spots.anchor(3, &still), Some(Point::new(50.0, 80.0 - 3.5)));
         assert_eq!(spots.anchor(9, &still), None);
         let _m = crate::gui::widgets::anim::forced::set(false);
@@ -520,10 +519,7 @@ mod tests {
         assert_eq!(interaction(&p, false, true, B, over), I::Grab);
         assert_eq!(interaction(&p, false, false, B, over), I::None);
         assert_eq!(interaction(&p, true, false, B, away), I::None);
-        let held = Pointer {
-            pressed: true,
-            ..p
-        };
+        let held = Pointer { pressed: true, ..p };
         assert_eq!(interaction(&held, false, true, B, away), I::Grabbing);
     }
 }

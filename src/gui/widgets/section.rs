@@ -18,7 +18,6 @@ use iced::{
 };
 use std::time::Instant;
 
-
 pub fn region<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
@@ -37,7 +36,6 @@ pub fn region<'a>(
             snap: true,
         })
 }
-
 
 #[derive(Default)]
 struct HoverState {
@@ -214,7 +212,6 @@ pub fn hoverable<'a>(p: Palette, content: impl Into<Element<'a, Message>>) -> El
     })
 }
 
-
 pub fn row_item<'a>(
     p: Palette,
     glyph: Option<Icon>,
@@ -337,7 +334,6 @@ pub fn row_item_lead<'a>(
     }
 }
 
-
 pub fn group<'a>(
     p: Palette,
     title: impl Into<String>,
@@ -372,7 +368,6 @@ pub fn group<'a>(
     .width(Length::Fill)
     .into()
 }
-
 
 struct ChevronState {
     shown_open: bool,
@@ -478,7 +473,6 @@ impl Widget<Message, Theme, Renderer> for Chevron {
 fn chevron<'a>(size: f32, color: Color, open: bool) -> Element<'a, Message> {
     Element::new(Chevron { size, color, open })
 }
-
 
 pub fn collapsible<'a>(
     p: Palette,
@@ -598,7 +592,6 @@ fn collapsible_group<'a>(
     }
     c.into()
 }
-
 
 pub fn limited<T>(items: &[T], limit: usize, expanded: bool) -> &[T] {
     if expanded || items.len() <= limit {

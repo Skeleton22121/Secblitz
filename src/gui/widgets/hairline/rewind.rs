@@ -351,7 +351,8 @@ impl<M> canvas::Program<M> for Rewind {
             }
             st.ease = None;
         }
-        st.live.redraw(&step, self.busy(st, st.live.age(self.changed, self.now)))
+        st.live
+            .redraw(&step, self.busy(st, st.live.age(self.changed, self.now)))
     }
 
     fn draw(
@@ -464,14 +465,19 @@ impl<M> canvas::Program<M> for Rewind {
             }
         }
         let tremble = match (run, st.shake) {
-            (Run::Failed, Some(s)) if !anim::reduced() => 0.12 * (s * 26.0).sin() * (-s * 2.5).exp(),
+            (Run::Failed, Some(s)) if !anim::reduced() => {
+                0.12 * (s * 26.0).sin() * (-s * 2.5).exp()
+            }
             _ => 0.0,
         };
         f.stroke(
             &stage.line(C, hand(h + tremble / 12.0, HOUR)),
             stroke(ink.ink, W_THICK),
         );
-        f.stroke(&stage.line(C, hand(m + tremble, MINUTE)), stroke(ink.ink, W_INK));
+        f.stroke(
+            &stage.line(C, hand(m + tremble, MINUTE)),
+            stroke(ink.ink, W_INK),
+        );
         f.fill(&stage.circle(C, 2.6), ink.ink);
 
         if !working {
@@ -513,8 +519,7 @@ impl<M> canvas::Program<M> for Rewind {
     ) -> mouse::Interaction {
         if st.held && st.live.pointer.pressed {
             mouse::Interaction::Grabbing
-        } else if cursor.is_over(bounds) && st.live.pointer.inside && on_clock(st.live.pointer.at)
-        {
+        } else if cursor.is_over(bounds) && st.live.pointer.inside && on_clock(st.live.pointer.at) {
             mouse::Interaction::Grab
         } else {
             mouse::Interaction::None
@@ -592,9 +597,9 @@ fn badge_mark(run: Run) -> PathData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
     use crate::gui::widgets::hairline::parallax::Parallax;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
     use std::time::Duration;
@@ -617,8 +622,6 @@ mod tests {
             label: String::new(),
         }
     }
-
-
 
     fn px(p: Point) -> Point {
         Stage::fit(UNITS, BOUNDS.size()).point(p)
@@ -769,7 +772,13 @@ mod tests {
         let mut clock = t0 + Duration::from_secs(5);
         for _ in 0..80 {
             clock += Duration::from_millis(16);
-            Program::<()>::update(&done, &mut st, &frame(clock), BOUNDS, mouse::Cursor::Unavailable);
+            Program::<()>::update(
+                &done,
+                &mut st,
+                &frame(clock),
+                BOUNDS,
+                mouse::Cursor::Unavailable,
+            );
         }
         assert!(st.ease.is_none() && close(wrap(st.m - M0), 0.0));
     }
@@ -787,7 +796,11 @@ mod tests {
         };
         let from = px(pt(C.x - 30.0, C.y));
         send(&mut st, mouse::Event::CursorMoved { position: from }, from);
-        send(&mut st, mouse::Event::ButtonPressed(mouse::Button::Left), from);
+        send(
+            &mut st,
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            from,
+        );
         for i in 0..=60 {
             let p = px(pt(C.x - 30.0 + i as f32, C.y));
             send(&mut st, mouse::Event::CursorMoved { position: p }, p);

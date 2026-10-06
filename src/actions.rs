@@ -246,7 +246,11 @@ mod tests {
         assert_eq!(RESTART_FLAGS, 0x44);
         assert_eq!(RESTART_FLAGS & 0x3, 0, "no force flags");
         assert_eq!(RESTART_REASON & 0x8000_0000, 0x8000_0000, "planned");
-        assert_eq!(RESTART_REASON & 0x00FF_0000, 0x0002_0000, "operating system");
+        assert_eq!(
+            RESTART_REASON & 0x00FF_0000,
+            0x0002_0000,
+            "operating system"
+        );
         assert_eq!(RESTART_REASON & 0xFFFF, 0x12, "security fix");
         #[cfg(not(windows))]
         assert!(restart_for_updates().is_err());
@@ -267,7 +271,10 @@ mod tests {
                 "windowsdefender://threatsettings",
             ),
             (Action::OpenProtectionHistory, "windowsdefender://threat"),
-            (Action::OpenProtectionHistoryList, "windowsdefender://history"),
+            (
+                Action::OpenProtectionHistoryList,
+                "windowsdefender://history",
+            ),
             (
                 Action::OpenAppBrowserControl,
                 "windowsdefender://appbrowser",
@@ -276,7 +283,10 @@ mod tests {
             (Action::OpenAccounts, "ms-settings:otherusers"),
             (Action::OpenCoreIsolation, "windowsdefender://coreisolation"),
             (Action::OpenFirewall, "windowsdefender://network"),
-            (Action::OpenDeviceSecurity, "windowsdefender://devicesecurity"),
+            (
+                Action::OpenDeviceSecurity,
+                "windowsdefender://devicesecurity",
+            ),
             (Action::OpenWorkAccounts, "ms-settings:workplace"),
             (Action::OpenRecovery, "ms-settings:recovery"),
             (Action::OpenRemoteDesktop, "ms-settings:remotedesktop"),

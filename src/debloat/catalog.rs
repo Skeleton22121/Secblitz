@@ -72,12 +72,7 @@ pub static CATALOG: &[App] = &[
         Group::Recommended,
         None,
     ),
-    app(
-        "Microsoft.WindowsMaps",
-        "Maps",
-        Group::Recommended,
-        None,
-    ),
+    app("Microsoft.WindowsMaps", "Maps", Group::Recommended, None),
     app(
         "Microsoft.ZuneVideo",
         "Movies & TV",
@@ -300,12 +295,7 @@ pub static CATALOG: &[App] = &[
         Group::Gaming,
         None,
     ),
-    app(
-        "Microsoft.BingFinance",
-        "Finance",
-        Group::Recommended,
-        None,
-    ),
+    app("Microsoft.BingFinance", "Finance", Group::Recommended, None),
     app("Microsoft.BingSports", "Sports", Group::Recommended, None),
     app("Microsoft.BingTravel", "Travel", Group::Recommended, None),
     app(

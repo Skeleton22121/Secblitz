@@ -274,8 +274,19 @@ mod tests {
     #[test]
     fn check_status_round_trips_every_value_and_keeps_unknown_text() {
         for s in [
-            "ok", "info", "attention", "review", "unknown", "compliant", "pending", "applied",
-            "restored", "unchanged", "skipped", "error", "conflict",
+            "ok",
+            "info",
+            "attention",
+            "review",
+            "unknown",
+            "compliant",
+            "pending",
+            "applied",
+            "restored",
+            "unchanged",
+            "skipped",
+            "error",
+            "conflict",
         ] {
             let v: CheckStatus = serde_json::from_value(json!(s)).unwrap();
             assert!(!matches!(v, CheckStatus::Other(_)), "{s}");

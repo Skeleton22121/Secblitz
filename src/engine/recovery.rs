@@ -207,8 +207,10 @@ impl Engine {
                 "Unpublished append is not newest active transaction"
             );
             ensure!(
-                next.entries.iter().all(|entry| entry.state == State::Restored
-                    || !Self::owned_elsewhere(tx, &entry.id, transactions)),
+                next.entries
+                    .iter()
+                    .all(|entry| entry.state == State::Restored
+                        || !Self::owned_elsewhere(tx, &entry.id, transactions)),
                 "Unpublished record duplicates an active control owner"
             );
             return Ok(());

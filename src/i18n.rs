@@ -444,7 +444,10 @@ mod tests {
             // vbs::UNREADABLE) before anything is shown.
             if matches!(
                 name.as_str(),
-                "engine/journal.rs" | "engine/recovery.rs" | "engine/fsio.rs" | "platform/vbs_native.rs"
+                "engine/journal.rs"
+                    | "engine/recovery.rs"
+                    | "engine/fsio.rs"
+                    | "platform/vbs_native.rs"
             ) {
                 continue;
             }
@@ -458,7 +461,10 @@ mod tests {
                     || text.starts_with("[Console]")
                     || text.starts_with("$global:ProgressPreference = ")
                     || text == "Secblitz · v{}"
-                    || matches!(text.as_str(), " -k netsvcs" | " -k netsvcs -p" | "Windows Update")
+                    || matches!(
+                        text.as_str(),
+                        " -k netsvcs" | " -k netsvcs -p" | "Windows Update"
+                    )
                 {
                     continue;
                 }

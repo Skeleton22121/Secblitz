@@ -51,11 +51,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             row![
                 widgets::muted(p, ctx.t(BLOCKED_NOTE)),
                 space::horizontal(),
-                widgets::link(
-                    p,
-                    ctx.t(ALLOW_AGAIN),
-                    wrap(Msg::AllowSuggested),
-                ),
+                widgets::link(p, ctx.t(ALLOW_AGAIN), wrap(Msg::AllowSuggested),),
             ]
             .spacing(theme::S3)
             .align_y(Alignment::Center),
@@ -97,21 +93,19 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
     match &state.scan {
         Scan::Loading if state.groups.is_empty() => loading_state(state, ctx),
-        Scan::Failed(technical) => column![
-            widgets::empty_state(
+        Scan::Failed(technical) => column![widgets::empty_state(
+            p,
+            Icon::AlertTriangle,
+            ctx.t("We couldn't look at your apps"),
+            ctx.t(debloat::friendly::run_failure(technical)),
+            Some(widgets::action(
                 p,
-                Icon::AlertTriangle,
-                ctx.t("We couldn't look at your apps"),
-                ctx.t(debloat::friendly::run_failure(technical)),
-                Some(widgets::action(
-                    p,
-                    ButtonKind::Secondary,
-                    ctx.t("Try again"),
-                    Some(Icon::Refresh),
-                    Some(wrap(Msg::Rescan)),
-                )),
-            ),
-        ]
+                ButtonKind::Secondary,
+                ctx.t("Try again"),
+                Some(Icon::Refresh),
+                Some(wrap(Msg::Rescan)),
+            )),
+        ),]
         .spacing(theme::S4)
         .into(),
         _ if state.groups.is_empty() => widgets::empty_state(
@@ -171,7 +165,11 @@ fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             .iter()
             .flat_map(|(_, members)| shown_members(state, ctx, members))
             .collect();
-        state.selected.iter().filter(|i| !on_screen.contains(i)).count()
+        state
+            .selected
+            .iter()
+            .filter(|i| !on_screen.contains(i))
+            .count()
     } else {
         0
     };
@@ -417,8 +415,10 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
     let summary = (state.saved_bytes > 0).then(|| {
-        ctx.t("Saved copies use about {size}.")
-            .replace("{size}", &crate::app::maintenance::size_phrase(state.saved_bytes))
+        ctx.t("Saved copies use about {size}.").replace(
+            "{size}",
+            &crate::app::maintenance::size_phrase(state.saved_bytes),
+        )
     });
     widgets::group(p, ctx.t("Removed apps"), summary, None, rows)
 }
@@ -616,19 +616,13 @@ fn working_sheet<'a>(
         .count();
     let mut list = column![].spacing(theme::S3);
     for (index, step) in items {
-        let blank = || -> Element<'a, Message> {
-            space::horizontal().width(theme::CHECK).into()
-        };
+        let blank = || -> Element<'a, Message> { space::horizontal().width(theme::CHECK).into() };
         let (lead, note): (Element<'a, Message>, String) = match step {
             Step::Waiting => (blank(), ctx.t("Waiting")),
             Step::Saving => (blank(), ctx.t("Saving a copy…")),
             Step::Working => (blank(), ctx.t("Removing…")),
             Step::Done(ItemResult::Removed, at) => (
-                anim::check_draw(
-                    18.0,
-                    p.good,
-                    anim::slow_progress(*at, state.now),
-                ),
+                anim::check_draw(18.0, p.good, anim::slow_progress(*at, state.now)),
                 ctx.t("Removed"),
             ),
             Step::Done(ItemResult::Protected, _) => (
@@ -640,11 +634,7 @@ fn working_sheet<'a>(
                 ctx.t(kept_text(kept)),
             ),
             Step::Done(ItemResult::Failed(_), at) => (
-                anim::cross_draw(
-                    18.0,
-                    p.bad,
-                    anim::slow_progress(*at, state.now),
-                ),
+                anim::cross_draw(18.0, p.bad, anim::slow_progress(*at, state.now)),
                 ctx.t("Couldn't remove"),
             ),
         };
@@ -802,7 +792,9 @@ fn suggested_blocker(helper: Helper) -> &'static str {
 
 fn kept_text(kept: &Kept) -> &'static str {
     match kept {
-        Kept::NoSpace => "Kept: not enough free space to save a copy. Free up some space and try again.",
+        Kept::NoSpace => {
+            "Kept: not enough free space to save a copy. Free up some space and try again."
+        }
         Kept::NoCopy(_) => "Kept: couldn't save a copy first. Restart your PC and try again.",
     }
 }
@@ -984,7 +976,12 @@ fn batch_report<'a>(
         block(Icon::Info, Tone::Neutral, ctx.t(kept_text(&reason)), list);
     }
     let any_failed = !failed.is_empty();
-    block(Icon::AlertTriangle, Tone::Bad, ctx.t("Couldn't remove"), failed);
+    block(
+        Icon::AlertTriangle,
+        Tone::Bad,
+        ctx.t("Couldn't remove"),
+        failed,
+    );
     if any_failed {
         body.push(widgets::small(
             p,
@@ -1023,7 +1020,12 @@ fn batch_report<'a>(
 
 fn failure_report<'a>(done: &'a Finished, ctx: &'a Ctx, menu: MenuFn<'_, 'a>) -> Report<'a> {
     let p = pal(ctx);
-    let head = result_head(p, menu, Outcome::Failed, ctx.t("We couldn't remove the apps"));
+    let head = result_head(
+        p,
+        menu,
+        Outcome::Failed,
+        ctx.t("We couldn't remove the apps"),
+    );
     let body = vec![widgets::muted(
         p,
         ctx.t("Nothing was changed. Please try again."),
@@ -1101,12 +1103,18 @@ mod tests {
         assert_eq!(fate_of(&Step::Waiting), Fate::Waiting);
         assert_eq!(fate_of(&Step::Saving), Fate::Saving);
         assert_eq!(fate_of(&Step::Working), Fate::Busy);
-        assert_eq!(fate_of(&Step::Done(ItemResult::Removed, t)), Fate::Removed(t));
+        assert_eq!(
+            fate_of(&Step::Done(ItemResult::Removed, t)),
+            Fate::Removed(t)
+        );
         assert_eq!(
             fate_of(&Step::Done(ItemResult::Failed("x".into()), t)),
             Fate::Refused(t)
         );
-        assert_eq!(fate_of(&Step::Done(ItemResult::Protected, t)), Fate::Stays(t));
+        assert_eq!(
+            fate_of(&Step::Done(ItemResult::Protected, t)),
+            Fate::Stays(t)
+        );
         assert_eq!(
             fate_of(&Step::Done(ItemResult::Kept(Kept::NoSpace), t)),
             Fate::Kept(t)
@@ -1169,7 +1177,16 @@ mod tests {
         assert_eq!(sc.hidden, 0);
         assert_eq!(
             sc.places,
-            vec![Slot(0), Gone, Slot(1), Slot(2), Slot(3), Slot(4), Gone, Slot(5)]
+            vec![
+                Slot(0),
+                Gone,
+                Slot(1),
+                Slot(2),
+                Slot(3),
+                Slot(4),
+                Gone,
+                Slot(5)
+            ]
         );
     }
 
@@ -1249,7 +1266,10 @@ mod tests {
             .iter()
             .any(|m| format!("{:?}", m.2).contains("RestoreStore")));
         assert!(super::store_blocker(Helper::Ready).is_none());
-        assert_eq!(super::store_blocker(Helper::Reopen), Some(crate::gui::REOPEN_TO_DO_THIS));
+        assert_eq!(
+            super::store_blocker(Helper::Reopen),
+            Some(crate::gui::REOPEN_TO_DO_THIS)
+        );
     }
 
     #[test]

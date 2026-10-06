@@ -141,7 +141,11 @@ impl<Id: Copy + PartialEq> Live<Id> {
             return still;
         }
         self.born
-            .map(|b| self.clock(page_now).saturating_duration_since(b).as_secs_f32())
+            .map(|b| {
+                self.clock(page_now)
+                    .saturating_duration_since(b)
+                    .as_secs_f32()
+            })
             .unwrap_or(0.0)
     }
 

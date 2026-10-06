@@ -362,7 +362,10 @@ impl Engine {
             tx.name
         );
         if let Err(e) = self.backend.write(&c.id, expected) {
-            callback(Progress::new(&c.id, ProgressStep::Result(CheckStatus::Error)));
+            callback(Progress::new(
+                &c.id,
+                ProgressStep::Result(CheckStatus::Error),
+            ));
             return Err(e.context(format!(
                 "Apply {} has unknown outcome; pending transaction {} retained",
                 c.id, tx.name

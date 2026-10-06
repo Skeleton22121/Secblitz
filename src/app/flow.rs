@@ -3,8 +3,14 @@ use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 
 pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
-    if report.findings.iter().any(|f| f.status == CheckStatus::Pending)
-        || report.results.iter().any(|r| r.status == CheckStatus::Pending)
+    if report
+        .findings
+        .iter()
+        .any(|f| f.status == CheckStatus::Pending)
+        || report
+            .results
+            .iter()
+            .any(|r| r.status == CheckStatus::Pending)
     {
         return Vec::new();
     }
@@ -106,8 +112,10 @@ pub const REASON_NEEDS_OTHER: &str =
 pub const REASON_DISK: &str = "Your disk is full or can't be written to right now, so Secblitz can't save changes safely. Free up some space, then check again.";
 pub const REASON_BUSY: &str = "Secblitz is finishing another job, like an update or a repair. Wait for it to finish, then try again.";
 pub const REASON_EARLIER: &str = "An earlier update or repair didn't finish cleanly, so Secblitz is waiting until it can check it. Restart your PC, then open Secblitz again.";
-pub const NOTICE_DISK_READ_ONLY: &str = "Your disk can't be written to right now, so fixes will wait.";
-pub const NOTICE_DISK_FULL: &str = "Your disk is full, so fixes will wait. Free up some space, then check again.";
+pub const NOTICE_DISK_READ_ONLY: &str =
+    "Your disk can't be written to right now, so fixes will wait.";
+pub const NOTICE_DISK_FULL: &str =
+    "Your disk is full, so fixes will wait. Free up some space, then check again.";
 
 pub const FAILURE_GENERAL: &str = "Something went wrong, so Secblitz stopped. Close Secblitz and open it again. If it keeps happening, restart your PC or check for a Secblitz update.";
 pub const COULDNT_READ: &str = "We couldn't read this from Windows. Check again in a moment. If it keeps happening, restart your PC.";
@@ -190,7 +198,8 @@ fn reason(status: &CheckStatus, detail: &str, id: &str) -> &'static str {
         REASON_MANAGED
     } else if *status == CheckStatus::Conflict {
         REASON_CHANGED
-    } else if *status == CheckStatus::Pending || detail.starts_with("Revert the active transaction") {
+    } else if *status == CheckStatus::Pending || detail.starts_with("Revert the active transaction")
+    {
         REASON_UNDO_FIRST
     } else if detail.to_ascii_lowercase().contains("restart") {
         REASON_RESTART
@@ -234,10 +243,7 @@ pub fn summarize(
     match (attempted, result) {
         (Some(ids), Err(e)) => {
             let why = plain_failure(e);
-            s.not_done = ids
-                .iter()
-                .map(|id| (id.clone(), why.to_owned()))
-                .collect();
+            s.not_done = ids.iter().map(|id| (id.clone(), why.to_owned())).collect();
         }
         (Some(ids), Ok(report)) => {
             for id in ids {
@@ -645,7 +651,11 @@ mod tests {
         let chosen = ids(&["uac.enabled", "defender.ioav"]);
         let result = rep(vec![
             out("uac.enabled", "restored", "Original preference restored"),
-            out("defender.ioav", "unchanged", "Original preference already present"),
+            out(
+                "defender.ioav",
+                "unchanged",
+                "Original preference already present",
+            ),
         ]);
         let s = summarize_chosen(&chosen, Ok(&result), Ok(&rep(vec![])));
         assert_eq!(s.kind, SummaryKind::Success);
@@ -659,12 +669,30 @@ mod tests {
 
     #[test]
     fn chosen_settings_left_as_they_are_get_plain_reasons() {
-        let chosen = ids(&["uac.enabled", "uac.consent", "defender.ioav", "defender.archive", "lsa.restrict_anonymous_sam"]);
+        let chosen = ids(&[
+            "uac.enabled",
+            "uac.consent",
+            "defender.ioav",
+            "defender.archive",
+            "lsa.restrict_anonymous_sam",
+        ]);
         let result = rep(vec![
-            out("uac.enabled", "conflict", "Preference differs from both target and before image; no write performed"),
+            out(
+                "uac.enabled",
+                "conflict",
+                "Preference differs from both target and before image; no write performed",
+            ),
             out("uac.consent", "skipped", "Nothing recorded to put back"),
-            out("defender.ioav", "skipped", "Another protection needs this one"),
-            out("defender.archive", "restored", "Original preference restored; restart required"),
+            out(
+                "defender.ioav",
+                "skipped",
+                "Another protection needs this one",
+            ),
+            out(
+                "defender.archive",
+                "restored",
+                "Original preference restored; restart required",
+            ),
         ]);
         let s = summarize_chosen(&chosen, Ok(&result), Ok(&rep(vec![])));
         assert_eq!(s.kind, SummaryKind::Partial);
@@ -676,7 +704,10 @@ mod tests {
                 ("uac.enabled".to_owned(), REASON_LEFT_AS_IS.to_owned()),
                 ("uac.consent".to_owned(), REASON_NOTHING.to_owned()),
                 ("defender.ioav".to_owned(), REASON_NEEDS_OTHER.to_owned()),
-                ("lsa.restrict_anonymous_sam".to_owned(), REASON_NOTHING.to_owned()),
+                (
+                    "lsa.restrict_anonymous_sam".to_owned(),
+                    REASON_NOTHING.to_owned()
+                ),
             ]
         );
         assert_eq!(s.less_protected.len(), 1);
@@ -707,7 +738,11 @@ mod tests {
     #[test]
     fn a_failed_chosen_undo_changes_nothing_and_says_why() {
         let chosen = ids(&["uac.enabled"]);
-        let s = summarize_chosen(&chosen, Err("Another Secblitz operation holds the journal lock"), Err("x"));
+        let s = summarize_chosen(
+            &chosen,
+            Err("Another Secblitz operation holds the journal lock"),
+            Err("x"),
+        );
         assert_eq!(s.kind, SummaryKind::Failed);
         assert!(s.done.is_empty() && s.less_protected.is_empty() && s.unverified);
         assert!(s.not_done[0].1.contains("Close it"));
@@ -720,8 +755,16 @@ mod tests {
     fn managed_and_unfinished_chosen_settings_use_the_shared_reasons() {
         let chosen = ids(&["uac.consent", "uac.enabled"]);
         let result = rep(vec![
-            out("uac.consent", "skipped", "Domain-managed machine: assessment only"),
-            out("uac.enabled", "skipped", "Revert the active transaction before undoing chosen controls"),
+            out(
+                "uac.consent",
+                "skipped",
+                "Domain-managed machine: assessment only",
+            ),
+            out(
+                "uac.enabled",
+                "skipped",
+                "Revert the active transaction before undoing chosen controls",
+            ),
         ]);
         let s = summarize_chosen(&chosen, Ok(&result), Ok(&rep(vec![])));
         assert_eq!(s.not_done[0].1, REASON_MANAGED);
@@ -730,8 +773,9 @@ mod tests {
 
     #[test]
     fn known_raw_failures_get_a_friendly_fix() {
-        assert!(plain_failure("Another Secblitz operation holds the journal lock")
-            .contains("Close it"));
+        assert!(
+            plain_failure("Another Secblitz operation holds the journal lock").contains("Close it")
+        );
         assert!(plain_failure("Interactive split-token administrator required; service/over-the-shoulder elevation unsupported")
             .contains("Sign in with"));
         assert!(plain_failure("Journal exceeds size limit").contains("Restart your PC"));
@@ -761,9 +805,13 @@ mod tests {
             plain_failure("Revert the active transaction before applying"),
             REASON_UNDO_FIRST
         );
-        assert!(plain_failure("Another Secblitz operation holds the journal lock")
-            .contains("Close it"));
-        assert_eq!(plain_failure("Access is denied. (os error 5)"), FAILURE_GENERAL);
+        assert!(
+            plain_failure("Another Secblitz operation holds the journal lock").contains("Close it")
+        );
+        assert_eq!(
+            plain_failure("Access is denied. (os error 5)"),
+            FAILURE_GENERAL
+        );
         assert_eq!(plain_failure("permission denied"), FAILURE_GENERAL);
     }
 
@@ -786,7 +834,9 @@ mod tests {
             REASON_BUSY
         );
         assert_eq!(
-            plain_failure("Deferred: unresolved patching intent/reboot; independent verification required"),
+            plain_failure(
+                "Deferred: unresolved patching intent/reboot; independent verification required"
+            ),
             REASON_EARLIER
         );
         assert_eq!(
@@ -799,10 +849,16 @@ mod tests {
         );
         assert!(can_retry("Deferred: shared engine.lock is busy"));
         assert!(can_retry("Deferred: a Windows servicing process is active"));
-        assert!(!can_retry("Deferred: updater installation requires completion"));
-        assert!(can_retry("Another Secblitz operation holds the journal lock"));
+        assert!(!can_retry(
+            "Deferred: updater installation requires completion"
+        ));
+        assert!(can_retry(
+            "Another Secblitz operation holds the journal lock"
+        ));
         assert!(!can_retry("Repair readiness blocks new changes"));
-        assert!(!can_retry("Revert the active transaction before applying again"));
+        assert!(!can_retry(
+            "Revert the active transaction before applying again"
+        ));
     }
 
     #[test]
@@ -818,7 +874,11 @@ mod tests {
 
     #[test]
     fn a_failed_undo_says_why() {
-        let s = summarize(None, Err("Another Secblitz operation holds the journal lock"), Err("x"));
+        let s = summarize(
+            None,
+            Err("Another Secblitz operation holds the journal lock"),
+            Err("x"),
+        );
         assert_eq!(s.kind, SummaryKind::Failed);
         assert!(s.failure.unwrap().contains("Close it"));
     }

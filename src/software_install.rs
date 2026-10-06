@@ -633,7 +633,7 @@ mod windows {
         let job = Handle(job);
         let mut limits = ExtendedLimits::default();
         limits.basic.flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no breakaway.
-        // SAFETY: `limits` is a live ExtendedLimits and the length matches it.
+                                     // SAFETY: `limits` is a live ExtendedLimits and the length matches it.
         check(
             unsafe {
                 SetInformationJobObject(
@@ -842,10 +842,11 @@ mod tests {
     #[test]
     fn account_refusals_are_told_apart_from_other_failures() {
         use anyhow::Context;
-        let refused = Err::<(), _>(anyhow::anyhow!("not the desktop user")).context(ToolError::NotHere);
+        let refused =
+            Err::<(), _>(anyhow::anyhow!("not the desktop user")).context(ToolError::NotHere);
         let refused = refused.unwrap_err();
         assert_eq!(ToolError::of(&refused), Some(ToolError::NotHere));
-            }
+    }
 
     #[test]
     fn offline_wins_when_both_kinds_are_present() {
@@ -866,12 +867,15 @@ mod tests {
         assert_eq!(ToolError::of(&as_context), Some(ToolError::NotHere));
         let as_cause = anyhow::Error::new(ToolError::NotHere).context("Check Bitwarden");
         assert_eq!(ToolError::of(&as_cause), Some(ToolError::NotHere));
-                let offline_context = Err::<(), _>(anyhow::anyhow!("dns"))
+        let offline_context = Err::<(), _>(anyhow::anyhow!("dns"))
             .context(ToolError::Offline)
             .unwrap_err();
         assert_eq!(ToolError::of(&offline_context), Some(ToolError::Offline));
         assert_eq!(ToolError::Offline.to_string(), "network_unreachable");
-        assert_eq!(ToolError::NotHere.to_string(), "not_available_for_this_account");
+        assert_eq!(
+            ToolError::NotHere.to_string(),
+            "not_available_for_this_account"
+        );
     }
 
     #[test]

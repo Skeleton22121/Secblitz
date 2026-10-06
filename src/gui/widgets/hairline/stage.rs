@@ -67,7 +67,10 @@ impl Stage {
         if self.k <= 0.0 {
             return Point::ORIGIN;
         }
-        Point::new((px.x - self.origin.x) / self.k, (px.y - self.origin.y) / self.k)
+        Point::new(
+            (px.x - self.origin.x) / self.k,
+            (px.y - self.origin.y) / self.k,
+        )
     }
 
     pub fn path(&self, f: impl FnOnce(&mut Sketch<'_>)) -> Path {
@@ -89,8 +92,7 @@ impl Stage {
     pub fn icon(&self, g: Glyph, centre: Point, size: f32) -> Path {
         let k = size / 24.0;
         let o = Point::new(centre.x - size / 2.0, centre.y - size / 2.0);
-        g.data()
-            .to_path(|p| self.px(o.x + p.x * k, o.y + p.y * k))
+        g.data().to_path(|p| self.px(o.x + p.x * k, o.y + p.y * k))
     }
 
     pub fn rounded_rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32) -> Path {
@@ -197,7 +199,6 @@ impl Sketch<'_> {
         self.pen = self.start;
     }
 }
-
 
 pub fn stroke(color: Color, width_px: f32) -> Stroke<'static> {
     Stroke::default()
@@ -315,7 +316,10 @@ mod tests {
         assert_eq!(s.k, 2.0);
         assert_eq!(s.origin, Point::new(0.0, 44.0));
         assert_eq!(s.px(160.0, 128.0), Point::new(320.0, 300.0));
-        assert_eq!(s.to_units(Point::new(320.0, 300.0)), Point::new(160.0, 128.0));
+        assert_eq!(
+            s.to_units(Point::new(320.0, 300.0)),
+            Point::new(160.0, 128.0)
+        );
         assert_eq!(s.len(10.0), 20.0);
         let w = Stage::fit(Size::new(320.0, 256.0), Size::new(1000.0, 256.0));
         assert_eq!(w.k, 1.0);
