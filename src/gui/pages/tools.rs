@@ -106,6 +106,9 @@ pub enum Msg {
     RestartDone(Result<(), String>),
     ToggleDetail(Detail),
     Personal(personal::Msg),
+    AccountKnown(Option<&'static str>),
+    CheckAccount,
+    Ready(Sheet, Option<&'static str>, bool),
 }
 
 #[derive(Debug)]
@@ -167,6 +170,14 @@ pub enum Updates {
     },
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Account {
+    #[default]
+    Checking,
+    Fine,
+    Blocked(&'static str),
+}
+
 #[derive(Debug, Default)]
 pub enum Tips {
     #[default]
@@ -197,6 +208,9 @@ const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 
 pub struct State {
     sheet: Option<Sheet>,
+    sheet_block: Option<&'static str>,
+    sheet_checking: bool,
+    account: Account,
     scan: Run<Result<(), String>>,
     threats: Run<Result<actions::ThreatRemoval, String>>,
     defender: Run<Result<(), String>>,
@@ -233,6 +247,9 @@ impl Default for State {
     fn default() -> Self {
         Self {
             sheet: None,
+            sheet_block: None,
+            sheet_checking: false,
+            account: Account::Checking,
             scan: Run::Idle,
             threats: Run::Idle,
             defender: Run::Idle,
@@ -269,6 +286,8 @@ fn plain(e: anyhow::Error) -> String {
 pub fn escape(state: &mut State) {
     if state.sheet.is_some() {
         state.sheet = None;
+        state.sheet_block = None;
+        state.sheet_checking = false;
         state.close_detail(Detail::Sheet);
     }
 }
@@ -283,15 +302,37 @@ pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
 
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     let settings = personal::on_enter(&mut state.personal, ctx);
+    let account = check_account(state);
     if ctx.broker.is_none() || state.bitwarden_present || !matches!(state.bitwarden, Run::Idle) {
-        return settings;
+        return Task::batch([settings, account]);
     }
     Task::batch([
         settings,
+        account,
         ctx.broker_task(broker::Request::BitwardenStatus, |r| {
             tools(Msg::BitwardenKnown(r))
         }),
     ])
+}
+
+fn check_account(state: &mut State) -> Task<Message> {
+    if state.account == Account::Fine {
+        return Task::none();
+    }
+    Task::perform(
+        blocking(|| logic::updates_account_note(secblitz::patching::account_supported())),
+        |note| tools(Msg::AccountKnown(note)),
+    )
+}
+
+fn needs_ready_check(sheet: Sheet) -> bool {
+    matches!(sheet, Sheet::Repair(_) | Sheet::InstallUpdates)
+}
+
+fn check_ready(sheet: Sheet, start: bool) -> Task<Message> {
+    Task::perform(blocking(logic::check_start_blocker), move |note| {
+        tools(Msg::Ready(sheet, note, start))
+    })
 }
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
@@ -304,22 +345,61 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart | Sheet::RemoveThreats
             );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
-            if !blocked {
-                state.sheet = Some(sheet);
+            if blocked {
+                return Task::none();
+            }
+            state.sheet = Some(sheet);
+            state.sheet_block = None;
+            state.sheet_checking = false;
+            if needs_ready_check(sheet) {
+                return check_ready(sheet, false);
             }
             Task::none()
         }
         Msg::CloseSheet => {
             state.sheet = None;
+            state.sheet_block = None;
+            state.sheet_checking = false;
             state.close_detail(Detail::Sheet);
             Task::none()
         }
         Msg::Confirm => {
-            state.close_detail(Detail::Sheet);
-            match state.sheet.take() {
-                Some(sheet) => confirm(state, sheet, ctx),
-                None => Task::none(),
+            let Some(sheet) = state.sheet else {
+                return Task::none();
+            };
+            if needs_ready_check(sheet) {
+                if state.sheet_checking {
+                    return Task::none();
+                }
+                state.sheet_checking = true;
+                return check_ready(sheet, true);
             }
+            state.sheet = None;
+            state.close_detail(Detail::Sheet);
+            confirm(state, sheet, ctx)
+        }
+        Msg::Ready(sheet, note, start) => {
+            if state.sheet != Some(sheet) {
+                return Task::none();
+            }
+            if start {
+                state.sheet_checking = false;
+            }
+            state.sheet_block = note;
+            if start && note.is_none() {
+                state.sheet = None;
+                state.close_detail(Detail::Sheet);
+                return confirm(state, sheet, ctx);
+            }
+            Task::none()
+        }
+        Msg::AccountKnown(note) => {
+            state.account = note.map_or(Account::Fine, Account::Blocked);
+            Task::none()
+        }
+        Msg::CheckAccount => {
+            state.account = Account::Checking;
+            check_account(state)
         }
         Msg::ScanDone(r) => {
             state.scan = Run::Done(r);

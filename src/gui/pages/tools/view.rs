@@ -1,6 +1,6 @@
 //! Drawing code for the Tools page.
 use super::{
-    repair_ratio, stage_ratio, tools, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State, Tips,
+    repair_ratio, stage_ratio, tools, Account, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State, Tips,
     Updates,
 };
 use crate::app::tools::{
@@ -11,7 +11,7 @@ use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
-use crate::gui::{Ctx, Message, Page};
+use crate::gui::{Ctx, Helper, Message, Page};
 use iced::widget::{column, container, row, space, text};
 use iced::{Alignment, Element, Font, Length};
 
@@ -229,7 +229,7 @@ fn details<'a>(state: &State, ctx: &Ctx, which: Detail, raw: &str) -> El<'a> {
 }
 
 fn open_security_entry(ctx: &Ctx) -> Option<MenuEntry> {
-    ctx.broker.is_some().then(|| {
+    ctx.can_open_pages().then(|| {
         entry(
             Icon::ExternalLink,
             ctx.t("Open Windows Security"),
@@ -238,8 +238,11 @@ fn open_security_entry(ctx: &Ctx) -> Option<MenuEntry> {
     })
 }
 
-fn reopen_hint(ctx: &Ctx) -> String {
-    ctx.t("Reopen Secblitz from its shortcut to use this.")
+fn helper_hint(ctx: &Ctx) -> String {
+    match ctx.helper {
+        Helper::NotOnThisAccount => ctx.t("Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off."),
+        _ => ctx.t("Close Secblitz and open it again from its Start menu shortcut to do this."),
+    }
 }
 
 fn busy_hint(ctx: &Ctx) -> String {
@@ -414,19 +417,35 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 raw: None,
             },
         ),
-        Run::Done(Err(raw)) => finished(
-            state,
-            ctx,
-            Outcome {
-                slot: Slot::Defender,
-                icon: Icon::Download,
-                tone: Tone::Warn,
-                title: ctx.t("We couldn't update right now"),
-                sub: Some(ctx.t("Check your internet connection and try again.")),
-                menu: vec![entry(Icon::Refresh, ctx.t("Try again"), Msg::ClearDefender)],
-                raw: Some((Detail::Defender, logic::friendly_why(raw).to_owned())),
-            },
-        ),
+        Run::Done(Err(raw)) => {
+            let note = logic::friendly_error(raw);
+            let sub = match note {
+                logic::ERR_NETWORK => ctx.t("Check your internet connection and try again."),
+                logic::ERR_GENERAL => ctx.t("Try again in a few minutes. If it keeps happening, update in Windows Security instead."),
+                other => ctx.t(other),
+            };
+            let menu = if logic::is_retryable(note) {
+                vec![entry(Icon::Refresh, ctx.t("Try again"), Msg::ClearDefender)]
+            } else {
+                open_security_entry(ctx)
+                    .into_iter()
+                    .chain([entry(Icon::Check, ctx.t("Done"), Msg::ClearDefender)])
+                    .collect()
+            };
+            finished(
+                state,
+                ctx,
+                Outcome {
+                    slot: Slot::Defender,
+                    icon: Icon::Download,
+                    tone: Tone::Warn,
+                    title: ctx.t("We couldn't update right now"),
+                    sub: Some(sub),
+                    menu,
+                    raw: Some((Detail::Defender, logic::friendly_why(raw).to_owned())),
+                },
+            )
+        }
     }
 }
 
@@ -592,7 +611,7 @@ fn check_again(label: String) -> MenuEntry {
 
 fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     match &state.updates {
-        Updates::Idle => updates_idle(ctx),
+        Updates::Idle => updates_idle(state, ctx),
         Updates::Looking => busy_row(
             state,
             ctx.palette,
@@ -625,9 +644,35 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     }
 }
 
-fn updates_idle<'a>(ctx: &Ctx) -> El<'a> {
+fn updates_idle<'a>(state: &State, ctx: &Ctx) -> El<'a> {
     let p = ctx.palette;
-    let free = !ctx.busy;
+    if let Account::Blocked(note) = state.account {
+        let retry = entry(Icon::Refresh, ctx.t("Try again"), Msg::CheckAccount);
+        let (menu, button) = failure_steps(ctx, note, retry);
+        let mut items = Vec::new();
+        if let Some((label, icon, msg)) = button {
+            items.push(widgets::action(
+                p,
+                ButtonKind::Secondary,
+                label,
+                Some(icon),
+                Some(tools(msg)),
+            ));
+        }
+        if !menu.is_empty() {
+            items.push(more(p, menu));
+        }
+        return widgets::row_item_tinted(
+            p,
+            Some(Icon::Download),
+            Some(Tone::Warn),
+            ctx.t("Windows updates"),
+            Some(ctx.t(note)),
+            trailing(items),
+            None,
+        );
+    }
+    let free = !ctx.busy && state.account == Account::Fine;
     widgets::row_item(
         p,
         Some(Icon::Download),
@@ -741,11 +786,11 @@ fn updates_done<'a>(
     let mut menu = Vec::new();
     let mut button = None;
     if let (InstallResult::CouldNotFinish, Some(n)) = (result, note) {
-        if logic::suggests_windows_update(n) && ctx.broker.is_some() {
+        if logic::suggests_windows_update(n) && ctx.can_open_pages() {
             button = Some(open_update_button(ctx));
         }
     }
-    if result == InstallResult::NotConfirmed && ctx.broker.is_some() {
+    if result == InstallResult::NotConfirmed && ctx.can_open_pages() {
         menu.push(entry(
             Icon::ExternalLink,
             ctx.t("Open Windows Update"),
@@ -793,7 +838,7 @@ fn failure_steps(
     retry: MenuEntry,
 ) -> (Vec<MenuEntry>, Option<(String, Icon, Msg)>) {
     if logic::suggests_windows_update(note) {
-        let button = ctx.broker.is_some().then(|| open_update_button(ctx));
+        let button = ctx.can_open_pages().then(|| open_update_button(ctx));
         (Vec::new(), button)
     } else if logic::is_retryable(note) {
         (vec![retry], None)
@@ -951,7 +996,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
-    let action: El<'a> = match logic::tip_action(tip, fix, ctx.broker.is_some()) {
+    let action: El<'a> = match logic::tip_action(tip, fix, ctx.can_open_pages()) {
         logic::TipAction::ReviewFix(id) => widgets::action(
             p,
             ButtonKind::Secondary,
@@ -1016,7 +1061,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
                 ctx,
                 g,
                 widgets::explain::INDENT,
-                ctx.broker.is_some()
+                ctx.can_open_pages()
             )
         ]
         .spacing(theme::S1)
@@ -1110,6 +1155,7 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
 fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let has_broker = ctx.broker.is_some();
+    let not_here = ctx.helper == Helper::NotOnThisAccount;
     match &state.bitwarden {
         Run::Idle if state.bitwarden_present => widgets::row_item(
             p,
@@ -1133,8 +1179,14 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ctx.t("Password manager"),
             Some(if has_broker {
                 ctx.t("Keep all your passwords safe in one place.")
+            } else if not_here {
+                format!(
+                    "{} {}",
+                    helper_hint(ctx),
+                    ctx.t("You can get it from bitwarden.com instead.")
+                )
             } else {
-                reopen_hint(ctx)
+                helper_hint(ctx)
             }),
             secondary(
                 p,
@@ -1213,7 +1265,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
 
 fn settings_group<'a>(ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let available = ctx.broker.is_some();
+    let available = ctx.can_open_pages();
     let rows = Shortcut::ALL
         .iter()
         .map(|&shortcut| {
@@ -1252,7 +1304,7 @@ fn settings_group<'a>(ctx: &'a Ctx) -> El<'a> {
     widgets::group(
         p,
         ctx.t("Windows settings"),
-        (!available).then(|| reopen_hint(ctx)),
+        (!available).then(|| helper_hint(ctx)),
         None,
         rows,
     )
@@ -1406,6 +1458,16 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     for line in lines {
         content = content.push(widgets::body(p, line));
     }
+    if let Some(note) = state.sheet_block {
+        content = content.push(
+            row![
+                widgets::icon(Icon::AlertTriangle, 16.0, p.tone(Tone::Warn)),
+                widgets::body(p, ctx.t(note))
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
+        );
+    }
     if sheet == Sheet::InstallUpdates {
         if let Updates::Found(found) = &state.updates {
             for item in install_updates_extra(state, ctx, found) {
@@ -1427,7 +1489,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ButtonKind::Primary,
             confirm_label,
             None,
-            Some(tools(Msg::Confirm)),
+            (!state.sheet_checking).then(|| tools(Msg::Confirm)),
         ),
     ]
     .spacing(theme::S2);

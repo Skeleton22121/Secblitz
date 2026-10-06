@@ -328,6 +328,9 @@ fn binding(win: &Path) -> Result<Binding> {
         original_user: hash(&("secblitz.patching.original-user.v1", sid))?,
     })
 }
+pub(super) fn account_supported() -> Result<()> {
+    binding(&windows_dir()?).map(|_| ())
+}
 pub(super) struct Backend {
     root: PathBuf,
     win: PathBuf,
