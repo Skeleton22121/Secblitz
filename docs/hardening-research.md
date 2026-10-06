@@ -113,7 +113,7 @@ No system-wide before/after benchmark or permission finding count exists. Narrow
 
 ## Researched surface catalog
 
-OS/account/security changes outside the exact **18-control** table are **future/researched only**. The separate 24-character generator and approved Bitwarden desktop installation do not configure credentials or add hardening controls. Current advisory coverage is identified above. The A/U/D labels are this project's conservative synthesis, not a verbatim Microsoft baseline.
+OS/account/security changes outside the exact **18-control** table are **future/researched only**. The approved Bitwarden desktop installation does not configure credentials or add hardening controls. Current advisory coverage is identified above. The A/U/D labels are this project's conservative synthesis, not a verbatim Microsoft baseline.
 
 ### 1. Defender, reputation, and exclusions
 
@@ -206,8 +206,6 @@ NIST SP 800-63B-4 recommends/mandates controls for network authentication verifi
 Passkeys bind authentication to the relying party and resist phishing; synced and device-bound credentials have different recovery and assurance properties. Windows 11's native passkey-management experience begins with 22H2 plus the applicable update; older Windows/browser/authenticator combinations differ. Hello PIN/biometric unlock is not evidence of a weak or missing account password.
 
 The application must not read SAM/LSASS, Credential Manager, browser credential databases, vaults, password hashes, tokens, recovery codes, private keys, or Wi-Fi keys. It must not attempt password validation, password resets, account disabling or group-membership changes. The current `PasswordRequired` flag assessment cannot determine actual strength or whether a password exists.
-
-Password generation is a **separate explicit `password` action** in `src/ui.rs`: 24 characters from a 64-symbol alphabet using OS randomness, interactive-terminal output only, no account change, clipboard copy, journal or report inclusion. It is not one of the 18 hardening controls. Tests use synthetic input rather than generating/exposing a secret. Bitwarden's generator history has a different lifecycle; terminal output can persist in scrollback/transcripts.
 
 `tools bitwarden --yes` is implemented in `src/software_install.rs` and requires the original desktop user's **non-elevated session**. Consent covers download/install and package/source agreements. It resolves registered App Installer, validates the Microsoft WinGet repository metadata, selects exact `Bitwarden.Bitwarden` in user scope, preserves installer-hash checks, avoids upgrading existing installations, bounds execution and detects installation afterward. Actual network installation remains untested in the offline guest. This does not create a vault/account, inspect/import credentials, configure browser extensions/autofill or enroll MFA/passkeys. Preference rollback does not uninstall the app. See [FEATURES.md](FEATURES.md).
 

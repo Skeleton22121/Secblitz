@@ -158,8 +158,6 @@ The LocalService monitor remains read-only on startup/about every 15 minutes; it
 
 No existing passwords, hashes, browser cookies/vaults, tokens, Wi-Fi keys, passkey private material, BitLocker recovery secrets or LSASS content are read. Automatic logon reads only its nonsecret flag/password-value-name presence; no LSA-secret inspection. WDigest changes only a fixed DWORD, not live credential contents.
 
-Password generation is a separate explicit OS-random 24-character action, no automatic clipboard/report/vault storage or account change. Screen/scrollback capture remains possible; memory clearing is not proof that the system retains no copies.
-
 Machine identity, SIDs, DACL originals, paths, installed-provider metadata and errors are **sensitive operational data**, though not credentials. Keep originals local/protected; redact shared evidence. No arbitrary reports belong in the strict journal root. There is no report-upload/telemetry integration; the updater, user-approved tools and Windows components have independent network behavior. Research keys are not application configuration and must not enter source, logs or docs.
 
 ## Evidence and open limits

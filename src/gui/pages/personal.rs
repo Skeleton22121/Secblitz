@@ -309,11 +309,82 @@ fn helper_text(ctx: &Ctx) -> String {
 }
 
 
-pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
-    column![account_group(state, ctx), apps_group(state, ctx)]
-        .spacing(theme::S8)
-        .width(Length::Fill)
-        .into()
+/// One section's content, ready for the Tools page to put under its header.
+pub struct Part<'a> {
+    pub subtitle: String,
+    pub rows: Vec<El<'a>>,
+}
+
+pub fn account<'a>(state: &'a State, ctx: &'a Ctx) -> Part<'a> {
+    Part {
+        subtitle: ctx.t("Settings that belong to the person signed in to this PC."),
+        rows: account_rows(state, ctx),
+    }
+}
+
+pub fn apps<'a>(state: &'a State, ctx: &'a Ctx) -> Part<'a> {
+    Part {
+        subtitle: ctx.t("Newer versions of popular programs fix security problems."),
+        rows: apps_rows(state, ctx),
+    }
+}
+
+pub fn account_status(state: &State, ctx: &Ctx) -> Option<tools::Status> {
+    let working = |text| tools::Status::new(Tone::Neutral, ctx.t(text));
+    state
+        .cells
+        .iter()
+        .find_map(|c| match c {
+            Cell::Working => Some(working("Changing…")),
+            Cell::Loading => Some(working("Checking…")),
+            _ => None,
+        })
+}
+
+pub fn apps_status(state: &State, ctx: &Ctx) -> Option<tools::Status> {
+    if ctx.helper != Helper::Ready {
+        return None;
+    }
+    let mut all = Vec::new();
+    let status = |tone, text: &str| tools::Status::new(tone, ctx.t(text));
+    match state.apps {
+        Apps::Preparing | Apps::Scanning | Apps::Reading(_) => {
+            all.push(status(Tone::Neutral, "Looking for app updates…"));
+        }
+        Apps::Failed(_) => all.push(status(Tone::Warn, "We couldn't check for updates")),
+        Apps::Ready => {
+            let waiting = state
+                .app_cells
+                .iter()
+                .filter(|c| matches!(c, AppCell::Available))
+                .count();
+            all.push(match waiting {
+                0 => status(Tone::Good, "Your popular programs are up to date."),
+                1 => status(Tone::Warn, "1 app can be updated"),
+                n => tools::Status::new(
+                    Tone::Warn,
+                    ctx.t("{n} apps can be updated")
+                        .replace("{n}", &n.to_string()),
+                ),
+            });
+        }
+        Apps::Unchecked | Apps::Probing | Apps::Idle => {}
+    }
+    for cell in &state.app_cells {
+        match cell {
+            AppCell::Preparing | AppCell::Updating => {
+                all.push(status(Tone::Neutral, "Updating…"));
+            }
+            AppCell::Failed(_) | AppCell::Unconfirmed => {
+                all.push(status(Tone::Warn, "An app update needs a look"));
+            }
+            AppCell::Updated if state.apps != Apps::Ready => {
+                all.push(status(Tone::Good, "Updated."));
+            }
+            _ => {}
+        }
+    }
+    tools::most_important(all)
 }
 
 fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
@@ -375,7 +446,7 @@ fn is_on(reply: Reply) -> bool {
     matches!(reply, Reply::Safe | Reply::SafeByUs)
 }
 
-fn account_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+fn account_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let p = ctx.palette;
     let mut rows: Vec<El<'a>> = Vec::new();
     if ctx.helper != Helper::Ready {
@@ -413,13 +484,7 @@ fn account_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ));
         }
     }
-    widgets::group(
-        p,
-        ctx.t("Your account"),
-        Some(ctx.t("Settings that belong to the person signed in to this PC.")),
-        None,
-        rows,
-    )
+    rows
 }
 
 fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<El<'a>> {
@@ -467,7 +532,7 @@ fn why_text(ctx: &Ctx, why: Why) -> String {
     }
 }
 
-fn apps_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+fn apps_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let p = ctx.palette;
     let mut rows: Vec<El<'a>> = Vec::new();
     let scan_title = ctx.t("Look for app updates");
@@ -567,13 +632,7 @@ fn apps_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     if let Some(e) = explainer(state, ctx, "software.outdated_winget", Detail::Apps) {
         rows.push(e);
     }
-    widgets::group(
-        p,
-        ctx.t("App updates"),
-        Some(ctx.t("Newer versions of popular programs fix security problems.")),
-        None,
-        rows,
-    )
+    rows
 }
 
 fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {

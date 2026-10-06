@@ -354,4 +354,12 @@ pub(super) const ROWS: &[[&str; 6]] = &[
     ["Clear search", "Borrar búsqueda", "Effacer la recherche", "Suche löschen", "Limpar pesquisa", "Cancella ricerca"],
     ["{n} selected, {k} hidden by search", "{n} elegidos, {k} ocultos por la búsqueda", "{n} choisis, {k} masqués par la recherche", "{n} ausgewählt, {k} durch die Suche ausgeblendet", "{n} escolhidos, {k} ocultos pela pesquisa", "{n} scelti, {k} nascosti dalla ricerca"],
     ["Some apps you chose are hidden by your search. You can review before anything is removed.", "Algunas aplicaciones que elegiste están ocultas por la búsqueda. Podrás revisarlo antes de quitar nada.", "Certaines applications choisies sont masquées par votre recherche. Vous pourrez tout vérifier avant toute suppression.", "Einige gewählte Apps sind durch deine Suche ausgeblendet. Du kannst alles prüfen, bevor etwas entfernt wird.", "Alguns apps que você escolheu estão ocultos pela pesquisa. Você poderá revisar antes de remover qualquer coisa.", "Alcune app che hai scelto sono nascoste dalla ricerca. Potrai controllare tutto prima di rimuovere qualcosa."],
+    // Merged from i18n-pending (checks, explanations, GUI follow-ups).
+    ["Removing threats…", "Quitando las amenazas…", "Suppression des menaces…", "Bedrohungen werden entfernt …", "Removendo as ameaças…", "Rimozione delle minacce…"],
+    ["1 update ready", "1 actualización lista", "1 mise à jour prête", "1 Update bereit", "1 atualização pronta", "1 aggiornamento pronto"],
+    ["{n} updates ready", "{n} actualizaciones listas", "{n} mises à jour prêtes", "{n} Updates bereit", "{n} atualizações prontas", "{n} aggiornamenti pronti"],
+    ["Installing Bitwarden…", "Instalando Bitwarden…", "Installation de Bitwarden…", "Bitwarden wird installiert …", "Instalando o Bitwarden…", "Installazione di Bitwarden…"],
+    ["1 app can be updated", "1 app se puede actualizar", "1 appli peut être mise à jour", "1 App kann aktualisiert werden", "1 app pode ser atualizado", "1 app può essere aggiornata"],
+    ["{n} apps can be updated", "{n} apps se pueden actualizar", "{n} applis peuvent être mises à jour", "{n} Apps können aktualisiert werden", "{n} apps podem ser atualizados", "{n} app possono essere aggiornate"],
+    ["An app update needs a look", "Una actualización de app conviene revisarla", "Une mise à jour d’appli est à regarder", "Ein App-Update ist einen Blick wert", "Uma atualização de app vale a pena ver", "Un aggiornamento di un’app è da guardare"],
 ];
