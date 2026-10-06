@@ -14,7 +14,6 @@ use crate::app::tools::{
     RepairProgress, RepairResult, Secret, TipProfile, TipsReport,
 };
 use crate::broker;
-use crate::gui::theme::Tone;
 use crate::gui::widgets::anim::{self, Clock};
 use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use iced::{Subscription, Task};
@@ -51,32 +50,15 @@ impl Shortcut {
         Self::Encryption,
         Self::SignIn,
     ];
-    fn request(self) -> broker::Request {
+    fn page(self) -> crate::guide::Page {
+        use crate::guide::Page;
         match self {
-            Self::WindowsUpdate => broker::Request::OpenWindowsUpdate,
-            Self::WindowsSecurity => broker::Request::OpenWindowsSecurity,
-            Self::Encryption => broker::Request::OpenEncryption,
-            Self::SignIn => broker::Request::OpenSignIn,
+            Self::WindowsUpdate => Page::WindowsUpdate,
+            Self::WindowsSecurity => Page::WindowsSecurity,
+            Self::Encryption => Page::Encryption,
+            Self::SignIn => Page::SignIn,
         }
     }
-}
-
-/// The broker request that opens the Windows page for an action.
-fn request_for(action: actions::Action) -> Option<broker::Request> {
-    use actions::Action as A;
-    use broker::Request as R;
-    Some(match action {
-        A::OpenWindowsUpdate => R::OpenWindowsUpdate,
-        A::OpenWindowsSecurity => R::OpenWindowsSecurity,
-        A::OpenSignInSettings => R::OpenSignIn,
-        A::OpenEncryptionSettings => R::OpenEncryption,
-        A::OpenTamperProtection => R::OpenTamperProtection,
-        A::OpenProtectionHistory => R::OpenProtectionHistory,
-        A::OpenAppBrowserControl => R::OpenAppBrowserControl,
-        A::OpenOptionalFeatures => R::OpenOptionalFeatures,
-        A::OpenAccounts => R::OpenAccounts,
-        A::UpdateDefender | A::QuickScan | A::StartMonitoring => return None,
-    })
 }
 
 /// Which "More details" expander is open.
@@ -130,7 +112,6 @@ pub enum Msg {
     /// Open the Windows page a health tip points to.
     OpenAction(actions::Action),
     OpenSecurity,
-    Opened(Result<broker::Reply, String>),
     ToggleDetail(Detail),
     Personal(personal::Msg),
 }
@@ -579,21 +560,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.close_detail(Detail::Bitwarden);
             Task::none()
         }
-        Msg::Open(shortcut) => ctx.broker_task(shortcut.request(), |r| tools(Msg::Opened(r))),
-        Msg::OpenAction(action) => match request_for(action) {
-            Some(request) => ctx.broker_task(request, |r| tools(Msg::Opened(r))),
+        Msg::Open(shortcut) => super::fixes::open_page(ctx, shortcut.page()),
+        Msg::OpenAction(action) => match crate::guide::Page::from_action(action) {
+            Some(page) => super::fixes::open_page(ctx, page),
             None => Task::none(),
         },
-        Msg::OpenSecurity => ctx.broker_task(broker::Request::OpenWindowsSecurity, |r| {
-            tools(Msg::Opened(r))
-        }),
-        Msg::Opened(reply) => match reply {
-            Ok(broker::Reply::Done | broker::Reply::OpenedStore) => Task::none(),
-            _ => Task::done(Message::Toast(
-                ctx.t("We couldn't open that page. Please try again."),
-                Tone::Warn,
-            )),
-        },
+        Msg::OpenSecurity => super::fixes::open_page(ctx, crate::guide::Page::WindowsSecurity),
         Msg::Personal(msg) => personal::update(&mut state.personal, msg, ctx),
         Msg::ToggleDetail(detail) => {
             if state.open_details.contains(&detail) {
@@ -761,27 +733,6 @@ mod followup_tests {
         assert!(at(2, 30) > at(2, 0) && at(2, 600) > at(2, 30));
         assert!(at(1, 100_000) < at(2, 0), "the next step starts ahead");
         assert!(at(2, 100_000) < 1.0, "only Done fills the bar");
-    }
-
-    #[test]
-    fn every_open_action_has_a_broker_request() {
-        use actions::Action as A;
-        for action in [
-            A::OpenWindowsUpdate,
-            A::OpenWindowsSecurity,
-            A::OpenSignInSettings,
-            A::OpenEncryptionSettings,
-            A::OpenTamperProtection,
-            A::OpenProtectionHistory,
-            A::OpenAppBrowserControl,
-            A::OpenOptionalFeatures,
-            A::OpenAccounts,
-        ] {
-            assert!(request_for(action).is_some(), "{action:?}");
-        }
-        for action in [A::UpdateDefender, A::QuickScan, A::StartMonitoring] {
-            assert!(request_for(action).is_none());
-        }
     }
 
     /// bitwarden_not_here starts false and is set correctly from BitwardenKnown replies.

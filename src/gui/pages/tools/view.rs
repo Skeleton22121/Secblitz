@@ -861,18 +861,33 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     // Windows page that helps. Nothing starts without the person's say-so.
     let action: El<'a> = match tip.open {
         _ if tip.state != TipState::Look => space::horizontal().width(0).into(),
+        _ if tip.fix => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Go to Protection"),
+            None,
+            Some(Message::Navigate(crate::gui::Page::Fixes)),
+        ),
+        // The in-app scan stays reachable even when steps are shown below.
         _ if tip.scan => secondary(
             p,
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
-        Some(open) if ctx.broker.is_some() => widgets::action(
-            p,
-            ButtonKind::Secondary,
-            ctx.t("Open"),
-            Some(Icon::ExternalLink),
-            Some(tools(Msg::OpenAction(open))),
-        ),
+        // A guide shows its own button under the steps.
+        _ if tip.guide.is_some() => space::horizontal().width(0).into(),
+        Some(open) if ctx.broker.is_some() => {
+            // The button is named after the page it opens.
+            let label = crate::guide::Page::from_action(open)
+                .map_or("Open", crate::guide::Page::button);
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t(label),
+                Some(Icon::ExternalLink),
+                Some(tools(Msg::OpenAction(open))),
+            )
+        }
         _ => space::horizontal().width(0).into(),
     };
     let head = widgets::row_item_tinted(
@@ -884,6 +899,21 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
         action,
         None,
     );
+    // The steps need no launcher; only the buttons that open pages do.
+    let head = match (tip.guide, tip.state) {
+        (Some(g), TipState::Look) => column![
+            head,
+            crate::gui::pages::fixes::guide_block(
+                ctx,
+                g,
+                widgets::explain::INDENT,
+                ctx.broker.is_some()
+            )
+        ]
+        .spacing(theme::S1)
+        .into(),
+        _ => head,
+    };
     match &tip.explain {
         // Tips only report: the third line says what the person can do.
         Some(id) => {
