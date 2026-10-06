@@ -157,6 +157,7 @@ pub enum Msg {
     ToggleTechnical,
     Feedback(crate::broker::Request),
     FeedbackOpened(bool),
+    PrivacyOpened(bool),
     Frame,
     Remove(remove::Msg),
 }
@@ -311,13 +312,20 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.technical = !state.technical;
             Task::none()
         }
-        Msg::Feedback(request) => ctx.broker_task(request, |reply| {
-            Message::Settings(Msg::FeedbackOpened(matches!(
-                reply,
-                Ok(crate::broker::Reply::Done)
-            )))
+        Msg::Feedback(request) => ctx.broker_task(request, move |reply| {
+            let opened = matches!(reply, Ok(crate::broker::Reply::Done));
+            Message::Settings(if request == crate::broker::Request::OpenPrivacyPolicy {
+                Msg::PrivacyOpened(opened)
+            } else {
+                Msg::FeedbackOpened(opened)
+            })
         }),
-        Msg::FeedbackOpened(true) => Task::none(),
+        Msg::FeedbackOpened(true) | Msg::PrivacyOpened(true) => Task::none(),
+        Msg::PrivacyOpened(false) => toast(
+            "We couldn't open your web browser. Visit secblitz.lol/privacy.html to read the privacy policy.",
+            Tone::Warn,
+            ctx,
+        ),
         Msg::FeedbackOpened(false) => toast(
             "We couldn't open your web browser. Visit github.com/Skeleton22121/Secblitz/issues to write to us.",
             Tone::Warn,
@@ -606,6 +614,14 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 t("Suggest a feature"),
                 Some(t("Share an idea that would make Secblitz better. This opens a form on GitHub.")),
                 link("Suggest a feature", crate::broker::Request::OpenSuggestFeature),
+                None,
+            ),
+            widgets::row_item(
+                p,
+                Some(Icon::Eye),
+                t("Privacy"),
+                Some(t("See what Secblitz stores and when it uses the internet. This opens a page on our website.")),
+                link("Open privacy policy", crate::broker::Request::OpenPrivacyPolicy),
                 None,
             ),
             widgets::row_item(

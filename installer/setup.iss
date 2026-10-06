@@ -68,6 +68,24 @@ fr.AutoUpdates=Maintenir Secblitz à jour automatiquement (vérification toutes 
 de.AutoUpdates=Secblitz automatisch aktuell halten (prüft jede Stunde)
 pt.AutoUpdates=Manter o Secblitz atualizado automaticamente (verifica a cada hora)
 it.AutoUpdates=Mantieni Secblitz aggiornato automaticamente (controlla ogni ora)
+en.PrivacyTitle=Your privacy
+es.PrivacyTitle=Tu privacidad
+fr.PrivacyTitle=Votre vie privée
+de.PrivacyTitle=Deine Privatsphäre
+pt.PrivacyTitle=Sua privacidade
+it.PrivacyTitle=La tua privacy
+en.PrivacySubtitle=What Secblitz does with your information
+es.PrivacySubtitle=Qué hace Secblitz con tu información
+fr.PrivacySubtitle=Ce que Secblitz fait de vos informations
+de.PrivacySubtitle=Was Secblitz mit Deinen Daten macht
+pt.PrivacySubtitle=O que o Secblitz faz com as suas informações
+it.PrivacySubtitle=Cosa fa Secblitz con le tue informazioni
+en.PrivacyText=Secblitz has no account, no ads and no tracking. Your results stay on your PC.%n%nIt goes online only to keep itself up to date and for things you ask for, such as installing an app. You can turn automatic updates off on the next page.%n%nThe full privacy policy is at secblitz.lol/privacy.html.
+es.PrivacyText=Secblitz no tiene cuenta, ni anuncios, ni seguimiento. Tus resultados se quedan en tu PC.%n%nSolo se conecta a internet para mantenerse actualizado y para lo que tú le pidas, como instalar una app. Puedes desactivar las actualizaciones automáticas en la página siguiente.%n%nLa política de privacidad completa está en secblitz.lol/privacy.html.
+fr.PrivacyText=Secblitz n'a ni compte, ni publicité, ni suivi. Vos résultats restent sur votre PC.%n%nIl ne se connecte à Internet que pour se tenir à jour et pour ce que vous lui demandez, comme installer une application. Vous pouvez désactiver les mises à jour automatiques à la page suivante.%n%nLa politique de confidentialité complète se trouve sur secblitz.lol/privacy.html.
+de.PrivacyText=Secblitz hat kein Konto, keine Werbung und kein Tracking. Deine Ergebnisse bleiben auf Deinem PC.%n%nEs geht nur online, um sich aktuell zu halten und für Dinge, um die Du es bittest, etwa eine App zu installieren. Automatische Updates kannst Du auf der nächsten Seite ausschalten.%n%nDie vollständige Datenschutzerklärung findest Du unter secblitz.lol/privacy.html.
+pt.PrivacyText=O Secblitz não tem conta, anúncios nem rastreamento. Seus resultados ficam no seu PC.%n%nEle só se conecta à internet para se manter atualizado e para o que você pedir, como instalar um app. Você pode desativar as atualizações automáticas na próxima página.%n%nA política de privacidade completa está em secblitz.lol/privacy.html.
+it.PrivacyText=Secblitz non ha account, pubblicità né tracciamento. I tuoi risultati restano sul tuo PC.%n%nSi collega a internet solo per tenersi aggiornato e per ciò che gli chiedi, come installare un'app. Puoi disattivare gli aggiornamenti automatici nella pagina successiva.%n%nL'informativa completa sulla privacy è su secblitz.lol/privacy.html.
 en.DesktopIcon=Keep Secblitz handy - create a desktop shortcut
 es.DesktopIcon=Ten Secblitz a mano: crea un acceso directo en el escritorio
 fr.DesktopIcon=Gardez Secblitz à portée de main : créez un raccourci sur le bureau
@@ -241,6 +259,7 @@ const MaintenanceSource =
 var ResumeAfterUpgrade, ResumeFilterAfterUpgrade, PostInstallFailed: Boolean;
     UninstallPutBack: Boolean;
     PreviousDesktopSelected, PreviousAutoUpdatesEnabled, PreviousHasUpdatePreference: Boolean;
+    PrivacyPage: TOutputMsgWizardPage;
 
 procedure InitializeWizard;
 var Enabled: Cardinal;
@@ -251,6 +270,8 @@ begin
   PreviousHasUpdatePreference := RegQueryDWordValue(HKLM64, 'Software\Secblitz', 'AutoUpdatesEnabled', Enabled);
   PreviousAutoUpdatesEnabled := True;
   if PreviousHasUpdatePreference then PreviousAutoUpdatesEnabled := Enabled <> 0;
+  PrivacyPage := CreateOutputMsgPage(wpWelcome, CustomMessage('PrivacyTitle'),
+    CustomMessage('PrivacySubtitle'), CustomMessage('PrivacyText'));
 end;
 
 function DesktopDefault: Boolean;

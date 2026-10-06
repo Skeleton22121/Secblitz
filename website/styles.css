@@ -220,6 +220,8 @@ h3 { font-size: 17px; line-height: 1.35; font-weight: 600; letter-spacing: -0.00
 }
 .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s2); margin-top: var(--s8); }
 .meta { margin-top: var(--s3); color: var(--muted); font-size: 14px; }
+.meta a { text-underline-offset: 3px; }
+.meta a:hover { color: var(--text); }
 .hero .shot { margin-top: var(--s12); }
 
 .shot {
@@ -369,6 +371,18 @@ details[open] > summary .chevron { transform: rotate(180deg); }
 .not-found { padding: var(--s24) 0; text-align: center; display: flex; flex-direction: column; align-items: center; }
 .not-found .lead { margin-top: var(--s4); }
 .not-found .button { margin-top: var(--s8); }
+
+/* Privacy */
+.policy { padding: var(--s16) var(--s6) var(--s12); max-width: 760px; }
+.policy h1 { font-size: clamp(2rem, 5vw, 3rem); }
+.policy .lead { max-width: none; }
+.policy h2 { font-size: 1.5rem; margin-top: var(--s12); }
+.policy h3 { font-size: 1.125rem; font-weight: 600; margin-top: var(--s6); }
+.policy p, .policy li { margin-top: var(--s3); color: var(--muted); font-size: 16px; line-height: 1.6; max-width: 680px; }
+.policy ul { padding-left: var(--s6); list-style: disc; }
+.policy li { margin-top: var(--s2); }
+.policy a { text-underline-offset: 3px; }
+.policy a:hover { color: var(--text); }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
