@@ -6,7 +6,7 @@ use super::stage::Stage;
 use crate::gui::theme::Palette;
 use crate::gui::widgets::anim;
 use iced::widget::canvas::{Action, Event, Frame};
-use iced::{mouse, window, Rectangle};
+use iced::{mouse, window, Color, Rectangle};
 use std::time::Instant;
 
 pub const SETTLED_AGE: f32 = 99.0;
@@ -163,6 +163,20 @@ impl<Id: Copy + PartialEq> Live<Id> {
         if let (Some(above), Some(below)) = (above, below) {
             tooltip_around(frame, p, stage, above, below, &label(id));
         }
+    }
+
+    /// The shared top layer of every drawing: click ripples, then the hover tooltip.
+    pub fn draw_overlay(
+        &self,
+        frame: &mut Frame,
+        p: &Palette,
+        stage: &Stage,
+        pulse: Color,
+        spots: &Hotspots<Id>,
+        label: impl Fn(Id) -> String,
+    ) {
+        self.pulses.draw(frame, stage, pulse);
+        self.draw_tooltip(frame, p, stage, spots, label);
     }
 
     pub fn interaction(

@@ -8,18 +8,26 @@ fn screen_box(x0: f32, y0: f32, x1: f32, y1: f32) -> Rectangle {
     Rectangle::new(Point::new(x0, y0), Size::new(x1 - x0, y1 - y0))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn monitor(
-    f: &mut Frame,
-    s: &Stage,
-    ink: &Ink,
-    cx: f32,
-    top: f32,
-    w: f32,
-    h: f32,
-    screen: Color,
-    alpha: f32,
-) -> Rectangle {
+/// Where a monitor stands (centre x, top, width, height) and how its screen looks.
+#[derive(Clone, Copy)]
+pub struct Monitor {
+    pub cx: f32,
+    pub top: f32,
+    pub w: f32,
+    pub h: f32,
+    pub screen: Color,
+    pub alpha: f32,
+}
+
+pub fn monitor(f: &mut Frame, s: &Stage, ink: &Ink, look: &Monitor) -> Rectangle {
+    let Monitor {
+        cx,
+        top,
+        w,
+        h,
+        screen,
+        alpha,
+    } = *look;
     let x0 = cx - w / 2.0;
     let y1 = top + h;
     let a = |c: Color| c.scale_alpha(alpha);

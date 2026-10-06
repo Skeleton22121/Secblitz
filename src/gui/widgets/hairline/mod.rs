@@ -20,18 +20,33 @@ pub use shield_fill::{Run, ShieldFill};
 pub use stage::Plate;
 
 #[cfg(test)]
+mod testing;
+
+/// A drawing shown at exactly `size` logical pixels.
+pub fn fixed_canvas<'a, M: 'a>(
+    drawing: impl iced::widget::canvas::Program<M> + 'a,
+    size: iced::Size,
+) -> iced::Element<'a, M> {
+    iced::widget::canvas::Canvas::new(drawing)
+        .width(iced::Length::Fixed(size.width))
+        .height(iced::Length::Fixed(size.height))
+        .into()
+}
+
+#[cfg(test)]
 mod example {
     //! A complete tiny drawing: a badge with a shield that pulses while
     //! working and draws a tick in when done. Never shown; it proves the
     //! pieces fit and pins how `update` asks for frames.
     use super::stage::{pt, stroke, Ink, Meaning, Stage, W_ACCENT, W_PART};
+    use super::testing::{frame, wants_frame};
     use super::{Glyph, Live, Plate};
     use super::motion::{phase, Spring};
     use super::pointer::{Hotspots, Layer};
     use crate::gui::theme::{Palette, LIGHT};
     use crate::gui::widgets::anim::{self, DECELERATE};
     use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
-    use iced::{mouse, window, Point, Rectangle, Renderer, Size, Theme};
+    use iced::{mouse, Point, Rectangle, Renderer, Size, Theme};
     use std::time::{Duration, Instant};
 
     const UNITS: Size = Size::new(120.0, 96.0);
@@ -176,9 +191,6 @@ mod example {
         height: 192.0,
     };
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
     fn tick(
         st: &mut State,
@@ -190,10 +202,6 @@ mod example {
         canvas::Program::update(prog, st, &frame(*clock), BOUNDS, cursor)
     }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     #[test]
     fn example_drawing_hovers_clicks_and_goes_quiet() {

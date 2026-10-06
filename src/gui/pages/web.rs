@@ -642,15 +642,16 @@ fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
         .look
         .unwrap_or_else(|| (guard_of(line), Instant::now()));
     let counts = blocked_today(snapshot);
-    let picture = web_globe::web_globe(
+    let picture = web_globe::WebGlobe {
         p,
-        Plate::Surface,
+        plate: Plate::Surface,
         guard,
-        since,
-        since,
-        counts,
-        web_globe::Labels::new(|k| ctx.t(k)),
-    );
+        changed: since,
+        now: since,
+        blocked: counts,
+        labels: web_globe::Labels::new(|k| ctx.t(k)),
+    }
+    .view();
     let (title, sub) = hero_text(ctx, line);
     let mut words = column![widgets::h2(p, title)].spacing(theme::S1);
     if let Some(sub) = sub {

@@ -9,7 +9,7 @@ use super::{Glyph, Live};
 use crate::gui::theme::Palette;
 use crate::gui::widgets::anim::{self, DECELERATE, EASE_IN_OUT};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry, Path};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
+use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Size, Theme, Vector};
 use std::time::{Duration, Instant};
 
 
@@ -97,10 +97,7 @@ pub struct Magnifier {
 
 impl Magnifier {
     pub fn view<'a, M: 'a>(self, scale: f32) -> Element<'a, M> {
-        canvas::Canvas::new(self)
-            .width(Length::Fixed(VIEW.width * scale))
-            .height(Length::Fixed(VIEW.height * scale))
-            .into()
+        super::fixed_canvas(self, Size::new(VIEW.width * scale, VIEW.height * scale))
     }
 }
 

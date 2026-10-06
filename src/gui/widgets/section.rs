@@ -235,35 +235,24 @@ pub fn row_item_tinted<'a>(
     trailing: impl Into<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    row_item_below(
-        p,
-        glyph,
-        tone,
-        title,
-        subtitle,
-        trailing,
-        Vec::new(),
-        on_press,
-    )
+    let c = tone.map(|t| p.tone(t)).unwrap_or(p.text_muted);
+    let lead = glyph.map(|g| icon(g, theme::ICON_ROW, c));
+    row_item_lead(p, lead, title, subtitle, trailing, Vec::new(), on_press)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn row_item_below<'a>(
     p: Palette,
     glyph: Option<Icon>,
-    tone: Option<Tone>,
     title: impl Into<String>,
     subtitle: Option<String>,
     trailing: impl Into<Element<'a, Message>>,
     below: Vec<Element<'a, Message>>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    let c = tone.map(|t| p.tone(t)).unwrap_or(p.text_muted);
-    let lead = glyph.map(|g| icon(g, theme::ICON_ROW, c));
+    let lead = glyph.map(|g| icon(g, theme::ICON_ROW, p.text_muted));
     row_item_lead(p, lead, title, subtitle, trailing, below, on_press)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn row_item_lead<'a>(
     p: Palette,
     lead_icon: Option<Element<'a, Message>>,
