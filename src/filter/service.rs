@@ -491,9 +491,16 @@ mod tests {
         panic!("timed out waiting for {what}");
     }
 
+    // The service binds UDP and TCP on the same port, and Windows reserves
+    // TCP port ranges that a free UDP port can fall into.
     fn free_port() -> u16 {
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
-        s.local_addr().unwrap().port()
+        loop {
+            let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = tcp.local_addr().unwrap().port();
+            if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+                return port;
+            }
+        }
     }
 
     #[test]
