@@ -1,8 +1,10 @@
 name: Bump version
 
-# Prepares a release: moves every version number and the changelog to the new
-# version on a branch and opens a pull request. It never pushes to main.
-# After the pull request is merged, tag-release.yml tags the release.
+# Prepares a release: moves every version number, the website, the README and
+# the changelog to the new version on a branch and opens a pull request. It
+# never pushes to main. After the pull request is merged, tag-release.yml tags
+# the release. Nothing here changes the live website: only publish-website.yml
+# deploys, and only after the owner publishes the release.
 on:
   workflow_dispatch:
     inputs:
@@ -10,14 +12,18 @@ on:
         description: "New version, for example 0.8.1 (must be greater than the current one)"
         required: true
         type: string
+      previous_release_unattested:
+        description: "The version becoming history was released before build attestations existed (for example 0.7.0). Skips only the attestation check of its files."
+        required: false
+        default: false
+        type: boolean
       allow_empty_notes:
         description: "Allow an empty Unreleased section in CHANGELOG.md"
         required: false
         default: false
         type: boolean
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: bump-version
@@ -31,26 +37,34 @@ jobs:
     # Needs the repository setting "Allow GitHub Actions to create and approve
     # pull requests" (Settings, Actions, General).
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write        # push the release branch
+      pull-requests: write   # open the pull request
+      attestations: read     # gh attestation verify on the previous release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
-          # The token stays in the git config for the push below, in this job only.
-          persist-credentials: true
+          persist-credentials: false
+      - name: Install the Python packages the tests need (hash-pinned)
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --disable-pip-version-check --require-hashes --only-binary=:all: -r scripts/requirements-release.txt
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
       - name: Check the version
         env:
           VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::'$VERSION' is not a plain MAJOR.MINOR.PATCH version."; exit 1
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+          if gh api "repos/$GH_REPO/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
             echo "::error::Tag v$VERSION already exists."; exit 1
           fi
-      - name: Bump the version and the changelog
+      - name: Bump the version, the website and the changelog
         env:
           VERSION: ${{ inputs.version }}
           ALLOW_EMPTY: ${{ inputs.allow_empty_notes }}
@@ -59,9 +73,37 @@ jobs:
           extra=()
           if [ "$ALLOW_EMPTY" = "true" ]; then extra+=(--allow-empty); fi
           python3 scripts/bump-version.py "$VERSION" "${extra[@]}"
+      - name: Pin the checksums of the version that becomes history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ALLOW_UNATTESTED: ${{ inputs.previous_release_unattested }}
+        run: |
+          set -euo pipefail
+          # The bump added the previous version to the list of older downloads
+          # that every deploy must carry. A hash is pinned only when the live
+          # site serves exactly the file of the GitHub release, and that release
+          # file matches its SHA256SUMS and (unless allowed) its build attestation.
+          # A tampered live site therefore cannot get its files pinned.
+          mkdir -p "$RUNNER_TEMP/verified"
+          for v in $(python3 scripts/historical-downloads.py missing); do
+            gh release download "v$v" --dir "$RUNNER_TEMP/verified" \
+              --pattern "secblitz-$v-windows-x64-setup.exe" --pattern "secblitz-$v-windows-x64.exe" --pattern SHA256SUMS --clobber
+            (cd "$RUNNER_TEMP/verified" && sha256sum --check --ignore-missing --strict SHA256SUMS)
+            for f in "secblitz-$v-windows-x64-setup.exe" "secblitz-$v-windows-x64.exe"; do
+              if [ "$ALLOW_UNATTESTED" = "true" ]; then
+                echo "Skipping the attestation check for $f (allowed by the owner)."
+              else
+                gh attestation verify "$RUNNER_TEMP/verified/$f" --repo "$GH_REPO" \
+                  --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "refs/tags/v$v" --deny-self-hosted-runners
+              fi
+            done
+            rm -f "$RUNNER_TEMP/verified/SHA256SUMS"
+          done
+          python3 scripts/historical-downloads.py record-missing --verified-dir "$RUNNER_TEMP/verified"
+          python3 scripts/historical-downloads.py check
       - name: Test the tools
         run: |
-          python3 -m pip install --disable-pip-version-check "cryptography==46.0.5"
           python3 scripts/bump-version-tests.py
           python3 scripts/release-tests.py
       - name: Check the lock file still matches
@@ -74,6 +116,7 @@ jobs:
       - name: Commit, push and open the pull request
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -83,7 +126,10 @@ jobs:
           git switch -c "$branch"
           git add -A
           git commit -m "Release $VERSION"
-          git push origin "$branch"
+          # The token is handed to this one push only, never stored in the checkout.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$branch"
           gh pr create --base main --head "$branch" \
             --title "Release $VERSION" \
-            --body "Version bump to $VERSION. Check the changelog wording, then merge. After the merge the tag v$VERSION is created and the release build starts (docs/RELEASING.md)."
+            --body "Version bump to $VERSION: Cargo files, installer resources, website, README and changelog. Check the changelog wording and the website diff, then merge. After the merge the tag v$VERSION is created and the release build starts (docs/RELEASING.md)."

@@ -1,0 +1,9 @@
+{
+  "name": "secblitz-site-deploy",
+  "private": true,
+  "description": "Pinned Cloudflare deploy tool for publish-website.yml. Not part of the app.",
+  "engines": { "node": ">=20.19" },
+  "devDependencies": {
+    "wrangler": "4.143.1"
+  }
+}
