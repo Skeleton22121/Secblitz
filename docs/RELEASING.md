@@ -70,8 +70,15 @@ Do this once, before the first release through this pipeline. Replace
 ### Rulesets (Settings, Rules, Rulesets)
 
 **Ruleset "main"**, target: default branch.
-- Require a pull request before merging, with at least one approval.
-- Require review from Code Owners (after `@OWNER` is real).
+- Require a pull request before merging. Required approvals: **0 if you are the
+  only maintainer** (GitHub never lets an author approve their own pull request,
+  so one required approval would block you from merging your own work). Set it
+  to 1 and turn on "Require review from Code Owners" once a second reviewer
+  exists. The required status checks below are what gate every merge.
+- Do not give anything bypass rights. Note that the setting "Allow GitHub
+  Actions to create and approve pull requests" (needed for the bump pull
+  request) lets the built-in token approve pull requests, so once you require
+  approvals, an approval from `github-actions[bot]` counts. Review what you merge.
 - Require status checks to pass: `Rust tests and lints (Windows, MSVC)`,
   `Locales, release tools, version bump and website tests`,
   `Workflow security audit (zizmor)`. Require branches to be up to date.
@@ -87,11 +94,16 @@ so the required checks run.
 - Block force pushes.
 - Do **not** turn on "Restrict creations". `tag-release.yml` creates the tag
   with the built-in token, and that token cannot be added to a bypass list.
-  This is safe: a tag only becomes a release if its commit is on `main`, its
-  version matches `Cargo.toml`, the changelog and the website, and the build
-  runs from that tag. If you prefer to be the only person who can create tags,
-  turn on "Restrict creations", create the tag yourself and the push starts
-  `release.yml` (see step 3).
+  With creations open, anyone with write access could create a `v*` tag first on
+  an unreviewed commit, and a run on that tag uses that commit's own workflow
+  files. Three things limit this: `tag-release.yml` fails loudly when the tag
+  already exists on a different commit; the owner check in step 6 below
+  requires the attested commit to be the one you expect and an ancestor of
+  `main`; and the `signing` and `website` environments need your approval. If
+  you want creation closed completely, turn on "Restrict creations" and create
+  the tag yourself (or through a GitHub App in the bypass list); the push starts
+  `release.yml` (see step 3). Also add a ruleset that blocks creating branches
+  named `v*`, so a branch can never share a name with a release tag.
 
 ### Environment `website` (Settings, Environments)
 
@@ -127,9 +139,14 @@ Pages Direct Upload, so no Git integration is needed on Cloudflare.
 
 ### Environment `signing` and SignPath (optional, off until you turn it on)
 
-Create the environment `signing` and restrict it to tags `v*`. Put the secret
-`SIGNPATH_API_TOKEN` there. The variables are repository variables (or
-environment variables):
+Create the environment `signing`, restrict it to tags `v*` **and add yourself as a
+required reviewer** (as for `website`), so nobody who can push a tag can use the
+SignPath token without your approval. Also set the SignPath signing policy to
+require manual approval. Put the secret `SIGNPATH_API_TOKEN` in the environment.
+`SIGNPATH_ENABLED` **must be a repository variable**, not an environment
+variable: `release.yml` reads it once in the `verify` job (which has no
+environment) and every later job follows that result. All the other
+`SIGNPATH_*` variables can be repository or environment variables:
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -186,7 +203,11 @@ and adds the version being replaced to the list of older downloads in
 `historical-downloads.py record-missing` reads that old version's installer and
 portable exe from the live site and pins their SHA-256 in
 `scripts/historical-downloads.sha256` (the workflow does this for you).
-Review that diff: the hashes must match what you published.
+The workflow pins a hash only when the live site serves exactly the file of
+that version's GitHub release, which must match its `SHA256SUMS` and build
+attestation. A version released before attestations existed (0.7.0) needs the
+workflow input `previous_release_unattested`, which skips only the attestation
+check. Review that diff: the hashes must match what you published.
 
 The script refuses a version that is not greater than the current one, and an
 empty `Unreleased` section (override with `--allow-empty`). `--dry-run` never
@@ -276,9 +297,15 @@ sha256sum --check SHA256SUMS
 for f in secblitz-0.8.1-windows-x64-setup.exe secblitz-0.8.1-windows-x64.exe; do
   gh attestation verify "$f" --repo OWNER/REPO \
     --signer-workflow OWNER/REPO/.github/workflows/release.yml \
-    --source-ref refs/tags/v0.8.1
+    --source-ref refs/tags/v0.8.1 \
+    --source-digest "$(git rev-parse origin/main)"   # the main commit you expect
 done
+# The release commit must be on main (the attestation names the commit):
+git fetch origin && git merge-base --is-ancestor "$(git rev-parse origin/main)" origin/main
 ```
+Use the commit of the "Release X.Y.Z" merge as the digest (check it in the
+Actions run, and `git log origin/main`), not just any commit. A tag someone else
+created on a different commit fails the digest check.
 
 The attestation proves the file was built by this repository's `release.yml`
 from the tagged commit. The installer tests have already passed (step 4.6; see
@@ -361,8 +388,15 @@ verified with the pinned key inside the app.
 carries `releases/stable.json` (the `stage-pages.py` allowlist). Publish those
 extra files by hand, or add them to the allowlist in a reviewed pull request.
 Renewing an existing feed (new `published_at` and `expires_at`, same installer)
-is done offline with `release-renew.py` and published by re-running this
-workflow against a release that carries the renewed `stable.json`, or by hand.
+cannot go through this workflow with "Immutable releases" on, because a
+published release's `stable.json` can no longer be replaced. A feed lasts at most
+90 days, so renew by publishing a new patch release (the normal flow), or deploy
+the renewed feed by hand with `release-renew.py` and wrangler on your own
+machine. Do not leave the live feed to expire.
+
+Publishing is refused for any tag that is not the latest release, so a re-run on
+an old tag can never roll the website back. The verified site is kept for 30
+days, the longest an approval can wait.
 
 ## Reproducible build
 

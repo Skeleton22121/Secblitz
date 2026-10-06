@@ -264,6 +264,29 @@ class BumpTests(unittest.TestCase):
         historical.write_manifest(keep, partial)
         self.assertEqual(historical.record_missing(base, lambda url: pe, stage, partial), ["0.6.1"])
         self.assertEqual(historical.record_missing(base, lambda url: self.fail("nothing is missing"), stage, partial), [])
+        # With an independent verified copy, a live file that differs is never pinned.
+        ref = self.root / "verified"
+        ref.mkdir()
+        for n in ("secblitz-0.6.1-windows-x64-setup.exe", "secblitz-0.6.1-windows-x64.exe"):
+            (ref / n).write_bytes(pe)
+        historical.write_manifest(keep, partial)
+        with self.assertRaises(historical.HistoryError):
+            historical.record_missing(base, lambda url: pe + b"evil", stage, partial, ref)
+        self.assertEqual(historical.record_missing(base, lambda url: pe, stage, partial, ref), ["0.6.1"])
+        empty = self.root / "empty"
+        empty.mkdir()
+        historical.write_manifest(keep, partial)
+        with self.assertRaises(historical.HistoryError):
+            historical.record_missing(base, lambda url: pe, stage, partial, empty)
+
+    def test_publish_workflow_does_not_clash_with_repo_folders(self):
+        # The workflow runs from the repo root: its download folder must not be a tracked path.
+        text = (Path(__file__).resolve().parents[1] / ".github/workflows/publish-website.yml").read_text()
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("mkdir "):
+                folder = line.split()[-1]
+                self.assertFalse((Path(__file__).resolve().parents[1] / folder).exists(), f"mkdir {folder} clashes with a repo path")
 
     def test_failed_plan_writes_nothing(self):
         (self.root / "assets/secblitz.rc").write_text("1 VERSIONINFO\n")

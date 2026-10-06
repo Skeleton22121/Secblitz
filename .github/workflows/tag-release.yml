@@ -60,12 +60,21 @@ jobs:
           python3 scripts/release-notes.py "$version" > /dev/null
           python3 scripts/bump-version.py "$version" --check-site
           if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
-            echo "Tag $tag already exists. Nothing to do."; exit 0
+            # The tag must point at THIS commit. Anything else is a tag made by someone else first.
+            ref_type=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.type)
+            ref_sha=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha)
+            if [ "$ref_type" = "tag" ]; then
+              ref_sha=$(gh api "repos/$GH_REPO/git/tags/$ref_sha" --jq .object.sha)
+            fi
+            if [ "$ref_sha" != "$COMMIT_SHA" ]; then
+              echo "::error::Tag $tag already exists but points at $ref_sha, not at this release commit $COMMIT_SHA. Investigate before releasing."; exit 1
+            fi
+            echo "Tag $tag already exists on this commit. Nothing to do."; exit 0
           fi
           # An annotated tag object, then the ref that points to it.
           object=$(gh api "repos/$GH_REPO/git/tags" \
             -f tag="$tag" -f message="Secblitz $version" -f object="$COMMIT_SHA" -f type=commit --jq .sha)
           gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$object" > /dev/null
           echo "Created $tag on $COMMIT_SHA."
-          gh workflow run release.yml --ref "$tag" -f "tag=$tag"
+          gh workflow run release.yml --ref "refs/tags/$tag" -f "tag=$tag"
           echo "Started the release build for $tag."

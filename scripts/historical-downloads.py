@@ -12,7 +12,9 @@ refuses any file whose SHA-256 is not in scripts/historical-downloads.sha256.
                                                   the live site and add their hashes
                                                   (run when a version becomes history,
                                                   review the diff, commit it)
-    historical-downloads.py record-missing        the same for every listed file that has
+    historical-downloads.py missing               print the versions that have no pinned hash yet
+    historical-downloads.py record-missing --verified-dir DIR
+                                                  the same for every listed file that has
                                                   no pinned hash yet (bump-version.yml)
 
 Reads only. It never signs, deploys or uses credentials. Standard library only.
@@ -124,7 +126,7 @@ def fetch(dest, base, fetcher=download, stage=None, hashes=None):
     return len(listed_names(stage))
 
 
-def record(version, base, fetcher=download, stage=None, path=MANIFEST):
+def record(version, base, fetcher=download, stage=None, path=MANIFEST, verified_dir=None):
     if not VERSION.fullmatch(version):
         raise HistoryError("Version must be plain X.Y.Z.")
     stage = stage or load_stage()
@@ -133,6 +135,14 @@ def record(version, base, fetcher=download, stage=None, path=MANIFEST):
         data = fetcher(f"{base}/downloads/{name}")
         stage.check_content(name, data)
         digest = hashlib.sha256(data).hexdigest()
+        if verified_dir is not None:
+            # Independent proof: the same file from the GitHub release, already
+            # checked against its SHA256SUMS and build attestation by the workflow.
+            reference = Path(verified_dir) / name
+            if not reference.is_file() or reference.is_symlink():
+                raise HistoryError(f"No verified copy of {name} to compare with.")
+            if hashlib.sha256(reference.read_bytes()).hexdigest() != digest:
+                raise HistoryError(f"{name} on the live site differs from the GitHub release. Not pinning it.")
         if hashes.get(name, digest) != digest:
             raise HistoryError(f"{name} is already pinned with a different hash. Refusing to change it.")
         hashes[name] = digest
@@ -140,7 +150,7 @@ def record(version, base, fetcher=download, stage=None, path=MANIFEST):
     return hashes
 
 
-def record_missing(base, fetcher=download, stage=None, path=MANIFEST):
+def record_missing(base, fetcher=download, stage=None, path=MANIFEST, verified_dir=None):
     stage = stage or load_stage()
     hashes = read_manifest(path) if path.exists() else {}
     versions = []
@@ -150,7 +160,7 @@ def record_missing(base, fetcher=download, stage=None, path=MANIFEST):
             if version not in versions:
                 versions.append(version)
     for version in versions:
-        record(version, base, fetcher, stage, path)
+        record(version, base, fetcher, stage, path, verified_dir)
     return versions
 
 
@@ -162,7 +172,10 @@ def main(argv=None):
     fetch_parser.add_argument("--dest", type=Path, required=True)
     record_parser = sub.add_parser("record")
     record_parser.add_argument("version")
-    sub.add_parser("record-missing")
+    missing_parser = sub.add_parser("record-missing")
+    missing_parser.add_argument("--verified-dir", type=Path, required=True,
+                                help="folder with the same files from the GitHub release (checked by the workflow); every live file must match")
+    sub.add_parser("missing")
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
@@ -171,11 +184,21 @@ def main(argv=None):
         elif args.command == "fetch":
             count = fetch(args.dest, origin())
             print(f"Fetched and verified {count} historical downloads.")
+        elif args.command == "missing":
+            stage = load_stage()
+            hashes = read_manifest() if MANIFEST.exists() else {}
+            seen = []
+            for name in listed_names(stage):
+                if name not in hashes:
+                    version = re.fullmatch(r"secblitz-(.*)-windows-x64(?:-setup)?\.exe", name)[1]
+                    if version not in seen:
+                        seen.append(version)
+                        print(version)
         elif args.command == "record-missing":
-            versions = record_missing(origin())
+            versions = record_missing(origin(), verified_dir=args.verified_dir)
             print("Recorded hashes for: " + (", ".join(versions) or "nothing, all were pinned") + f". Review the diff of {MANIFEST.name}.")
         else:
-            hashes = record(args.version, origin())
+            hashes = record(args.version, origin())  # by hand only; the workflow uses record-missing
             print(f"Recorded hashes for {args.version}. Review the diff of {MANIFEST.name}.")
     except (HistoryError, ValueError, OSError) as err:
         print(f"error: {err}", file=sys.stderr)

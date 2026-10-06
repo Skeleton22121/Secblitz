@@ -69,6 +69,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG="$REF_NAME"
@@ -100,6 +102,11 @@ jobs:
           python3 scripts/release-notes.py "$version" > /dev/null
           # Every version string and download link on the website and README equals the tag.
           python3 scripts/bump-version.py "$version" --check-site
+          # Never publish an older release over a newer one (that would roll the site back).
+          latest=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)
+          if [ "$latest" != "$TAG" ]; then
+            echo "::error::$TAG is not the latest release ($latest is). Publishing it would roll the website back."; exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha=$head" >> "$GITHUB_OUTPUT"
@@ -123,13 +130,13 @@ jobs:
           if ! diff assets.expected assets.list; then
             echo "::error::The release files are not exactly the expected four (see the diff above). Attach the signed stable.json and nothing else."; exit 1
           fi
-          mkdir assets
-          gh release download "$TAG" --dir assets
-          ls -l assets
+          mkdir release-assets
+          gh release download "$TAG" --dir release-assets
+          ls -l release-assets
       - name: Check SHA256SUMS against the files
         env:
           VERSION: ${{ steps.tag.outputs.version }}
-        working-directory: assets
+        working-directory: release-assets
         run: |
           set -euo pipefail
           # Exactly the two files, nothing else listed, and every hash must match.
@@ -146,7 +153,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           VERSION: ${{ steps.tag.outputs.version }}
           SHA: ${{ steps.tag.outputs.sha }}
-        working-directory: assets
+        working-directory: release-assets
         run: |
           set -euo pipefail
           for file in "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe"; do
@@ -165,7 +172,7 @@ jobs:
           # Checks: signature against assets/update-public-key.hex, schema and
           # target, version equals the tag, filename, size and SHA-256 equal the
           # released setup, and the feed is neither future-dated nor expired.
-          python3 scripts/prepare-pages.py --verify-feed assets/stable.json --installer-directory assets --expected-version "$VERSION"
+          python3 scripts/prepare-pages.py --verify-feed release-assets/stable.json --installer-directory release-assets --expected-version "$VERSION"
       - name: Fetch the older downloads and check their pinned hashes
         run: python3 scripts/historical-downloads.py fetch --dest historical
       - name: Build the site to deploy
@@ -174,7 +181,7 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          python3 scripts/assemble-site.py --version "$VERSION" --assets assets --historical historical --output dist/pages
+          python3 scripts/assemble-site.py --version "$VERSION" --assets release-assets --historical historical --output dist/pages
           # A fingerprint of the whole tree. The deploy job must see the same one.
           (cd dist/pages && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > site.sha256
           cat site.sha256
@@ -185,7 +192,7 @@ jobs:
           name: site
           path: dist/pages
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   deploy:
     name: Deploy to Cloudflare Pages and check the live site

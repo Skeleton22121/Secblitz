@@ -12,6 +12,11 @@ on:
         description: "New version, for example 0.8.1 (must be greater than the current one)"
         required: true
         type: string
+      previous_release_unattested:
+        description: "The version becoming history was released before build attestations existed (for example 0.7.0). Skips only the attestation check of its files."
+        required: false
+        default: false
+        type: boolean
       allow_empty_notes:
         description: "Allow an empty Unreleased section in CHANGELOG.md"
         required: false
@@ -34,6 +39,7 @@ jobs:
     permissions:
       contents: write        # push the release branch
       pull-requests: write   # open the pull request
+      attestations: read     # gh attestation verify on the previous release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -68,12 +74,33 @@ jobs:
           if [ "$ALLOW_EMPTY" = "true" ]; then extra+=(--allow-empty); fi
           python3 scripts/bump-version.py "$VERSION" "${extra[@]}"
       - name: Pin the checksums of the version that becomes history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ALLOW_UNATTESTED: ${{ inputs.previous_release_unattested }}
         run: |
           set -euo pipefail
           # The bump added the previous version to the list of older downloads
-          # that every deploy must carry. Their SHA-256 are read from the live
-          # site here and shown in the pull request for review.
-          python3 scripts/historical-downloads.py record-missing
+          # that every deploy must carry. A hash is pinned only when the live
+          # site serves exactly the file of the GitHub release, and that release
+          # file matches its SHA256SUMS and (unless allowed) its build attestation.
+          # A tampered live site therefore cannot get its files pinned.
+          mkdir -p "$RUNNER_TEMP/verified"
+          for v in $(python3 scripts/historical-downloads.py missing); do
+            gh release download "v$v" --dir "$RUNNER_TEMP/verified" \
+              --pattern "secblitz-$v-windows-x64-setup.exe" --pattern "secblitz-$v-windows-x64.exe" --pattern SHA256SUMS --clobber
+            (cd "$RUNNER_TEMP/verified" && sha256sum --check --ignore-missing --strict SHA256SUMS)
+            for f in "secblitz-$v-windows-x64-setup.exe" "secblitz-$v-windows-x64.exe"; do
+              if [ "$ALLOW_UNATTESTED" = "true" ]; then
+                echo "Skipping the attestation check for $f (allowed by the owner)."
+              else
+                gh attestation verify "$RUNNER_TEMP/verified/$f" --repo "$GH_REPO" \
+                  --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "refs/tags/v$v" --deny-self-hosted-runners
+              fi
+            done
+            rm -f "$RUNNER_TEMP/verified/SHA256SUMS"
+          done
+          python3 scripts/historical-downloads.py record-missing --verified-dir "$RUNNER_TEMP/verified"
           python3 scripts/historical-downloads.py check
       - name: Test the tools
         run: |
