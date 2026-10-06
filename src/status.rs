@@ -281,6 +281,7 @@ mod tests {
             reason: String::new(),
             effective: None,
             authority: None,
+            labels: Vec::new(),
         };
         assert_eq!(
             classify("defender.realtime", &json!(false), &obs(json!(false))),

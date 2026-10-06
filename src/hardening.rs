@@ -1058,6 +1058,11 @@ static SPECS: &[Spec] = &[
         gate: Gate {
             areas: &["Browser", "Edge", "ADMX_MicrosoftEdge"],
             pattern: "SmartScreen|SafeBrowsing",
+            // A browser enrolled in cloud management is run by an organization.
+            policy_values: &[
+                (CHROME_POLICY, "CloudManagementEnrollmentToken"),
+                (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+            ],
             ..NO_GATE
         },
     },
@@ -1165,8 +1170,9 @@ pub const BROAD_SIDS: &[&str] = &["S-1-1-0", "S-1-5-7", "S-1-5-32-546"];
 pub const BROAD_RIGHTS: &[&str] = &["Change", "Full"];
 
 /// `<share name>|<SID>|<right>`: one entry of a share's permission list.
-/// Windows share names cannot hold `|`, quotes or control characters, and
-/// built-in shares (anything ending in `$`) are never named.
+/// Windows share names cannot hold `|`, quotes or control characters. The
+/// built-in shares (C$, ADMIN$, IPC$, print$, drive shares) are never named;
+/// a hidden share the person made themselves (ending in `$`) can be.
 fn share_grant_name_ok(name: &str) -> bool {
     let parts: Vec<&str> = name.split('|').collect();
     let [share, sid, right] = parts[..] else {
@@ -1174,17 +1180,59 @@ fn share_grant_name_ok(name: &str) -> bool {
     };
     !share.is_empty()
         && share.chars().count() <= 80
-        && !share.ends_with('$')
+        && !builtin_share(share)
         && share.trim() == share
         && !share.chars().any(|c| {
             c.is_control()
                 || matches!(
                     c,
-                    '"' | '/' | '\\' | '[' | ']' | ':' | '<' | '>' | '+' | '=' | ';' | ',' | '?' | '*' | '\''
+                    '"' | '/' | '\\' | '[' | ']' | ':' | '<' | '>' | '+' | '=' | ';' | ',' | '?' | '*'
                 )
         })
         && BROAD_SIDS.contains(&sid)
         && BROAD_RIGHTS.contains(&right)
+}
+
+/// The things a fix for a list-type control would change, for the review sheet:
+/// account names (supplied by the backend) or shared-folder entries
+/// (`share|SID|right`, still raw). Anything else, and anything that is not
+/// switched on or present now, lists nothing.
+pub fn review_items(id: &str, observed: &Value, labels: &[String]) -> Vec<String> {
+    const MAX: usize = 32;
+    let clean = |s: &str| -> Option<String> {
+        let t: String = s.chars().filter(|c| !c.is_control()).take(64).collect();
+        let t = t.trim().to_owned();
+        (!t.is_empty()).then_some(t)
+    };
+    let mut out: Vec<String> = match spec(id).map(|s| s.source) {
+        Some(Source::StaleAccounts) => labels.iter().filter_map(|l| clean(l)).collect(),
+        Some(Source::ShareGrants) => observed
+            .get("items")
+            .and_then(Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .filter(|(k, v)| v.as_u64() == Some(1) && share_grant_name_ok(k))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    out.sort();
+    out.dedup();
+    out.truncate(MAX);
+    out
+}
+
+/// Administrative shares Windows makes itself: never touched.
+fn builtin_share(name: &str) -> bool {
+    let up = name.to_ascii_uppercase();
+    if matches!(up.as_str(), "ADMIN$" | "IPC$" | "PRINT$") {
+        return true;
+    }
+    // Drive shares: a single letter followed by `$`.
+    let b = up.as_bytes();
+    b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b'$'
 }
 
 /// The only services the legacy-remote-access control may stop and disable.
@@ -1951,6 +1999,8 @@ mod tests {
             "Work files|S-1-5-32-546|Full",
             "Public|S-1-5-7|Change",
             "Fotos für alle|S-1-1-0|Full",
+            "Mom's files|S-1-1-0|Change",
+            "Backup$|S-1-1-0|Full",
         ] {
             sh.validate(&json!({"items": {ok: 1}})).unwrap();
         }
@@ -1960,6 +2010,8 @@ mod tests {
             "ADMIN$|S-1-1-0|Full",
             "IPC$|S-1-1-0|Change",
             "print$|S-1-1-0|Full",
+            "c$|S-1-1-0|Full",
+            "Print$|S-1-1-0|Full",
             // Only the broad SIDs and the two rights the check flags.
             "Photos|S-1-5-11|Change",
             "Photos|S-1-1-0|Read",
@@ -1970,7 +2022,6 @@ mod tests {
             "|S-1-1-0|Change",
             " Photos|S-1-1-0|Change",
             "Pho\"tos|S-1-1-0|Change",
-            "Pho'tos|S-1-1-0|Change",
             "Pho\ntos|S-1-1-0|Change",
             "Pho\\tos|S-1-1-0|Change",
             "Pho:tos|S-1-1-0|Change",
@@ -1983,6 +2034,32 @@ mod tests {
         assert!(sh.validate(&json!({"items": {"Photos|S-1-1-0|Full": 2}})).is_err());
         let long = format!("{}|S-1-1-0|Full", "x".repeat(81));
         assert!(sh.validate(&json!({"items": {long: 1}})).is_err());
+    }
+
+    #[test]
+    fn the_review_lists_what_a_fix_would_change_and_nothing_else() {
+        let labels = vec!["bob".to_owned(), " amy\n".to_owned(), String::new(), "bob".to_owned()];
+        assert_eq!(
+            review_items("accounts.stale_enabled", &json!({"items": {}}), &labels),
+            ["amy", "bob"]
+        );
+        let shares = json!({"items": {
+            "Photos|S-1-1-0|Change": 1,
+            "Photos|S-1-5-7|Full": 1,
+            "Work|S-1-1-0|Full": 0,
+            "C$|S-1-1-0|Full": 1,
+            "Music|S-1-1-0|Read": 1,
+        }});
+        // Only entries that are present now, valid and not built-in; one line per folder entry.
+        assert_eq!(
+            review_items("smb.shares_exposed", &shares, &[]),
+            ["Photos|S-1-1-0|Change", "Photos|S-1-5-7|Full"]
+        );
+        // Other controls never list anything, even when handed labels.
+        assert!(review_items("smartscreen.browser_policy", &shares, &labels).is_empty());
+        assert!(review_items("unknown.id", &shares, &labels).is_empty());
+        let many: Vec<String> = (0..100).map(|n| format!("user{n:03}")).collect();
+        assert_eq!(review_items("accounts.stale_enabled", &json!({}), &many).len(), 32);
     }
 
     #[test]
@@ -2050,6 +2127,9 @@ mod tests {
         assert!(b.validate(&items(b, &[Some(3), None, None])).is_err());
         // Groups of other policy values are left alone: the gate lists browser areas only.
         assert!(b.gate.areas.contains(&"Edge"));
+        // A browser enrolled in cloud management belongs to an organization.
+        assert!(b.gate.policy_values.contains(&(CHROME_POLICY, "CloudManagementEnrollmentToken")));
+        assert!(b.gate.policy_values.contains(&(EDGE_POLICY, "EdgeManagementEnrollmentToken")));
     }
 
     #[test]

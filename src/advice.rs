@@ -473,7 +473,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Old accounts are switched off, not deleted. Undo switches them back on."
         }
         "smb.shares_exposed" => {
-            "Other devices on your network may need a password to open these folders."
+            "Only the people listed on these folders can open them from other devices. Others may lose access."
         }
         "smartscreen.browser_policy" => {
             "Edge and Chrome will warn you about dangerous websites again."
@@ -546,6 +546,12 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: a shared folder would be left with no one who can open it" => {
             "A shared folder would be left that nobody can open, so we leave this alone."
+        }
+        "Not offered: a shared folder would be left that only administrators can open" => {
+            "A shared folder would be left that only administrators can open, so we leave this alone."
+        }
+        "Not offered: a shared folder has permissions that could not be put back exactly" => {
+            "A shared folder has permissions we could not put back exactly, so we leave this alone."
         }
         _ => return None,
     })
@@ -994,6 +1000,8 @@ mod tests {
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
             "Not offered: a shared folder would be left with no one who can open it",
+            "Not offered: a shared folder would be left that only administrators can open",
+            "Not offered: a shared folder has permissions that could not be put back exactly",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");

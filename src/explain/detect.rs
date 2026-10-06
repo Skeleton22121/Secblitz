@@ -22,7 +22,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "defender.threats" => Explainer {
             what: "This looks for harmful files that Windows Security found and has not finished dealing with.",
             risk: "A harmful file left in place can steal passwords or damage your files.",
-            change: "Choose Remove found threats in Tools. Windows Security keeps what it removes in quarantine, so you can restore an item there.",
+            change: "On the Tools page, choose Remove on the Virus protection safeguards tip. Windows Security usually keeps what it removes, so you can restore it.",
         },
         "defender.exclusions_risky" => Explainer {
             what: "Windows Security can be told to skip some places or programs. This checks that the skipped list is not risky.",
@@ -92,7 +92,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "smb.shares_exposed" => Explainer {
             what: "This looks for folders on your PC that other people on your network can open.",
             risk: "On a shared or café network, strangers could read or change files in a folder shared with everyone.",
-            change: "Secblitz takes away the open access for everyone, so other devices need a password to open them. Undo gives it back.",
+            change: "Secblitz takes away the open access for everyone, so only the people listed on each folder can open it from other devices. Undo gives it back.",
         },
         "smb.server_encryption" => Explainer {
             what: "This shows whether file sharing on your PC scrambles its traffic so others can't read it.",

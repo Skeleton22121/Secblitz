@@ -46,6 +46,10 @@ pub struct Observation {
     pub effective: Option<EffectiveFirewall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
+    /// Names of the accounts a fix would switch off, so the person can see them
+    /// before approving. Only the old-accounts control supplies them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// Validate typed evidence at both native decoding and the engine boundary.

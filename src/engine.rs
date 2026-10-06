@@ -64,6 +64,11 @@ pub struct Outcome {
     pub effective: Option<EffectiveFirewall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
+    /// What a fix for a list-type control would change (account names, shared
+    /// folder entries), shown to the person before they approve. Raw and
+    /// English-free: the page words them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<String>,
 }
 
 /// Downcast an Engine::open/operation error to this type to offer diagnostics.
@@ -1368,6 +1373,7 @@ impl Engine {
         Outcome {
             effective: observation.effective,
             authority: observation.authority,
+            items: crate::hardening::review_items(&c.id, &observation.value, &observation.labels),
             ..Self::outcome(c, status, detail)
         }
     }
@@ -3022,6 +3028,7 @@ mod tests {
                 reason: reason.into(),
                 effective,
                 authority,
+                labels: Vec::new(),
             })
         }
         fn write(&mut self, id: &str, value: &Value) -> Result<()> {

@@ -1232,7 +1232,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "os.feature_release_support" => "Your version of Windows is running out of safety updates. Install the newest version in Windows Update.",
         "boot.secure_boot_certs" => "Your PC's startup security needs a renewal. Install all Windows updates, then check your PC maker's website.",
         "defender.tamper_protection" => "Turn on Tamper Protection so malware can't switch off your virus protection.",
-        "defender.threats" => "Windows found something harmful. Secblitz can remove it, and Windows Security keeps a copy you can restore.",
+        "defender.threats" => "Windows found something harmful. Secblitz can remove it, and Windows Security usually keeps a copy you can restore.",
         "defender.exclusions_risky" => "Your virus protection skips some risky places. Look at the list in Windows Security.",
         "defender.scan_age" => "Your PC hasn't been scanned for a while. Run a quick scan in Windows Security.",
         "smartscreen.apps" => "Turn on warnings for unknown downloads in Windows Security.",
@@ -1350,6 +1350,11 @@ pub struct Tip {
     /// Protection fix (control id) that solves a `Look` tip, offered instead of
     /// manual steps.
     pub fix: Option<&'static str>,
+    /// What the tip says and opens when the latest Protection check does not
+    /// offer that fix (managed PC, account in use, not checked yet): the manual
+    /// steps, never a promise Secblitz cannot keep.
+    pub manual_advice: &'static str,
+    pub manual_open: Option<secblitz::actions::Action>,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1357,7 +1362,6 @@ pub struct Tip {
 
 #[derive(Debug, Clone)]
 pub struct TipsReport {
-    #[allow(dead_code)] // kept for the technical view
     pub profile: TipProfile,
     pub tips: Vec<Tip>,
     #[allow(dead_code)] // raw evidence, never shown on screen
@@ -1414,6 +1418,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .find(|a| rule_advice(&a.rule.id).is_some())
             .map(|a| a.rule.id.as_str());
         let fix = first_rule.and_then(rule_fix);
+        let manual = first_rule.and_then(|rule| rule_advice(rule).map(|text| (text, rule_open(rule))));
         let first = first_rule.and_then(|rule| {
             rule_advice(rule).map(|text| match fix {
                 Some(_) => (rule_fix_advice(rule), None),
@@ -1457,6 +1462,14 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             scan: look && scan,
             remove_threats: look && remove_threats,
             fix: if look { fix } else { None },
+            manual_advice: match (look, fix, manual) {
+                (true, Some(_), Some((text, _))) => text,
+                _ => "",
+            },
+            manual_open: match (look, fix, manual) {
+                (true, Some(_), Some((_, open))) => open,
+                _ => None,
+            },
         });
     }
     let rank = |s: TipState| match s {
@@ -2027,6 +2040,8 @@ mod tests {
             assert_eq!(tip.state, TipState::Look, "{rule}");
             assert_eq!(tip.fix, Some(rule), "{rule}");
             assert_eq!(tip.advice, rule_fix_advice(rule), "{rule}");
+            // When the latest check does not offer the fix, the manual steps remain.
+            assert_eq!(tip.manual_advice, rule_advice(rule).unwrap(), "{rule}");
             assert_eq!(tip.open, None, "{rule}: no manual Windows page");
             assert!(!tip.scan && !tip.remove_threats, "{rule}");
         }

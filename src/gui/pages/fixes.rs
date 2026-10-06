@@ -178,6 +178,28 @@ fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
     format!("{} · {}", lang.t(st), lang.t(next))
 }
 
+/// "Accounts: bob, amy" or "Folders: Photos": the names a fix would change, so
+/// the person knows before approving. None for controls without a list.
+pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
+    if r.items.is_empty() {
+        return None;
+    }
+    let (key, names): (&str, Vec<&str>) = match r.id.as_str() {
+        "accounts.stale_enabled" => ("Accounts: {names}", r.items.iter().map(String::as_str).collect()),
+        "smb.shares_exposed" => {
+            let mut v: Vec<&str> = r
+                .items
+                .iter()
+                .filter_map(|i| i.split('|').next())
+                .collect();
+            v.dedup();
+            ("Folders: {names}", v)
+        }
+        _ => return None,
+    };
+    Some(ctx.t(key).replace("{names}", &names.join(", ")))
+}
+
 fn build(ctx: &Ctx, report: &Report) -> Rows {
     let lang = ctx.lang;
     let mut rows = Rows::default();
@@ -192,7 +214,10 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         let choice = advice::is_choice(id);
         // A choice always shows its one-line consequence, never a generic impact.
         let line = if choice || impact.is_empty() {
-            ctx.t(a.next)
+            match items_line(ctx, r) {
+                Some(items) => format!("{}\n{}", ctx.t(a.next), items),
+                None => ctx.t(a.next),
+            }
         } else {
             format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(impact))
         };

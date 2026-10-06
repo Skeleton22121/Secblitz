@@ -168,11 +168,23 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 
 fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
     let impact = crate::advice::control_impact(id);
+    // Which accounts or folders would change, so nothing is approved unseen.
+    let items = ctx
+        .report
+        .as_deref()
+        .and_then(|r| r.results.iter().find(|o| o.id == id))
+        .and_then(|o| super::fixes::items_line(ctx, o));
+    let impact_line = (with_impact && !impact.is_empty())
+        .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
     PlanRow {
         id: id.to_owned(),
         name: ctx.lang.control(id),
-        line: (with_impact && !impact.is_empty())
-            .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact))),
+        line: match (with_impact, impact_line, items) {
+            (true, Some(l), Some(i)) => Some(format!("{l}\n{i}")),
+            (true, Some(l), None) => Some(l),
+            (true, None, Some(i)) => Some(i),
+            _ => None,
+        },
         restart: ctx.catalog.restart.iter().any(|x| x == id),
     }
 }
