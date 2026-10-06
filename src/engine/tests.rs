@@ -2224,3 +2224,30 @@ fn skipping_a_batch_keeps_computed_outcomes_and_reports_each_control_once() {
 include!("recovery_tests.rs");
 include!("hardening_tests.rs");
 include!("revert_all_tests.rs");
+
+#[test]
+fn can_change_answers_without_writing_and_names_what_blocks() {
+    use crate::model::{Readiness, VolumeReadiness};
+    let (_dir, state, mut e) = fixture(DEFENDER, json!(true));
+    e.can_change(false).unwrap();
+    e.can_change(true).unwrap();
+    state.borrow_mut().readiness = Readiness {
+        journal_volume: Probe::Known(VolumeReadiness {
+            available_bytes: 0,
+            read_only: false,
+        }),
+        ..Default::default()
+    };
+    let err = e.can_change(false).unwrap_err();
+    assert!(format!("{err:#}").contains("readiness blocks"));
+    e.can_change(true).unwrap();
+    state.borrow_mut().readiness = Readiness::default();
+    e.mutation_check = Some(Box::new(|_| bail!("Deferred: updater installation")));
+    assert!(e.can_change(false).is_err());
+    assert!(e.can_change(true).is_err());
+    e.mutation_check = None;
+    prepare(&mut e, 1, DEFENDER, json!(true));
+    let err = e.can_change(false).unwrap_err();
+    assert!(format!("{err:#}").contains("Revert the active transaction"));
+    assert!(state.borrow().writes.is_empty());
+}

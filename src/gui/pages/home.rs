@@ -1,6 +1,7 @@
 //! Home: one hero region (score ring, verdict, one primary, extras in the
 //! overflow menu), then flat row groups; first-run PC-check view.
 use crate::advice::{self, Group, NextStep};
+use crate::app::flow;
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Tone};
@@ -320,13 +321,10 @@ fn readiness_notices(ctx: &Ctx, report: &Report) -> Vec<(Tone, String)> {
     let Some(r) = &report.readiness else {
         return out;
     };
-    if let Probe::Known(v) = &r.system_volume {
-        if v.read_only {
-            out.push((
-                Tone::Warn,
-                ctx.t("Your disk can't be written to right now, so fixes will wait."),
-            ));
-        } else if v.available_bytes < LOW_DISK_BYTES {
+    if let Some(sentence) = flow::repairs_blocked(report) {
+        out.push((Tone::Warn, ctx.t(sentence)));
+    } else if let Probe::Known(v) = &r.system_volume {
+        if v.available_bytes < LOW_DISK_BYTES {
             out.push((
                 Tone::Warn,
                 ctx.t(
@@ -518,7 +516,8 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
                 None,
                 None,
             ));
-    } else if verdict == Verdict::Attention && fixable > 0 {
+    } else if verdict == Verdict::Attention && fixable > 0 && flow::repairs_blocked(report).is_none()
+    {
         buttons = buttons.push(widgets::action(
             p,
             ButtonKind::Primary,
