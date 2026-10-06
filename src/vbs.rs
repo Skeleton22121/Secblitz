@@ -1,30 +1,7 @@
-//! Safety decisions for the two core protections Secblitz can turn on for the
-//! person: Memory integrity (`vbs.memory_integrity`) and Kernel-mode
-//! Hardware-enforced Stack Protection (`vbs.kernel_stack_protection`).
-//!
-//! Everything here is pure and testable on any host. The Windows facts it
-//! judges (what the hardware reports, which drivers would load) are collected
-//! by `platform/windows.rs` and `platform/vbs.ps1`, read-only and fast: no
-//! driver is loaded and nothing is written.
-//!
-//! What this relies on (Microsoft Learn):
-//! * "Enable memory integrity": the `HypervisorEnforcedCodeIntegrity` scenario
-//!   values `Enabled` and `WasEnabledBy` (2 lets the Windows Security switch
-//!   behave normally), the `Locked` value (never written by Secblitz), and the
-//!   Win32_DeviceGuard class: AvailableSecurityProperties (1 hypervisor, 2
-//!   Secure Boot), SecurityServicesConfigured and SecurityServicesRunning
-//!   (2 memory integrity, 5 kernel-mode stack protection, 6 its audit mode).
-//! * "Driver compatibility with memory integrity and VBS": drivers must not
-//!   have a section that is both writable and executable, must have section
-//!   alignment that is a multiple of 0x1000, and must not place the import
-//!   address table in an executable section. Other causes (executable memory
-//!   allocations at run time) cannot be seen in a file, so the scan can only
-//!   rule drivers out, never prove one works: that is why the person can undo.
-//! * "Kernel Mode Hardware-enforced Stack Protection": needs memory integrity
-//!   and a processor with shadow stacks (Intel CET or AMD shadow stacks).
-//! * "Understanding App Control event IDs": 3111 (a file did not meet the
-//!   hypervisor-protected code integrity policy) and 3074 (page hash failure
-//!   while it was on) in Microsoft-Windows-CodeIntegrity/Operational.
+//! Safety decisions for Memory integrity (`vbs.memory_integrity`) and Kernel-mode Hardware-enforced Stack Protection (`vbs.kernel_stack_protection`). Pure and host-testable; Windows facts come from `platform/windows.rs` and `platform/vbs.ps1`.
+//! Sources (Microsoft Learn): HypervisorEnforcedCodeIntegrity `Enabled`/`WasEnabledBy` (2 lets the Windows Security switch behave normally) and `Locked` (never written here); Win32_DeviceGuard AvailableSecurityProperties (1 hypervisor, 2 Secure Boot), SecurityServicesConfigured/Running (2 memory integrity, 5 stack protection, 6 its audit mode).
+//! Driver rules: no section both writable and executable, section alignment a multiple of 0x1000, import address table not in an executable section. Other causes (runtime executable allocations) are invisible in a file, so the scan can only rule drivers out, never prove one works.
+//! Stack protection needs memory integrity and shadow stacks (Intel CET or AMD). Event IDs 3111 and 3074 are in Microsoft-Windows-CodeIntegrity/Operational.
 
 use crate::model::Finding;
 use serde::Deserialize;
@@ -49,19 +26,15 @@ pub const UNREADABLE: &str = "Not offered: we could not check this PC's protecti
 pub const SET_BY_HAND: &str = "Not offered: this PC's virtualization security was set up by hand";
 pub const OLD_WINDOWS: &str = "Not offered: this version of Windows does not support it";
 
-/// The driver reason, alone or followed by ": " and the driver names.
 pub fn is_driver_reason(reason: &str) -> bool {
     reason
         .strip_prefix(DRIVER)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(": "))
 }
 
-// Finding titles for the check after the restart.
 pub const MEMORY_INTEGRITY_NOT_RUNNING: &str = "Memory integrity not running";
 pub const STACK_NOT_RUNNING: &str = "Kernel stack protection not running";
-/// Memory integrity runs, but Windows refused a driver since the last start.
 pub const DEVICE_BLOCKED: &str = "A device may not be working";
-/// Prefix of the finding detail that carries driver names.
 pub const BLOCKED_PREFIX: &str = "blocked: ";
 /// The finding detail carries the start-up time (Unix seconds) so the engine
 /// can tell "restarted since the change" from "still waiting for a restart".
@@ -70,7 +43,6 @@ pub const BOOT_PREFIX: &str = "boot: ";
 /// be undone, so "Undo" really undoes it and nothing else.
 pub const UNDO_READY: &str = "undo: latest";
 
-/// The control a verification finding is about.
 pub fn finding_control(title: &str) -> Option<&'static str> {
     match title {
         MEMORY_INTEGRITY_NOT_RUNNING | DEVICE_BLOCKED => Some(MEMORY_INTEGRITY),
@@ -79,15 +51,12 @@ pub fn finding_control(title: &str) -> Option<&'static str> {
     }
 }
 
-/// Start-up time carried in a verification finding.
 pub fn boot_from_detail(detail: &str) -> Option<i64> {
     let rest = detail.split_once(BOOT_PREFIX)?.1;
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
 }
 
-/// Split one fix selection into separate batches: everything ordinary first,
-/// then each core protection alone, so undoing one never touches another fix.
 pub fn split_batches(ids: &[String]) -> Vec<Vec<String>> {
     let mut batches = Vec::new();
     let ordinary: Vec<String> = ids.iter().filter(|i| !is_vbs(i)).cloned().collect();
@@ -100,19 +69,14 @@ pub fn split_batches(ids: &[String]) -> Vec<Vec<String>> {
     batches
 }
 
-// ------------------------------------------------------------ PE scan
 
-/// One reason a driver file may not work with memory integrity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeProblem {
-    /// Not a readable Windows image.
     NotAnImage,
-    /// Section alignment is not a multiple of 0x1000 (page size).
     SectionAlignment,
     /// A section is both writable and executable (the old INIT section is
     /// tolerated: Windows removes its write permission).
     WritableAndExecutable(String),
-    /// The import address table sits in an executable section.
     ImportTableExecutable,
 }
 
@@ -128,7 +92,6 @@ fn u32_at(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.get(at..at.checked_add(4)?)?.try_into().ok()?))
 }
 
-/// Check the headers of a driver image against the static requirements.
 /// `bytes` must hold the headers (the first 64 KiB is plenty).
 pub fn scan_pe(bytes: &[u8]) -> Vec<PeProblem> {
     match scan_headers(bytes) {
@@ -209,16 +172,13 @@ fn scan_headers(b: &[u8]) -> Option<Vec<PeProblem>> {
     Some(problems)
 }
 
-// ------------------------------------------------------------- drivers
 
-/// A driver image that would be loaded: its short name and where it lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriverFile {
     pub name: String,
     pub path: String,
 }
 
-/// One kernel driver service as the registry describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceRow {
     pub name: String,
@@ -278,17 +238,12 @@ pub fn resolve_image(raw: &str, windows: &str) -> Option<String> {
     (absolute && !full.split('\\').any(|part| part == "..")).then_some(full)
 }
 
-/// The drivers to scan, and the configured drivers whose file could not be
-/// located (those can never be called fine).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DriverList {
     pub files: Vec<DriverFile>,
     pub unresolved: Vec<String>,
 }
 
-/// The driver files configured to load (kernel or file-system driver services
-/// that start at boot, system start, automatically or on demand) plus the
-/// modules that are loaded right now. Only `.sys` files are listed, once each.
 pub fn driver_files(services: &[ServiceRow], loaded: &[String], windows: &str) -> DriverList {
     let mut out = DriverList::default();
     let mut push = |name: &str, path: String| {
@@ -342,7 +297,6 @@ fn file_name(path: &str) -> Option<String> {
     safe_name(name)
 }
 
-/// A file name that is safe to show: plain characters only, bounded.
 pub fn safe_name(name: &str) -> Option<String> {
     let ok = !name.is_empty()
         && name.chars().count() <= 64
@@ -352,12 +306,9 @@ pub fn safe_name(name: &str) -> Option<String> {
     ok.then(|| name.to_owned())
 }
 
-/// Result of scanning the driver files.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Scan {
-    /// Drivers that failed a documented requirement, with the reasons.
     pub flagged: Vec<(String, Vec<PeProblem>)>,
-    /// Drivers that exist but could not be read.
     pub unreadable: Vec<String>,
 }
 
@@ -383,9 +334,7 @@ pub fn scan_files(
     scan
 }
 
-// --------------------------------------------------------------- facts
 
-/// What the PC reports, read without changing anything.
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Facts {
@@ -396,20 +345,17 @@ pub struct Facts {
     pub virt_firmware: Option<bool>,
     /// Win32_DeviceGuard VirtualizationBasedSecurityStatus: 2 means running.
     pub vbs_status: Option<u32>,
-    /// Windows build number, for features that arrived in a later release.
     pub build: Option<u32>,
     pub lock_vbs: Option<u32>,
     pub lock_hvci: Option<u32>,
     pub lock_stack: Option<u32>,
     /// DeviceGuard `Mandatory`: Windows refuses to start without VBS.
     pub mandatory: Option<u32>,
-    /// DeviceGuard `EnableVirtualizationBasedSecurity` set on purpose.
     pub enable_vbs: Option<u32>,
     pub require_platform: Option<u32>,
     pub enabled_hvci: Option<u32>,
     pub enabled_stack: Option<u32>,
     pub boot_unix: Option<i64>,
-    /// Driver files Windows blocked since the last start.
     pub blocked: Vec<String>,
     /// Vendor the processor reports for the hypervisor it runs under, filled
     /// in by the caller from CPUID (not by the script). None: no hypervisor.
@@ -417,14 +363,9 @@ pub struct Facts {
     pub hypervisor_vendor: Option<String>,
 }
 
-/// The vendor id Windows' own hypervisor reports.
 pub const MICROSOFT_HV: &str = "Microsoft Hv";
 
-/// Whether the PC can start memory integrity: a hypervisor and Secure Boot
-/// are available, and either Windows' own hypervisor is already in use or no
-/// hypervisor is present and virtualization is on in the firmware. Any other
-/// vendor's hypervisor (a virtual machine) cannot host Windows' hypervisor
-/// reliably, so it never counts.
+/// Needs a hypervisor and Secure Boot, and either Windows' own hypervisor in use or no hypervisor with virtualization on in the firmware. Another vendor's hypervisor (a virtual machine) never counts.
 pub fn hardware_supports(facts: &Facts) -> bool {
     if !(facts.available.contains(&1) && facts.available.contains(&2)) {
         return false;
@@ -449,7 +390,6 @@ fn no(reason: &str) -> Decision {
     Decision::NotOffered(reason.to_owned())
 }
 
-/// Why the driver scan blocks the offer, naming the drivers (at most five).
 pub fn driver_reason(scan: &Scan) -> Option<String> {
     if !scan.flagged.is_empty() {
         let mut names: Vec<&str> = scan.flagged.iter().map(|(n, _)| n.as_str()).collect();
@@ -461,9 +401,6 @@ pub fn driver_reason(scan: &Scan) -> Option<String> {
     (!scan.unreadable.is_empty()).then(|| DRIVERS_UNREADABLE.to_owned())
 }
 
-/// Settings someone chose on purpose that make a change here risky or
-/// pointless: Windows refusing to start without VBS, VBS switched off by hand,
-/// or a platform feature that is required but not available.
 fn set_up_by_hand(facts: &Facts) -> Option<&'static str> {
     if facts.mandatory == Some(1) || facts.enable_vbs == Some(0) {
         return Some(SET_BY_HAND);
@@ -498,7 +435,6 @@ pub fn decide(
         if facts.build.is_some_and(|b| b < STACK_PROTECTION_BUILD) {
             return no(OLD_WINDOWS);
         }
-        // Say what cannot change first, so the advice can always be followed.
         if !hardware_supports(facts) && !facts.running.contains(&2) {
             return no(NOT_SUPPORTED);
         }
@@ -538,8 +474,6 @@ pub fn decide(
     }
 }
 
-/// True when the PC has started since the setting was written, so the
-/// setting has had its chance to take effect. Unknown times never claim it.
 pub fn restarted_since(written_unix: Option<i64>, boot_unix: Option<i64>) -> bool {
     matches!((written_unix, boot_unix), (Some(w), Some(b)) if w <= b)
 }
@@ -592,8 +526,6 @@ pub fn verification(facts: &Facts) -> Vec<Finding> {
     out
 }
 
-/// Driver names carried in a verification finding's detail (already
-/// sanitized when it was built; checked again here before anything is shown).
 pub fn blocked_names(detail: &str) -> Option<String> {
     let rest = detail.split_once(BLOCKED_PREFIX)?.1;
     let names: Vec<String> = rest
@@ -604,7 +536,6 @@ pub fn blocked_names(detail: &str) -> Option<String> {
     (!names.is_empty()).then(|| names.join(", "))
 }
 
-/// Driver names inside an exact driver "not offered" reason.
 pub fn reason_names(reason: &str) -> Option<String> {
     let rest = reason.strip_prefix(DRIVER)?.strip_prefix(": ")?;
     let cleaned: String = rest
@@ -614,8 +545,7 @@ pub fn reason_names(reason: &str) -> Option<String> {
     (!cleaned.is_empty() && cleaned == rest && rest.len() <= 200).then(|| rest.to_owned())
 }
 
-/// Does the processor report shadow stack (CET) support? CPUID leaf 7, ECX
-/// bit 7, the same flag on Intel and AMD. Read-only and instant.
+/// CPUID leaf 7, ECX bit 7: the same flag on Intel and AMD.
 pub fn cpu_has_shadow_stacks() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -640,8 +570,7 @@ fn cpuid_leaf7_ecx() -> Option<u32> {
     }
 }
 
-/// The vendor id of the hypervisor this processor runs under (CPUID leaf 1
-/// bit 31, then leaf 0x40000000), or None on bare hardware. Read-only.
+/// CPUID leaf 1 bit 31, then leaf 0x40000000; None on bare hardware.
 pub fn cpu_hypervisor_vendor() -> Option<String> {
     #[cfg(target_arch = "x86_64")]
     {
@@ -684,7 +613,6 @@ mod tests {
     struct Pe {
         alignment: u32,
         iat: u32,
-        /// (name, address, size, flags)
         sections: Vec<(&'static str, u32, u32, u32)>,
         pe32: bool,
     }
@@ -775,7 +703,6 @@ mod tests {
             };
             assert_eq!(scan_pe(&build(&pe)), vec![], "{alignment:#x}");
         }
-        // A section that does not start on a page boundary.
         let pe = Pe {
             sections: vec![(".text", 0x1200, 0x800, 0x6000_0020)],
             ..Pe::default()
@@ -796,7 +723,6 @@ mod tests {
             scan_pe(&build(&pe)),
             vec![PeProblem::WritableAndExecutable(".hack".into())]
         );
-        // Write only, or execute only, is fine.
         let pe = Pe {
             sections: vec![
                 (".a", 0x1000, 0x800, 0xC000_0040),
@@ -823,13 +749,11 @@ mod tests {
 
     #[test]
     fn the_import_table_must_not_be_in_an_executable_section() {
-        // The IAT lands inside .text (a merged .rdata).
         let pe = Pe {
             iat: 0x1100,
             ..Pe::default()
         };
         assert_eq!(scan_pe(&build(&pe)), vec![PeProblem::ImportTableExecutable]);
-        // The last byte of the section counts, the first byte after does not.
         let pe = Pe {
             iat: 0x1000 + 0x800 - 1,
             ..Pe::default()
@@ -840,7 +764,6 @@ mod tests {
             ..Pe::default()
         };
         assert_eq!(scan_pe(&build(&pe)), vec![]);
-        // In a data section: fine. No table at all: fine.
         let pe = Pe {
             iat: 0x2008,
             ..Pe::default()
@@ -854,7 +777,6 @@ mod tests {
         assert_eq!(scan_pe(&[]), vec![PeProblem::NotAnImage]);
         assert_eq!(scan_pe(b"MZ"), vec![PeProblem::NotAnImage]);
         assert_eq!(scan_pe(&good[..0x90]), vec![PeProblem::NotAnImage]);
-        // Section table cut short.
         assert_eq!(scan_pe(&good[..0x170]), vec![PeProblem::NotAnImage]);
         let mut bad = good.clone();
         bad[0x80..0x84].copy_from_slice(b"PX\0\0");
@@ -938,7 +860,6 @@ mod tests {
         // A configured driver whose file cannot be located is never skipped
         // quietly: it is listed so the check says "could not check".
         assert_eq!(list.unresolved, ["odd"]);
-        // An odd service name never reaches the screen.
         let odd = driver_files(&[svc("bad name;", 1, 3, Some(r"\Device\x\a.sys"))], &[], r"C:\Windows");
         assert_eq!(odd.unresolved, ["driver"]);
     }
@@ -1011,14 +932,12 @@ mod tests {
             decide_with(MEMORY_INTEGRITY, &supported(), false, clean()),
             Decision::Offer
         );
-        // Already running: nothing to do.
         let mut f = supported();
         f.running = vec![2];
         assert_eq!(
             decide_with(MEMORY_INTEGRITY, &f, false, clean()),
             no(ALREADY_ON)
         );
-        // Locked by the firmware, by either lock.
         for set in [
             |f: &mut Facts| f.lock_vbs = Some(1),
             |f: &mut Facts| f.lock_hvci = Some(1),
@@ -1027,7 +946,6 @@ mod tests {
             set(&mut f);
             assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), no(LOCKED));
         }
-        // Lock value 0 is not a lock.
         let mut f = supported();
         f.lock_vbs = Some(0);
         f.lock_hvci = Some(0);
@@ -1036,7 +954,6 @@ mod tests {
 
     #[test]
     fn missing_hardware_support_reads_as_a_calm_not_offered() {
-        // A virtual machine without virtualization support reports nothing.
         let f = Facts::default();
         assert_eq!(
             decide_with(MEMORY_INTEGRITY, &f, true, clean()),
@@ -1062,12 +979,10 @@ mod tests {
                 no(NOT_SUPPORTED)
             );
         }
-        // Windows' own hypervisor is enough when the firmware flag is unknown.
         let mut f = supported();
         f.virt_firmware = None;
         f.hypervisor_vendor = Some(MICROSOFT_HV.into());
         assert_eq!(decide_with(MEMORY_INTEGRITY, &f, false, clean()), Decision::Offer);
-        // So is a PC where virtualization-based security already runs.
         let mut f = supported();
         f.virt_firmware = None;
         f.vbs_status = Some(2);
@@ -1120,7 +1035,6 @@ mod tests {
     #[test]
     fn stack_protection_needs_memory_integrity_running_and_a_capable_processor() {
         let mut f = supported();
-        // What cannot change is named first, so the advice can be followed.
         assert_eq!(
             decide_with(STACK_PROTECTION, &Facts::default(), true, clean()),
             no(NOT_SUPPORTED)
@@ -1129,49 +1043,41 @@ mod tests {
             decide_with(STACK_PROTECTION, &f, false, clean()),
             no(NO_SHADOW_STACKS)
         );
-        // Memory integrity not on at all.
         assert_eq!(
             decide_with(STACK_PROTECTION, &f, true, clean()),
             no(NEEDS_MEMORY_INTEGRITY)
         );
-        // Turned on but waiting for the restart.
         f.configured = vec![2];
         assert_eq!(
             decide_with(STACK_PROTECTION, &f, true, clean()),
             no(NEEDS_RESTART)
         );
-        // Running, but the processor has no shadow stacks.
         f.running = vec![2];
         assert_eq!(
             decide_with(STACK_PROTECTION, &f, false, clean()),
             no(NO_SHADOW_STACKS)
         );
         assert_eq!(decide_with(STACK_PROTECTION, &f, true, clean()), Decision::Offer);
-        // An older Windows does not have the feature at all.
         let mut old = f.clone();
         old.build = Some(19045);
         assert_eq!(decide_with(STACK_PROTECTION, &old, true, clean()), no(OLD_WINDOWS));
         old.build = Some(STACK_PROTECTION_BUILD);
         assert_eq!(decide_with(STACK_PROTECTION, &old, true, clean()), Decision::Offer);
-        // Its own lock or the general one.
         let mut locked = f.clone();
         locked.lock_stack = Some(1);
         assert_eq!(decide_with(STACK_PROTECTION, &locked, true, clean()), no(LOCKED));
         let mut locked = f.clone();
         locked.lock_vbs = Some(1);
         assert_eq!(decide_with(STACK_PROTECTION, &locked, true, clean()), no(LOCKED));
-        // A memory integrity lock does not block stack protection by itself.
         let mut other = f.clone();
         other.lock_hvci = Some(1);
         assert_eq!(decide_with(STACK_PROTECTION, &other, true, clean()), Decision::Offer);
-        // Already running (5); audit mode (6) is not running.
         let mut on = f.clone();
         on.running = vec![2, 5];
         assert_eq!(decide_with(STACK_PROTECTION, &on, true, clean()), no(ALREADY_ON));
         let mut audit = f;
         audit.running = vec![2, 6];
         assert_eq!(decide_with(STACK_PROTECTION, &audit, true, clean()), Decision::Offer);
-        // Never scans drivers for this one.
         let mut ran = false;
         let mut g = supported();
         g.running = vec![2];
@@ -1205,18 +1111,14 @@ mod tests {
         assert_eq!(blocked_names(&out[0].detail).unwrap(), "bad.sys, second.sys");
         assert_eq!(boot_from_detail(&out[0].detail), Some(1000));
         assert_eq!(finding_control(&out[0].title), Some(MEMORY_INTEGRITY));
-        // Without blocked drivers there is nothing to name.
         f.blocked.clear();
         let out = verification(&f);
         assert_eq!(blocked_names(&out[0].detail), None);
-        // Unknown start time: say nothing.
         f.boot_unix = None;
         assert!(verification(&f).is_empty());
         f.boot_unix = Some(1000);
-        // Running with nothing blocked: all well.
         f.running = vec![2];
         assert!(verification(&f).is_empty());
-        // Not configured: nothing to verify.
         f.running.clear();
         f.enabled_hvci = Some(0);
         assert!(verification(&f).is_empty());
@@ -1234,7 +1136,6 @@ mod tests {
         assert_eq!(out[0].title, DEVICE_BLOCKED);
         assert_eq!(finding_control(DEVICE_BLOCKED), Some(MEMORY_INTEGRITY));
         assert_eq!(blocked_names(&out[0].detail).unwrap(), "pen.sys");
-        // Only when memory integrity is on.
         f.enabled_hvci = Some(0);
         assert!(verification(&f).is_empty());
     }
@@ -1250,7 +1151,6 @@ mod tests {
         assert_eq!(finding_control(STACK_NOT_RUNNING), Some(STACK_PROTECTION));
         f.running = vec![2, 5];
         assert!(verification(&f).is_empty());
-        // Memory integrity itself not running: its own finding comes first.
         f.running.clear();
         f.enabled_hvci = Some(1);
         let out = verification(&f);
@@ -1270,7 +1170,6 @@ mod tests {
             f.running = vec![2];
             assert_eq!(decide_with(STACK_PROTECTION, &f, true, clean()), no(SET_BY_HAND));
         }
-        // Required platform features the PC does not offer.
         let mut f = supported();
         f.require_platform = Some(3);
         f.available = vec![1, 2];
@@ -1280,7 +1179,6 @@ mod tests {
         let mut f = supported();
         f.required = vec![1, 2, 4];
         assert_eq!(decide_with(MEMORY_INTEGRITY, &f, true, clean()), no(NOT_SUPPORTED));
-        // Harmless values do not block.
         let mut f = supported();
         f.mandatory = Some(0);
         f.enable_vbs = Some(1);

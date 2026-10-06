@@ -1,8 +1,4 @@
-//! Plain-language explanation for every check: what it is, what can happen
-//! if it is off, and what changes when it is turned on (or what to do, for
-//! checks Secblitz only reports). Every string is a translation source key.
-//!
-//! Each area keeps its own table so the catalogs stay small and readable.
+//! Plain-language what / if-off / if-on text for every check. Every string is a translation source key.
 
 mod access;
 mod core;
@@ -12,19 +8,13 @@ mod system;
 mod user;
 mod web;
 
-/// The three short lines shown when a person opens a check's details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Explainer {
-    /// "What it is": one plain sentence, no jargon.
     pub what: &'static str,
-    /// "If it's off": a concrete what-if a non-technical person recognises.
     pub risk: &'static str,
-    /// "If you turn it on" (or "What you can do" for report-only checks):
-    /// what the person will notice, including any downside.
     pub change: &'static str,
 }
 
-/// Explanation for a control id, diagnostics rule id or finding title.
 pub fn for_check(id: &str) -> Option<Explainer> {
     core::get(id)
         .or_else(|| access::get(id))
@@ -39,11 +29,9 @@ pub fn for_check(id: &str) -> Option<Explainer> {
 mod tests {
     use super::*;
 
-    /// Every dotted lowercase literal in a source file, e.g. "update.paused".
     fn dotted_literals(source: &str) -> Vec<String> {
         let mut out = Vec::new();
         for (index, piece) in source.split('"').enumerate() {
-            // Odd pieces sit between a pair of quotes.
             if index % 2 == 0 || !piece.contains('.') {
                 continue;
             }
@@ -62,7 +50,6 @@ mod tests {
         out
     }
 
-    /// Titles passed to `Finding '...'` in the backend script.
     fn script_finding_titles() -> Vec<String> {
         include_str!("../platform/backend.ps1")
             .lines()
@@ -89,7 +76,6 @@ mod tests {
         ids
     }
 
-    // Titles that Rust code emits (engine journal check, service audit).
     const RUST_FINDINGS: [&str; 11] = [
         "Journal recovery",
         "Memory integrity not running",

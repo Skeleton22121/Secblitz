@@ -1,8 +1,6 @@
-// Included into engine::tests. Exercises every extended hardening control
-// through the real engine: target, eligibility, journaling, undo, drift.
+// Included into engine::tests: exercises every extended hardening control through the real engine.
 use crate::hardening::{self, Rule, Source, Spec};
 
-/// A state with exactly the first key unsafe and every other key safe.
 fn hardening_unsafe_state(spec: &Spec) -> Value {
     if spec.source == Source::FirewallExposure {
         return json!({"items": {"FPS-A": 15, "FPS-B": 12, "FPS-C": 3, "NETDIS-D": 7}});
@@ -18,7 +16,6 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
         }});
     }
     if spec.source == Source::LegacyServices {
-        // Automatic+running, already disabled, disabled but still running.
         return json!({"items": {"RemoteRegistry": 10, "sshd": 4, "WinRM": 12}});
     }
     if spec.source == Source::DefenderExclusions {
@@ -45,7 +42,6 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
         }});
     }
     if spec.source == Source::StaleAccounts {
-        // Two old accounts still on, one already switched off.
         return json!({"items": {
             "S-1-5-21-1111111111-2222222222-3333333333-1001": 1,
             "S-1-5-21-1111111111-2222222222-3333333333-1002": 1,
@@ -85,7 +81,6 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
 fn hardening_safe_state(spec: &Spec) -> Value {
     let unsafe_state = hardening_unsafe_state(spec);
     let mut safe = spec.derive_target(&unsafe_state).unwrap();
-    // Explicit absence of a safe-by-default value must also be accepted.
     if let Some(items) = safe["items"].as_object_mut() {
         for k in spec.keys {
             if let Rule::Set {
@@ -119,13 +114,11 @@ fn every_hardening_control_audits_applies_and_undoes_exactly() {
             vec![(id.to_string(), target)],
             "{id}"
         );
-        // The journal holds the exact original slice.
         let tx = e.load().unwrap().pop().unwrap();
         assert_eq!(tx.entries[0].before, before, "{id}");
         assert!(!tx.entries[0].before.to_string().contains("effective"));
         drop(tx);
         assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
-        // Applying again is a no-op that keeps the original before-image.
         let again = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
         assert_eq!(again.results[0].status, "unchanged", "{id}");
         assert_eq!(state.borrow().writes.len(), 1);
@@ -205,14 +198,12 @@ fn hardening_undo_never_overwrites_a_setting_changed_after_the_fix() {
     let (_dir, state, mut e) = fixture(id, json!({"items": {"RunAsPPL": null}}));
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
     assert_eq!(state.borrow().values[id], json!({"items": {"RunAsPPL": 2}}));
-    // Someone upgraded it to the firmware-locked mode afterwards.
     state
         .borrow_mut()
         .values
         .insert(id.into(), json!({"items": {"RunAsPPL": 1}}));
     assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "conflict");
     assert_eq!(state.borrow().writes.len(), 1);
-    // Back to our value: undo proceeds and restores absence.
     state
         .borrow_mut()
         .values
@@ -234,14 +225,12 @@ fn dynamic_hardening_undo_ignores_items_that_appeared_or_vanished() {
         state.borrow().values[id],
         json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3}})
     );
-    // A new rule appeared and one recorded rule was removed meanwhile.
     state.borrow_mut().values.insert(
         id.into(),
         json!({"items": {"FPS-A": 11, "FPS-C": 3, "NETDIS-NEW": 15}}),
     );
     let undone = e.revert(|_, _| {}).unwrap();
     assert_eq!(undone.results[0].status, "restored");
-    // Only the surviving recorded rule was written back; the new rule is untouched.
     assert_eq!(
         state.borrow().writes.last().unwrap().1,
         json!({"items": {"FPS-A": 15, "FPS-C": 3}})
@@ -307,7 +296,6 @@ fn hardening_journal_images_are_strict() {
     }
 }
 
-// ---- system area (OS / credentials / update / privacy) -------------------
 
 #[test]
 fn legacy_services_stop_and_disable_only_what_is_unsafe_and_undo_restores_each() {
@@ -316,7 +304,6 @@ fn legacy_services_stop_and_disable_only_what_is_unsafe_and_undo_restores_each()
     let (_dir, state, mut e) = fixture(id, before.clone());
     assert_eq!(e.audit().unwrap().results[0].status, "attention");
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-    // Manual+stopped and already-disabled services keep their state exactly.
     assert_eq!(
         state.borrow().values[id],
         json!({"items": {"RemoteRegistry": 4, "WinRM": 3, "sshd": 4, "SNMP": 4}})
@@ -354,7 +341,6 @@ fn old_accounts_are_switched_off_never_deleted_and_undo_switches_them_back_on() 
     assert_eq!(e.audit().unwrap().results[0].status, "attention");
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
     assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
-    // Switched-off accounts are no longer listed: still the recorded safe state.
     state.borrow_mut().values.insert(id.into(), json!({"items": {}}));
     assert_eq!(e.audit().unwrap().results[0].status, "compliant");
     assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
@@ -367,8 +353,6 @@ fn an_old_account_switched_on_again_by_hand_is_not_written_by_undo() {
     let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
     let (_dir, state, mut e) = fixture(id, json!({"items": {a: 1}}));
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-    // The person switched it on again by hand: the recorded original is
-    // already in place, so undo has nothing to write.
     state.borrow_mut().values.insert(id.into(), json!({"items": {a: 1}}));
     let writes = state.borrow().writes.len();
     assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "unchanged");
@@ -384,8 +368,6 @@ fn broad_share_entries_are_removed_one_by_one_and_undo_adds_back_exactly_those()
     let (_dir, state, mut e) = fixture(id, before.clone());
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
     assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
-    // A new broad entry appeared on another share meanwhile: undo restores the
-    // recorded entries only and never touches the new one.
     state.borrow_mut().values.insert(
         id.into(),
         json!({"items": {"Games|S-1-1-0|Full": 1}}),
@@ -417,7 +399,6 @@ fn update_pause_undo_restores_every_saved_time() {
 #[test]
 fn exploit_mitigations_only_move_switched_off_protections() {
     let id = "system.exploit_mitigations";
-    // Default (not set) and on are left alone; only the explicit OFF is repaired.
     let before = json!({"items": {"DEP": 2, "SEHOP": 0, "BottomUp": 1, "HighEntropy": 0, "CFG": 2}});
     let (_dir, state, mut e) = fixture(id, before.clone());
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
@@ -427,7 +408,6 @@ fn exploit_mitigations_only_move_switched_off_protections() {
     );
     e.revert(|_, _| {}).unwrap();
     assert_eq!(state.borrow().values[id], before);
-    // The Windows default alone is never a repair request.
     let stock = json!({"items": {"DEP": 1, "SEHOP": 1, "BottomUp": 2, "HighEntropy": 1, "CFG": 1}});
     let (_dir, state, mut e) = fixture(id, stock);
     assert_eq!(e.audit().unwrap().results[0].status, "compliant");
@@ -499,14 +479,12 @@ fn handled_item_controls_switch_off_only_flagged_items_and_never_touch_changed_o
             assert_eq!(v, 0, "{id} {k} is switched off");
         }
         assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
-        // Somebody changed one of the fixed items again: undo leaves it alone.
         let mut changed = after.clone();
         changed["items"][a] = json!(2);
         state.borrow_mut().values.insert(id.into(), changed);
         let writes = state.borrow().writes.len();
         assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "conflict", "{id}");
         assert_eq!(state.borrow().writes.len(), writes, "{id} nothing was written");
-        // Back as we left it: undo restores the original flags exactly.
         state.borrow_mut().values.insert(id.into(), after);
         assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored", "{id}");
         assert_eq!(state.borrow().values[id], before, "{id}");

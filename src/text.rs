@@ -1,8 +1,6 @@
 //! Text from other programs (PowerShell errors and the like), made safe to show.
 
-/// One line of at most `max` characters, with whitespace collapsed and control
-/// and invisible formatting characters (bidi overrides, zero-width marks)
-/// removed, so error text can't break a log line or reorder what people read.
+/// Strips control and invisible formatting characters (bidi overrides, zero-width marks) so error text can't reorder what people read.
 pub fn excerpt(raw: &str, max: usize) -> String {
     raw.split_whitespace()
         .collect::<Vec<_>>()
@@ -13,8 +11,6 @@ pub fn excerpt(raw: &str, max: usize) -> String {
         .collect()
 }
 
-/// Unicode format characters (category Cf) that change how text is shown
-/// without being visible themselves.
 fn is_invisible_format(c: char) -> bool {
     matches!(c,
         '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{FEFF}'

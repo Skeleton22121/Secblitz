@@ -1,6 +1,5 @@
 //! Presentation-only advice. These are translation source keys, never commands
 //! or mutation authority. Only a control outcome of `attention` offers a fix.
-/// The control that now fixes what an older finding only reported.
 pub fn control_for_finding(title: &str) -> Option<&'static str> {
     Some(match title {
         "Memory integrity" => "vbs.memory_integrity",
@@ -24,7 +23,6 @@ pub enum NextStep {
     ReviewWindowsFeatures,
     ReviewWithAdministrator,
     ReviewUndo,
-    /// Open the History page (undo your fixes there, newest first).
     OpenHistory,
     Restart,
     CheckAgain,
@@ -44,17 +42,11 @@ pub struct Advice {
     pub next: &'static str,
     pub step: NextStep,
     pub group: Group,
-    /// Translation source key: a noun phrase naming the concrete threat this
-    /// check guards against. Empty string means no impact line is rendered.
     pub impact: &'static str,
-    /// True for a choice the person makes: never pre-selected, always shown
-    /// with its one-line consequence (`next`) before anything is changed.
     pub ask: bool,
 }
 
 impl Advice {
-    /// Returns the translation source key for the prefix rendered before the
-    /// impact phrase. Empty when `impact` is empty.
     pub fn impact_prefix(&self) -> &'static str {
         if self.impact.is_empty() {
             return "";
@@ -67,8 +59,6 @@ impl Advice {
     }
 }
 
-/// Returns the translation source key for the concrete threat this control
-/// guards against, or "" for aggregate / fallback / unrecognized ids.
 pub fn control_impact(id: &str) -> &'static str {
     match id {
         "readiness" => "A full drive stopping fixes and updates from completing",
@@ -141,7 +131,6 @@ pub fn control_impact(id: &str) -> &'static str {
             "Your PC sending sign-in details to a file server on the internet"
         }
         "tls.legacy_protocols" => "Old, breakable secure connections being forced on your PC",
-        // System area.
         "ntlm.extras" => "Weak stored copies of your password being cracked",
         "driver.vulnerable_blocklist" => {
             "Attackers using a flawed driver to switch off your security"
@@ -169,7 +158,6 @@ pub fn control_impact(id: &str) -> &'static str {
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
-        // Sign-in and remote access.
         "accounts.autologon" => "Anyone who turns on your PC getting straight into your account",
         "remote_desktop.disabled" => "Strangers trying to sign in to your PC from far away",
         "smb1.disabled" => "Old file-sharing flaws that let malware spread between PCs",
@@ -195,8 +183,6 @@ pub fn control_impact(id: &str) -> &'static str {
     }
 }
 
-/// Returns the translation source key for the concrete threat the finding
-/// title guards against, or "" for informational / audit / unknown titles.
 pub fn finding_impact(title: &str) -> &'static str {
     match title {
         "Windows lifecycle" => "Running Windows that no longer gets security fixes",
@@ -269,7 +255,6 @@ pub fn control_label(id: &str) -> &'static str {
         "net.wpad" => "Automatic proxy search",
         "firewall.outbound_smb_internet" => "File sharing to the internet",
         "tls.legacy_protocols" => "Old secure-connection versions",
-        // System area.
         "ntlm.extras" => "Old password leftovers",
         "driver.vulnerable_blocklist" => "Dangerous driver blocking",
         "system.exploit_mitigations" => "Built-in memory protections",
@@ -428,13 +413,10 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
     }
 }
 
-/// True for choices the person makes themselves. They are offered with a
-/// one-line consequence and are never ticked by default.
 pub fn is_choice(id: &str) -> bool {
     secblitz::hardening::is_ask(id)
 }
 
-/// One plain line telling the person what changes if they say yes.
 pub fn choice_consequence(id: &str) -> &'static str {
     match id {
         "defender.cloud_protection" => {
@@ -568,8 +550,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
     }
 }
 
-/// Exact backend reasons for "this protection is not offered on this PC right
-/// now". They are calm facts, not faults, so they never lower the score.
+/// Calm facts, not faults: they never lower the score.
 fn not_offered(reason: &str) -> Option<&'static str> {
     use secblitz::vbs as v;
     // The driver reason also names the drivers after a colon; the names are
@@ -812,11 +793,9 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.step = NextStep::Repair;
             a.group = Group::Recommended;
             if is_choice(id) {
-                // Never pre-selected: the person decides, knowing what changes.
                 a.status = "Your choice";
                 a.next = choice_consequence(id);
                 a.ask = true;
-                // Privacy tidy-ups are optional extras, not protection gaps.
                 a.group = if id.starts_with("privacy.") {
                     Group::Information
                 } else {
@@ -860,7 +839,6 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.step = NextStep::ReviewWithAdministrator;
         }
         "skipped" if detail == secblitz::vbs::ALREADY_ON => {
-            // Running already (on by itself or by the person): protected.
             a.status = "Good to go";
             a.next = "This protection is already running on this PC. Nothing to change.";
             a.step = NextStep::None;
@@ -980,7 +958,6 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
     a
 }
 
-/// The engine marks a core protection note when undoing it is the next undo.
 fn undo_ready(detail: &str) -> bool {
     detail.starts_with(secblitz::vbs::UNDO_READY)
 }
@@ -1032,7 +1009,6 @@ mod tests {
 
     #[test]
     fn every_recognized_control_and_finding_has_non_empty_impact() {
-        // Every control id handled by control_label (except fallback) gets a phrase.
         for id in [
             "defender.realtime",
             "defender.behavior",
@@ -1061,11 +1037,9 @@ mod tests {
                 "missing impact for compliant control: {id}"
             );
         }
-        // Fallback and aggregate have no impact phrase.
         assert!(for_control("unknown.id", "attention", "").impact.is_empty());
         assert!(for_control("findings", "attention", "").impact.is_empty());
 
-        // Every recognized finding title with a concrete protection gets a phrase.
         for title in [
             "Windows lifecycle",
             "Device encryption",
@@ -1081,7 +1055,6 @@ mod tests {
             let a = for_finding(title, "attention", "");
             assert!(!a.impact.is_empty(), "missing impact for finding: {title}");
         }
-        // Informational / audit findings have no impact phrase.
         for title in [
             "Security providers",
             "Windows Firewall",
@@ -1103,11 +1076,9 @@ mod tests {
             assert_ne!(control_label(id), "Protection check", "{id}");
             assert!(!control_impact(id).is_empty(), "{id}");
             assert_eq!(is_choice(id), spec.ask, "{id}");
-            // Safe or default-safe state is protected.
             let ok = for_control(id, "compliant", "");
             assert_eq!(ok.group, Group::Protected, "{id}");
             assert!(!ok.ask);
-            // Unsafe state is repairable; choices are never pre-selected.
             let a = for_control(id, "attention", "Eligible");
             assert_eq!(a.step, NextStep::Repair, "{id}");
             assert_eq!(a.ask, spec.ask, "{id}");
@@ -1132,7 +1103,6 @@ mod tests {
                 assert_eq!(a.group, Group::Recommended);
                 assert!(choice_consequence(id).is_empty());
             }
-            // Management and capability vetoes are never offered as a fix.
             let managed = for_control(
                 id,
                 "skipped",
@@ -1140,7 +1110,6 @@ mod tests {
             );
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
             assert_ne!(managed.step, NextStep::Repair);
-            // Restart-needed controls say so after applying.
             let applied = for_control(id, "applied", "Preference applied; restart required");
             assert_eq!(applied.status, "Restart needed", "{id}");
         }
@@ -1201,7 +1170,6 @@ mod tests {
             assert_eq!(a.group, Group::Information);
             assert_ne!(a.step, NextStep::Repair);
         }
-        // Unknown reasons are not trusted as "not offered".
         assert_ne!(
             for_control("lsa.run_as_ppl", "skipped", "Not offered: anything").status,
             "Not offered"
@@ -1217,7 +1185,6 @@ mod tests {
         ] {
             assert_eq!(control_for_finding(title), Some(id));
             assert!(secblitz::hardening::is_hardening(id));
-            // Same plain words on both, so the row reads the same either way.
             assert_eq!(for_finding(title, "attention", "").label, control_label(id));
             assert_eq!(for_finding(title, "attention", "").impact, control_impact(id));
         }
@@ -1229,16 +1196,12 @@ mod tests {
     #[test]
     fn core_protection_rows_read_well_when_offered_blocked_or_waiting_for_a_restart() {
         for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
-            // Offered as a choice with its consequence, never pre-selected.
             let a = for_control(id, "attention", "Eligible");
             assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
             assert!(a.next.contains("restart") && a.next.contains("undo"), "{id}");
-            // Applied: restart needed, in plain words.
             let applied = for_control(id, "applied", "Preference applied; restart required");
             assert_eq!(applied.status, "Restart needed");
             assert_eq!(applied.step, NextStep::Restart);
-            // Every reason it may be blocked is a calm "Not offered" line that
-            // never offers a fix and never counts against the score.
             for reason in [
                 secblitz::vbs::NOT_SUPPORTED,
                 secblitz::vbs::LOCKED,
@@ -1255,14 +1218,11 @@ mod tests {
                 assert!(n.next.ends_with('.') && n.next.len() < 170, "{reason}");
                 assert!(!n.next.contains("Memory integrity"), "{reason}");
             }
-            // Already running is good news, not a gap and not a "not offered".
             let on = for_control(id, "skipped", secblitz::vbs::ALREADY_ON);
             assert_eq!((on.status, on.group), ("Good to go", Group::Protected));
-            // A managed PC stays assessment only.
             let m = for_control(id, "skipped", "Relevant policy is configured: assessment only");
             assert_eq!(m.status, "Managed elsewhere");
         }
-        // The driver line points to Windows Security and names no one here.
         let driver = for_control(
             "vbs.memory_integrity",
             "skipped",
@@ -1280,19 +1240,16 @@ mod tests {
             "Kernel stack protection not running",
             "A device may not be working",
         ] {
-            // Undo goes straight to the review sheet only when it undoes this change.
             let a = for_finding(title, "attention", &ready);
             assert_eq!(a.step, NextStep::ReviewUndo, "{title}");
             assert_eq!(a.group, Group::Choice);
             assert!(a.next.contains("undo"), "{title}");
             assert!(!a.impact.is_empty(), "{title}");
             assert!(a.next.len() < 170);
-            // Otherwise the person is sent to History, never to a blind undo.
             let h = for_finding(title, "attention", "boot: 1.");
             assert_eq!(h.step, NextStep::OpenHistory, "{title}");
             assert!(h.next.contains("History") && h.next.len() < 190, "{title}");
         }
-        // The old tip is replaced by the fix row, but only that one.
         assert_eq!(
             control_for_finding("Memory integrity"),
             Some("vbs.memory_integrity")
@@ -1320,7 +1277,6 @@ mod tests {
     #[test]
     fn recovery_tools_row_is_a_normal_fix_with_a_plain_reason_when_not_offered() {
         let id = "recovery.winre_enabled";
-        // No trade-off to weigh: a recommended fix, ticked like other plain fixes.
         let a = for_control(id, "attention", "Eligible");
         assert_eq!((a.status, a.step, a.ask, a.group), ("Can fix", NextStep::Repair, false, Group::Recommended));
         assert!(a.next.contains("recovery tools") && a.next.len() < 130, "{}", a.next);
@@ -1328,7 +1284,6 @@ mod tests {
         assert!(!a.impact.is_empty() && !a.impact.ends_with('.'));
         let ok = for_control(id, "compliant", "");
         assert_eq!((ok.status, ok.group), ("Good to go", Group::Protected));
-        // Every reason the script gives is a calm sentence, never a fix.
         let script = include_str!("platform/hardening.ps1");
         let start = script.find("'recovery.winre_enabled' {").unwrap();
         let body = &script[start..start + script[start..].find("\n        }\n").unwrap()];
@@ -1340,7 +1295,6 @@ mod tests {
             assert_ne!(a.step, NextStep::Repair);
             assert!(a.next.ends_with('.') && !a.next.contains('\u{2014}'), "{reason}");
         }
-        // Managed PCs are left alone, and a change made after the fix is a conflict.
         let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
         assert_eq!(managed.status, "Managed elsewhere");
         assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
@@ -1358,32 +1312,26 @@ mod tests {
             let a = for_control(id, "attention", "Eligible");
             assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
             assert!(!a.impact.is_empty() && a.next == choice_consequence(id));
-            // Never offered when somebody else manages the setting.
             let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
             assert_eq!(managed.status, "Managed elsewhere", "{id}");
-            // A change made after our fix is a conflict, never a silent overwrite.
             assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
         }
     }
 
     #[test]
     fn impact_prefix_follows_group_and_is_empty_when_impact_is_empty() {
-        // Protected → "Protects you from:"
         let a = for_control("uac.enabled", "compliant", "");
         assert_eq!(a.group, Group::Protected);
         assert_eq!(a.impact_prefix(), "Protects you from:");
 
-        // Recommended → "Leaves you open to:"
         let a = for_control("uac.enabled", "attention", "");
         assert_eq!(a.group, Group::Recommended);
         assert_eq!(a.impact_prefix(), "Leaves you open to:");
 
-        // Choice → "Why it matters:"
         let a = for_control("uac.enabled", "unknown", "");
         assert_eq!(a.group, Group::Choice);
         assert_eq!(a.impact_prefix(), "Why it matters:");
 
-        // Restart needed → Choice group → "Why it matters:"
         let a = for_control(
             "uac.enabled",
             "applied",
@@ -1392,7 +1340,6 @@ mod tests {
         assert_eq!(a.group, Group::Choice);
         assert_eq!(a.impact_prefix(), "Why it matters:");
 
-        // Empty impact → empty prefix regardless of group
         let a = for_control("unknown.id", "compliant", "");
         assert!(a.impact.is_empty());
         assert_eq!(a.impact_prefix(), "");

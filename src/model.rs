@@ -46,17 +46,14 @@ pub struct Observation {
     pub effective: Option<EffectiveFirewall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
-    /// Plain names of the exact items a fix would change (display only, never
-    /// mutation authority). Dynamic controls fill it; everything else leaves it empty.
+    /// Display only, never mutation authority.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<ItemLabel>,
 }
 
-/// One item a fix would change, e.g. a service, firewall rule or startup entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ItemLabel {
-    /// One of [`ItemLabel::KINDS`].
     pub kind: String,
     pub name: String,
 }
@@ -68,11 +65,8 @@ impl ItemLabel {
         "startup",
         "task",
         "hosts",
-        // Old accounts by name, and shared folders by name.
         "account",
         "share",
-        // Items a fix leaves alone (named in the details), and how many more
-        // items exist than are listed.
         "skip_missing",
         "skip_shadow",
         "more",
@@ -104,8 +98,7 @@ impl ItemLabel {
     }
 }
 
-/// Validate typed evidence at both native decoding and the engine boundary.
-/// Missing evidence is representable, but never proves effective protection.
+/// Validates typed evidence at both native decoding and the engine boundary. Missing evidence never proves effective protection.
 pub fn validate_observation(id: &str, obs: &Observation) -> anyhow::Result<()> {
     use anyhow::ensure;
     let enabled = matches!(
@@ -165,8 +158,7 @@ pub struct Readiness {
 }
 
 impl Readiness {
-    /// Confirmed storage conditions that block new repairs. Unknown probes and
-    /// informational power/reboot signals do not block; undo keeps its own gates.
+    /// Unknown probes and informational power/reboot signals do not block; undo keeps its own gates.
     pub fn blocks_repairs(&self) -> bool {
         matches!(&self.system_volume, Probe::Known(v) if v.read_only)
             || matches!(&self.journal_volume, Probe::Known(v) if v.read_only || v.available_bytes == 0)
@@ -184,8 +176,6 @@ pub trait Backend {
     fn machine_id(&mut self) -> anyhow::Result<String>;
     fn controls(&self) -> Vec<Control>;
     fn observe(&mut self, id: &str) -> anyhow::Result<Observation>;
-    /// Observe several controls, results in the order of `ids`. Reads one at
-    /// a time unless a backend knows its reads are independent.
     fn observe_many(&mut self, ids: &[&str]) -> Vec<anyhow::Result<Observation>> {
         ids.iter().map(|id| self.observe(id)).collect()
     }
