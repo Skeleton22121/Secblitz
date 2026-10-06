@@ -1,7 +1,7 @@
 //! SVG path data, parsed once into absolute segments.
 use iced::widget::canvas::Path;
 use iced::{Point, Rectangle, Vector};
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
+use std::f64::consts::{FRAC_PI_2, TAU};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Seg {

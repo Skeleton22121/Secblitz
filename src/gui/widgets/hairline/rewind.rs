@@ -596,7 +596,7 @@ fn badge_mark(run: Run) -> PathData {
 mod tests {
     use super::*;
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::hairline::Parallax;
+    use crate::gui::widgets::hairline::parallax::Parallax;
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
     use iced::window;

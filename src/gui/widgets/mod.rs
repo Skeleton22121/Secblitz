@@ -1,5 +1,4 @@
 //! Reusable visual building blocks.
-#![allow(dead_code, unused_imports)]
 
 pub mod anim;
 pub mod appear;
@@ -16,7 +15,7 @@ pub mod ring;
 pub mod scan;
 pub mod section;
 
-pub use controls::{checkbox, dropdown, segmented, slide_marker, switch, text_field, CheckState};
+pub use controls::{checkbox, dropdown, segmented, slide_marker, switch, CheckState};
 pub use cursor::arrow;
 pub use menu::overflow_menu;
 pub use parts::*;
@@ -26,7 +25,7 @@ use super::icons::Icon;
 use super::theme::{self, Palette, Tone};
 use super::Message;
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, column, container, opaque, row, stack, svg, text};
+use iced::widget::{button, column, container, opaque, row, svg, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Pixels, Shadow};
 
 pub fn h1<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {

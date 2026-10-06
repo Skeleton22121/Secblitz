@@ -6,7 +6,7 @@ use super::parts::Mark;
 use super::pointer::{Hotspots, Layer};
 use super::stage::{pt, stroke, Ink, Meaning, Plate, Stage, W_ACCENT, W_FAINT, W_PART};
 use super::svg::PathData;
-use super::SETTLED_AGE;
+use super::live::SETTLED_AGE;
 use crate::gui::theme::{self, mix, Palette};
 use crate::gui::widgets::anim::{
     self, ACCELERATE, DECELERATE, EASE_IN_OUT, EMPHASIZED, STANDARD,
@@ -1082,7 +1082,7 @@ mod tests {
         let sc = m.scene(t0);
         assert_eq!(sc.hidden, 5);
         let spots = m.spots(&sc, false);
-        let still = super::super::Parallax::off();
+        let still = crate::gui::widgets::hairline::parallax::Parallax::off();
         assert_eq!(spots.hit(slot_centre(0), &still), Some(Part::Tile(0)));
         assert_eq!(m.label(Part::Tile(0), &sc), "Suppression de App 0");
         assert_eq!(m.label(Part::Tile(1), &sc), "En attente : App 1");
@@ -1116,7 +1116,7 @@ mod tests {
         let sc = m.scene(t0);
         assert_eq!(sc.places[1], Place::Slot(1));
         let spots = m.spots(&sc, false);
-        assert_eq!(spots.hit(slot_centre(1), &super::super::Parallax::off()), None);
+        assert_eq!(spots.hit(slot_centre(1), &crate::gui::widgets::hairline::parallax::Parallax::off()), None);
     }
 
     #[test]
@@ -1131,7 +1131,7 @@ mod tests {
         assert_eq!((gone.scale, gone.ring), (0.0, 0.0));
         let sc = m.scene(t0 + Duration::from_millis(300));
         assert_eq!(m.label(Part::Tile(1), &sc), "App 0");
-        let still = super::super::Parallax::off();
+        let still = crate::gui::widgets::hairline::parallax::Parallax::off();
         assert_eq!(m.spots(&sc, false).hit(slot_centre(1), &still), None);
         let sc = m.scene(t0 + Duration::from_secs(1));
         assert_eq!(sc.places[1], Place::Gone);
@@ -1172,7 +1172,7 @@ mod tests {
         let t0 = Instant::now();
         let m = menu(vec![Fate::Removed(t0)], 9, Outcome::Removed, t0);
         let spots = m.spots(&m.scene(t0), true);
-        let still = super::super::Parallax::off();
+        let still = crate::gui::widgets::hairline::parallax::Parallax::off();
         let stage = StartMenu::stage(BOUNDS.size());
         let r = super::super::pointer::tooltip_rect_around(
             stage.point(spots.anchor(Part::Mark, &still).unwrap()),

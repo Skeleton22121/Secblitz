@@ -1089,7 +1089,7 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
 mod tests {
     use super::*;
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::hairline::Parallax;
+    use crate::gui::widgets::hairline::parallax::Parallax;
     use iced::{window, Vector};
     use std::time::Duration;
 
@@ -1213,7 +1213,7 @@ mod tests {
         assert!((fade[0].weight + fade[1].weight - 1.0).abs() < 1e-4);
         assert_eq!(dome_states(Guard::Paused, Some(Guard::On), 1.0).len(), 1);
         assert!(dome_states(Guard::Off, Some(Guard::On), 1.0).is_empty());
-        let settled = dome_states(Guard::On, None, super::super::SETTLED_AGE);
+        let settled = dome_states(Guard::On, None, super::super::live::SETTLED_AGE);
         assert_eq!(settled[0].outline, 1.0);
     }
 

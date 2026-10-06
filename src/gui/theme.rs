@@ -1,5 +1,4 @@
 //! Design tokens: colours, type scale, spacing, radii and fonts.
-#![allow(dead_code)]
 
 use iced::font::{Family, Weight};
 use iced::{Color, Font, Theme};
@@ -211,7 +210,6 @@ pub const S10: f32 = 40.0;
 
 pub const CONTROL: f32 = 36.0;
 pub const CONTROL_SMALL: f32 = 28.0;
-pub const ROW: f32 = 48.0;
 pub const ROW_ITEM: f32 = 56.0;
 pub const ICON_ROW: f32 = 20.0;
 pub const MENU_ROW: f32 = 32.0;
@@ -219,8 +217,6 @@ pub const CONTENT_MAX: f32 = 560.0;
 pub const WINDOW_MIN_WIDTH: f32 = 880.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 600.0;
 pub const CHECK: f32 = 18.0;
-pub const SETTING_ROW: f32 = ROW + S2;
-pub const CARD_BODY_MIN: f32 = ROW * 2.0;
 pub const DOT: f32 = 8.0;
 pub const HAIRLINE: f32 = 1.0;
 pub const MAX_READABLE: f32 = 420.0;

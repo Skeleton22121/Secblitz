@@ -28,6 +28,7 @@ pub const POINT_TO_POINT: Curve = cubic_bezier(0.55, 0.55, 0.0, 1.0);
 pub const EMPHASIZED: Curve = cubic_bezier(0.05, 0.7, 0.1, 1.0);
 pub const STANDARD: Curve = cubic_bezier(0.2, 0.0, 0.0, 1.0);
 pub const EASE_IN_OUT: Curve = cubic_bezier(0.42, 0.0, 0.58, 1.0);
+#[cfg(test)]
 pub const LINEAR: Curve = cubic_bezier(0.0, 0.0, 1.0, 1.0);
 
 impl Curve {
@@ -121,9 +122,6 @@ impl Clock {
     }
     pub fn elapsed_at(&self, now: Instant) -> Duration {
         now.saturating_duration_since(self.start)
-    }
-    pub fn progress(&self, d: Duration) -> f32 {
-        ratio(self.elapsed(), d)
     }
     pub fn progress_at(&self, d: Duration, now: Instant) -> f32 {
         ratio(self.elapsed_at(now), d)
@@ -255,9 +253,6 @@ impl Tween {
             dur,
         }
     }
-    pub fn target(&self) -> f32 {
-        self.to
-    }
     pub fn retarget(&mut self, now: Instant, to: f32) {
         self.from = self.value(now);
         self.to = to;
@@ -265,9 +260,6 @@ impl Tween {
     }
     pub fn value(&self, now: Instant) -> f32 {
         ring_fill(self.from, self.to, self.clock.progress_at(self.dur, now))
-    }
-    pub fn done(&self, now: Instant) -> bool {
-        self.clock.done(self.dur, now)
     }
 }
 
@@ -278,9 +270,6 @@ enum Kind {
     Check,
     Cross,
     Warn,
-    Shield,
-    Pulse,
-    Dots,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -382,19 +371,6 @@ fn spinner_with<'a, M: 'a>(
     )
 }
 
-pub fn dots<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
-    canvas::Canvas::new(Glyph {
-        kind: Kind::Dots,
-        color,
-        t: 1.0,
-        secs: elapsed.as_secs_f32(),
-        still: reduced(),
-    })
-    .width(Length::Fixed(size * 2.2))
-    .height(Length::Fixed(size))
-    .into()
-}
-
 pub fn check_draw<'a, M: 'a>(size: f32, color: Color, t: f32) -> Element<'a, M> {
     one_shot(Kind::Check, size, color, t)
 }
@@ -417,32 +393,6 @@ fn one_shot<'a, M: 'a>(kind: Kind, size: f32, color: Color, t: f32) -> Element<'
             t,
             secs: 0.0,
             still: t >= 1.0,
-        },
-    )
-}
-
-pub fn shield_scan<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
-    element(
-        size,
-        Glyph {
-            kind: Kind::Shield,
-            color,
-            t: 1.0,
-            secs: elapsed.as_secs_f32(),
-            still: reduced(),
-        },
-    )
-}
-
-pub fn pulse_dot<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
-    element(
-        size,
-        Glyph {
-            kind: Kind::Pulse,
-            color,
-            t: 1.0,
-            secs: elapsed.as_secs_f32(),
-            still: reduced(),
         },
     )
 }
@@ -531,9 +481,6 @@ fn paint(f: &mut Frame, g: &Glyph) {
         Kind::Spinner => paint_spinner(f, g),
         Kind::Check | Kind::Cross => paint_badge(f, g),
         Kind::Warn => paint_warn(f, g),
-        Kind::Shield => paint_shield(f, g),
-        Kind::Pulse => paint_pulse(f, g),
-        Kind::Dots => paint_dots(f, g),
     }
 }
 
@@ -574,24 +521,6 @@ fn paint_spinner(f: &mut Frame, g: &Glyph) {
     }
     let (start, len) = spinner_arc(g.secs);
     f.stroke(&arc_path(c, r, start, len), stroke(g.color, w));
-}
-
-pub fn dot_pulse(secs: f32, i: usize) -> f32 {
-    let p = (secs / 1.2 - i as f32 * 0.16).rem_euclid(1.0);
-    STANDARD.at(triangle(p))
-}
-
-fn paint_dots(f: &mut Frame, g: &Glyph) {
-    let (w, h) = (f.size().width, f.size().height);
-    let r = h * 0.17;
-    for i in 0..3 {
-        let k = if g.still { 0.6 } else { dot_pulse(g.secs, i) };
-        let cx = w * (1.0 + 2.0 * i as f32) / 6.0;
-        f.fill(
-            &Path::circle(Point::new(cx, h / 2.0), r * (0.7 + 0.3 * k)),
-            g.color.scale_alpha(0.3 + 0.7 * k),
-        );
-    }
 }
 
 fn paint_badge(f: &mut Frame, g: &Glyph) {
@@ -649,69 +578,6 @@ fn paint_warn(f: &mut Frame, g: &Glyph) {
             f.stroke(&p, stroke(col, w));
         }
         f.fill(&Path::circle(xf.p(12.0, 16.8), xf.len(1.0) * pop), col);
-    }
-}
-
-fn shield_path(xf: &Xf) -> Path {
-    Path::new(|b| {
-        b.move_to(xf.p(12.0, 2.6));
-        b.bezier_curve_to(xf.p(14.5, 4.4), xf.p(17.2, 5.4), xf.p(20.3, 5.6));
-        b.line_to(xf.p(20.3, 11.0));
-        b.bezier_curve_to(xf.p(20.3, 15.7), xf.p(17.4, 19.0), xf.p(12.0, 21.2));
-        b.bezier_curve_to(xf.p(6.6, 19.0), xf.p(3.7, 15.7), xf.p(3.7, 11.0));
-        b.line_to(xf.p(3.7, 5.6));
-        b.bezier_curve_to(xf.p(6.8, 5.4), xf.p(9.5, 4.4), xf.p(12.0, 2.6));
-        b.close();
-    })
-}
-
-fn paint_shield(f: &mut Frame, g: &Glyph) {
-    let xf = Xf::new(f.size(), 1.0);
-    let shield = shield_path(&xf);
-    f.stroke(&shield, stroke(g.color, xf.len(1.6)));
-    if g.still {
-        return;
-    }
-    const PERIOD: f32 = 2.4;
-    let p = (g.secs / PERIOD).fract() * 2.0;
-    let leg = if p < 1.0 { p } else { 2.0 - p };
-    let y = 2.6 + (21.2 - 2.6) * EASE_IN_OUT.at(leg);
-    let size = f.size();
-    let full = |y0: f32, y1: f32| {
-        let top = xf.p(0.0, y0.max(0.0)).y.max(0.0);
-        let bot = xf.p(0.0, y1).y.min(size.height);
-        Rectangle::new(
-            Point::new(0.0, top),
-            iced::Size::new(size.width, (bot - top).max(0.0)),
-        )
-    };
-    let trail = if p < 1.0 { y - 3.2 } else { y };
-    let trail_end = if p < 1.0 { y } else { y + 3.2 };
-    let band = full(trail, trail_end);
-    if band.height > 0.5 {
-        f.with_clip(band, |c| c.fill(&shield, g.color.scale_alpha(0.14)));
-    }
-    let line = full(y - 0.45, y + 0.45);
-    if line.height > 0.0 {
-        f.with_clip(line, |c| c.fill(&shield, g.color.scale_alpha(0.9)));
-    }
-}
-
-fn paint_pulse(f: &mut Frame, g: &Glyph) {
-    let xf = Xf::new(f.size(), 1.0);
-    let c = xf.p(12.0, 12.0);
-    f.fill(&Path::circle(c, xf.len(5.0)), g.color);
-    if g.still {
-        return;
-    }
-    const PERIOD: f32 = 2.4;
-    let p = phase((g.secs / PERIOD).fract(), 0.0, 0.7);
-    if p > 0.0 && p < 1.0 {
-        let e = DECELERATE.at(p);
-        f.fill(
-            &Path::circle(c, xf.len(5.0 + 6.5 * e)),
-            g.color.scale_alpha(0.28 * (1.0 - e)),
-        );
     }
 }
 
@@ -902,32 +768,19 @@ mod tests {
     }
 
     #[test]
-    fn dots_pulse_in_range_and_offset() {
-        for i in 0..3 {
-            for t in 0..120 {
-                let v = dot_pulse(t as f32 / 50.0, i);
-                assert!((0.0..=1.0).contains(&v));
-            }
-        }
-        assert_ne!(dot_pulse(0.3, 0), dot_pulse(0.3, 1));
-    }
-
-    #[test]
     fn tween_math() {
         let _m = forced::set(false);
         let t0 = Instant::now();
         let mut tw = Tween::starting(t0, 10.0, 20.0, SLOW);
         assert_eq!(tw.value(t0), 10.0);
         assert!((tw.value(t0 + SLOW) - 20.0).abs() < 1e-4);
-        assert!(tw.done(t0 + SLOW));
-        assert!(!tw.done(t0 + SLOW / 2));
         // Decelerate: more than half way at half time.
         assert!(tw.value(t0 + SLOW / 2) > 15.0);
         let mid = t0 + SLOW / 4;
         let shown = tw.value(mid);
         tw.retarget(mid, 0.0);
         assert!((tw.value(mid) - shown).abs() < 1e-4);
-        assert_eq!(tw.target(), 0.0);
+        assert_eq!(tw.to, 0.0);
         assert!((tw.value(mid + SLOW)).abs() < 1e-4);
     }
 

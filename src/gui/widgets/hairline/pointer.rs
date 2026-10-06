@@ -293,6 +293,7 @@ fn measure(label: &str) -> f32 {
     p.min_width()
 }
 
+#[cfg(test)]
 pub fn tooltip_rect(anchor: Point, text_width: f32, canvas: Size) -> Rectangle {
     tooltip_rect_around(anchor, anchor, text_width, canvas)
 }
