@@ -587,27 +587,57 @@ fn line<'a>(
     r.push(content).push(trailing).into()
 }
 
+struct More {
+    why: Option<String>,
+    items: Option<(String, Vec<String>)>,
+    tech: Option<String>,
+}
+
+/// Details under a row, minus anything the row already shows.
+fn details(
+    shown: &[&str],
+    why: Option<String>,
+    items: Option<(String, Vec<String>)>,
+    tech: &str,
+) -> Option<More> {
+    let seen = |text: &str| {
+        shown
+            .iter()
+            .any(|s| s.lines().any(|line| line.trim() == text.trim()))
+    };
+    let why = why.filter(|w| !w.trim().is_empty() && !seen(w));
+    let items = items.filter(|(_, lines)| !lines.is_empty());
+    let mut parts: Vec<&str> = Vec::new();
+    for part in tech.split(" · ").map(str::trim) {
+        if !part.is_empty() && !seen(part) && why.as_deref() != Some(part) && !parts.contains(&part) {
+            parts.push(part);
+        }
+    }
+    let tech = (!parts.is_empty()).then(|| parts.join(" · "));
+    (why.is_some() || items.is_some() || tech.is_some()).then_some(More { why, items, tech })
+}
+
 fn expanded<'a>(
     p: Palette,
     indent: f32,
-    why: Option<String>,
-    items: Option<(String, &[String])>,
+    More { why, items, tech }: More,
     label: String,
-    tech: String,
 ) -> Element<'a, Message> {
     let mut c = column![].spacing(theme::S2);
     if let Some(w) = why {
         c = c.push(widgets::body(p, w));
     }
-    if let Some((heading, lines)) = items.filter(|(_, lines)| !lines.is_empty()) {
+    if let Some((heading, lines)) = items {
         c = c.push(widgets::section_label(p, heading));
         for line in lines {
-            c = c.push(widgets::small(p, line.clone()));
+            c = c.push(widgets::small(p, line));
         }
     }
-    c = c
-        .push(widgets::section_label(p, label))
-        .push(widgets::small(p, tech));
+    if let Some(tech) = tech {
+        c = c
+            .push(widgets::section_label(p, label))
+            .push(widgets::small(p, tech));
+    }
     row![space::horizontal().width(indent), widgets::well(p, c)].into()
 }
 
@@ -677,13 +707,21 @@ fn attention_row<'a>(
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &a.id) {
         tools = tools.push(t);
     }
-    tools = tools.push(widgets::action(
-        p,
-        ButtonKind::Ghost,
-        ctx.t(if open { "Hide details" } else { "Details" }),
-        None,
-        Some(Message::Fixes(Msg::Expand(a.id.clone()))),
-    ));
+    let more = details(
+        &[a.line.as_str()],
+        Some(a.why.clone()),
+        Some((ctx.t("What will change"), a.items.clone())),
+        &a.tech,
+    );
+    if more.is_some() {
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Ghost,
+            ctx.t(if open { "Hide details" } else { "Details" }),
+            None,
+            Some(Message::Fixes(Msg::Expand(a.id.clone()))),
+        ));
+    }
     let head = line(
         Some(widgets::checkbox(
             p,
@@ -706,15 +744,8 @@ fn attention_row<'a>(
     if let Some(inset) = widgets::explain::panel(ctx, "fixes", &a.id, false, INDENT) {
         rows = rows.push(inset);
     }
-    if open {
-        rows = rows.push(expanded(
-            p,
-            INDENT,
-            Some(a.why.clone()),
-            Some((ctx.t("What will change"), a.items.as_slice())),
-            ctx.t("More details"),
-            a.tech.clone(),
-        ));
+    if let Some(more) = more.filter(|_| open) {
+        rows = rows.push(expanded(p, INDENT, more, ctx.t("More details")));
     }
     rows.into()
 }
@@ -722,12 +753,15 @@ fn attention_row<'a>(
 fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&o.key);
-    let menu = vec![(
-        Icon::Info,
-        ctx.t(if open { "Hide details" } else { "Details" }),
-        Message::Fixes(Msg::Expand(o.key.clone())),
-        false,
-    )];
+    let more = details(&[o.line.as_str(), o.status.as_str()], None, None, &o.tech);
+    let menu = more.as_ref().map(|_| {
+        (
+            Icon::Info,
+            ctx.t(if open { "Hide details" } else { "Details" }),
+            Message::Fixes(Msg::Expand(o.key.clone())),
+            false,
+        )
+    });
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &o.explain) {
         tools = tools.push(t);
@@ -772,7 +806,9 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
         ]),
         _ => None,
     };
-    tools = tools.push(widgets::overflow_menu(p, menu));
+    if let Some(item) = menu {
+        tools = tools.push(widgets::overflow_menu(p, vec![item]));
+    }
     let head = line(
         None,
         widgets::row_item_tinted(
@@ -798,15 +834,8 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     {
         rows = rows.push(inset);
     }
-    if open {
-        rows = rows.push(expanded(
-            p,
-            INDENT_PLAIN,
-            None,
-            None,
-            ctx.t("More details"),
-            o.tech.clone(),
-        ));
+    if let Some(more) = more.filter(|_| open) {
+        rows = rows.push(expanded(p, INDENT_PLAIN, more, ctx.t("More details")));
     }
     rows.into()
 }
@@ -1257,6 +1286,24 @@ fn protected_group<'a>(state: &State, ctx: &Ctx, rows: &Rows) -> Element<'a, Mes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn details_never_repeat_what_the_row_shows() {
+        let row = "Turn on Windows Firewall.\nAccounts: bob";
+        assert!(details(&[row, "Not protected"], None, None, "Not protected · Turn on Windows Firewall.").is_none());
+        let more = details(
+            &[row],
+            Some("Turn on Windows Firewall.".into()),
+            Some(("What will change".into(), vec!["Firewall: on".into()])),
+            "Not protected · Turn on Windows Firewall.",
+        )
+        .unwrap();
+        assert_eq!(more.why, None);
+        assert_eq!(more.tech.as_deref(), Some("Not protected"));
+        assert_eq!(more.items.unwrap().1, vec!["Firewall: on".to_string()]);
+        let more = details(&["Leaves you open to: x"], Some("Do y.".into()), None, "Not protected · Do y.").unwrap();
+        assert_eq!((more.why.as_deref(), more.tech.as_deref()), (Some("Do y."), Some("Not protected")));
+    }
 
     #[test]
     fn accounts_and_folders_are_named_once_and_only_on_their_rows() {
