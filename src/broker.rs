@@ -340,7 +340,10 @@ impl Client {
             let mut pipe = self
                 .inner
                 .lock()
-                .map_err(|_| anyhow::anyhow!("broker unavailable"))?;
+                .map_err(|e| {
+                    eprintln!("{e}");
+                    anyhow::anyhow!("broker unavailable")
+                })?;
             let byte = pipe.round_trip(request.encode(), request.timeout())?;
             Reply::decode(byte).ok_or_else(|| anyhow::anyhow!("invalid broker reply"))
         }

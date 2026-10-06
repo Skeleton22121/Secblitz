@@ -372,7 +372,10 @@ fn device_id(root: &Path, create_missing: bool) -> Result<[u8; 16]> {
     }
     read_bounded(root, name, 16)?
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid rollout identity"))
+        .map_err(|v: Vec<u8>| {
+            eprintln!("{} bytes", v.len());
+            anyhow::anyhow!("Invalid rollout identity")
+        })
 }
 fn fetch_manifest(client: &reqwest::blocking::Client, url: reqwest::Url) -> Result<Vec<u8>> {
     let response = client.get(url).send()?;
@@ -424,9 +427,7 @@ fn lock(root: &Path, name: &str) -> Result<Option<File>> {
     if !path.try_exists()? {
         match create(&path) {
             Ok(f) => drop(f),
-            Err(e) if path.try_exists()? => {
-                let _ = e;
-            }
+            Err(_) if path.try_exists()? => {}
             Err(e) => return Err(e),
         }
     }
@@ -1189,7 +1190,10 @@ fn key() -> Result<[u8; 32]> {
         .context("Invalid embedded update public key")?;
     bytes
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Embedded update public key must be 32 bytes"))
+        .map_err(|v: Vec<u8>| {
+            eprintln!("{} bytes", v.len());
+            anyhow::anyhow!("Embedded update public key must be 32 bytes")
+        })
 }
 fn record(root: &Path, result: UpdateOutcome) -> Result<UpdateOutcome> {
     replace(
