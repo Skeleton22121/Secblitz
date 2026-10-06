@@ -107,6 +107,31 @@ pub fn friendly_error(raw: &str) -> &'static str {
     }
 }
 
+/// The plain reason this account cannot run Windows updates, or `None` when it can.
+pub fn updates_account_note(probe: anyhow::Result<()>) -> Option<&'static str> {
+    probe.err().map(|e| friendly_error(&format!("{e:#}")))
+}
+
+/// The first thing that would stop a repair or an update from starting, using
+/// only facts that are known. Unknown facts do not block; the engine checks
+/// them again before it starts.
+pub fn start_blocker(r: &secblitz::model::Readiness) -> Option<&'static str> {
+    use secblitz::model::Probe;
+    if matches!(r.windows_update_reboot, Probe::Known(true)) {
+        return Some(ERR_RESTART);
+    }
+    if matches!(&r.power, Probe::Known(p) if p.ac_connected == Some(false)) {
+        return Some(ERR_POWER);
+    }
+    let low = matches!(&r.system_volume, Probe::Known(v) if v.read_only || v.available_bytes < 5 * 1024 * 1024 * 1024)
+        || matches!(&r.journal_volume, Probe::Known(v) if v.read_only || v.available_bytes < 64 * 1024 * 1024);
+    low.then_some(ERR_DISK)
+}
+
+pub fn check_start_blocker() -> Option<&'static str> {
+    start_blocker(&secblitz::readiness::collect())
+}
+
 pub fn why_for_note(note: &str) -> &'static str {
     match note {
         ERR_USE_WINDOWS_UPDATE => "Windows only lets Secblitz install updates from a standard administrator account, and this account can't. Sign in with a different administrator account, or ask the person who manages this PC, then open Secblitz again.",
@@ -245,6 +270,53 @@ mod tests {
             friendly_error("The file is locked by another operation"),
             ERR_BUSY
         );
+    }
+
+    #[test]
+    fn start_blocker_names_only_known_problems() {
+        use secblitz::model::{PowerReadiness, Probe, Readiness, VolumeReadiness};
+        let gb = 1024u64 * 1024 * 1024;
+        let vol = |bytes| {
+            Probe::Known(VolumeReadiness {
+                available_bytes: bytes,
+                read_only: false,
+            })
+        };
+        let good = Readiness {
+            system_volume: vol(50 * gb),
+            journal_volume: vol(50 * gb),
+            power: Probe::Known(PowerReadiness {
+                ac_connected: Some(true),
+                battery_percent: None,
+                battery_present: Some(false),
+            }),
+            windows_update_reboot: Probe::Known(false),
+        };
+        assert_eq!(start_blocker(&good), None);
+        assert_eq!(start_blocker(&Readiness::default()), None);
+        let mut r = good.clone();
+        r.windows_update_reboot = Probe::Known(true);
+        assert_eq!(start_blocker(&r), Some(ERR_RESTART));
+        let mut r = good.clone();
+        r.power = Probe::Known(PowerReadiness {
+            ac_connected: Some(false),
+            battery_percent: Some(40),
+            battery_present: Some(true),
+        });
+        assert_eq!(start_blocker(&r), Some(ERR_POWER));
+        let mut r = good.clone();
+        r.system_volume = vol(gb);
+        assert_eq!(start_blocker(&r), Some(ERR_DISK));
+        let mut r = good;
+        r.journal_volume = vol(0);
+        assert_eq!(start_blocker(&r), Some(ERR_DISK));
+    }
+
+    #[test]
+    fn account_note_matches_the_engine_wording() {
+        assert_eq!(updates_account_note(Ok(())), None);
+        let split = anyhow::anyhow!("Interactive split-token administrator required; service/over-the-shoulder elevation unsupported");
+        assert_eq!(updates_account_note(Err(split)), Some(ERR_USE_WINDOWS_UPDATE));
     }
 
     #[test]

@@ -245,6 +245,18 @@ pub fn ensure_idle(shared_engine_lock: &std::fs::File) -> Result<()> {
     }
 }
 
+/// Read-only: whether this account can run Windows updates at all.
+pub fn account_supported() -> Result<()> {
+    #[cfg(windows)]
+    {
+        windows::account_supported()
+    }
+    #[cfg(not(windows))]
+    {
+        bail!("Patching requires elevated interactive Windows x64")
+    }
+}
+
 #[cfg(windows)]
 type Native = core::Engine<storage::Store, windows::Backend>;
 #[cfg(not(windows))]
