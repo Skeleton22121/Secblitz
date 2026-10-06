@@ -14,11 +14,10 @@ pub struct Ring {
     pub caption: String,
 }
 
-type RingKey = (u32, Tone, u64, theme::Mode, i64);
+type RingKey = (u32, Tone, u64, theme::Mode);
 
 struct Counted {
     ring: Ring,
-    count: Option<i64>,
 }
 
 #[derive(Default)]
@@ -28,9 +27,6 @@ pub struct RingState {
     shown: f32,
     from: f32,
     target: f32,
-    shown_n: i64,
-    from_n: i64,
-    target_n: i64,
     start: Option<std::time::Instant>,
 }
 
@@ -51,29 +47,23 @@ impl canvas::Program<Message> for Counted {
             return None;
         };
         let target = self.ring.ratio.clamp(0.0, 1.0);
-        let target_n = self.count.unwrap_or(0);
-        if (state.target - target).abs() > f32::EPSILON || state.target_n != target_n {
+        if (state.target - target).abs() > f32::EPSILON {
             state.from = state.shown;
-            state.from_n = state.shown_n;
             state.target = target;
-            state.target_n = target_n;
             state.start = Some(*now);
         }
         let start = state.start?;
         if anim::reduced() {
             state.start = None;
             state.shown = target;
-            state.shown_n = target_n;
             return Some(canvas::Action::request_redraw());
         }
         let t = now.saturating_duration_since(start).as_secs_f32() / anim::SLOW.as_secs_f32();
         if t >= 1.0 {
             state.start = None;
             state.shown = target;
-            state.shown_n = target_n;
         } else {
             state.shown = anim::ring_fill(state.from, target, t);
-            state.shown_n = anim::count_up_int(state.from_n, target_n, t);
         }
         Some(canvas::Action::request_redraw())
     }
@@ -98,22 +88,13 @@ impl canvas::Program<Message> for Counted {
             self.ring.tone,
             text.finish(),
             self.ring.p.mode,
-            if self.count.is_some() {
-                state.shown_n
-            } else {
-                i64::MIN
-            },
         );
         if state.key.borrow().as_ref() != Some(&key) {
             state.cache.clear();
             *state.key.borrow_mut() = Some(key);
         }
         vec![state.cache.draw(renderer, bounds.size(), |frame| {
-            let label = match self.count {
-                Some(_) => state.shown_n.to_string(),
-                None => self.ring.label.clone(),
-            };
-            self.ring.paint(frame, state.shown, label);
+            self.ring.paint(frame, state.shown, self.ring.label.clone());
         })]
     }
 }
@@ -174,20 +155,10 @@ impl Ring {
 }
 
 pub fn ring<'a>(ring: Ring, size: f32) -> Element<'a, Message> {
-    canvas::Canvas::new(Counted { ring, count: None })
+    canvas::Canvas::new(Counted { ring })
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
         .into()
-}
-
-pub fn ring_counting<'a>(ring: Ring, number: i64, size: f32) -> Element<'a, Message> {
-    canvas::Canvas::new(Counted {
-        ring,
-        count: Some(number),
-    })
-    .width(Length::Fixed(size))
-    .height(Length::Fixed(size))
-    .into()
 }
 
 #[cfg(test)]

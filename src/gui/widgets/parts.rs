@@ -1,13 +1,13 @@
 //! Reusable list, form and feedback pieces built on the core widgets.
 use super::appear::slide_in;
 use super::cursor::arrow;
-use super::{icon, ButtonKind};
+use super::{icon, small, ButtonKind};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, column, container, progress_bar, row, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Pixels, Shadow};
+use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Pixels, Shadow, Theme};
 
 pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
@@ -17,31 +17,73 @@ pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Messag
         .into()
 }
 
-pub fn list_button<'a>(
+/// Container style for the rounded inset panels used behind grouped details.
+pub fn well_style(p: Palette) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(p.surface_alt)),
+        border: Border {
+            radius: theme::R.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn well<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
-    on_press: Message,
+) -> container::Container<'a, Message> {
+    container(content)
+        .padding(theme::S3)
+        .width(Length::Fill)
+        .style(well_style(p))
+}
+
+/// A well whose content scrolls once it is taller than `max`.
+pub fn scroll_well<'a>(
+    p: Palette,
+    list: impl Into<Element<'a, Message>>,
+    max: f32,
 ) -> Element<'a, Message> {
-    arrow(
-        button(content)
-            .width(Length::Fill)
-            .padding([theme::S3, theme::S4])
-            .on_press(on_press)
-            .style(move |_, status| button::Style {
-                background: match status {
-                    button::Status::Hovered => Some(Background::Color(p.hover)),
-                    button::Status::Pressed => Some(Background::Color(p.pressed)),
-                    _ => None,
-                },
-                text_color: p.text,
-                border: Border {
-                    radius: theme::R.into(),
-                    ..Border::default()
-                },
-                shadow: Shadow::default(),
-                snap: true,
-            }),
+    container(
+        scrollable(container(list).padding(theme::S3).width(Length::Fill))
+            .direction(super::controls::scrollbar())
+            .style(super::controls::scroll_style(p)),
     )
+    .max_height(max)
+    .style(well_style(p))
+    .into()
+}
+
+/// One line of a progress list: the state mark, what it is about and a short note.
+pub fn step_row<'a>(
+    p: Palette,
+    lead: Element<'a, Message>,
+    label: Vec<Element<'a, Message>>,
+    note: String,
+) -> Element<'a, Message> {
+    let mut line = row![container(lead).center(theme::CHECK)];
+    for part in label {
+        line = line.push(part);
+    }
+    line.push(space::horizontal())
+        .push(small(p, note))
+        .spacing(theme::S3)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// Items set under a row's title, lined up with its text rather than its icon.
+pub fn under_row<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    container(column(items).spacing(theme::S2).width(Length::Fill))
+        .padding(Padding {
+            top: 0.0,
+            right: theme::S4,
+            bottom: theme::S2,
+            left: super::explain::INDENT,
+        })
+        .width(Length::Fill)
+        .into()
 }
 
 pub fn empty_state<'a>(
@@ -84,52 +126,6 @@ pub fn empty_state_art<'a>(
     container(c)
         .center_x(Length::Fill)
         .padding([theme::S10, theme::S5])
-        .into()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepState {
-    Running,
-    Done,
-}
-
-pub fn progress_row<'a>(
-    p: Palette,
-    label: impl Into<String>,
-    state: StepState,
-) -> Element<'a, Message> {
-    let (glyph, color) = match state {
-        StepState::Running => (Icon::Refresh, p.text_muted),
-        StepState::Done => (Icon::CheckCircle, p.good),
-    };
-    row![
-        container(icon(glyph, 18.0, color)).center_x(18),
-        text(label.into())
-            .size(theme::BODY)
-            .font(if state == StepState::Running {
-                theme::MEDIUM
-            } else {
-                theme::REGULAR
-            })
-            .color(p.text)
-    ]
-    .spacing(theme::S3)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-pub fn bar<'a>(p: Palette, ratio: f32, tone: Tone) -> Element<'a, Message> {
-    let fill = p.tone(tone);
-    progress_bar(0.0..=1.0, ratio.clamp(0.0, 1.0))
-        .girth(6)
-        .style(move |_| progress_bar::Style {
-            background: Background::Color(p.hover_strong),
-            bar: Background::Color(fill),
-            border: Border {
-                radius: 3.0.into(),
-                ..Border::default()
-            },
-        })
         .into()
 }
 
@@ -216,19 +212,7 @@ pub fn expander<'a>(
     );
     let mut c = column![head].spacing(theme::S2);
     if open {
-        c = c.push(
-            container(content)
-                .padding(theme::S3)
-                .width(Length::Fill)
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(p.surface_alt)),
-                    border: Border {
-                        radius: theme::R.into(),
-                        ..Border::default()
-                    },
-                    ..container::Style::default()
-                }),
-        );
+        c = c.push(well(p, content));
     }
     c.into()
 }
@@ -292,36 +276,4 @@ pub fn toast<'a>(
 
 pub fn link<'a>(p: Palette, label: impl Into<String>, on_press: Message) -> Element<'a, Message> {
     super::action(p, ButtonKind::Ghost, label, None, Some(on_press))
-}
-
-pub fn hyperlink<'a>(
-    p: Palette,
-    label: impl Into<String>,
-    on_press: Message,
-) -> Element<'a, Message> {
-    button(
-        row![
-            text(label.into())
-                .size(theme::BODY)
-                .font(theme::MEDIUM)
-                .wrapping(Wrapping::None),
-            icon(Icon::ExternalLink, 14.0, p.text_muted),
-        ]
-        .spacing(theme::S2)
-        .align_y(Alignment::Center),
-    )
-    .padding([theme::S1, 0.0])
-    .on_press(on_press)
-    .style(move |_, status| button::Style {
-        background: None,
-        text_color: if status == button::Status::Active {
-            p.text
-        } else {
-            p.text_muted
-        },
-        border: Border::default(),
-        shadow: Shadow::default(),
-        snap: true,
-    })
-    .into()
 }

@@ -8,7 +8,7 @@ use super::svg::PathData;
 use crate::gui::theme::{mix, Palette};
 use crate::gui::widgets::anim::{self, DECELERATE, EASE_IN_OUT, STANDARD};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Size, Theme};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -78,10 +78,7 @@ pub struct ShieldFill {
 
 impl ShieldFill {
     pub fn view<'a, M: 'a>(self) -> Element<'a, M> {
-        canvas::Canvas::new(self)
-            .width(Length::Fixed(SIZE.width))
-            .height(Length::Fixed(SIZE.height))
-            .into()
+        super::fixed_canvas(self, SIZE)
     }
 
     fn busy(&self, st: &State, age: f32, t: f32) -> bool {
@@ -444,9 +441,8 @@ impl<M> canvas::Program<M> for ShieldFill {
             Run::Working => {}
         }
 
-        st.live.pulses.draw(&mut f, &stage, color);
         st.live
-            .draw_tooltip(&mut f, &self.p, &stage, &spots(), |_| self.label.clone());
+            .draw_overlay(&mut f, &self.p, &stage, color, &spots(), |_| self.label.clone());
         vec![f.into_geometry()]
     }
 
@@ -473,12 +469,11 @@ fn excl_gap() -> &'static PathData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
-    use crate::gui::widgets::anim::MOTION_LOCK;
-    use crate::gui::widgets::hairline::Parallax;
+    use crate::gui::widgets::hairline::parallax::Parallax;
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
-    use iced::window;
     use std::time::Duration;
 
     const BOUNDS: Rectangle = Rectangle {
@@ -500,14 +495,7 @@ mod tests {
         }
     }
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     #[test]
     fn constants_parse() {
@@ -579,8 +567,7 @@ mod tests {
 
     #[test]
     fn fills_while_working_then_settles_and_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
@@ -611,13 +598,11 @@ mod tests {
         }
         assert!(frames as f32 * 0.016 >= RESULT_END - 0.05);
         assert_eq!(st.level.value, 1.04);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn no_splash_at_the_start_and_clicks_beside_it_do_nothing() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let t0 = Instant::now();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
         let mut st = State::default();
@@ -639,13 +624,11 @@ mod tests {
         assert!(st.ripple.is_none() && !st.live.pulses.alive());
         click(&mut st, stage.point(C));
         assert!(st.ripple.is_some() && st.live.pulses.alive());
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_shows_the_end_at_once() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let t0 = Instant::now();
         let mut st = State::default();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
@@ -668,6 +651,5 @@ mod tests {
         )));
         assert_eq!(st.level.value, 0.0);
         assert!(st.ripple.is_none());
-        anim::set_reduced_override(None);
     }
 }

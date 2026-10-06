@@ -1,14 +1,15 @@
 //! The Secblitz window (iced, CPU renderer).
 pub mod icons;
 pub mod pages;
+mod persist;
 pub mod render;
+mod tasks;
 pub mod theme;
+mod window;
 pub mod widgets;
 
 use crate::app::{self, score::Score, worker};
 use crate::i18n::Lang;
-use iced::futures::channel::{mpsc, oneshot};
-use iced::futures::{Future, Stream};
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
@@ -17,6 +18,11 @@ use secblitz::engine::Report;
 use std::path::PathBuf;
 use std::sync::Arc;
 use theme::{Palette, Tone};
+
+pub use persist::wait_persisted;
+pub use tasks::{blocking, blocking_stream, ticks_100ms};
+use persist::{forget_check, persist, Cache};
+use window::window_icon;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -233,105 +239,6 @@ pub struct App {
     recheck: Recheck,
     focused: bool,
     user: Option<String>,
-}
-
-enum Cache {
-    Keep,
-    Save(String, u64, Arc<secblitz::engine::Report>),
-    Forget,
-}
-
-fn persist(
-    dir: Option<PathBuf>,
-    entry: Option<app::history::Entry>,
-    status: secblitz::status::Status,
-    cache: Cache,
-) {
-    write_in_order(move || {
-        if let (Some(dir), Some(entry)) = (&dir, &entry) {
-            let _ = app::history::record(dir, entry);
-        }
-        let _ = secblitz::status::write(&status);
-        if let Some(dir) = &dir {
-            match cache {
-                Cache::Keep => {}
-                Cache::Save(user, at, report) => {
-                    let _ = app::last_check::save(dir, &user, at, &report);
-                }
-                Cache::Forget => app::last_check::forget(dir),
-            }
-        }
-    });
-}
-
-fn forget_check(dir: Option<PathBuf>) {
-    let Some(dir) = dir else { return };
-    write_in_order(move || app::last_check::forget(&dir));
-}
-
-/// Run file writes one after another on a single background thread, in the
-/// order they were queued: a later "forget" must never land before an
-/// earlier save, and history read-modify-writes must not interleave.
-fn write_in_order(job: impl FnOnce() + Send + 'static) {
-    type Job = Box<dyn FnOnce() + Send>;
-    static QUEUE: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<Job>>> =
-        std::sync::OnceLock::new();
-    PENDING_WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let queue = QUEUE.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<Job>();
-        std::thread::spawn(move || {
-            for job in rx {
-                job();
-                PENDING_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-            }
-        });
-        std::sync::Mutex::new(tx)
-    });
-    let sent = queue
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .send(Box::new(job));
-    if sent.is_err() {
-        PENDING_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-static PENDING_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-pub fn wait_persisted() {
-    while PENDING_WRITES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-}
-
-pub fn blocking<T: Send + 'static>(
-    f: impl FnOnce() -> T + Send + 'static,
-) -> impl Future<Output = T> + Send + 'static {
-    let (tx, rx) = oneshot::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(f());
-    });
-    // A panicked closure drops the sender: keep the UI alive rather than
-    // panicking inside the executor (the page's own error handling applies).
-    async move {
-        match rx.await {
-            Ok(value) => value,
-            Err(_) => std::future::pending().await,
-        }
-    }
-}
-
-pub fn blocking_stream<T: Send + 'static>(
-    f: impl FnOnce(&dyn Fn(T)) + Send + 'static,
-) -> impl Stream<Item = T> + Send + 'static {
-    let (tx, rx) = mpsc::unbounded();
-    std::thread::spawn(move || {
-        let emit = move |item: T| {
-            let _ = tx.unbounded_send(item);
-        };
-        f(&emit);
-    });
-    rx
 }
 
 impl App {
@@ -1093,59 +1000,6 @@ const WARM_SETTINGS: usize = 2;
 const PAGE_MAX_WIDTH: f32 = 960.0;
 const TOAST_SECONDS: u64 = 4;
 
-fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant> + Send + 'static {
-    let (tx, rx) = mpsc::unbounded();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(period);
-        if tx.unbounded_send(std::time::Instant::now()).is_err() {
-            break;
-        }
-    });
-    rx
-}
-
-pub fn ticks_100ms() -> Subscription<std::time::Instant> {
-    Subscription::run(|| ticker(std::time::Duration::from_millis(100)))
-}
-
-pub fn window_icon_rgba(size: u32) -> Vec<u8> {
-    const ICO: &[u8] = include_bytes!("../../assets/secblitz.ico");
-    ico_frame(ICO, size).unwrap_or_default()
-}
-
-fn ico_frame(ico: &[u8], size: u32) -> Option<Vec<u8>> {
-    let count = u16::from_le_bytes([*ico.get(4)?, *ico.get(5)?]) as usize;
-    for i in 0..count {
-        let entry = ico.get(6 + 16 * i..22 + 16 * i)?;
-        let width = if entry[0] == 0 {
-            256
-        } else {
-            u32::from(entry[0])
-        };
-        if width != size {
-            continue;
-        }
-        let len = u32::from_le_bytes(entry[8..12].try_into().ok()?) as usize;
-        let offset = u32::from_le_bytes(entry[12..16].try_into().ok()?) as usize;
-        let mut reader = png::Decoder::new(ico.get(offset..offset.checked_add(len)?)?)
-            .read_info()
-            .ok()?;
-        let mut pixels = vec![0; reader.output_buffer_size()];
-        let frame = reader.next_frame(&mut pixels).ok()?;
-        let rgba = frame.color_type == png::ColorType::Rgba
-            && frame.bit_depth == png::BitDepth::Eight
-            && frame.width == size
-            && frame.height == size;
-        pixels.truncate(frame.buffer_size());
-        return rgba.then_some(pixels);
-    }
-    None
-}
-
-fn window_icon() -> Option<iced::window::Icon> {
-    iced::window::icon::from_rgba(window_icon_rgba(64), 64, 64).ok()
-}
-
 pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::Status {
     let attention: Vec<String> = app::score::to_check_ids(report)
         .into_iter()
@@ -1192,29 +1046,6 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         .run()
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn icon_has_expected_size_and_shape() {
-        let px = window_icon_rgba(32);
-        assert_eq!(px.len(), 32 * 32 * 4);
-        let at = |x: usize, y: usize| &px[(y * 32 + x) * 4..(y * 32 + x) * 4 + 4];
-        assert_eq!(at(0, 0)[3], 0, "corner is transparent");
-        assert_eq!(at(7, 13)[..3], [255, 255, 255], "shield outline is white");
-        assert_eq!(at(3, 16)[..3], [0x18, 0x18, 0x1B], "the tile is ink");
-        assert!(
-            at(11, 13)[..3].iter().all(|&c| c < 0x30),
-            "inside the shield is dark"
-        );
-        assert_eq!(at(15, 11)[..3], [255, 255, 255], "the bolt is white");
-        assert_eq!(window_icon_rgba(64).len(), 64 * 64 * 4);
-        assert!(window_icon_rgba(33).is_empty(), "no frame, no icon");
-        assert!(window_icon().is_some());
-    }
-}
-
 #[cfg(test)]
 mod recheck_tests {
     use super::*;

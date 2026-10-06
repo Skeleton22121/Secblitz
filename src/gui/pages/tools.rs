@@ -115,6 +115,7 @@ pub enum Run<T> {
     Done(T),
 }
 
+// Not derived: a derive would demand `T: Default`.
 #[allow(clippy::derivable_impls)]
 impl<T> Default for Run<T> {
     fn default() -> Self {

@@ -62,37 +62,6 @@ impl Glyph {
         Glyph::Folder,
     ];
 
-    pub const fn name(self) -> &'static str {
-        match self {
-            Glyph::Shield => "shield",
-            Glyph::Tick => "tick",
-            Glyph::Cross => "cross",
-            Glyph::Excl => "excl",
-            Glyph::Wall => "wall",
-            Glyph::Update => "update",
-            Glyph::Lock => "lock",
-            Glyph::Wifi => "wifi",
-            Glyph::Person => "person",
-            Glyph::Eye => "eye",
-            Glyph::Game => "game",
-            Glyph::Music => "music",
-            Glyph::Play => "play",
-            Glyph::Cart => "cart",
-            Glyph::News => "news",
-            Glyph::Cards => "cards",
-            Glyph::Mail => "mail",
-            Glyph::Camera => "camera",
-            Glyph::Warn => "warn",
-            Glyph::Gear => "gear",
-            Glyph::Bin => "bin",
-            Glyph::Power => "power",
-            Glyph::Search => "search",
-            Glyph::Doc => "doc",
-            Glyph::Remote => "remote",
-            Glyph::Folder => "folder",
-        }
-    }
-
     pub const fn d(self) -> &'static str {
         match self {
             Glyph::Shield => "M12 2.6c2.5 1.8 5.2 2.8 8.3 3V11c0 4.7-2.9 8-8.3 10.2C6.6 19 3.7 15.7 3.7 11V5.6c3.1-.2 5.8-1.2 8.3-3z",
@@ -129,10 +98,6 @@ impl Glyph {
         let all = ALL.get_or_init(|| Glyph::ALL.iter().map(|g| PathData::of(g.d())).collect());
         &all[self as usize]
     }
-
-    pub fn from_name(name: &str) -> Option<Glyph> {
-        Glyph::ALL.into_iter().find(|g| g.name() == name)
-    }
 }
 
 #[cfg(test)]
@@ -143,17 +108,15 @@ mod tests {
     fn every_glyph_parses_and_fits_its_box() {
         for (i, g) in Glyph::ALL.into_iter().enumerate() {
             assert_eq!(g as usize, i, "ALL is in declaration order");
-            let d = PathData::parse(g.d()).unwrap_or_else(|e| panic!("{}: {e}", g.name()));
-            assert!(!d.segs.is_empty(), "{}", g.name());
+            let d = PathData::parse(g.d()).unwrap_or_else(|e| panic!("{g:?}: {e}"));
+            assert!(!d.segs.is_empty(), "{g:?}");
             assert_eq!(g.data(), &d);
-            assert!(d.length() > 0.0, "{}", g.name());
+            assert!(d.length() > 0.0, "{g:?}");
             let b = d.bounds().unwrap();
             assert!(
                 b.x >= 0.0 && b.y >= 0.0 && b.x + b.width <= 24.0 && b.y + b.height <= 24.0,
-                "{} leaves its box: {b:?}",
-                g.name()
+                "{g:?} leaves its box: {b:?}"
             );
-            assert_eq!(Glyph::from_name(g.name()), Some(g));
         }
     }
 

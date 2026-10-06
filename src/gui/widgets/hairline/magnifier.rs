@@ -9,7 +9,7 @@ use super::{Glyph, Live};
 use crate::gui::theme::Palette;
 use crate::gui::widgets::anim::{self, DECELERATE, EASE_IN_OUT};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry, Path};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
+use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Size, Theme, Vector};
 use std::time::{Duration, Instant};
 
 
@@ -97,10 +97,7 @@ pub struct Magnifier {
 
 impl Magnifier {
     pub fn view<'a, M: 'a>(self, scale: f32) -> Element<'a, M> {
-        canvas::Canvas::new(self)
-            .width(Length::Fixed(VIEW.width * scale))
-            .height(Length::Fixed(VIEW.height * scale))
-            .into()
+        super::fixed_canvas(self, Size::new(VIEW.width * scale, VIEW.height * scale))
     }
 }
 
@@ -906,7 +903,6 @@ impl<M> canvas::Program<M> for Magnifier {
 mod tests {
     use super::*;
     use crate::gui::theme::{DARK, LIGHT};
-    use crate::gui::widgets::anim::MOTION_LOCK;
     use crate::i18n::Lang;
     use iced::window;
 
@@ -931,7 +927,7 @@ mod tests {
     #[test]
     fn rows_are_hit_where_they_are_drawn() {
         let h = spots();
-        let tilt = super::super::Parallax::off();
+        let tilt = crate::gui::widgets::hairline::parallax::Parallax::off();
         for i in 0..N {
             assert_eq!(h.hit(pt(120.0, row_y(i)), &tilt), Some(i));
             assert_eq!(h.hit(pt(SX1 - 2.0, row_y(i) + 8.0), &tilt), Some(i));
@@ -1073,8 +1069,7 @@ mod tests {
 
     #[test]
     fn progress_ticks_rows_and_the_ready_glass_goes_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let mut m = sample();
         let mut st = State::default();
         let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
@@ -1136,13 +1131,11 @@ mod tests {
         let secs = frames as f32 * 0.016;
         assert!(secs > BOB_HOLD && secs < BOB_HOLD + BOB_FADE + 2.0, "{secs}");
         assert!((st.lens().x - REST.x).abs() < 0.01 && (st.lens().y - REST.y).abs() < 0.01);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_is_still_but_answers() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let m = Magnifier {
             progress: Some(0.45),
             ..sample()
@@ -1162,7 +1155,6 @@ mod tests {
         assert_eq!(st.live.hover, Some(3));
         assert!(!frame(&mut st, &m, &mut clock, mouse::Cursor::Available(at)));
         assert!((st.lens_y.value - (at.y + VIEW_AT.y)).abs() < 0.01);
-        anim::set_reduced_override(None);
     }
 
     #[test]
@@ -1224,8 +1216,7 @@ mod tests {
 
     #[test]
     fn a_resting_pointer_lets_the_ready_glass_go_quiet() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let m = Magnifier {
             status: Status::Ready,
             progress: None,
@@ -1250,13 +1241,11 @@ mod tests {
         assert_eq!(st.live.hover, Some(0));
         assert!(st.tip_on);
         assert!((st.tip_y.value - (row_y(0) - ROW_H / 2.0 * 0.7)).abs() < 0.01);
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn the_label_glides_and_never_covers_its_row() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(false));
+        let _m = anim::forced::set(false);
         let m = sample();
         let mut st = State::default();
         let mut clock = m.changed;
@@ -1286,18 +1275,16 @@ mod tests {
                 for y in [row_y(i) - LENS_R - 1.0, row_y(i) - ROW_H / 2.0 * 0.7] {
                     st.tip_y = Spring::new(y);
                     let anchor = s.point(tip_at(&st, &s));
-                    let r = super::super::tooltip_rect(anchor, 90.0, size);
+                    let r = super::super::pointer::tooltip_rect(anchor, 90.0, size);
                     assert!(r.y + r.height <= anchor.y + 0.5, "k {k} row {i}: {r:?} {anchor:?}");
                 }
             }
         }
-        anim::set_reduced_override(None);
     }
 
     #[test]
     fn reduced_motion_rests_the_ready_glass_in_place() {
-        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        anim::set_reduced_override(Some(true));
+        let _m = anim::forced::set(true);
         let m = Magnifier {
             status: Status::Ready,
             progress: None,
@@ -1311,6 +1298,5 @@ mod tests {
         clock += Duration::from_secs(20);
         assert!(!frame(&mut st, &m, &mut clock, off));
         assert_eq!(st.lens(), REST);
-        anim::set_reduced_override(None);
     }
 }

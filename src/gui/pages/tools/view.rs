@@ -111,7 +111,6 @@ fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
     widgets::row_item_below(
         p,
         Some(r.icon),
-        None,
         r.title,
         Some(r.sub),
         trailing(vec![more(p, r.menu)]),
@@ -174,7 +173,6 @@ fn finished_with<'a>(
     widgets::row_item_below(
         p,
         Some(o.icon),
-        None,
         o.title,
         o.sub,
         {
@@ -440,160 +438,164 @@ fn keep_using<'a>(p: Palette, ctx: &Ctx) -> El<'a> {
     )
 }
 
+fn stop_menu(ctx: &Ctx, stopping: bool, stop: Msg) -> Vec<MenuEntry> {
+    if stopping {
+        vec![]
+    } else {
+        vec![entry(Icon::X, ctx.t("Stop after this step"), stop)]
+    }
+}
+
+fn stop_note<'a>(p: Palette, ctx: &Ctx, stopping: bool) -> El<'a> {
+    if stopping {
+        widgets::small(p, ctx.t("Stopping after this step…"))
+    } else {
+        keep_using(p, ctx)
+    }
+}
+
 fn repair_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
-    let p = ctx.palette;
-    let free = !ctx.busy;
     match &state.repair {
-        Repair::Idle => {
-            let menu = if free {
-                vec![entry(
-                    Icon::Wrench,
-                    ctx.t("Repair system files"),
-                    Msg::Ask(Sheet::Repair(RepairKind::Repair)),
-                )]
-            } else {
-                vec![]
-            };
-            widgets::row_item(
-                p,
-                Some(Icon::Wrench),
-                ctx.t("Repair Windows"),
-                Some(if free {
-                    ctx.t("Find and fix problems with Windows itself.")
-                } else {
-                    busy_hint(ctx)
-                }),
-                trailing(vec![
-                    secondary(
-                        p,
-                        ctx.t("Check"),
-                        free.then_some(Msg::Ask(Sheet::Repair(RepairKind::Check))),
-                    ),
-                    more(p, menu),
-                ]),
-                None,
-            )
-        }
+        Repair::Idle => repair_idle(ctx),
         Repair::Working {
             kind,
             cancel,
             progress: pr,
-        } => {
-            let title = match kind {
-                RepairKind::Check => ctx.t("Checking for problems"),
-                RepairKind::Repair => ctx.t("Repairing Windows"),
-            };
-            let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
-            let (ratio, label) = match pr {
-                Some(pr) => (repair_ratio(pr), ctx.t(pr.label)),
-                None => (0.03, ctx.t("Getting ready…")),
-            };
-            let mut notes = Vec::new();
-            if let Some(pr) = pr {
-                notes.push(widgets::small(
-                    p,
-                    format!(
-                        "{}  ·  {}",
-                        ctx.t("Step {a} of {b}")
-                            .replace("{a}", &pr.step.to_string())
-                            .replace("{b}", &pr.total.to_string()),
-                        running_for(ctx, pr.elapsed)
-                    ),
-                ));
-            }
-            notes.push(if stopping {
-                widgets::small(p, ctx.t("Stopping after this step…"))
-            } else {
-                keep_using(p, ctx)
-            });
-            let menu = if stopping {
-                vec![]
-            } else {
-                vec![entry(
-                    Icon::X,
-                    ctx.t("Stop after this step"),
-                    Msg::StopRepair,
-                )]
-            };
-            running(
-                p,
-                Running {
-                    icon: Icon::Wrench,
-                    title,
-                    sub: label,
-                    menu,
-                    bar: progress::bar_eased(p, ratio, Tone::Brand),
-                    notes,
-                },
-            )
-        }
+        } => repair_working(ctx, *kind, cancel, pr.as_ref()),
         Repair::Done {
-            kind,
-            result,
-            note,
-            ..
-        } => {
-            let tone = match result {
-                RepairResult::NoProblems | RepairResult::Repaired => Tone::Good,
-                RepairResult::CouldNotFinish => Tone::Bad,
-                RepairResult::ProblemsFound
-                | RepairResult::NeedsRestart
-                | RepairResult::Stopped => Tone::Warn,
-            };
-            let detail = match (result, note) {
-                (RepairResult::CouldNotFinish, Some(n)) => ctx.t(n),
-                _ => ctx.t(result.detail()),
-            };
-            let mut menu = Vec::new();
-            if *result == RepairResult::ProblemsFound && *kind == RepairKind::Check && free {
-                menu.push(entry(
-                    Icon::Wrench,
-                    ctx.t("Repair system files"),
-                    Msg::Ask(Sheet::Repair(RepairKind::Repair)),
-                ));
-            }
-            menu.push(entry(Icon::Check, ctx.t("Done"), Msg::ClearRepair));
-            finished(
-                state,
-                ctx,
-                Outcome {
-                    slot: Slot::Repair,
-                    icon: Icon::Wrench,
-                    tone,
-                    title: ctx.t(result.title()),
-                    sub: Some(detail),
-                    menu,
-                    raw: Some((Detail::Repair, logic::repair_why(*result, *note).to_owned())),
-                },
-            )
-        }
+            kind, result, note, ..
+        } => repair_done(state, ctx, *kind, *result, *note),
     }
 }
 
-fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+fn repair_idle<'a>(ctx: &Ctx) -> El<'a> {
     let p = ctx.palette;
     let free = !ctx.busy;
-    let again = |label: String| entry(Icon::Refresh, label, Msg::LookForUpdates);
-    match &state.updates {
-        Updates::Idle => widgets::row_item(
-            p,
-            Some(Icon::Download),
-            ctx.t("Windows updates"),
-            Some(if free {
-                ctx.t("Install important security updates.")
-            } else {
-                busy_hint(ctx)
-            }),
+    let menu = if free {
+        vec![entry(
+            Icon::Wrench,
+            ctx.t("Repair system files"),
+            Msg::Ask(Sheet::Repair(RepairKind::Repair)),
+        )]
+    } else {
+        vec![]
+    };
+    widgets::row_item(
+        p,
+        Some(Icon::Wrench),
+        ctx.t("Repair Windows"),
+        Some(if free {
+            ctx.t("Find and fix problems with Windows itself.")
+        } else {
+            busy_hint(ctx)
+        }),
+        trailing(vec![
             secondary(
                 p,
-                ctx.t("Look for updates"),
-                free.then_some(Msg::LookForUpdates),
+                ctx.t("Check"),
+                free.then_some(Msg::Ask(Sheet::Repair(RepairKind::Check))),
             ),
-            None,
-        ),
+            more(p, menu),
+        ]),
+        None,
+    )
+}
+
+fn repair_working<'a>(
+    ctx: &Ctx,
+    kind: RepairKind,
+    cancel: &std::sync::atomic::AtomicBool,
+    pr: Option<&logic::RepairProgress>,
+) -> El<'a> {
+    let p = ctx.palette;
+    let title = match kind {
+        RepairKind::Check => ctx.t("Checking for problems"),
+        RepairKind::Repair => ctx.t("Repairing Windows"),
+    };
+    let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
+    let (ratio, label) = match pr {
+        Some(pr) => (repair_ratio(pr), ctx.t(pr.label)),
+        None => (0.03, ctx.t("Getting ready…")),
+    };
+    let mut notes = Vec::new();
+    if let Some(pr) = pr {
+        notes.push(widgets::small(
+            p,
+            format!(
+                "{}  ·  {}",
+                ctx.t("Step {a} of {b}")
+                    .replace("{a}", &pr.step.to_string())
+                    .replace("{b}", &pr.total.to_string()),
+                running_for(ctx, pr.elapsed)
+            ),
+        ));
+    }
+    notes.push(stop_note(p, ctx, stopping));
+    running(
+        p,
+        Running {
+            icon: Icon::Wrench,
+            title,
+            sub: label,
+            menu: stop_menu(ctx, stopping, Msg::StopRepair),
+            bar: progress::bar_eased(p, ratio, Tone::Brand),
+            notes,
+        },
+    )
+}
+
+fn repair_done<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    kind: RepairKind,
+    result: RepairResult,
+    note: Option<&'static str>,
+) -> El<'a> {
+    let tone = match result {
+        RepairResult::NoProblems | RepairResult::Repaired => Tone::Good,
+        RepairResult::CouldNotFinish => Tone::Bad,
+        RepairResult::ProblemsFound | RepairResult::NeedsRestart | RepairResult::Stopped => {
+            Tone::Warn
+        }
+    };
+    let detail = match (result, note) {
+        (RepairResult::CouldNotFinish, Some(n)) => ctx.t(n),
+        _ => ctx.t(result.detail()),
+    };
+    let mut menu = Vec::new();
+    if result == RepairResult::ProblemsFound && kind == RepairKind::Check && !ctx.busy {
+        menu.push(entry(
+            Icon::Wrench,
+            ctx.t("Repair system files"),
+            Msg::Ask(Sheet::Repair(RepairKind::Repair)),
+        ));
+    }
+    menu.push(entry(Icon::Check, ctx.t("Done"), Msg::ClearRepair));
+    finished(
+        state,
+        ctx,
+        Outcome {
+            slot: Slot::Repair,
+            icon: Icon::Wrench,
+            tone,
+            title: ctx.t(result.title()),
+            sub: Some(detail),
+            menu,
+            raw: Some((Detail::Repair, logic::repair_why(result, note).to_owned())),
+        },
+    )
+}
+
+fn check_again(label: String) -> MenuEntry {
+    entry(Icon::Refresh, label, Msg::LookForUpdates)
+}
+
+fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    match &state.updates {
+        Updates::Idle => updates_idle(ctx),
         Updates::Looking => busy_row(
             state,
-            p,
+            ctx.palette,
             Icon::Download,
             ctx.t("Windows updates"),
             ctx.t("Looking for updates…"),
@@ -607,135 +609,164 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 tone: Tone::Good,
                 title: ctx.t("Your PC is up to date"),
                 sub: Some(ctx.t("There are no important updates waiting.")),
-                menu: vec![again(ctx.t("Check again"))],
+                menu: vec![check_again(ctx.t("Check again"))],
                 raw: None,
             },
         ),
-        Updates::Found(found) => {
-            let size = logic::size_phrase(found.total_bytes());
-            let restart = ctx.t("Windows may need to restart afterwards.");
-            let tail = if size.is_empty() {
-                restart
-            } else {
-                format!(
-                    "{} {restart}",
-                    ctx.t("The download is about {size}.")
-                        .replace("{size}", &size)
-                )
-            };
-            widgets::row_item_tinted(
-                p,
-                Some(Icon::Download),
-                Some(Tone::Warn),
-                count_line(ctx, found.updates.len()),
-                Some(tail),
-                trailing(vec![
-                    widgets::action(
-                        p,
-                        ButtonKind::Primary,
-                        ctx.t("Install updates"),
-                        None,
-                        free.then(|| tools(Msg::Ask(Sheet::InstallUpdates))),
-                    ),
-                    more(p, vec![again(ctx.t("Check again"))]),
-                ]),
-                None,
-            )
-        }
-        Updates::Failed { note, .. } => {
-            let (menu, button) = failure_steps(ctx, note, again(ctx.t("Try again")));
-            finished_with(
-                state,
-                ctx,
-                Outcome {
-                    slot: Slot::Updates,
-                    icon: Icon::Download,
-                    tone: Tone::Warn,
-                    title: ctx.t("We couldn't check for updates"),
-                    sub: Some(ctx.t(note)),
-                    menu,
-                    raw: Some((Detail::Updates, logic::why_for_note(note).to_owned())),
-                },
-                button,
-            )
-        }
+        Updates::Found(found) => updates_found(ctx, found),
+        Updates::Failed { note, .. } => updates_failed(state, ctx, note),
         Updates::Installing {
             cancel,
             stage,
             elapsed,
             count,
-        } => {
-            let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
-            let notes = vec![
-                widgets::small(p, running_for(ctx, *elapsed)),
-                if stopping {
-                    widgets::small(p, ctx.t("Stopping after this step…"))
-                } else {
-                    keep_using(p, ctx)
-                },
-            ];
-            let menu = if stopping {
-                vec![]
-            } else {
-                vec![entry(
-                    Icon::X,
-                    ctx.t("Stop after this step"),
-                    Msg::StopInstall,
-                )]
-            };
-            running(
+        } => updates_installing(ctx, cancel, *stage, *elapsed, *count),
+        Updates::Done { result, note, .. } => updates_done(state, ctx, *result, *note),
+    }
+}
+
+fn updates_idle<'a>(ctx: &Ctx) -> El<'a> {
+    let p = ctx.palette;
+    let free = !ctx.busy;
+    widgets::row_item(
+        p,
+        Some(Icon::Download),
+        ctx.t("Windows updates"),
+        Some(if free {
+            ctx.t("Install important security updates.")
+        } else {
+            busy_hint(ctx)
+        }),
+        secondary(
+            p,
+            ctx.t("Look for updates"),
+            free.then_some(Msg::LookForUpdates),
+        ),
+        None,
+    )
+}
+
+fn updates_found<'a>(ctx: &Ctx, found: &logic::Found) -> El<'a> {
+    let p = ctx.palette;
+    let size = logic::size_phrase(found.total_bytes());
+    let restart = ctx.t("Windows may need to restart afterwards.");
+    let tail = if size.is_empty() {
+        restart
+    } else {
+        format!(
+            "{} {restart}",
+            ctx.t("The download is about {size}.")
+                .replace("{size}", &size)
+        )
+    };
+    widgets::row_item_tinted(
+        p,
+        Some(Icon::Download),
+        Some(Tone::Warn),
+        count_line(ctx, found.updates.len()),
+        Some(tail),
+        trailing(vec![
+            widgets::action(
                 p,
-                Running {
-                    icon: Icon::Download,
-                    title: count_installing(ctx, *count),
-                    sub: ctx.t(stage.label()),
-                    menu,
-                    bar: progress::bar_eased(p, stage_ratio(*stage), Tone::Brand),
-                    notes,
-                },
-            )
-        }
-        Updates::Done { result, note, .. } => {
-            let tone = match result {
-                InstallResult::Installed => Tone::Good,
-                InstallResult::CouldNotFinish => Tone::Bad,
-                _ => Tone::Warn,
-            };
-            let detail = match (result, note) {
-                (InstallResult::CouldNotFinish, Some(n)) => ctx.t(n),
-                _ => ctx.t(result.detail()),
-            };
-            let mut menu = Vec::new();
-            let mut button = None;
-            if let (InstallResult::CouldNotFinish, Some(n)) = (result, note) {
-                if logic::suggests_windows_update(n) && ctx.broker.is_some() {
-                    button = Some(open_update_button(ctx));
-                }
-            }
-            if *result == InstallResult::NotConfirmed && ctx.broker.is_some() {
-                menu.push(entry(
-                    Icon::ExternalLink,
-                    ctx.t("Open Windows Update"),
-                    Msg::Open(Shortcut::WindowsUpdate),
-                ));
-            }
-            menu.push(entry(Icon::Check, ctx.t("Done"), Msg::ClearUpdates));
-            finished_with(
-                state,
-                ctx,
-                Outcome {
-                    slot: Slot::Updates,
-                    icon: Icon::Download,
-                    tone,
-                    title: ctx.t(result.title()),
-                    sub: Some(detail),
-                    menu,
-                    raw: Some((Detail::Updates, logic::install_why(*result, *note).to_owned())),
-                },
-                button,
-            )
+                ButtonKind::Primary,
+                ctx.t("Install updates"),
+                None,
+                (!ctx.busy).then(|| tools(Msg::Ask(Sheet::InstallUpdates))),
+            ),
+            more(p, vec![check_again(ctx.t("Check again"))]),
+        ]),
+        None,
+    )
+}
+
+fn updates_failed<'a>(state: &'a State, ctx: &'a Ctx, note: &'static str) -> El<'a> {
+    let (menu, button) = failure_steps(ctx, note, check_again(ctx.t("Try again")));
+    finished_with(
+        state,
+        ctx,
+        Outcome {
+            slot: Slot::Updates,
+            icon: Icon::Download,
+            tone: Tone::Warn,
+            title: ctx.t("We couldn't check for updates"),
+            sub: Some(ctx.t(note)),
+            menu,
+            raw: Some((Detail::Updates, logic::why_for_note(note).to_owned())),
+        },
+        button,
+    )
+}
+
+fn updates_installing<'a>(
+    ctx: &Ctx,
+    cancel: &std::sync::atomic::AtomicBool,
+    stage: logic::InstallStage,
+    elapsed: u64,
+    count: usize,
+) -> El<'a> {
+    let p = ctx.palette;
+    let stopping = cancel.load(std::sync::atomic::Ordering::SeqCst);
+    let notes = vec![
+        widgets::small(p, running_for(ctx, elapsed)),
+        stop_note(p, ctx, stopping),
+    ];
+    running(
+        p,
+        Running {
+            icon: Icon::Download,
+            title: count_installing(ctx, count),
+            sub: ctx.t(stage.label()),
+            menu: stop_menu(ctx, stopping, Msg::StopInstall),
+            bar: progress::bar_eased(p, stage_ratio(stage), Tone::Brand),
+            notes,
+        },
+    )
+}
+
+fn updates_done<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    result: InstallResult,
+    note: Option<&'static str>,
+) -> El<'a> {
+    let tone = match result {
+        InstallResult::Installed => Tone::Good,
+        InstallResult::CouldNotFinish => Tone::Bad,
+        _ => Tone::Warn,
+    };
+    let detail = match (result, note) {
+        (InstallResult::CouldNotFinish, Some(n)) => ctx.t(n),
+        _ => ctx.t(result.detail()),
+    };
+    let mut menu = Vec::new();
+    let mut button = None;
+    if let (InstallResult::CouldNotFinish, Some(n)) = (result, note) {
+        if logic::suggests_windows_update(n) && ctx.broker.is_some() {
+            button = Some(open_update_button(ctx));
         }
     }
+    if result == InstallResult::NotConfirmed && ctx.broker.is_some() {
+        menu.push(entry(
+            Icon::ExternalLink,
+            ctx.t("Open Windows Update"),
+            Msg::Open(Shortcut::WindowsUpdate),
+        ));
+    }
+    menu.push(entry(Icon::Check, ctx.t("Done"), Msg::ClearUpdates));
+    finished_with(
+        state,
+        ctx,
+        Outcome {
+            slot: Slot::Updates,
+            icon: Icon::Download,
+            tone,
+            title: ctx.t(result.title()),
+            sub: Some(detail),
+            menu,
+            raw: Some((Detail::Updates, logic::install_why(result, note).to_owned())),
+        },
+        button,
+    )
 }
 
 fn tips_summary(ctx: &Ctx, report: &logic::TipsReport) -> String {
@@ -791,6 +822,34 @@ fn count_installing(ctx: &Ctx, n: usize) -> String {
 
 
 fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
+    if let Tips::Running(profile) = &state.tips {
+        return vec![tips_running(ctx, *profile)];
+    }
+    let mut out = vec![tips_picker(state, ctx)];
+    if let Tips::Done(report) = &state.tips {
+        out.extend(tips_lists(state, ctx, report));
+    }
+    out
+}
+
+fn tips_running<'a>(ctx: &Ctx, profile: TipProfile) -> El<'a> {
+    let p = ctx.palette;
+    widgets::row_item_below(
+        p,
+        Some(Icon::ShieldCheck),
+        ctx.t("Looking at your PC…"),
+        Some(format!(
+            "{}  ·  {}",
+            ctx.t(profile.title()),
+            ctx.t("This can take about a minute.")
+        )),
+        iced::widget::space::horizontal().width(0),
+        vec![progress::indeterminate(p, Tone::Brand)],
+        None,
+    )
+}
+
+fn tips_picker<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let profiles: Vec<(TipProfile, String)> = TipProfile::ALL
         .iter()
@@ -801,24 +860,6 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     }))
     .max_width(theme::CONTENT_MAX)
     .into();
-
-    if let Tips::Running(profile) = &state.tips {
-        return vec![widgets::row_item_below(
-            p,
-            Some(Icon::ShieldCheck),
-            None,
-            ctx.t("Looking at your PC…"),
-            Some(format!(
-                "{}  ·  {}",
-                ctx.t(profile.title()),
-                ctx.t("This can take about a minute.")
-            )),
-            iced::widget::space::horizontal().width(0),
-            vec![progress::indeterminate(p, Tone::Brand)],
-            None,
-        )];
-    }
-
     let done = matches!(state.tips, Tips::Done(_));
     let mut items = vec![secondary(
         p,
@@ -846,55 +887,57 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
             below.push(raw_text(ctx, &tips_summary(ctx, report)));
         }
     }
-    let mut out = vec![widgets::row_item_below(
+    widgets::row_item_below(
         p,
         Some(Icon::ShieldCheck),
-        None,
         ctx.t("What do you use this PC for?"),
         Some(ctx.t("This only looks at your PC. Nothing is changed.")),
         trailing(items),
         below,
         None,
-    )];
-    if let Tips::Done(report) = &state.tips {
-        let scanning = matches!(state.scan, Run::Working);
-        let threats_busy = matches!(state.threats, Run::Working);
-        let (needs, fine): (Vec<&logic::Tip>, Vec<&logic::Tip>) = report
-            .tips
-            .iter()
-            .partition(|tip| tip.state != TipState::Good);
-        let rows = |tips: &[&logic::Tip]| -> El<'a> {
-            column(tips.iter().map(|tip| tip_row(ctx, tip, scanning, threats_busy)))
-                .spacing(theme::S1)
-                .width(Length::Fill)
-                .into()
-        };
-        if !needs.is_empty() {
-            out.push(widgets::collapsible(
-                p,
-                ctx.t("Needs a look"),
-                Some(match report.count(TipState::Look) {
-                    0 => ctx.t("{n} items").replace("{n}", &needs.len().to_string()),
-                    n => ctx.t("{n} worth a look").replace("{n}", &n.to_string()),
-                }),
-                !state.detail_open(Detail::TipsList),
-                tools(Msg::ToggleDetail(Detail::TipsList)),
-                rows(&needs),
-            ));
-        }
-        if !fine.is_empty() {
-            out.push(widgets::collapsible(
-                p,
-                ctx.t("All good"),
-                Some(
-                    ctx.t("{n} look good")
-                        .replace("{n}", &fine.len().to_string()),
-                ),
-                state.detail_open(Detail::TipsGood),
-                tools(Msg::ToggleDetail(Detail::TipsGood)),
-                rows(&fine),
-            ));
-        }
+    )
+}
+
+fn tips_lists<'a>(state: &'a State, ctx: &'a Ctx, report: &logic::TipsReport) -> Vec<El<'a>> {
+    let p = ctx.palette;
+    let scanning = matches!(state.scan, Run::Working);
+    let threats_busy = matches!(state.threats, Run::Working);
+    let (needs, fine): (Vec<&logic::Tip>, Vec<&logic::Tip>) = report
+        .tips
+        .iter()
+        .partition(|tip| tip.state != TipState::Good);
+    let rows = |tips: &[&logic::Tip]| -> El<'a> {
+        column(tips.iter().map(|tip| tip_row(ctx, tip, scanning, threats_busy)))
+            .spacing(theme::S1)
+            .width(Length::Fill)
+            .into()
+    };
+    let mut out = Vec::new();
+    if !needs.is_empty() {
+        out.push(widgets::collapsible(
+            p,
+            ctx.t("Needs a look"),
+            Some(match report.count(TipState::Look) {
+                0 => ctx.t("{n} items").replace("{n}", &needs.len().to_string()),
+                n => ctx.t("{n} worth a look").replace("{n}", &n.to_string()),
+            }),
+            !state.detail_open(Detail::TipsList),
+            tools(Msg::ToggleDetail(Detail::TipsList)),
+            rows(&needs),
+        ));
+    }
+    if !fine.is_empty() {
+        out.push(widgets::collapsible(
+            p,
+            ctx.t("All good"),
+            Some(
+                ctx.t("{n} look good")
+                    .replace("{n}", &fine.len().to_string()),
+            ),
+            state.detail_open(Detail::TipsGood),
+            tools(Msg::ToggleDetail(Detail::TipsGood)),
+            rows(&fine),
+        ));
     }
     out
 }
@@ -1016,14 +1059,7 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     )
     .padding([theme::S2, theme::S3])
     .width(Length::Fill)
-    .style(move |_| container::Style {
-        background: Some(iced::Background::Color(p.surface_alt)),
-        border: iced::Border {
-            radius: theme::R.into(),
-            ..iced::Border::default()
-        },
-        ..container::Style::default()
-    });
+    .style(widgets::well_style(p));
     let eye = widgets::icon_button(
         p,
         ButtonKind::Ghost,
@@ -1060,7 +1096,6 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     widgets::row_item_below(
         p,
         Some(Icon::Key),
-        None,
         ctx.t("Password generator"),
         Some(caption),
         space::horizontal().width(0),
@@ -1224,9 +1259,10 @@ fn settings_group<'a>(ctx: &'a Ctx) -> El<'a> {
 }
 
 
-fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
-    let p = ctx.palette;
-    let (icon, title, lines, confirm_label): (Icon, String, Vec<String>, String) = match sheet {
+type SheetText = (Icon, String, Vec<String>, String);
+
+fn sheet_text(state: &State, ctx: &Ctx, sheet: Sheet) -> SheetText {
+    match sheet {
         Sheet::Scan => (
             Icon::Bug,
             ctx.t("Scan for viruses?"),
@@ -1311,7 +1347,54 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ],
             ctx.t("Install"),
         ),
-    };
+    }
+}
+
+fn install_updates_extra<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    found: &logic::Found,
+) -> Vec<El<'a>> {
+    let p = ctx.palette;
+    let mut list = column![].spacing(theme::S2);
+    for u in found.updates.iter().take(5) {
+        list = list.push(
+            row![
+                widgets::icon(Icon::Check, 14.0, p.good),
+                text(u.title.clone())
+                    .size(theme::SMALL)
+                    .color(p.text)
+                    .width(Length::Fill)
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
+        );
+    }
+    if found.updates.len() > 5 {
+        list = list.push(widgets::small(
+            p,
+            ctx.t("and {n} more")
+                .replace("{n}", &(found.updates.len() - 5).to_string()),
+        ));
+    }
+    let mut raw = ctx.t("These updates come from Microsoft through Windows Update.");
+    let mut seen: Vec<&str> = Vec::new();
+    for u in &found.updates {
+        if !u.license.is_empty() && !seen.contains(&u.license.as_str()) {
+            seen.push(&u.license);
+            raw.push('\n');
+            raw.push_str(&u.license);
+        }
+    }
+    if raw.len() > 4000 {
+        raw.truncate(raw.floor_char_boundary(4000));
+    }
+    vec![list.into(), details(state, ctx, Detail::Sheet, &raw)]
+}
+
+fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
+    let p = ctx.palette;
+    let (icon, title, lines, confirm_label) = sheet_text(state, ctx, sheet);
     let mut content = column![row![
         widgets::icon(icon, theme::ICON_ROW, p.text_muted),
         widgets::h2(p, title)
@@ -1325,41 +1408,9 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     }
     if sheet == Sheet::InstallUpdates {
         if let Updates::Found(found) = &state.updates {
-            let mut list = column![].spacing(theme::S2);
-            for u in found.updates.iter().take(5) {
-                list = list.push(
-                    row![
-                        widgets::icon(Icon::Check, 14.0, p.good),
-                        text(u.title.clone())
-                            .size(theme::SMALL)
-                            .color(p.text)
-                            .width(Length::Fill)
-                    ]
-                    .spacing(theme::S2)
-                    .align_y(Alignment::Center),
-                );
+            for item in install_updates_extra(state, ctx, found) {
+                content = content.push(item);
             }
-            if found.updates.len() > 5 {
-                list = list.push(widgets::small(
-                    p,
-                    ctx.t("and {n} more")
-                        .replace("{n}", &(found.updates.len() - 5).to_string()),
-                ));
-            }
-            content = content.push(list);
-            let mut raw = ctx.t("These updates come from Microsoft through Windows Update.");
-            let mut seen: Vec<&str> = Vec::new();
-            for u in &found.updates {
-                if !u.license.is_empty() && !seen.contains(&u.license.as_str()) {
-                    seen.push(&u.license);
-                    raw.push('\n');
-                    raw.push_str(&u.license);
-                }
-            }
-            if raw.len() > 4000 {
-                raw.truncate(raw.floor_char_boundary(4000));
-            }
-            content = content.push(details(state, ctx, Detail::Sheet, &raw));
         }
     }
     let footer = row![
