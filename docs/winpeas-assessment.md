@@ -1,6 +1,6 @@
 # Scoped winPEAS assessment - baseline availability
 
-Date: 2026-10-02. Scope: defensive permission/privilege-escalation configuration measurement on **Secblitz-W11-Test only**. No exploit or payload was executed, and no privilege escalation was attempted.
+Date: 2026-10-02. Scope: defensive permission/privilege-escalation configuration measurement on **a disposable Windows 11 VM only**. No exploit or payload was executed, and no privilege escalation was attempted.
 
 ## Current result: benchmark blocked; Defender restored and verified
 
@@ -26,7 +26,7 @@ The supported `Set-MpPreference -DisableRealtimeMonitoring $true` call returned 
 - Asset: non-obfuscated **winPEASx64.exe**, 11,352,576 bytes.
 - SHA-256: **`c2b1b403f0dc71768d944100e86fa93213e5eb7c396d9b23f0fb57db3a81a973`**.
 - Downloaded on the host with `gh release download`; measured hash exactly matched the release API asset digest. This establishes matching release bytes, not a separate publisher signature/reproducible-build claim.
-- Executable retained outside the repository at `/tmp/opencode/secblitz-winpeas-private/winPEASx64.exe`; parent directory mode **0700**. Host executable was never run. No guest network or shared folder was enabled.
+- Executable retained outside the repository; parent directory mode **0700**. Host executable was never run. No guest network or shared folder was enabled.
 
 ## Reviewed invocation and collection limits
 
@@ -57,7 +57,7 @@ Service output can still contain local names/paths. Keep any future raw output i
 
 Nonsecret captures outside the repository:
 
-- `/tmp/opencode/secblitz-winpeas-private/protection-before.json`
+- `protection-before.json`
 - `enabled-help-attempt.json`
 - `supported-disable-attempt.json`
 - `blocked-summary.json`

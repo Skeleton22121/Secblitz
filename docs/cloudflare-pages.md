@@ -116,8 +116,8 @@ compiled origin.
 
 ## Sign the final release
 
-The production Ed25519 private key is stored at
-`/home/slay/.config/secblitz/release-signing-key.pem`, with mode `0600`.
+The production Ed25519 private key is kept in
+a protected location outside the repository, with mode `0600`.
 Never copy it to the repository, static site, installer, browser or tool output.
 Back it up securely outside those locations. The public 32-byte key is pinned in
 `assets/update-public-key.hex` and must be compiled into the application.
@@ -130,7 +130,7 @@ does not authorize relabeling the existing older installer:
 python3 scripts/sign-release.py \
   --installer dist/secblitz-0.4.2-windows-x64-setup.exe \
   --version 0.4.2 \
-  --key /home/slay/.config/secblitz/release-signing-key.pem \
+  --key /path/to/release-signing-key.pem \
   --output website/releases/stable.json \
   --lifetime-days 90
 ```

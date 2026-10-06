@@ -190,7 +190,7 @@ malformed/traversal paths, unstaged HTML/CSS assets, leaf/ancestor/output symlin
 hardlinks/FIFOs, ASCII/UTF-16 secret markers, PE mismatch, changed portable build,
 signed-installer tampering, feed-signature tampering, HTML hash mismatch, invalid
 WOFF2 length, signer key permissions and output aliases. Harness:
-`/tmp/opencode/test-release-review4.py` (temporary review evidence, not deployed).
+a temporary review script (temporary review evidence, not deployed).
 An initial test attempt duplicating full production binaries hit disk quota;
 compact synthetic PE/feed fixtures resolved it. Actual release staging had already
 passed independently.

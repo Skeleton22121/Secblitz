@@ -209,6 +209,6 @@ mapping, safe-right and administrator preservation, zero-mask retention,
 idempotence, inverse restore, owner/group/protection and safe-to-safe drift,
 complex ACL rejection, NULL versus empty DACLs, malformed/truncated descriptors,
 overlapping offsets, canonical encoding, size limits and exact ID allowlisting.
-Windows cross-checks use `/tmp/opencode/secblitz-cross-env.sh`; no guest changes
+Windows cross-checks use `target/build-tools/cross-env.sh`; no guest changes
 are performed. Runtime Windows mutation/readback and crash/revert validation
 remain distinct from cross-compilation and pure tests.

@@ -65,7 +65,7 @@ These tests inject updater/elevation results; they do not fetch a release, insta
 
 ### Executed results
 
-Using `source /tmp/opencode/secblitz-cross-env.sh` against the integrated 0.4.0 source:
+Using `source target/build-tools/cross-env.sh` against the integrated 0.4.0 source:
 
 - `cargo test --locked`: **93 library tests passed; 52 binary tests passed, 2 existing interactive menu probes ignored; 0 failures**. All 12 localization checks passed within the binary suite. Doc-tests passed with no cases.
 - `cargo clippy --locked --all-targets -- -D warnings`: **passed**.

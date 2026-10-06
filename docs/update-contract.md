@@ -1,6 +1,6 @@
 # Secblitz 0.5.0 update contract
 
-Source/evidence reviewed 2026-10-03. Current gate: [genuine published 0.4.3 to 0.5.0 LIVE E2E PASS](windows-v050-results.md). Protected highest-seen state and atomic replacement shipped in 0.4.3 and remain active. This is not full TUF or Authenticode publisher authentication. Earlier [0.4.x failures](windows-v040-results.md) and the pre-floor/unlink-first descriptions in older reviews are historical, not the current contract.
+Source/evidence reviewed 2026-10-03. Current gate: genuine published 0.4.3 to 0.5.0 LIVE E2E PASS. Protected highest-seen state and atomic replacement shipped in 0.4.3 and remain active. This is not full TUF or Authenticode publisher authentication. Earlier 0.4.x failures and the pre-floor/unlink-first descriptions in older reviews are historical, not the current contract.
 
 ## Unreleased 0.6.0 delivery extension
 
@@ -20,7 +20,7 @@ The compile-time `SECBLITZ_UPDATE_ORIGIN` override, or compiled `assets/update-o
 
 Current 0.5.0 compiles **https://secblitz.lol**. Older 0.4.1 clients retain **https://beacons.lol**. Both origins serve feed/download routes directly without redirects. The legacy root has a fixed 301 to the primary homepage; the primary www rule preserves its path to the apex. Updater clients request their compiled HTTPS apex directly. Mail configuration was untouched. Domain migration changed neither wire schema nor pinned key.
 
-The public trust anchor is `assets/update-public-key.hex`, 32 Ed25519 bytes encoded as 64 hex characters. Release signing credentials are external to the repository and are not distributed to users or test guests. Documentation work never needs the private key or hosting credentials. Current release artifacts/checksums are in [dist/SHA256SUMS](../dist/SHA256SUMS); avoid copying superseded hashes from older logs.
+The public trust anchor is `assets/update-public-key.hex`, 32 Ed25519 bytes encoded as 64 hex characters. Release signing credentials are external to the repository and are not distributed to users or test guests. Documentation work never needs the private key or hosting credentials. Current release artifacts/checksums are in dist/SHA256SUMS; avoid copying superseded hashes from older logs.
 
 ## Signed envelope and payload
 
@@ -60,7 +60,7 @@ This fixes the tested observe-higher/fail-payload/replay-lower case. It cannot p
 
 GET `/downloads/{filename}` from the same origin. Exact signed size and lowercase SHA-256 must match. Core payload maximum is **64 MiB**; the deployment scripts enforce Cloudflare Pages' stricter **25 MiB per-file** limit. Unverified network installer bytes are buffered and checked before staging. The client uses HTTPS only, no redirects and no inherited proxy configuration. Connection timeout is **15 seconds**; manifest plus payload share a **120-second download deadline**, with remaining budget applied to the second request.
 
-**Ed25519 metadata verification is not Windows Authenticode signing.** Current published PE/setup artifacts remain Authenticode-unsigned GNU-cross-built development artifacts. A valid release signature authorizes those exact bytes under the project's pinned key; it does not establish a Windows-trusted publisher or a complete supply-chain audit.
+**Ed25519 metadata verification is not Windows Authenticode signing.** Published PE and setup artifacts are built in CI with MSVC and are not Authenticode-signed yet. A valid release signature authorizes those exact bytes under the project's pinned key; it does not establish a Windows-trusted publisher or a complete supply-chain audit.
 
 ## Task and user preference
 
@@ -130,6 +130,6 @@ Outcomes: `not_configured`, `up_to_date`, `deferred_busy`, `worker_started`/`ins
 
 Security release 0.4.3 passed **116 native library + 52 CLI tests** and **nine SYSTEM updater cases**, including the new floor/atomic persistence cases; the earlier seven pinning/locking cases retain their narrower scope. Current 0.5.0 acceptance passed **138 library + 66 CLI**, separate readiness smoke and the same **nine SYSTEM cases**. Ignored live/attended probes are not counted as ordinary passes. [Security summary](SECURITY-REVIEW.md) distinguishes real standard-token tests, protocol fixtures and later live evidence.
 
-The genuine published **0.4.3 to 0.5.0** SYSTEM task returned Installed in **18.865 s**, UpToDate in **1.336 s**, and DeferredBusy in **1.005 s** while the same guide remained responsive. The prior authentic floor advanced to 0.5.0 with the signed installer hash, publication **1791022530**, expiration **1798798530**, and protected SYSTEM/Admin-only ACL; current/busy checks preserved it byte-for-byte. The resumed LocalService monitor produced a fresh **9,195-byte** typed 18/19/readiness report. All 18 baselines, original journals and eight real journal copies remained unchanged. No live rollback/corruption fixture was injected; SYSTEM regressions supply that evidence. [Live results](windows-v050-results.md) records the exact published bytes.
+The genuine published **0.4.3 to 0.5.0** SYSTEM task returned Installed in **18.865 s**, UpToDate in **1.336 s**, and DeferredBusy in **1.005 s** while the same guide remained responsive. The prior authentic floor advanced to 0.5.0 with the signed installer hash, publication **1791022530**, expiration **1798798530**, and protected SYSTEM/Admin-only ACL; current/busy checks preserved it byte-for-byte. The resumed LocalService monitor produced a fresh **9,195-byte** typed 18/19/readiness report. All 18 baselines, original journals and eight real journal copies remained unchanged. No live rollback/corruption fixture was injected; SYSTEM regressions supply that evidence. Live results records the exact published bytes.
 
 The shipped 0.4.0 worker still needs manual upgrade. That historical limitation does not invalidate the current live pass. Persistent observed-release rollback protection and atomic state publication are now implemented; Windows 10/Home/Pro/full standard-user broker coverage, Authenticode provenance, full TUF rotation/thresholds, staged rollout and transactional install recovery remain outside demonstrated scope. The unsigned initial browser bootstrap remains an explicit accepted preview boundary: same-site checksums are not independent publisher proof. `-RequirePublisherSignature` is ready for a future real certificate, not a self-signed trust claim.
