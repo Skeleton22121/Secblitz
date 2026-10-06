@@ -1092,7 +1092,12 @@ impl App {
             // Frame clocks run only for the page on screen: a job started on
             // Tools must not keep the whole window redrawing from another page.
             // Each page catches up on its next frame when it is shown again.
-            self.on_page(Page::Home, home::subscription(&self.home, &self.ctx)),
+            // The score counts up once the fix result is closed, where it can be seen.
+            if self.fix.is_open() {
+                Subscription::none()
+            } else {
+                self.on_page(Page::Home, home::subscription(&self.home, &self.ctx))
+            },
             self.on_page(Page::Fixes, fixes::subscription(&self.ctx)),
             fixflow::subscription(&self.fix),
             self.on_page(Page::Debloat, debloat::subscription(&self.debloat)),
