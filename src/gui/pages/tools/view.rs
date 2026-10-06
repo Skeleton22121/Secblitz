@@ -187,7 +187,7 @@ fn finished_with<'a>(
             Msg::ToggleDetail(which),
         ));
         if state.detail_open(which) {
-            below.push(raw_text(ctx, raw));
+            below.push(failure_text(ctx, o.tone, raw));
         }
     }
     widgets::row_item_below(
@@ -229,6 +229,18 @@ fn raw_text<'a>(ctx: &Ctx, raw: &str) -> El<'a> {
         .font(Font::MONOSPACE)
         .color(p.text_muted)
         .into()
+}
+
+/// "More details" for a finished job: the plain reason and what to do, never
+/// the raw text. A job that went fine has nothing more to say.
+fn failure_text<'a>(ctx: &Ctx, tone: Tone, raw: &str) -> El<'a> {
+    let p = ctx.palette;
+    let shown = if tone == Tone::Good || raw.trim().is_empty() {
+        ctx.t("No extra details.")
+    } else {
+        ctx.t(crate::app::tools::friendly_error(raw))
+    };
+    text(shown).size(theme::SMALL).color(p.text_muted).into()
 }
 
 fn elapsed_phrase(ctx: &Ctx, secs: u64) -> String {

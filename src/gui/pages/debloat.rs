@@ -1018,7 +1018,11 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                     Some(wrap(Msg::Rescan)),
                 )),
             ),
-            details(state, ctx, vec![technical.clone()]),
+            details(
+                state,
+                ctx,
+                vec![ctx.t(crate::app::tools::friendly_error(technical))],
+            ),
         ]
         .spacing(theme::S4)
         .into(),
@@ -1740,7 +1744,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Nothing was changed. Please try again."),
                 ));
             if let Some(e) = error {
-                technical.push(e.clone());
+                technical.push(ctx.t(crate::app::tools::friendly_error(e)));
             }
         }
     }
