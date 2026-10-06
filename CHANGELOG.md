@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-06
+
 ### Fixed
 - **Automatic updates from 0.7.0 finish properly.** Updating from 0.7.0 installed the new version but stopped before setting up web protection, restarting background checks and keeping automatic updates, then reported a failure. Setup now completes every step during an automatic update. If your PC already got 0.8.0 this way, this update finishes the job.
 
