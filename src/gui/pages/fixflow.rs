@@ -894,9 +894,14 @@ fn review_view<'a>(
     let mut c = column![widgets::h2(p, title)].spacing(theme::S3);
     let restart_label = ctx.t("Needs restart");
     if chosen {
+        let one = n == 1 && state.plan.len() <= 1;
         c = c.push(widgets::muted(
             p,
-            ctx.t("We'll put these settings back the way they were before Secblitz changed them:"),
+            ctx.t(if one {
+                "We'll put this setting back the way it was before Secblitz changed it:"
+            } else {
+                "We'll put these settings back the way they were before Secblitz changed them:"
+            }),
         ));
         c = c.push(plan_list(ctx, &state.plan, &restart_label));
         if state.together {
@@ -908,7 +913,11 @@ fn review_view<'a>(
         c = c.push(note(
             p,
             Icon::AlertTriangle,
-            ctx.t("Your PC will be less protected after this. You can fix these again at any time."),
+            ctx.t(if one {
+                "Your PC will be less protected after this. You can fix it again at any time."
+            } else {
+                "Your PC will be less protected after this. You can fix these again at any time."
+            }),
         ));
         c = c.push(widgets::small(
             p,
@@ -1146,8 +1155,12 @@ fn working_view<'a>(
 }
 
 fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
+    marked(p, Icon::Check, tone, s)
+}
+
+fn marked<'a>(p: Palette, mark: Icon, tone: Tone, s: String) -> Element<'a, Message> {
     row![
-        widgets::icon(Icon::Check, 16.0, p.tone(tone)),
+        widgets::icon(mark, 16.0, p.tone(tone)),
         widgets::body(p, s)
     ]
     .spacing(theme::S2)
@@ -1222,7 +1235,7 @@ fn result_view<'a>(
             ctx.t("You're now less protected from:"),
             s.less_protected
                 .iter()
-                .map(|k| bullet(p, Tone::Neutral, ctx.t(k)))
+                .map(|k| marked(p, Icon::Shield, Tone::Neutral, ctx.t(k)))
                 .collect(),
         ));
     }
