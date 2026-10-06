@@ -601,7 +601,7 @@ fn numeric_overflow_and_encoded_path_inputs_fail_before_download() {
 
 #[test]
 fn bounded_seeded_mutations_exercise_authentication_and_parser_without_panics() {
-    use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+    use rand::{rngs::StdRng, Rng, RngExt, SeedableRng};
     let mut rng = StdRng::seed_from_u64(0x5345_4342_4c49_545a);
     let raw = serde_json::to_vec(&payload()).unwrap();
     let (bytes, key) = signed(&raw);
@@ -616,15 +616,15 @@ fn bounded_seeded_mutations_exercise_authentication_and_parser_without_panics() 
         } else {
             ("signature", signature.clone())
         };
-        let index = rng.gen_range(0..changed.len());
-        changed[index] ^= 1 << rng.gen_range(0..8);
+        let index = rng.random_range(0..changed.len());
+        changed[index] ^= 1 << rng.random_range(0..8);
         envelope[field] = STANDARD.encode(changed).into();
         assert!(
             verify(&serde_json::to_vec(&envelope).unwrap(), &key, 1500).is_err(),
             "mutation {case}"
         );
 
-        let mut garbage = vec![0; rng.gen_range(0..=1024)];
+        let mut garbage = vec![0; rng.random_range(0..=1024)];
         rng.fill_bytes(&mut garbage);
         // A NUL at the start makes these deterministically invalid JSON, rather
         // than assuming every randomly generated string is invalid.
@@ -652,7 +652,7 @@ fn bounded_seeded_mutations_exercise_authentication_and_parser_without_panics() 
 
 #[test]
 fn seeded_fragmented_installer_streams_require_exact_authenticated_content() {
-    use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+    use rand::{rngs::StdRng, Rng, RngExt, SeedableRng};
     struct Fragmented<'a> {
         bytes: &'a [u8],
         chunk: usize,
@@ -673,7 +673,7 @@ fn seeded_fragmented_installer_streams_require_exact_authenticated_content() {
     p["sha256"] = hex::encode(Sha256::digest(&content)).into();
     let m = verify_value(p, 1500).unwrap();
     for case in 0..1024 {
-        let chunk = rng.gen_range(1..=127);
+        let chunk = rng.random_range(1..=127);
         assert_eq!(
             installer(
                 Fragmented {
@@ -688,13 +688,13 @@ fn seeded_fragmented_installer_streams_require_exact_authenticated_content() {
         let mut changed = content.clone();
         match case % 3 {
             0 => {
-                changed[rng.gen_range(0..content.len())] ^= 1 << rng.gen_range(0..8);
+                changed[rng.random_range(0..content.len())] ^= 1 << rng.random_range(0..8);
             }
             1 => {
-                changed.truncate(rng.gen_range(0..content.len()));
+                changed.truncate(rng.random_range(0..content.len()));
             }
             _ => {
-                changed.push(rng.gen());
+                changed.push(rng.random());
             }
         }
         assert!(

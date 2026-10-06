@@ -167,7 +167,7 @@ pub fn truncated(reply: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
 
     fn query_bytes(name: &str, qtype: u16) -> Vec<u8> {
         let mut p = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
@@ -369,10 +369,10 @@ mod tests {
     fn parse_never_panics() {
         let mut rng = StdRng::seed_from_u64(0x5ec0_b117);
         for _ in 0..10_000 {
-            let len = rng.gen_range(0..600);
+            let len = rng.random_range(0..600);
             let mut p = vec![0u8; len];
             rng.fill(&mut p[..]);
-            if len >= 12 && rng.gen_bool(0.5) {
+            if len >= 12 && rng.random_bool(0.5) {
                 p[2] &= 0x07;
                 p[4] = 0;
                 p[5] = 1;

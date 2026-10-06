@@ -1,7 +1,7 @@
 //! Saved copies of removed apps, kept in the protected state directory so an
 //! app can be brought back without internet. Never runs PowerShell or touches WindowsApps.
 use anyhow::{ensure, Context, Result};
-use rand::RngCore;
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -407,7 +407,7 @@ impl Store {
     pub fn new_staging(&self) -> Result<PathBuf> {
         self.ensure_root()?;
         let mut tag = [0u8; 8];
-        rand::rngs::OsRng.fill_bytes(&mut tag);
+        rand::rngs::SysRng.try_fill_bytes(&mut tag)?;
         let dir = self.root.join(format!("{STAGING}{}", hex(&tag)));
         fs::create_dir(&dir)?;
         Ok(dir)
@@ -503,7 +503,7 @@ impl Store {
         );
         let target = self.family_dir(family);
         let mut tag = [0u8; 8];
-        rand::rngs::OsRng.fill_bytes(&mut tag);
+        rand::rngs::SysRng.try_fill_bytes(&mut tag)?;
         let old = self.root.join(format!("{OLD}{}-{family}", hex(&tag)));
         let had_old = target.exists();
         if had_old {
