@@ -99,7 +99,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
         "accounts.autologon" => "Anyone who turns on your PC getting straight into your account",
-        "remote_desktop.disabled" => "Strangers trying to sign in to your PC from far away",
+        "remote_desktop.disabled" => "Someone signing in to your PC from another place",
         "smb1.disabled" => "Old file-sharing flaws that let malware spread between PCs",
         "vbs.memory_integrity" => "Harmful drivers taking over the core of Windows",
         "vbs.kernel_stack_protection" => {
@@ -116,7 +116,7 @@ pub fn control_impact(id: &str) -> &'static str {
             "A harmful program starting again every time you turn on your PC"
         }
         "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
-        "smb.shares_exposed" => "Strangers on your network opening or changing your shared files",
+        "smb.shares_exposed" => "Someone on your network opening or changing your shared files",
         "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
         "recovery.winre_enabled" => "Being stuck without a way to repair Windows if it stops starting",
         _ => "",
@@ -129,10 +129,9 @@ pub fn finding_impact(title: &str) -> &'static str {
         "Device encryption" => "Strangers reading your files if your PC is lost or stolen",
         "Secure Boot" => "Hidden malware starting before Windows does",
         "Windows updates" => "Known security holes staying open on your PC",
-        "Remote Desktop" => "Strangers trying to sign in to your PC from far away",
+        "Remote Desktop" => "Someone signing in to your PC from another place",
         "SMB1" => "Old file-sharing flaws that let malware spread between PCs",
         "SmartScreen" => "Scam websites and unrecognized apps you open by mistake",
-        "Local accounts" => "Weak or shared sign-ins that are easier to guess or steal",
         "Memory integrity" | "Memory integrity not running" | "A device may not be working" => {
             "Harmful drivers taking over the core of Windows"
         }

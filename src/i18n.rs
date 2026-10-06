@@ -746,7 +746,6 @@ mod tests {
             "Remote Desktop",
             "SMB1",
             "SmartScreen",
-            "Local accounts",
             "Memory integrity",
             "Automatic logon",
         ];

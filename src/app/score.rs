@@ -432,12 +432,12 @@ mod tests {
             detail: String::new(),
         };
         let mut r = rep(vec![out("uac.consent", "attention")]);
-        for t in ["Windows updates", "Secure Boot", "Local accounts", "SMB1"] {
+        for t in ["Windows updates", "Secure Boot", "SMB1"] {
             r.findings.push(find(t, "info"));
         }
         r.findings.push(find("Remote Desktop", "attention"));
         assert_eq!(classify_finding(&r.findings[0]), Class::Excluded);
-        assert_ne!(classify_finding(&r.findings[4]), Class::Excluded);
+        assert_ne!(classify_finding(&r.findings[3]), Class::Excluded);
         assert_eq!(to_check_count(&r), 2);
         assert_eq!(classify_finding(&find("SMB1", "error")), Class::Unknown);
     }

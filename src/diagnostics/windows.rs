@@ -522,7 +522,7 @@ fn modules(id: ProbeId) -> Vec<&'static str> {
         ProbeId::SecureBoot => &["SecureBoot"],
         ProbeId::Tpm => &["TrustedPlatformModule"],
         ProbeId::Accounts => &["Microsoft.PowerShell.LocalAccounts"],
-        ProbeId::RemoteAccess => &["SmbShare", "NetTCPIP"],
+        ProbeId::RemoteAccess => &["SmbShare"],
         ProbeId::Storage => &["Storage"],
         ProbeId::Backup => &["CimCmdlets", "Microsoft.PowerShell.Diagnostics"],
         ProbeId::Adapters => &["NetAdapter"],

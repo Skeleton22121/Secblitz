@@ -29,17 +29,17 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "net.netbios" => Explainer {
             what: "Turns off an old way for computers on a network to find each other by name.",
-            risk: "Someone on the same network could answer for another computer and trick your PC into sending its sign-in details.",
+            risk: "Someone on the same network could answer for another computer, and your PC might send its sign-in details to them.",
             change: "Nothing you'll notice. Very old network drives, printers or scanners may stop being found by name.",
         },
         "net.mdns" => Explainer {
             what: "Stops your PC from asking and answering name questions with other devices on your local network.",
-            risk: "Someone on the same network could pretend to be a printer or TV and trick your PC into talking to them.",
+            risk: "Someone on the same network could answer as a printer or TV, and your PC might start talking to them.",
             change: "Casting to a TV, AirPrint and some smart-home devices may stop showing up. It takes effect after a restart.",
         },
         "net.wpad" => Explainer {
             what: "Stops Windows from searching the network for a setup file that tells it how to reach the internet.",
-            risk: "A stranger on shared Wi-Fi could offer a fake setup file and send your web traffic through their device.",
+            risk: "Someone on shared Wi-Fi could offer a different setup file and send your web traffic through their device.",
             change: "Nothing you'll notice at home. A work or school network that sets this up automatically may stop working. It takes effect after a restart.",
         },
         "firewall.outbound_smb_internet" => Explainer {

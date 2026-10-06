@@ -18,7 +18,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         ),
         "remote_desktop.disabled" => e(
             "Remote Desktop lets someone sign in to this PC and use it from another device, anywhere on the internet or your network.",
-            "Strangers can keep trying passwords from far away, and one weak password could give them full control.",
+            "Someone who learns or guesses one password could sign in from another device and use this PC.",
             "Other devices can no longer connect this way. Everything on this PC works as before, and you can turn it back on.",
         ),
         "smb1.disabled" => e(

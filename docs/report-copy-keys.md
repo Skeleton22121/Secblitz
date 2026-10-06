@@ -61,7 +61,6 @@ Windows updates
 Remote access
 Older file sharing
 Unsafe app and website warnings
-Account sign-in safety
 Core system protection
 Who manages this PC
 Automatic sign-in
@@ -172,7 +171,6 @@ Known security holes staying open on your PC
 Attackers trying to sign in to your PC remotely
 Old file-sharing flaws used by worms like WannaCry
 Scam websites and unrecognized apps you open by mistake
-Weak or shared sign-ins that are easier to guess or steal
 Malicious drivers taking over the core of Windows
 Anyone who turns on your PC getting straight into your account
 ```

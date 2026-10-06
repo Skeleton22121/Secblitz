@@ -135,7 +135,7 @@ probe_ids! {
     Vbs => "root/Microsoft/Windows/DeviceGuard: Win32_DeviceGuard",
     WinRe => "Trusted System32/reagentc.exe /info: reported Windows RE status only",
     Accounts => "LocalAccounts: built-in Administrators membership and Guest RID 501",
-    RemoteAccess => "HKLM RDP settings, SmbShare configuration and local TCP listeners",
+    RemoteAccess => "HKLM RDP settings and SmbShare configuration",
     Software => "Read-only HKLM uninstall registration, Registry64 and Registry32",
     BrowserExtensions => "Verified original desktop user's bounded Chrome/Edge manifests and Firefox extensions.json",
     Storage => "Storage/Get-PhysicalDisk and Get-StorageReliabilityCounter",
@@ -259,8 +259,6 @@ facts!(Accounts {
 facts!(RemoteAccess {
     rdp_denied: bool,
     rdp_nla_required: bool,
-    rdp_listener: bool,
-    smb_listener: bool,
     smb1_enabled: bool,
     smb2_enabled: bool,
     smb_server_signing_required: bool,

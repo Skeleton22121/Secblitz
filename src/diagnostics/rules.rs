@@ -282,7 +282,6 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::RemoteAccess(v) => {
             out.push(boolean("remote.rdp", &v.rdp_denied, true, "RDP connection acceptance configuration. An enabled service may be intentional; confirm a need and boundary before changing it."));
             out.push(boolean("remote.nla", &v.rdp_nla_required, true, "RDP NLA configuration; effective reachability and resultant policy are not proven by this registry preference."));
-            for (id, f) in [("remote.listener", &v.rdp_listener), ("smb.listener", &v.smb_listener)] { out.push(a(id, if f.known().is_some() { Informational } else { Unknown }, "Local listener presence only; firewall and upstream reachability are not tested.")); }
             for (id, f, desired) in [("smb.v1", &v.smb1_enabled, false), ("smb.server_signing", &v.smb_server_signing_required, true), ("smb.client_signing", &v.smb_client_signing_required, true), ("smb.guest", &v.smb_guest_logons_enabled, false)] { out.push(boolean(id, f, desired, "SMB reported configuration. Legacy printers/NAS may require migration; do not silently allow SMB1, unsigned SMB or guest access.")); }
         }
         Evidence::Software(v) => {
