@@ -1,4 +1,5 @@
 //! Clean up apps: removes the built-in Windows apps from a catalog, never apps the user installed.
+use crate::app::search::{Haystack, Query};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{Palette, Tone};
 use crate::gui::widgets::{self, anim, handoff};
@@ -9,6 +10,8 @@ use secblitz::debloat::offline::Restored;
 use secblitz::debloat::{self, Batch, Group, Installed, ItemResult, Kept, Progress};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
+
+pub const SEARCH_ID: &str = "debloat-search";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
@@ -76,6 +79,7 @@ pub struct State {
     scan_gen: u32,
     tab: Tab,
     scan: Scan,
+    search: String,
     installed: Vec<Installed>,
     selected: BTreeSet<u16>,
     block_again: bool,
@@ -112,6 +116,7 @@ impl Default for State {
             scan_gen: 0,
             tab: Tab::Apps,
             scan: Scan::Loading,
+            search: String::new(),
             installed: Vec::new(),
             selected: BTreeSet::new(),
             block_again: false,
@@ -155,6 +160,8 @@ pub enum Msg {
     JournalLoaded(Vec<Batch>),
     Rescan,
     SetTab(Tab),
+    Search(String),
+    ClearSearch,
     Toggle(u16),
     ToggleGroup(Group),
     ToggleOpen(Group),
@@ -330,7 +337,65 @@ pub fn escape(state: &mut State) {
         Sheet::Review | Sheet::Done(_) | Sheet::Delete(_)
     ) {
         state.sheet = Sheet::None;
+    } else {
+        clear_search(state);
     }
+}
+
+pub fn clear_search(state: &mut State) {
+    state.search.clear();
+}
+
+/// Whether the page has its search box on screen right now.
+pub fn shows_search(state: &State) -> bool {
+    state.tab == Tab::Apps
+        && !state.groups.is_empty()
+        && !matches!(state.scan, Scan::Failed(_))
+}
+
+fn searching(state: &State) -> bool {
+    !Query::new(&state.search).is_empty()
+}
+
+/// What a typed search is compared with: the app's name in the current
+/// language and in English, and its package names.
+fn app_text(ctx: &Ctx, state: &State, index: u16) -> Haystack {
+    let app = app_of(index);
+    let packages = state
+        .installed
+        .iter()
+        .filter(|found| found.index == index)
+        .map(|found| found.package.as_str());
+    Haystack::new(
+        [ctx.t(app.name).as_str(), app.name, app.family]
+            .into_iter()
+            .chain(packages),
+    )
+}
+
+/// The members of a group that match the search, in their normal order.
+fn shown_members(state: &State, ctx: &Ctx, members: &[u16]) -> Vec<u16> {
+    let query = Query::new(&state.search);
+    members
+        .iter()
+        .copied()
+        .filter(|index| query.is_empty() || query.matches(&app_text(ctx, state, *index)))
+        .collect()
+}
+
+#[cfg(test)]
+pub fn selected_apps(state: &State) -> Vec<u16> {
+    state.selected.iter().copied().collect()
+}
+
+/// The apps on screen, group by group.
+#[cfg(test)]
+pub fn visible_apps(state: &State, ctx: &Ctx) -> Vec<u16> {
+    state
+        .groups
+        .iter()
+        .flat_map(|(_, members)| shown_members(state, ctx, members))
+        .collect()
 }
 
 const BLOCKED_NOTE: &str = "Windows was asked not to add suggested apps.";
@@ -376,12 +441,20 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.tab = tab;
             Task::none()
         }
+        Msg::Search(text) => {
+            state.search = text;
+            Task::none()
+        }
+        Msg::ClearSearch => {
+            clear_search(state);
+            iced::widget::operation::focus(SEARCH_ID)
+        }
         Msg::Toggle(i) => {
             toggle_app(state, i);
             Task::none()
         }
         Msg::ToggleGroup(group) => {
-            toggle_group(state, group);
+            toggle_group(state, ctx, group);
             Task::none()
         }
         Msg::ToggleOpen(g) => {
@@ -536,11 +609,12 @@ fn on_scanned(
     icons
 }
 
-fn toggle_group(state: &mut State, group: Group) {
+fn toggle_group(state: &mut State, ctx: &Ctx, group: Group) {
     let members: Vec<u16> = installed_indices(state)
         .into_iter()
         .filter(|i| app_of(*i).group == group)
         .collect();
+    let members = shown_members(state, ctx, &members);
     if members.iter().all(|i| state.selected.contains(i)) {
         for i in members {
             state.selected.remove(&i);

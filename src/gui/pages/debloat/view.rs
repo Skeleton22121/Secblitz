@@ -120,11 +120,29 @@ fn apps_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             None,
         ),
         _ => {
+            let bar = widgets::search_field(
+                p,
+                SEARCH_ID,
+                &ctx.t("Search apps"),
+                &state.search,
+                |text| wrap(Msg::Search(text)),
+                wrap(Msg::ClearSearch),
+            );
             let mut col = column![].spacing(theme::S1);
+            let mut any = false;
             for (group, members) in &state.groups {
-                col = col.push(group_card(state, ctx, *group, members));
+                let shown = shown_members(state, ctx, members);
+                if !shown.is_empty() {
+                    any = true;
+                    col = col.push(group_card(state, ctx, *group, &shown));
+                }
             }
-            col.into()
+            let list: Element<'a, Message> = if any {
+                col.into()
+            } else {
+                widgets::no_matches(ctx, &state.search, wrap(Msg::ClearSearch))
+            };
+            column![bar, list].spacing(theme::S4).into()
         }
     }
 }
@@ -145,8 +163,20 @@ fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     } else {
         count_text(ctx, n, "Remove {n} app", "Remove {n} apps")
     };
+    let hidden = if searching(state) {
+        let on_screen: BTreeSet<u16> = state
+            .groups
+            .iter()
+            .flat_map(|(_, members)| shown_members(state, ctx, members))
+            .collect();
+        state.selected.iter().filter(|i| !on_screen.contains(i)).count()
+    } else {
+        0
+    };
     let hint = if ctx.busy {
         ctx.t("Please wait until the current task has finished.")
+    } else if hidden > 0 {
+        ctx.t("Some apps you chose are hidden by your search. You can review before anything is removed.")
     } else if n == 0 {
         ctx.t("Tick the apps you want to remove.")
     } else {
@@ -205,9 +235,10 @@ fn group_card<'a>(
     state: &'a State,
     ctx: &'a Ctx,
     group: Group,
-    members: &'a [u16],
+    members: &[u16],
 ) -> Element<'a, Message> {
     let p = pal(ctx);
+    let narrowed = searching(state);
     let (title, subtitle, _) = group_text(group);
     let chosen = members
         .iter()
@@ -224,8 +255,8 @@ fn group_card<'a>(
         .t("{a} of {b} selected")
         .replace("{a}", &chosen.to_string())
         .replace("{b}", &members.len().to_string());
-    let open = state.open.contains(&group);
-    let expanded = state.expanded.contains(&group);
+    let open = state.open.contains(&group) || narrowed;
+    let expanded = state.expanded.contains(&group) || narrowed;
     let mut body = column![].spacing(theme::S1);
     body = body.push(
         container(widgets::small(p, ctx.t(subtitle))).padding(Padding {
@@ -260,7 +291,7 @@ fn group_card<'a>(
             Some(wrap(Msg::Toggle(index))),
         ));
     }
-    if members.len() > GROUP_ROWS {
+    if members.len() > GROUP_ROWS && !narrowed {
         let label = if expanded {
             ctx.t("Show less")
         } else {

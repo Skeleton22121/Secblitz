@@ -218,6 +218,8 @@ pub enum Message {
     ReviewFixes(Vec<String>),
     ReviewUndo,
     Escape,
+    SearchEscape,
+    Find,
     Noop,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
@@ -480,12 +482,32 @@ impl App {
                     return Task::none();
                 }
                 match self.page {
+                    Page::Fixes => fixes::escape(&mut self.fixes),
                     Page::Debloat => debloat::escape(&mut self.debloat),
                     Page::Tools => tools::escape(&mut self.tools),
                     Page::Settings => settings::escape(&mut self.settings),
                     _ => {}
                 }
                 Task::none()
+            }
+            Message::SearchEscape => {
+                match self.page {
+                    Page::Fixes if !self.fix.is_open() => fixes::escape(&mut self.fixes),
+                    Page::Debloat => debloat::clear_search(&mut self.debloat),
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::Find => {
+                let id = match self.page {
+                    Page::Fixes if fixes::shows_search(&self.ctx) => fixes::SEARCH_ID,
+                    Page::Debloat if debloat::shows_search(&self.debloat) => debloat::SEARCH_ID,
+                    _ => return Task::none(),
+                };
+                if self.fix.is_open() {
+                    return Task::none();
+                }
+                iced::widget::operation::focus(id)
             }
             Message::Toast(text, tone) => {
                 self.ctx.toast = Some((text, tone));
@@ -1069,6 +1091,26 @@ impl App {
                 modifiers,
                 ..
             } => Some(Message::Tab(modifiers.shift())),
+            keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                physical_key,
+                ..
+            } if modifiers.command() && key.to_latin(physical_key) == Some('f') => {
+                Some(Message::Find)
+            }
+            _ => None,
+        });
+        // A search box that has the keyboard keeps Escape for itself, so the
+        // plain listener above never sees it.
+        let search_escape = iced::event::listen_with(|event, status, _| match (event, status) {
+            (
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                    ..
+                }),
+                iced::event::Status::Captured,
+            ) => Some(Message::SearchEscape),
             _ => None,
         });
         let entrance = if self.entered.is_some()
@@ -1087,6 +1129,7 @@ impl App {
         });
         Subscription::batch([
             escape,
+            search_escape,
             focus,
             iced::window::close_requests().map(Message::CloseRequested),
             entrance,

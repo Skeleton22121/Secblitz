@@ -10,6 +10,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [Unreleased]
 
 ### Added
+- **Search on Protection and Clean up apps.** Type a word, or press Ctrl+F, to show only the matching settings or apps. It forgives small typing mistakes and accents, and the choices you already made stay in place while you search.
 - **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
 - **Privacy policy.** A plain privacy page says exactly when Secblitz uses the internet and what it keeps on your PC. The installer shows a short summary, and Settings links to the full page.
 - Web protection credits the block lists it uses, from AdGuard, EasyList and HaGeZi.
