@@ -200,6 +200,7 @@ fn local_directories(path: &[u16]) -> Option<(Vec<u16>, Vec<Handle>)> {
         if raw == INVALID_HANDLE_VALUE {
             // Only an absent child is evidence that the existing parent contains
             // the prospective journal. Denial/sharing/path errors remain Unknown.
+            // SAFETY: reads this thread's last error right after the failed call.
             return if !handles.is_empty() && unsafe { GetLastError() } == ERROR_FILE_NOT_FOUND {
                 Some((existing, handles))
             } else {
@@ -207,8 +208,9 @@ fn local_directories(path: &[u16]) -> Option<(Vec<u16>, Vec<Handle>)> {
             };
         }
         let handle = Handle(raw);
-        // SAFETY: native output structure; inspect it only on success.
+        // SAFETY: all-zero is valid for this plain-integer structure; it is only read after the call succeeds.
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `handle` is a live file handle and `info` is a valid out pointer.
         if unsafe { GetFileInformationByHandle(handle.0, &mut info) } == 0
             || info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
             || info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
@@ -223,6 +225,7 @@ fn local_directories(path: &[u16]) -> Option<(Vec<u16>, Vec<Handle>)> {
 }
 
 fn power() -> Option<PowerReadiness> {
+    // SAFETY: all-zero is valid for this plain-integer structure; it is only read after the call succeeds.
     let mut status: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
     // SAFETY: correctly sized and aligned writable native structure.
     if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
@@ -311,6 +314,7 @@ impl Drop for OwnedDispatch {
 struct Variant(VARIANT);
 impl Drop for Variant {
     fn drop(&mut self) {
+        // SAFETY: the VARIANT is VT_EMPTY or holds a value Invoke wrote, so clearing it once is correct.
         unsafe {
             VariantClear(&mut self.0);
         }
@@ -356,6 +360,7 @@ fn parse_system_info_class(text: &[u16; 40], bytes: u32) -> Option<GUID> {
         return None;
     }
     let mut class = GUID::from_u128(0);
+    // SAFETY: `text[38]` is NUL (checked above) and `class` is a valid out pointer.
     if unsafe { CLSIDFromString(text.as_ptr(), &mut class) } < 0 {
         return None;
     }
@@ -401,8 +406,9 @@ fn reboot_property(object: OwnedDispatch) -> Option<bool> {
     let property = wide("RebootRequired");
     let name = property.as_ptr();
     let mut id = 0;
-    // SAFETY: owned IDispatch and a single fixed NUL-terminated property name.
+    // SAFETY: owned IDispatch, so its vtable stays valid for the whole function.
     let table = unsafe { &*(*object.0).vtable };
+    // SAFETY: a single fixed NUL-terminated property name and a valid out id.
     if unsafe { (table.get_ids_of_names)(object.0, &IID_NULL, &name, 1, 0, &mut id) } < 0 {
         return None;
     }
@@ -485,8 +491,8 @@ fn machine_com_only() -> bool {
     {
         return false;
     }
-    // SAFETY: twelve SID bytes are within the initialized API output buffer.
-    let sid = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>().add(offset), 12) };
+    let raw: Vec<u8> = storage.iter().flat_map(|word| word.to_ne_bytes()).collect();
+    let sid = &raw[offset..offset + 12];
     sid[..8] == [1, 1, 0, 0, 0, 0, 0, 16]
         && u32::from_le_bytes(sid[8..12].try_into().unwrap()) >= 0x3000
 }
