@@ -1159,12 +1159,13 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                 && name.trim() == name
         }
         Source::UnquotedServices => {
+            // Service key names: up to 256 characters, no path separators or wildcards.
             !name.is_empty()
-                && name.len() <= 64
+                && name.chars().count() <= 256
                 && name.trim() == name
-                && name
+                && !name
                     .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '$' | ' '))
+                    .any(|c| c.is_control() || matches!(c, '"' | '\\' | '/' | '*' | '?' | '[' | ']'))
         }
         Source::UserDirFirewall => {
             !name.is_empty()
@@ -1894,16 +1895,19 @@ mod tests {
     #[test]
     fn handled_item_controls_accept_only_their_own_names_and_values() {
         let svc = spec("services.unquoted_paths").unwrap();
-        svc.validate(&json!({"items": {"Acme Updater": 1, "MSSQL$SQLEXPRESS": 0, "a.b-c_d": 2}}))
+        svc.validate(&json!({"items": {"Acme Updater": 1, "MSSQL$SQLEXPRESS": 0, "a.b-c_d": 2, "Intel(R) Update {1}+x": 1}}))
             .unwrap();
         for bad in [
             json!({"items": {"": 1}}),
             json!({"items": {" Acme": 1}}),
             json!({"items": {"Acme\\Run": 1}}),
             json!({"items": {"Acme\"x": 1}}),
-            json!({"items": {"Acme;calc": 1}}),
+            json!({"items": {"Acme/Run": 1}}),
+            json!({"items": {"Acme*": 1}}),
+            json!({"items": {"Acme[1]": 1}}),
+            json!({"items": {"Acme\n": 1}}),
             json!({"items": {"Acme": 3}}),
-            json!({"items": {"x".repeat(65): 1}}),
+            json!({"items": {"x".repeat(257): 1}}),
         ] {
             assert!(svc.validate(&bad).is_err(), "accepted {bad}");
         }
