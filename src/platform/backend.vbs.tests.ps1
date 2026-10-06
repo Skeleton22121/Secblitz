@@ -68,7 +68,6 @@ $dg = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard'
 $hvci = "$dg\Scenarios\HypervisorEnforcedCodeIntegrity"
 $stack = "$dg\Scenarios\KernelShadowStacks"
 
-# A plain PC: arrays stay arrays, unset flags stay null, nothing is asked of the log.
 Reset
 $f = VbsFacts
 Assert (@($f.available).Count -eq 3 -and $f.available[2] -eq 3) 'Available properties changed'
@@ -81,7 +80,6 @@ Assert (@($f.blocked).Count -eq 0) 'No blocked drivers expected'
 $json = ConvertTo-Json -InputObject $f -Depth 4 -Compress
 Assert ($json -match '"available":\[1,2,3\]' -and $json -match '"running":\[\]') 'JSON shape changed'
 
-# One-element arrays and a single value are both read as lists.
 Reset
 $script:guard.AvailableSecurityProperties = 2
 $script:guard.SecurityServicesRunning = @(2)
@@ -121,7 +119,6 @@ $script:events = $null
 $f = VbsFacts
 Assert (@($f.blocked).Count -eq 0) 'An unreadable log must report no names'
 
-# At most eight names.
 Reset
 $script:registry[$hvci] = @{ Enabled = (Dword 1) }
 $script:events = @([pscustomobject]@{ Message = (1..12 | ForEach-Object { "d$_.sys" }) -join ' ' })

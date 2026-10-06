@@ -1,21 +1,7 @@
-//! Optional delivery lane, NOT TUF or a replacement for the pinned v1 feed.
-//!
-//! releases/delivery.json is signed by the existing compiled root. It delegates
-//! one key to ONE exact releases/candidate.json envelope, for at most seven days.
-//! The root still approves every candidate/renewal. There are no recursive keys,
-//! thresholds, root replacement, unsigned key IDs, or runtime endpoints.
-//!
-//! Old clients continue consuming root-signed stable.json. Never publish a
-//! delegated signature there. Only a 404 before enrollment permits v1 fallback;
-//! after enrollment missing/expired metadata stops updates. Suppression before
-//! first enrollment and replay within an unobserved policy's lifetime remain
-//! possible. A larger sequence supersedes the entire previous authorization,
-//! retiring its key on receipt, even if the candidate download then fails. This
-//! is bounded authorization, not instantaneous/global key revocation.
-//!
-//! Holdback is forward-only: every observed candidate advances release-floor,
-//! even at 0%. Holdback never installs an older release or relaxes a floor. A bad
-//! release needs a higher-version forward fix; cohort salt is fixed per version.
+//! Optional signed delivery lane (not TUF). `releases/delivery.json`, signed by the compiled root,
+//! delegates one key to ONE exact `releases/candidate.json` for at most seven days; no recursive
+//! keys, thresholds or runtime endpoints. Only a 404 before enrollment permits v1 fallback.
+//! Holdback is forward-only: every observed candidate advances the release floor, even at 0%.
 use super::*;
 
 pub(super) const LIFETIME: u64 = 7 * 86400;

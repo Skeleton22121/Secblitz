@@ -1,14 +1,8 @@
-# Extended hardening controls. Appended to the backend definitions (never the
-# backend dispatcher) for ids in the compiled Rust catalog (src/hardening.rs).
-# $hardeningSpecJson is produced by Rust from that catalog: safe values, repair
-# values, registry paths and gate requirements live in ONE place. All state is a
-# slice {items: {key: int|null}}; null means "not configured".
-#
-# Writes can only move a key between its recorded unsafe original and the fixed
-# value (HFixOf); anything else means the setting changed behind us and stops.
-# No native child processes are started (the launcher job forbids them), except
-# by the few writes whose job allows exactly that: Windows feature changes
-# (DISM) and turning the recovery tools on or off (ReAgentc.exe).
+# Extended hardening controls, appended to the backend definitions (never the backend dispatcher)
+# for ids in the compiled Rust catalog. $hardeningSpecJson comes from that catalog; all state is a
+# slice {items: {key: int|null}} where null means "not configured". Writes can only move a key
+# between its recorded unsafe original and the fixed value (HFixOf). No native child processes,
+# except the DISM feature writes and ReAgentc.exe, whose jobs allow exactly that.
 $spec = ConvertFrom-Json -InputObject $hardeningSpecJson
 
 function HEq($a, $b) {
@@ -60,9 +54,7 @@ function HAnyUnsafe($slice) {
     return $false
 }
 
-# ---------------------------------------------------------------- readers
 function HValueName($def) {
-    # The registry value name (a control may hold one value under several keys).
     if ($null -ne $def.PSObject.Properties['valueName'] -and [string]$def.valueName) { return [string]$def.valueName }
     return [string]$def.name
 }
@@ -193,7 +185,6 @@ function HReadFirewall() {
     $out = @{}
     $rules = @()
     foreach ($pattern in @('FPS-*','NETDIS-*')) {
-        # A pattern with no match is an empty result, not a failure.
         try { $rules += @(Get-NetFirewallRule -PolicyStore PersistentStore -Name $pattern -ErrorAction Stop) }
         catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }
     }
@@ -323,7 +314,6 @@ function HRead() {
     throw 'Unknown hardening source'
 }
 
-# ------------------------------------------------------------------ gates
 function HGateCommon() {
     Load 'CimCmdlets'
     $os = Get-CimInstance Win32_OperatingSystem
@@ -420,7 +410,6 @@ function HGate() {
     if ($spec.source -ceq 'WifiProfiles') { HGateWifi }
 }
 
-# Extra conditions that must hold before a repair (never before an undo).
 function HPreflight() {
     switch -CaseSensitive ($spec.id) {
         'lsa.run_as_ppl' {
@@ -609,7 +598,6 @@ function HNetbiosPreflight() {
     }
 }
 
-# --------------------------------------------------------------- observe
 function HObserve() {
     $script:hLabels = @{}
     $script:hLeft = @()
@@ -619,7 +607,6 @@ function HObserve() {
         HGate
         if (HAnyUnsafe $slice) {
             HPreflight
-            # The exact items a fix would change, for the details of the row.
             $labels = @(HLabelList $slice)
             if ($labels.Count -gt 0) { $o.labels = $labels }
         }
@@ -630,7 +617,6 @@ function HObserve() {
     return $o
 }
 
-# ----------------------------------------------------------------- writers
 function HSetRegistry($def, $v) {
     $vn = HValueName $def
     if ($null -eq $v) { Remove-ItemProperty -LiteralPath $def.path -Name $vn -ErrorAction Stop; return }
@@ -693,7 +679,6 @@ function HSetNetbios($name, $v) {
     $found = @(Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -Filter "SettingID = '$name'")
     if ($found.Count -ne 1) { throw 'Network adapter not found exactly once' }
     $r = Invoke-CimMethod -InputObject $found[0] -MethodName SetTcpipNetbios -Arguments @{ TcpipNetbiosOptions = [uint32]$v }
-    # 0 = done, 1 = done but a restart is needed.
     if ($null -eq $r -or @(0,1) -notcontains [int]$r.ReturnValue) { throw "NetBIOS setting was refused (code $($r.ReturnValue))" }
 }
 function HSetOutbound($v) {
@@ -773,11 +758,6 @@ function HSet([string]$name, $v) {
     }
 }
 
-# ====================================================================
-# System area: OS / credentials / update / privacy controls.
-# Self-contained block; every reader returns {key: int} and every writer
-# changes exactly one key. Nothing here starts a child process.
-# ====================================================================
 function HVerified([string]$name, $have, $want) {
     if (HEq $have $want) { return $true }
     # An account or shared folder the person deleted since the fix has nothing
@@ -814,7 +794,6 @@ function HAfterRegistry($def, $v) {
     }
 }
 
-# ---- system.exploit_mitigations
 function HMitigationValue($v) {
     switch -CaseSensitive (([string]$v).ToUpperInvariant()) {
         'ON' { return 1 }
@@ -842,7 +821,6 @@ function HSetMitigation([string]$name, $v) {
     else { Set-ProcessMitigation -System -Disable $name -ErrorAction Stop }
 }
 
-# ---- ps.v2_engine
 function HFeatureState([string]$name) { return (FeatureState $name) }
 function HV2Value([string]$state) {
     switch -CaseSensitive ($state) {
@@ -875,7 +853,6 @@ function HSetPowerShellV2($v) {
     }
 }
 
-# ---- accounts.autologon
 # Only the AutoAdminLogon text value is read or written. The saved sign-in
 # name, saved password and sign-in count are never opened.
 function HReadAutoLogon() {
@@ -896,7 +873,6 @@ function HSetAutoLogon([string]$name, $v) {
     New-ItemProperty -LiteralPath $def.path -Name 'AutoAdminLogon' -PropertyType String -Value ([string][int]$v) -Force -ErrorAction Stop | Out-Null
 }
 
-# ---- remote_desktop.disabled (preflight helper)
 function HRemoteSessionActive() {
     # SM_REMOTESESSION (0x1000) through a Reflection.Emit P/Invoke stub: no
     # Add-Type, so no csc.exe child process. Anything unclear counts as remote.
@@ -913,7 +889,6 @@ function HRemoteSessionActive() {
     return ([Secblitz.SessionInfo]::GetSystemMetrics(4096) -ne 0)
 }
 
-# ---- smb1.disabled
 # Windows reports an optional feature as unchanged until the restart that
 # finishes the change. After a successful change that needs a restart, a small
 # note (one value per feature) says what was asked for, so the check reads the
@@ -1102,7 +1077,6 @@ function HSetLockOnWake([string]$name, $v) {
         $i.setting.SettingIndexValue = [uint32]$v
         Set-CimInstance -InputObject $i.setting -ErrorAction Stop
     } elseif ($mode -ceq 'AC') { throw 'The sign-in-on-wake setting is not available' }
-    # Re-apply the plan so the new value is in force straight away.
     Invoke-CimMethod -InputObject $i.plan -MethodName Activate -ErrorAction Stop | Out-Null
 }
 
@@ -1155,7 +1129,6 @@ function HSetPause($def, $v) {
         if ($null -ne $key -and $key.GetValueNames() -contains $def.name) { Remove-ItemProperty -LiteralPath $def.path -Name $def.name -ErrorAction Stop }
         return
     }
-    # A pause that has already ended has nothing left to put back.
     if (!(HPauseWantedActive)) { return }
     $seconds = [int64]$v * 60
     $text = [DateTimeOffset]::FromUnixTimeSeconds($seconds).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
@@ -1344,7 +1317,6 @@ function HAccountState([string]$sid) {
     Load 'Microsoft.PowerShell.LocalAccounts'
     try { $user = Get-LocalUser -SID $sid -ErrorAction Stop }
     catch {
-        # Deleted: nothing is switched on any more.
         if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return 0 }
         throw
     }
@@ -1393,15 +1365,12 @@ function HSetStale([string]$sid, $v) {
     try { $user = Get-LocalUser -SID $sid -ErrorAction Stop }
     catch {
         if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }
-        # Deleted since the fix: there is nothing to switch back on.
         if ([int]$v -eq 1) { return }
         throw 'The account no longer exists; nothing was changed'
     }
     if ([int]$v -eq 1) { Enable-LocalUser -SID $sid -ErrorAction Stop; return }
-    # Re-check at the moment of the write, whatever was true when it was offered.
     $inUse = HAccountsInUse
     if ($inUse.ContainsKey($sid)) { throw 'This account is in use; nothing was changed' }
-    # Still an old account right now, not one that signed in since it was offered.
     if (@(HStaleAccounts | Where-Object { [string]$_.SID.Value -ceq $sid }).Count -eq 0) { throw 'This account is no longer an old account; nothing was changed' }
     $admins = @(HEnabledAdminSids)
     if (($admins -ccontains $sid) -and @($admins | Where-Object { $_ -cne $sid -and $_ -cnotmatch '-500$' }).Count -eq 0) { throw 'This is the last administrator account; nothing was changed' }
@@ -1509,7 +1478,6 @@ function HSetShare([string]$name, $v) {
     Load 'SmbShare'
     $share = @(HFindShare $p.share)
     if ($share.Count -eq 0) {
-        # Removed since the fix: there is nothing to put back.
         if ([int]$v -eq 1) { return }
         throw 'The shared folder no longer exists; nothing was changed'
     }
@@ -1566,7 +1534,6 @@ function HReadRecovery() {
     throw 'The recovery tools setting is not readable'
 }
 function HRecoveryImageReady() {
-    # While the tools are off, Windows keeps their image here; /enable moves it into place.
     $image = [IO.FileInfo]::new([IO.Path]::Combine((HRecoveryDir), 'Winre.wim'))
     return ($image.Exists -and $image.Length -gt 0)
 }
@@ -1576,13 +1543,11 @@ function HRunReagent([string]$verb) {
     if (![IO.File]::Exists($exe)) { throw 'The recovery tools are missing from this PC' }
     $start = [Diagnostics.ProcessStartInfo]::new($exe, $verb)
     $start.UseShellExecute = $false
-    # A hidden console of its own: no window ever appears.
     $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.WorkingDirectory = [IO.Path]::Combine($env:SystemRoot, 'System32')
-    # The launcher clears the environment; give the tool a working folder for its own files.
     $temp = [IO.Path]::Combine($env:SystemRoot, 'Temp')
     $start.EnvironmentVariables['TEMP'] = $temp
     $start.EnvironmentVariables['TMP'] = $temp
@@ -1648,7 +1613,6 @@ function HWrite($inputValue) {
         $steps += @{ name = $name; from = $cur; to = $want }
     }
     if ($repairing) { HPreflight }
-    # Turning old file sharing off goes children first; turning it back on, parent first.
     if ($spec.source -ceq 'SmbFeature' -and $repairing) { $steps = @($steps | Sort-Object { $_.name } -Descending) }
     $done = @()
     try {

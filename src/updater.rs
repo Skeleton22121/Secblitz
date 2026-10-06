@@ -74,7 +74,6 @@ pub(crate) fn install_idle(bytes: &[u8]) -> Result<()> {
 /// Read-only interlock for other subsystems. Caller must own and retain the
 /// exclusive root engine.lock. Both uncertain setup and unverified zero exits
 /// veto other work; only the updater's own recovery path may resolve them.
-/// Does not acquire update.lock, create state, run health or open another engine.
 pub fn ensure_install_idle(shared_engine_lock: &std::fs::File) -> Result<()> {
     #[cfg(windows)]
     {

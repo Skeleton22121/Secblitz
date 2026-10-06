@@ -1,8 +1,5 @@
-//! The DNS listeners and the forwarder of the filter service. Portable (std
-//! sockets and threads only) so the whole path is tested on any host.
-//!
-//! Only loopback peers are ever answered. A blocked name is answered here;
-//! every other name is passed on unchanged to the PC's normal DNS servers.
+//! The DNS listeners and forwarder of the filter service. Portable (std sockets and threads).
+//! Only loopback peers are answered; unblocked names go unchanged to the PC's own DNS servers.
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -18,18 +15,15 @@ use super::config::Config;
 use super::dns::{self, Query};
 use super::matcher::{Filter, Kind};
 
-/// Largest query that is looked at (matches `dns::parse_query`).
 const MAX_PACKET: usize = 4096;
 const WORKERS: usize = 16;
 const QUEUE: usize = 256;
 const MAX_TCP_CONNECTIONS: usize = 32;
 const TCP_IDLE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(500);
-/// How long one upstream server gets to answer.
 pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(2);
 const SECONDS_PER_DAY: u64 = 86_400;
 
-/// Used when the network gives no DNS servers of its own.
 pub const FALLBACK_UPSTREAM: [IpAddr; 2] = [
     IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)),
     IpAddr::V4(Ipv4Addr::new(149, 112, 112, 112)),
@@ -46,7 +40,6 @@ fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Blocked lookups today (UTC day), one counter per switch.
 #[derive(Default)]
 pub struct Stats {
     pub blocked: [AtomicU64; 3],
@@ -62,7 +55,6 @@ impl Stats {
         }
     }
 
-    /// Counts one blocked lookup; the first one of a new day starts from zero.
     pub fn record(&self, kind: Kind, now: u64) {
         let today = now / SECONDS_PER_DAY;
         let seen = self.day.load(Ordering::Relaxed);
@@ -91,7 +83,6 @@ impl Stats {
         }
     }
 
-    /// `(day, [ads, tracking, dangerous])`; zeros when nothing was counted today.
     pub fn snapshot(&self, now: u64) -> (u64, [u64; 3]) {
         let today = now / SECONDS_PER_DAY;
         if self.day.load(Ordering::Relaxed) != today {
@@ -106,7 +97,6 @@ impl Stats {
     }
 }
 
-/// Everything the listener threads share with the service loop.
 pub struct Shared {
     pub filter: RwLock<Arc<Filter>>,
     pub config: RwLock<Config>,
@@ -128,7 +118,6 @@ impl Shared {
     }
 }
 
-/// Port 53 sockets for these servers.
 pub fn upstream_addrs(servers: &[IpAddr]) -> Vec<SocketAddr> {
     let servers = if servers.is_empty() {
         &FALLBACK_UPSTREAM[..]
@@ -143,7 +132,6 @@ pub enum Action {
     Forward,
 }
 
-/// What to do with one query. `None` means drop it without an answer.
 pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action)> {
     let q = dns::parse_query(packet)?;
     if q.question.name == dns::CANARY {
@@ -222,7 +210,6 @@ fn ask_tcp(
     dns::reply_matches(&body, id, &q.question).then_some(body)
 }
 
-/// How the asking program reached the filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Via {
     Udp,
@@ -257,7 +244,6 @@ pub fn forward_checked(
     None
 }
 
-/// Like `forward_checked`, with a SERVFAIL answer when every server failed.
 pub fn forward(
     packet: &[u8],
     q: &Query,
@@ -269,7 +255,6 @@ pub fn forward(
         .unwrap_or_else(|| dns::servfail_reply(packet, q))
 }
 
-/// The answer to send back, or `None` to stay silent.
 fn answer(packet: &[u8], shared: &Shared, via: Via) -> Option<Vec<u8>> {
     let (q, action) = decide(packet, shared, unix_now())?;
     Some(match action {
@@ -284,7 +269,6 @@ fn answer(packet: &[u8], shared: &Shared, via: Via) -> Option<Vec<u8>> {
     })
 }
 
-/// Only this PC may ask.
 pub fn allowed_peer(addr: &SocketAddr) -> bool {
     addr.ip().to_canonical().is_loopback()
 }
@@ -336,7 +320,6 @@ pub fn serve_udp(socket: UdpSocket, shared: Arc<Shared>, stop: Arc<AtomicBool>) 
     }
 }
 
-/// Counts an open connection and frees the slot when dropped.
 struct Slot(Arc<AtomicUsize>);
 
 impl Drop for Slot {
@@ -378,7 +361,6 @@ fn serve_connection(mut stream: TcpStream, shared: &Shared) {
     }
 }
 
-/// Answers TCP queries (length-prefixed) until `stop` is set.
 pub fn serve_tcp(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBool>) {
     if listener.set_nonblocking(true).is_err() {
         return;
@@ -409,7 +391,6 @@ pub fn serve_tcp(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBoo
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BindError {
-    /// Another program already uses port 53 on this PC.
     PortInUse,
     Other(String),
 }
@@ -481,7 +462,6 @@ mod tests {
         p
     }
 
-    /// A response to `query` with one A record for `ip`.
     fn answer_for(query: &[u8], id: u16, ip: [u8; 4], flags: u16) -> Vec<u8> {
         let q = dns::parse_query(query).expect("query");
         let mut out = id.to_be_bytes().to_vec();
@@ -519,7 +499,6 @@ mod tests {
         }
     }
 
-    /// A fake DNS server on loopback that answers every query with `1.2.3.4`.
     fn fake_upstream() -> SocketAddr {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let addr = socket.local_addr().unwrap();

@@ -110,7 +110,6 @@ fn inspect_pinned(
     }
     Ok(())
 }
-// Pointers must remain valid within the owning security descriptor's lifetime.
 unsafe fn inspect_acl(
     owner: PSID,
     acl: *mut ACL,
@@ -787,7 +786,6 @@ fn wait_read_only_child_until(child: &mut std::process::Child, deadline: Instant
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-// Read-only probes may be terminated; installers must never use this guard.
 struct ReadOnlyChild(std::process::Child);
 impl Drop for ReadOnlyChild {
     fn drop(&mut self) {
@@ -822,7 +820,6 @@ fn read_only_output_until(
 ) -> Result<Vec<u8>> {
     read_only_output_fed(command, None, limit, deadline)
 }
-/// `input`, when given, is written to the child's stdin and then closed.
 fn read_only_output_fed(
     command: &mut Command,
     input: Option<&'static str>,
@@ -840,7 +837,6 @@ fn read_only_output_fed(
     );
     if let Some(text) = input {
         let mut stdin = child.0.stdin.take().context("Missing probe input")?;
-        // A stalled pipe must not hold up the deadline below.
         std::thread::spawn(move || {
             let _ = stdin.write_all(text.as_bytes());
         });
@@ -866,8 +862,6 @@ fn read_only_output_fed(
 fn preflight_worker(path: &Path, root: &Path) -> Result<()> {
     // Parent retains update.lock: status validates the native root first, then
     // returns DeferredBusy without waiting, networking, or launching an installer.
-    // On failure the parent can safely record Failed using its already pinned
-    // root, rather than guessing a fallback path in a broken worker environment.
     let mut child = ReadOnlyChild(
         child_command(path, root)?
             .args(["update", "status", "--json"])
@@ -967,7 +961,6 @@ fn installation_health(path: &Path, root: &Path, version: &str) -> Result<Update
     // requirements. Never pass a metadata/caller-supplied path to this exception.
     let _shell_pins = trusted_image(&powershell, true)?;
     let mut command = child_command(&powershell, root)?;
-    // Only inbox modules, even before the script pins this itself.
     if let Some(home) = powershell.parent() {
         command.env("PSModulePath", home.join("Modules"));
     }
@@ -1007,8 +1000,6 @@ pub(super) fn health() -> Result<UpdateHealth> {
         "Health must run from the installed executable"
     );
     let (root, _pins) = health_root()?;
-    // Do not acquire either lock, create state, or open Engine here: caller may
-    // own both locks. Only the fixed existing updater namespace is inspected.
     installation_health(&path, &root, env!("CARGO_PKG_VERSION"))
 }
 fn health_root() -> Result<(PathBuf, Vec<File>)> {
@@ -1063,8 +1054,6 @@ fn write_attempt(root: &Path, attempt: Option<&InstallAttempt>) -> Result<()> {
     parse_attempt(&bytes)?;
     replace(root, "install-attempt.json", &bytes)
 }
-// Caller owns both locks and has excluded live installers. Only a durably
-// confirmed zero exit permits resuming the read-only health/publication steps.
 // A crash before recording that exit cannot prove whether setup is still alive
 // (including extracted Inno children), so never replay setup or claim UpToDate.
 fn recover_installation(root: &Path, path: &Path) -> Result<Option<UpdateOutcome>> {
@@ -1257,9 +1246,6 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
             "Updates must originate from the installed executable"
         );
         let held = trusted_installed(&path)?;
-        // Busy before anything was checked: keep the last real result on
-        // record (a recorded DeferredBusy means an update is downloaded and
-        // waiting, see install-staged).
         let Some(_engine) = lock(engine_lock_root(&root)?, "engine.lock")? else {
             return Ok(UpdateOutcome::DeferredBusy);
         };
@@ -1318,7 +1304,6 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
         );
         replace(&root, "update-installer.exe", &bytes)?;
         replace(&root, "update-manifest.json", &raw)?;
-        // Read from the already pinned trusted installed image, not another path.
         let mut image = Vec::new();
         held.last()
             .context("Missing installed image")?
@@ -1380,7 +1365,6 @@ pub(super) fn install_staged() -> Result<UpdateOutcome> {
         };
         interlock::ensure_others_idle(interlock::Activity::Updater, &_engine)?;
         let path = installed()?;
-        // Allow the check process to exit. Other interactive sessions are never killed.
         while busy(&path, &root)? {
             if Instant::now() >= deadline {
                 return record(&root, UpdateOutcome::DeferredBusy);
@@ -1583,8 +1567,6 @@ mod tests {
         write_attempt(&test_root, Some(&attempt)).unwrap();
         let path = test_root.join("install-attempt.json");
         let original = fs::read(&path).unwrap();
-        // If recovery incorrectly reaches a probe, this nonexistent image fails
-        // differently. In particular no version-only success may clear intent.
         let error = recover_installation(&test_root, &test_root.join("missing.exe")).unwrap_err();
         assert!(error.to_string().contains("completion is unconfirmed"));
         assert_eq!(fs::read(&path).unwrap(), original);
@@ -1725,7 +1707,6 @@ mod tests {
     }
     #[test]
     fn default_programdata_acl_is_allowed_only_as_an_ancestor() {
-        // Exact recorded ProgramData SDDL; DCLCRPCR is the applicable 0x116 ACE.
         let sddl = "O:SYG:SYD:PAI(A;OICIIO;GA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;CI;DCLCRPCR;;;BU)";
         check_acl(sddl, true, false, true).unwrap();
         assert!(check_acl(sddl, true, false, false).is_err());
@@ -1770,7 +1751,6 @@ mod tests {
     fn attribute_exception_never_applies_to_owned_roots_or_files() {
         for right in [FILE_WRITE_EA, FILE_WRITE_ATTRIBUTES, GENERIC_WRITE] {
             let sddl = format!("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x{right:x};;;BU)");
-            // Strict always wins, even if ancestor was accidentally also set.
             for (directory, strict, ancestor) in [
                 (true, true, false),
                 (true, true, true),
@@ -1848,8 +1828,6 @@ mod tests {
         assert!(args.contains(&"/TASKS=")); // Empty value; no literal quote characters in argv.
         assert!(args.contains(&"/NORESTART"));
     }
-    // Native race checks require an elevated Windows test runner; no guest
-    // operations are performed by the cross-build validation.
     #[test]
     fn update_layout_requires_the_native_base_and_exact_child() {
         let base = known_folder(&FOLDERID_ProgramData)
@@ -1873,7 +1851,6 @@ mod tests {
         let base = crate::platform::state_dir().unwrap();
         assert_eq!(root, base.join("Updates"));
         assert_eq!(engine_lock_root(&root).unwrap(), base);
-        // The engine's base lock must contend with the updater's chosen lock.
         let engine = lock(&base, "engine.lock")
             .unwrap()
             .expect("Run serially without an engine");
@@ -1906,7 +1883,6 @@ mod tests {
                 Path::new(&std::env::var_os("ProgramData").unwrap())
             );
             assert!(installed().unwrap().is_absolute());
-            // Exercise the production preflight API too; parent holds its lock.
             let status = status().unwrap();
             if config().unwrap().is_some() {
                 assert_eq!(status.result, UpdateOutcome::DeferredBusy);
@@ -2073,7 +2049,6 @@ mod tests {
         let (root, _pins) = update_root().unwrap();
         let test_root = root.join(format!("floor-test-{}", std::process::id()));
         let pin = protected_update_directory(&test_root).unwrap();
-        // Native persistence test; signed parsing is exercised in protocol tests.
         let mut m = Manifest {
             schema: 1,
             version: "9.2.0".into(),

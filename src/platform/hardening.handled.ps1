@@ -1,13 +1,7 @@
-# Handled-item controls: services.unquoted_paths, firewall.user_dir_inbound_allow,
-# net.hosts_file, persistence.run_and_tasks. Concatenated between the backend
-# definitions and hardening.ps1 (which holds the dispatcher), so everything here
-# is available to it and to $spec at call time.
-#
-# Every item reads 1 while it is flagged and untouched, 0 while it is exactly as
-# Secblitz left it, and 2 when Secblitz fixed it and someone changed it since.
-# What undo needs (the exact original) lives in Secblitz-owned state under
-# HKLM\Software\Secblitz\HardeningUndo\<control id>; the journal only records 1.
-# Nothing is deleted and nothing here starts a child process.
+# Handled-item controls: services.unquoted_paths, firewall.user_dir_inbound_allow, net.hosts_file,
+# persistence.run_and_tasks. Each item reads 1 while flagged and untouched, 0 while exactly as Secblitz
+# left it, 2 when Secblitz fixed it and someone changed it since. The exact original lives in
+# HKLM\\Software\\Secblitz\\HardeningUndo\\<control id>. Nothing is deleted; no child process is started.
 $hUserDirPattern = '\\users\\[^\\]+\\(downloads|desktop|appdata\\local\\temp)\\|\\users\\public\\|\\windows\\temp\\|%userprofile%\\(downloads|desktop)\\|%temp%\\|%public%\\'
 $hHostsBroad = '(^|\.)(microsoft|windowsupdate|windows|live|office|office365|msedge|xbox)\.(com|net)\z|defender|kaspersky|avast|avg\.com|norton|symantec|mcafee|malwarebytes|bitdefender|eset\.|sophos|trendmicro|avira|webroot|paypal|bank|chase\.com|wellsfargo|citibank|hsbc|barclays|santander|capitalone|americanexpress|revolut'
 $hHostsUpdate = 'windowsupdate\.com\z|(^|\.)update\.microsoft\.com\z|(^|\.)download\.microsoft\.com\z|(^|\.)smartscreen[^.]*\.microsoft\.com\z|(^|\.)wdcp\.microsoft\.com\z|defender|kaspersky|avast|norton|symantec|mcafee|malwarebytes|bitdefender|eset\.|sophos|trendmicro|avira|webroot'
@@ -21,7 +15,6 @@ $script:hMe = $null
 $script:hUnquotedCache = $null
 $script:hStartupCache = $null
 
-# ---- Secblitz-owned undo state
 function HStateSub() { return ('SOFTWARE\Secblitz\HardeningUndo\' + [string]$spec.id) }
 function HStateNames() {
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey((HStateSub), $false)
@@ -71,8 +64,6 @@ function HLabelKind([string]$name) {
     return ''
 }
 function HLabelList($slice) {
-    # The exact items a fix would change, for the row's details (display only).
-    # Items that are left alone follow, then how many more are not listed.
     $out = @()
     $more = 0
     foreach ($name in @($slice.Keys | Sort-Object)) {
@@ -88,7 +79,6 @@ function HLabelList($slice) {
     return $out
 }
 
-# ---- services.unquoted_paths
 function HServicesRoot() { return 'SYSTEM\CurrentControlSet\Services' }
 function HBroadWriters() { return @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') }
 function HDirWritable([string]$dir, $cache) {
@@ -165,7 +155,6 @@ function HUnquotedEntries() {
     return $out
 }
 function HUnquotedEntriesOnce() {
-    # One scan per run: a fix of several services must not rescan for each one.
     if ($null -eq $script:hUnquotedCache) { $script:hUnquotedCache = @(HUnquotedEntries) }
     return $script:hUnquotedCache
 }
@@ -227,7 +216,6 @@ function HSetUnquoted([string]$name, $v) {
     HStateRemove $name
 }
 
-# ---- firewall.user_dir_inbound_allow
 function HFirewallProgramOf($rule, $programs) {
     # The program filters are read once for all rules (one call per rule is very
     # slow with hundreds of rules). A rule missing from that list is asked directly.
@@ -296,7 +284,6 @@ function HSetUserDirFirewall([string]$name, $v) {
     HStateRemove $name
 }
 
-# ---- net.hosts_file
 function HHostsPath() { return [IO.Path]::Combine($env:SystemRoot, 'System32\drivers\etc\hosts') }
 function HHostsBytes() {
     $p = HHostsPath
@@ -405,7 +392,6 @@ function HHostsSetReadOnly([bool]$on) {
     [IO.File]::SetAttributes($p, [IO.FileAttributes]$attrs)
 }
 function HFlushDns() {
-    # Best effort: the next lookup would pick the change up anyway.
     try { Load 'DnsClient'; Clear-DnsClientCache -ErrorAction Stop } catch { }
 }
 function HSetHosts([string]$name, $v) {
@@ -445,7 +431,6 @@ function HHostsPreflight() {
     if (!(HHostsPlain $bytes)) { throw 'Not offered: the hosts file uses a format we cannot keep exactly' }
 }
 
-# ---- persistence.run_and_tasks
 function HStartupRoot([string]$kind) {
     # Where each kind of entry lives and where Windows keeps its on/off switch.
     $explorer = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\'
@@ -528,7 +513,6 @@ function HApprovedEnabled($bytes) {
     return (($bytes[0] -band 1) -eq 0)
 }
 function HStartupEntriesOnce() {
-    # One scan per run: a fix of several items must not rescan everything for each one.
     if ($null -eq $script:hStartupCache) { $script:hStartupCache = @(HStartupEntries) }
     return $script:hStartupCache
 }
@@ -596,7 +580,6 @@ function HTaskParts([string]$name) {
     return @{ path = $m.Groups['path'].Value; leaf = $m.Groups['leaf'].Value }
 }
 function HStartupTaskState([string]$name) {
-    # 'Disabled', another state, or $null when the task is gone.
     $parts = HTaskParts $name
     Load 'ScheduledTasks'
     $found = @(Get-ScheduledTask -TaskPath $parts.path -TaskName $parts.leaf -ErrorAction SilentlyContinue)

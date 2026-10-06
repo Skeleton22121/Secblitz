@@ -48,8 +48,6 @@ fn root_authorizes_only_one_key_one_exact_candidate_and_one_origin() {
         &origin("https://other.example.org").unwrap().unwrap()
     )
     .is_err());
-    // The old verifier continues requiring its pinned root. No new fields or
-    // delegated keys are silently accepted in stable.json.
     assert!(verify(&raw, &root.verifying_key().to_bytes(), 1500).is_err());
     assert!(verify(
         &envelope(&value, &root),
@@ -143,7 +141,6 @@ fn delegation_expiry_is_hard_and_durable_floor_does_not_expire() {
     for time in [2000, 2001, u64::MAX] {
         assert!(delivery::candidate(&raw, &a, time).is_err());
     }
-    // Authenticating durable state is intentionally clock-independent.
     let restored = decode(&value, &root).unwrap();
     value["sequence"] = 2.into();
     value["published_at"] = 3000.into();
@@ -213,7 +210,6 @@ fn holdback_observes_floor_and_failed_health_cannot_enable_downgrade() {
     let m = delivery::candidate(&raw, &a, 1500).unwrap();
     let floor = advance_floor(&m, "8.0.0", None).unwrap();
     assert!(!delivery::eligible(&[7; 16], &a).unwrap());
-    // Health failure is never automatic downgrade, nor floor deletion.
     assert!(health::validate(b"{}", "9.0.0", None).is_err());
     let old = Manifest {
         version: "8.5.0".into(),

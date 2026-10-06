@@ -32,7 +32,6 @@ impl Config {
         self.paused_until.is_some_and(|t| t > now)
     }
 
-    /// The switches that count right now (all off while paused).
     pub fn active(&self, now: u64) -> Switches {
         if self.paused(now) {
             return Switches::default();
@@ -77,7 +76,6 @@ pub struct Status {
     pub written_at: u64,
 }
 
-/// Reads a small file, refusing anything over `max` bytes.
 fn read_capped(path: &Path, max: u64) -> Option<Vec<u8>> {
     let file = fs::File::open(path).ok()?;
     let mut buf = Vec::new();
