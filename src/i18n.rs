@@ -243,7 +243,12 @@ mod tests {
                 name != "tests.rs" && !name.ends_with("_tests.rs") && name != "testing.rs"
             })
             .map(|path| {
-                let name = path.strip_prefix(&src).unwrap().display().to_string();
+                let name = path
+                    .strip_prefix(&src)
+                    .unwrap()
+                    .display()
+                    .to_string()
+                    .replace('\\', "/");
                 (name, std::fs::read_to_string(&path).unwrap())
             })
             .collect()
