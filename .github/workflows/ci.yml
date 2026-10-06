@@ -106,6 +106,6 @@ jobs:
       - name: Install pinned cargo-deny
         run: |
           rustup toolchain install stable --profile minimal
-          cargo +stable install cargo-deny --version 0.18.9 --locked --root "$RUNNER_TEMP/cargo-deny"
+          cargo +stable install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/cargo-deny"
       - name: Check that every dependency has an allowed license and comes from crates.io
         run: '"$RUNNER_TEMP/cargo-deny/bin/cargo-deny" --locked check licenses sources'
