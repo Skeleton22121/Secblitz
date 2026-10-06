@@ -78,6 +78,9 @@ pub struct Report {
     pub findings: Vec<Finding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<Readiness>,
+    /// The settings "undo your last fixes" would put back, oldest change first. Filled by a check.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undo_next: Vec<String>,
 }
 
 impl Report {
@@ -116,6 +119,9 @@ pub struct Outcome {
     pub authority: Option<Authority>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<crate::model::ItemLabel>,
+    /// Secblitz changed this setting and can put it back on its own. Filled by a check.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub undoable: bool,
 }
 
 /// Approval alone cannot make an ambiguous original safe, so there is deliberately no force-truncate API. Restore a verified journal backup under engine.lock instead.
