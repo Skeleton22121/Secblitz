@@ -18,9 +18,9 @@
 //! names it, clicking a row makes the lens glide there and look again (a
 //! ticked row draws its tick again), clicking elsewhere sends a pulse.
 use super::motion::{phase, Spring};
-use super::pointer::{tooltip, Hotspots, Layer};
+use super::pointer::{tooltip, Hotspots, Layer, TIP_ROOM};
 use super::stage::{
-    pt, stroke, tint_by, Ink, Plate, Stage, W_ACCENT, W_FAINT, W_LINE, W_MARK, W_PART, W_THICK,
+    pt, stroke, tint_by, Ink, Plate, Stage, TINT, W_ACCENT, W_FAINT, W_LINE, W_MARK, W_PART,
 };
 use super::svg::{PathData, Seg};
 use super::{Glyph, Live};
@@ -116,6 +116,11 @@ const RELOOK_DELAY: Duration = Duration::from_millis(450);
 const TICK_STAGGER: Duration = Duration::from_millis(150);
 /// A tick draws itself in over this long.
 const TICK_DRAW: f32 = 0.35;
+/// A switch turned on in blue (work in progress) turns green (done) over
+/// this part of the seconds after its tick starts drawing.
+const SWITCH_DONE: (f32, f32) = (0.45, 0.85);
+/// The hover label glides between rows and follows the lens on this spring.
+const TIP_SPRING: (f32, f32) = (320.0, 34.0);
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -238,6 +243,17 @@ fn bob(t: f32, amount: f32) -> Vector {
     Vector::new(3.0 * (t * 1.3).sin(), 4.0 * (t * 1.7).sin()) * amount
 }
 
+/// The hover label's anchor, kept low enough that the label fits above it
+/// (at small sizes it would otherwise flip below, over the row it names).
+fn tip_at(st: &State, s: &Stage) -> Point {
+    let top = if s.k > 0.0 {
+        VIEW_AT.y + TIP_ROOM / s.k
+    } else {
+        VIEW_AT.y
+    };
+    pt(st.tip_x.value, st.tip_y.value.max(top))
+}
+
 fn secs(d: Duration) -> f32 {
     d.as_secs_f32()
 }
@@ -353,10 +369,12 @@ struct RowLook {
     knob: f32,
     /// How much of the tick has drawn in.
     tick: f32,
+    /// The switch's colour, 0 accent (turning on) to 1 good (done).
+    done: f32,
 }
 
 /// The screen's contents: a title bar with three dots and the five rows.
-fn screen_prims(p: &Palette, ink: &Ink, rows: &[RowLook; N], out: &mut Vec<Prim>) {
+fn screen_prims(ink: &Ink, rows: &[RowLook; N], out: &mut Vec<Prim>) {
     for i in 0..3 {
         out.push(Prim {
             d: circle_d(pt(SX0 + 9.0 + i as f32 * 6.0, SY0 + 8.0), 1.5),
@@ -390,27 +408,41 @@ fn screen_prims(p: &Palette, ink: &Ink, rows: &[RowLook; N], out: &mut Vec<Prim>
                 paint: Paint::Stroke(ink.accent.scale_alpha(look.read), W_ACCENT),
             });
         }
+        // The switch: a grey outline; turning on, it fills with a little of
+        // its colour, its outline and knob take the colour, and once the
+        // row is done the colour goes from accent to good.
         let pill = rr_d(PILL_X, y - 5.0, 20.0, 10.0, 5.0);
+        let on = look.knob.clamp(0.0, 1.0);
+        let col = tint_by(ink.good, ink.accent, look.done.clamp(0.0, 1.0));
+        if on > 0.004 {
+            out.push(Prim {
+                d: pill.clone(),
+                paint: Paint::Fill(tint_by(col, ink.plate, TINT * on)),
+            });
+        }
         out.push(Prim {
             d: pill.clone(),
             paint: Paint::Stroke(ink.faint, W_FAINT),
         });
-        let on = look.knob.clamp(0.0, 1.0);
         if on > 0.004 {
             out.push(Prim {
                 d: pill,
-                paint: Paint::Fill(ink.accent.scale_alpha(on)),
+                paint: Paint::Stroke(col.scale_alpha(on), W_PART),
             });
         }
         let knob = circle_d(pt(PILL_X + 5.0 + 10.0 * look.knob, y), 3.0);
-        out.push(Prim {
-            d: knob,
-            paint: if look.knob > 0.5 {
-                Paint::Fill(p.on_brand)
-            } else {
-                Paint::Stroke(ink.faint, W_FAINT)
-            },
-        });
+        if on < 0.996 {
+            out.push(Prim {
+                d: knob.clone(),
+                paint: Paint::Stroke(ink.faint.scale_alpha(1.0 - on), W_FAINT),
+            });
+        }
+        if on > 0.004 {
+            out.push(Prim {
+                d: knob,
+                paint: Paint::Fill(col.scale_alpha(on)),
+            });
+        }
         if look.tick > 0.001 {
             let tick = PathData {
                 segs: vec![
@@ -648,8 +680,9 @@ fn draw_zoomed(f: &mut Frame, s: &Stage, prims: &[Prim], c: Point) {
                             }
                         }
                     });
-                    // Magnified lines are a little bolder, within the set's widths.
-                    f.stroke(&path, stroke(col, (w * ZOOM).min(W_THICK)));
+                    // Lines keep their width when magnified, as in the
+                    // prototype (its strokes do not scale).
+                    f.stroke(&path, stroke(col, w));
                 }
                 _ => {}
             }
@@ -686,9 +719,13 @@ pub struct State {
     rows: [Row; N],
     /// A clicked row the lens is looking at again, and since when.
     look: Option<(usize, Instant)>,
-    /// Last time the pointer was over the drawing (the Ready bob runs a
+    /// Last time the pointer moved over the drawing (the Ready bob runs a
     /// while after it).
     active: Option<Instant>,
+    /// Where the hover label is anchored, in units, and whether it shows.
+    tip_x: Spring,
+    tip_y: Spring,
+    tip_on: bool,
 }
 
 impl Default for State {
@@ -700,6 +737,9 @@ impl Default for State {
             rows: Default::default(),
             look: None,
             active: None,
+            tip_x: Spring::with(0.0, TIP_SPRING.0, TIP_SPRING.1),
+            tip_y: Spring::with(0.0, TIP_SPRING.0, TIP_SPRING.1),
+            tip_on: false,
         }
     }
 }
@@ -717,7 +757,8 @@ impl Magnifier {
 
     /// How much of the Ready bob is left at `now`.
     fn bob_amount(&self, st: &State, now: Instant) -> f32 {
-        if self.working() {
+        // Under reduced motion the glass rests still at its place.
+        if self.working() || anim::reduced() {
             return 0.0;
         }
         match st.active.or(st.live.born) {
@@ -807,25 +848,28 @@ impl Magnifier {
 
     fn row_looks(&self, st: &State, now: Instant) -> [RowLook; N] {
         let lens = st.lens();
-        let ptr = &st.live.pointer;
-        // The lens highlights what it reads while checking, or when a
-        // person leads it there.
-        let reads = self.working() || (ptr.inside && leads(ptr.at)) || st.look.is_some();
+        // The lens highlights what it reads (in accent, work in progress)
+        // while checking, or when a clicked row sends it to look. The
+        // resting glass drifting toward the pointer reads nothing: it is
+        // not on the row the pointer names.
+        let reads = self.working() || st.look.is_some();
         std::array::from_fn(|i| {
-            let tick = match st.rows[i].seen {
+            let (tick, done) = match st.rows[i].seen {
+                Some(_) if anim::reduced() => (1.0, 1.0),
                 Some(at) if now >= at => {
-                    if anim::reduced() {
-                        1.0
-                    } else {
-                        phase(secs(now - at), 0.0, TICK_DRAW, DECELERATE)
-                    }
+                    let age = secs(now - at);
+                    (
+                        phase(age, 0.0, TICK_DRAW, DECELERATE),
+                        phase(age, SWITCH_DONE.0, SWITCH_DONE.1, EASE_IN_OUT),
+                    )
                 }
-                _ => 0.0,
+                _ => (0.0, 0.0),
             };
             RowLook {
                 read: if reads { reading(lens, i) } else { 0.0 },
                 knob: st.rows[i].knob.value,
                 tick,
+                done,
             }
         })
     }
@@ -837,15 +881,35 @@ impl Magnifier {
         }
         let ticking = st.rows.iter().any(|r| {
             r.knob.moving()
-                || r.seen
-                    .is_some_and(|at| now < at + Duration::from_secs_f32(TICK_DRAW))
+                || r.seen.is_some_and(|at| {
+                    now < at + Duration::from_secs_f32(TICK_DRAW.max(SWITCH_DONE.1))
+                })
         });
+        let tip = st.tip_on && (st.tip_x.moving() || st.tip_y.moving());
         self.working()
             || self.bob_amount(st, now) > 0.0
             || st.lens_x.moving()
             || st.lens_y.moving()
             || st.look.is_some()
             || ticking
+            || tip
+    }
+
+    /// Where the label naming row `i` goes (units): above the lens when the
+    /// lens is on that row (following the pointer, or sent there by a
+    /// click), otherwise above the row.
+    fn tip_anchor(&self, st: &State, i: usize) -> Point {
+        let ptr = &st.live.pointer;
+        let on_lens = match st.look {
+            Some((j, _)) => j == i,
+            None => self.working() && ptr.inside && leads(ptr.at),
+        };
+        if on_lens {
+            let c = st.lens();
+            pt(c.x, c.y - LENS_R - 1.0)
+        } else {
+            pt((SX0 + SX1) / 2.0, row_y(i) - ROW_H / 2.0 * 0.7)
+        }
     }
 }
 
@@ -876,7 +940,9 @@ impl<M> canvas::Program<M> for Magnifier {
             st.lens_x = Spring::with(at.x, 70.0, 13.0);
             st.lens_y = Spring::with(at.y, 70.0, 13.0);
         }
-        if st.live.pointer.inside {
+        // Only a real pointer event over the drawing keeps the Ready bob
+        // going: a cursor resting on it must not keep frames coming.
+        if step.gesture.is_some() && st.live.pointer.inside {
             st.active = Some(now);
         }
         if let Some(at) = step.click() {
@@ -899,6 +965,26 @@ impl<M> canvas::Program<M> for Magnifier {
                 r.knob.target = if r.seen.is_some_and(|at| now >= at) { 1.0 } else { 0.0 };
                 r.knob.tick(dt);
             }
+        }
+        // The hover label: shows where it belongs, then glides (between
+        // rows, or after the lens) instead of jumping.
+        match st.live.hover {
+            Some(i) => {
+                let to = self.tip_anchor(st, i);
+                if !st.tip_on || anim::reduced() {
+                    st.tip_x = Spring::with(to.x, TIP_SPRING.0, TIP_SPRING.1);
+                    st.tip_y = Spring::with(to.y, TIP_SPRING.0, TIP_SPRING.1);
+                } else {
+                    st.tip_x.target = to.x;
+                    st.tip_y.target = to.y;
+                    if let Some(dt) = step.dt {
+                        st.tip_x.tick(dt);
+                        st.tip_y.tick(dt);
+                    }
+                }
+                st.tip_on = true;
+            }
+            None => st.tip_on = false,
         }
         // Any pointer event may move the lens: one more frame to follow it.
         let busy = self.busy(st, now) || step.gesture.is_some();
@@ -927,7 +1013,7 @@ impl<M> canvas::Program<M> for Magnifier {
 
         let mut prims = Vec::with_capacity(64);
         monitor_prims(&ink, &mut prims);
-        screen_prims(&self.p, &ink, &rows, &mut prims);
+        screen_prims(&ink, &rows, &mut prims);
         for prim in &prims {
             draw_prim(&mut f, &s, prim, ink.plate);
         }
@@ -956,15 +1042,8 @@ impl<M> canvas::Program<M> for Magnifier {
         f.stroke(&s.arc(c, LENS_R - 5.0, LENS_R - 5.0, -2.6, -1.7), ink.ln2());
 
         st.live.pulses.draw(&mut f, &s, ink.accent);
-        if let Some(i) = st.live.hover {
-            // Name the row above the lens when the lens is on it, else
-            // above the row.
-            let anchor = if reading(c, i) > 0.0 {
-                pt(c.x, c.y - LENS_R - 1.0)
-            } else {
-                pt((SX0 + SX1) / 2.0, row_y(i) - ROW_H / 2.0 * 0.7)
-            };
-            tooltip(&mut f, &self.p, &s, anchor, &self.labels.0[i]);
+        if let (Some(i), true) = (st.live.hover, st.tip_on) {
+            tooltip(&mut f, &self.p, &s, tip_at(st, &s), &self.labels.0[i]);
         }
         vec![f.into_geometry()]
     }
@@ -1276,12 +1355,160 @@ mod tests {
                 read: 1.0,
                 knob: 0.7,
                 tick: 1.0,
+                done: 0.5,
             }; N];
             let mut prims = Vec::new();
             monitor_prims(&ink, &mut prims);
-            screen_prims(&p, &ink, &rows, &mut prims);
+            screen_prims(&ink, &rows, &mut prims);
             // Plain drawing plus, at most, the magnified copy and the glass.
             assert!(prims.len() * 2 + 8 < 150, "{}", prims.len());
         }
+    }
+
+    /// The switch's fills, in drawing order (pill, then knob).
+    fn switch_fills(ink: &Ink, knob: f32, done: f32) -> Vec<Color> {
+        let rows = [RowLook {
+            read: 0.0,
+            knob,
+            tick: 0.0,
+            done,
+        }; N];
+        let mut prims = Vec::new();
+        screen_prims(ink, &rows, &mut prims);
+        prims
+            .iter()
+            .filter(|p| {
+                p.d.bounds()
+                    .is_some_and(|b| b.x >= PILL_X - 0.5 && b.y > row_y(0) - 6.0 && b.y < row_y(0))
+            })
+            .filter_map(|p| match p.paint {
+                Paint::Fill(c) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn switches_follow_the_colour_rules() {
+        for p in [LIGHT, DARK] {
+            for plate in [Plate::Bg, Plate::Surface] {
+                let ink = Ink::new(&p, plate);
+                // Off: nothing filled, the knob is a grey ring.
+                assert!(switch_fills(&ink, 0.0, 0.0).is_empty());
+                // Turning on: the pill takes 13 percent of the accent, the
+                // knob the accent itself.
+                assert_eq!(switch_fills(&ink, 1.0, 0.0), vec![ink.tint(ink.accent), ink.accent]);
+                // Done: the same in good.
+                let done = switch_fills(&ink, 1.0, 1.0);
+                assert_eq!(done.len(), 2);
+                let close = |a: Color, b: Color| {
+                    (a.r - b.r).abs() < 1e-4 && (a.g - b.g).abs() < 1e-4 && (a.b - b.b).abs() < 1e-4
+                };
+                assert!(close(done[0], ink.tint(ink.good)), "{:?}", done[0]);
+                assert!(close(done[1], ink.good));
+            }
+        }
+    }
+
+    #[test]
+    fn a_resting_pointer_lets_the_ready_glass_go_quiet() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let m = Magnifier {
+            status: Status::Ready,
+            progress: None,
+            ..sample()
+        };
+        let mut st = State::default();
+        let mut clock = m.changed;
+        // The pointer comes to rest on Firewall's row and stays there.
+        let at = Point::new(120.0 - VIEW_AT.x, row_y(0) - VIEW_AT.y);
+        let on_row = mouse::Cursor::Available(at);
+        frame(&mut st, &m, &mut clock, on_row);
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: at });
+        canvas::Program::<()>::update(&m, &mut st, &moved, BOUNDS, on_row);
+        assert_eq!(st.live.hover, Some(0));
+        let mut frames = 0;
+        while frame(&mut st, &m, &mut clock, on_row) {
+            frames += 1;
+            assert!(frames < 1000, "never settled");
+            // Ready is not work in progress: no row turns blue, even the
+            // one the drifting lens passes over.
+            assert!(m.row_looks(&st, clock).iter().all(|r| r.read == 0.0));
+        }
+        let secs = frames as f32 * 0.016;
+        assert!(secs > BOB_HOLD && secs < BOB_HOLD + BOB_FADE + 2.0, "{secs}");
+        // Still named, with its label resting above the row.
+        assert_eq!(st.live.hover, Some(0));
+        assert!(st.tip_on);
+        assert!((st.tip_y.value - (row_y(0) - ROW_H / 2.0 * 0.7)).abs() < 0.01);
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn the_label_glides_and_never_covers_its_row() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let m = sample();
+        let mut st = State::default();
+        let mut clock = m.changed;
+        let row = |i: usize| Point::new(150.0 - VIEW_AT.x, row_y(i) - VIEW_AT.y);
+        frame(&mut st, &m, &mut clock, mouse::Cursor::Available(row(1)));
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: row(1) });
+        canvas::Program::<()>::update(&m, &mut st, &moved, BOUNDS, mouse::Cursor::Available(row(1)));
+        for _ in 0..60 {
+            frame(&mut st, &m, &mut clock, mouse::Cursor::Available(row(1)));
+        }
+        // Checking with the pointer leading: the label sits above the lens.
+        assert!((st.tip_y.value - (st.lens().y - LENS_R - 1.0)).abs() < 0.5);
+        // Moving to the next row, the label never jumps more than a few
+        // units in one frame.
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: row(2) });
+        let over = mouse::Cursor::Available(row(2));
+        canvas::Program::<()>::update(&m, &mut st, &moved, BOUNDS, over);
+        assert_eq!(st.live.hover, Some(2));
+        let mut last = pt(st.tip_x.value, st.tip_y.value);
+        for _ in 0..60 {
+            frame(&mut st, &m, &mut clock, over);
+            let now = pt(st.tip_x.value, st.tip_y.value);
+            assert!(now.distance(last) < 4.0, "{last:?} -> {now:?}");
+            last = now;
+        }
+        // At every size the label fits above its anchor, so it never flips
+        // down over the row it names.
+        for k in [COMPACT, 0.8, FULL] {
+            let size = Size::new(VIEW.width * k, VIEW.height * k);
+            let s = stage_for(size);
+            for i in 0..N {
+                for y in [row_y(i) - LENS_R - 1.0, row_y(i) - ROW_H / 2.0 * 0.7] {
+                    st.tip_y = Spring::new(y);
+                    let anchor = s.point(tip_at(&st, &s));
+                    let r = super::super::tooltip_rect(anchor, 90.0, size);
+                    assert!(r.y + r.height <= anchor.y + 0.5, "k {k} row {i}: {r:?} {anchor:?}");
+                }
+            }
+        }
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn reduced_motion_rests_the_ready_glass_in_place() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(true));
+        let m = Magnifier {
+            status: Status::Ready,
+            progress: None,
+            ..sample()
+        };
+        let mut st = State::default();
+        let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
+        let mut clock = m.changed;
+        assert!(!frame(&mut st, &m, &mut clock, off));
+        assert_eq!(st.lens(), REST);
+        // Much later, a redraw finds it in the same place.
+        clock += Duration::from_secs(20);
+        assert!(!frame(&mut st, &m, &mut clock, off));
+        assert_eq!(st.lens(), REST);
+        anim::set_reduced_override(None);
     }
 }
