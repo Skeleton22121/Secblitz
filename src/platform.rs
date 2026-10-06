@@ -306,6 +306,37 @@ struct RegistryRepair {
     reboot: bool,
 }
 
+const REGISTRY_REPAIRS: [RegistryRepair; 4] = [
+    RegistryRepair {
+        id: "installer.always_install_elevated",
+        title: "Disable always-elevated MSI installation",
+        description: "Repair only machine AlwaysInstallElevated=1. The machine setting breaks the vulnerable machine/user conjunction; preserve HKCU, absent values and normal administrator-authorized installs.",
+        target: 0,
+        reboot: false,
+    },
+    RegistryRepair {
+        id: "lsa.restrict_anonymous_sam",
+        title: "Restrict anonymous SAM enumeration",
+        description: "Repair only RestrictAnonymousSAM=0. Require authentication for account enumeration; legacy anonymous enumeration workflows may be affected. Preserve absent values and other LSA settings.",
+        target: 1,
+        reboot: false,
+    },
+    RegistryRepair {
+        id: "lsa.limit_blank_password_use",
+        title: "Limit blank-password accounts to console logon",
+        description: "Repair only LimitBlankPasswordUse=0. Block remote logons using blank local passwords while preserving physical console logon. Preserve absent values; no passwords are inspected or changed.",
+        target: 1,
+        reboot: false,
+    },
+    RegistryRepair {
+        id: "wdigest.use_logon_credential",
+        title: "Disable WDigest plaintext credential caching",
+        description: "Repair only UseLogonCredential=1. Preserve absent values (safe on supported Windows). Readback verifies stored configuration, not running LSASS; restart/sign-out may be needed for existing sessions. Legacy Digest SSO may require credentials.",
+        target: 0,
+        reboot: true,
+    },
+];
+
 // Targets and restoration values describe raw preferences. Independently verified
 // firewall effective status lives only in Observation metadata, never before-images.
 // Registry restoration includes absence rather than inventing a previous value.
@@ -355,36 +386,7 @@ fn controls() -> Vec<Control> {
         description,
         target,
         reboot,
-    } in [
-        RegistryRepair {
-            id: "installer.always_install_elevated",
-            title: "Disable always-elevated MSI installation",
-            description: "Repair only machine AlwaysInstallElevated=1. The machine setting breaks the vulnerable machine/user conjunction; preserve HKCU, absent values and normal administrator-authorized installs.",
-            target: 0,
-            reboot: false,
-        },
-        RegistryRepair {
-            id: "lsa.restrict_anonymous_sam",
-            title: "Restrict anonymous SAM enumeration",
-            description: "Repair only RestrictAnonymousSAM=0. Require authentication for account enumeration; legacy anonymous enumeration workflows may be affected. Preserve absent values and other LSA settings.",
-            target: 1,
-            reboot: false,
-        },
-        RegistryRepair {
-            id: "lsa.limit_blank_password_use",
-            title: "Limit blank-password accounts to console logon",
-            description: "Repair only LimitBlankPasswordUse=0. Block remote logons using blank local passwords while preserving physical console logon. Preserve absent values; no passwords are inspected or changed.",
-            target: 1,
-            reboot: false,
-        },
-        RegistryRepair {
-            id: "wdigest.use_logon_credential",
-            title: "Disable WDigest plaintext credential caching",
-            description: "Repair only UseLogonCredential=1. Preserve absent values (safe on supported Windows). Readback verifies stored configuration, not running LSASS; restart/sign-out may be needed for existing sessions. Legacy Digest SSO may require credentials.",
-            target: 0,
-            reboot: true,
-        },
-    ] {
+    } in REGISTRY_REPAIRS {
         out.push(Control {
             id: id.into(),
             title: title.into(),
