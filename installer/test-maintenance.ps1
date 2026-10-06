@@ -16,7 +16,6 @@ foreach ($name in @('Get-Acl', 'Set-Acl')) {
         throw "Missing explicit inbox Security command: $name"
     }
 }
-# Exercise the actual production helpers, without invoking installer actions.
 $native = $ast.Find({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type' }, $true)
 . ([scriptblock]::Create($native.Extent.Text))
 foreach ($name in @('Assert-SafeItem', 'Assert-Tree', 'Protect-Item', 'Invoke-MonitorCommand', 'Invoke-ExeCommand', 'Assert-PurgeItem', 'Assert-PurgeTree', 'Remove-OwnedTree', 'Remove-OwnedRunValue')) {
@@ -40,7 +39,6 @@ try {
     $file = Join-Path $root 'image.exe'
     [IO.File]::WriteAllText($file, 'test fixture')
     Protect-Item $file $false
-    # Verify native dispatch and exact child exit codes even with PATHEXT absent.
     $exe = Join-Path $root 'native-exit-fixture.exe'
     Add-Type -TypeDefinition 'public static class ExitFixture { public static int Main(string[] args) { return args.Length == 2 && args[0] == "service" && args[1] == "install" ? 0 : 37; } }' -OutputAssembly $exe -OutputType ConsoleApplication
     $oldPathExt = $env:PATHEXT
@@ -58,14 +56,12 @@ try {
     Assert-Tree $root
     Release-Pins
 
-    # A pinned safe tree cannot be swapped out during ACL validation.
     Assert-SafeItem $file
     $renameFailed = $false
     try { [IO.File]::Move($file, "$file.moved") } catch { $renameFailed = $true }
     if (-not $renameFailed) { throw 'Pinned file was renamed.' }
     Release-Pins
 
-    # Model Inno's exclusive data-file handle. Only the exact active file gets
     # metadata-only access; all owner/DACL/link checks must still execute.
     $dataFile = Join-Path $root 'unins000.dat'
     [IO.File]::WriteAllText($dataFile, 'owned Inno fixture')
@@ -81,7 +77,6 @@ try {
         Set-Acl -LiteralPath $dataFile -AclObject $acl
         Expect-Rejected { Assert-SafeItem $dataFile }
         Protect-Item $dataFile $false
-        # A different locked file is NOT exempt just because its name looks similar.
         $other = Join-Path $root 'unins001.dat'
         [IO.File]::WriteAllText($other, 'other fixture')
         Protect-Item $other $false
@@ -102,7 +97,6 @@ try {
     Expect-Rejected { Assert-SafeItem $junction }
     [IO.Directory]::Delete($junction)
 
-    # The tray status directory lets LocalService modify status.json, nothing more.
     $statusDir = Join-Path $root 'Status'
     $statusSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)(A;OICI;0x1200a9;;;BU)'
     $null = New-Item -ItemType Directory -Path $statusDir
@@ -131,7 +125,6 @@ try {
     Set-Acl -LiteralPath $file -AclObject $acl
     Expect-Rejected { Assert-SafeItem $file }
     Protect-Item $file $false
-    # Stock C:\ProgramData grants Users (CI)(WD,AD,WEA,WA) = 0x116: allowed only as the ProgramData ancestor.
     $pdLike = Join-Path $root 'pd-like'
     $null = New-Item -ItemType Directory -Path $pdLike
     $acl = Get-Acl -LiteralPath $pdLike
@@ -149,8 +142,6 @@ try {
     Expect-Rejected { Assert-SafeItem $pdLike $true $true }
     Release-Pins
     Remove-Item -LiteralPath $pdLike -Recurse -Force
-    # The web protection commands use the same native dispatch and only two fixed
-    # argument strings; anything else is refused before a process starts.
     $failed = $false
     try { Invoke-ExeCommand 'filter install' } catch {
         if ($_.Exception.Message -notmatch 'failed \(37\)') { throw }
@@ -160,8 +151,6 @@ try {
     Expect-Rejected { Invoke-ExeCommand 'filter run' }
     Expect-Rejected { Invoke-ExeCommand 'filter install --other' }
 
-    # Full cleanup: a plain protected tree (with the filter's own LocalService
-    # write access) is removed completely.
     $purge = Join-Path $root 'purge'
     $dataSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)(A;OICI;0x1200a9;;;BU)'
     function New-PurgeFixture {
@@ -179,7 +168,6 @@ try {
     if (Test-Path -LiteralPath $purge) { throw 'Owned tree was not removed.' }
     Remove-OwnedTree $purge # an absent folder is fine
 
-    # A folder that is missing a safe property is left completely untouched.
     $outside = Join-Path $root 'outside'
     $null = New-Item -ItemType Directory -Path $outside
     Protect-Item $outside $true
@@ -190,7 +178,6 @@ try {
         Expect-Rejected { Remove-OwnedTree $purge }
         if (-not (Test-Path -LiteralPath (Join-Path $purge 'journal.json'))) { throw "Refused purge still deleted files ($Why)." }
         if (-not (Test-Path -LiteralPath $keep)) { throw "Purge followed a link out of its folder ($Why)." }
-        # Never let the cleanup itself follow the planted junction.
         if ($Link) { [IO.Directory]::Delete($Link) }
         Remove-Item -LiteralPath $purge -Recurse -Force
     }
@@ -216,7 +203,6 @@ try {
     Set-Acl -LiteralPath (Join-Path $purge 'journal.json') -AclObject $acl
     Expect-PurgeRefused 'foreign owner'
 
-    # A logon Run value goes only when it starts our own executable.
     $runKeyPath = 'Software\SecblitzRunTest-' + [guid]::NewGuid().ToString('N')
     $runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($runKeyPath)
     try {

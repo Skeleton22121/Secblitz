@@ -1,5 +1,3 @@
-# Cross-platform parser and scan-submission boundary tests. No Windows probe,
-# Defender command, servicing executable, registry API or elevation is invoked.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $root = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..'))
@@ -43,8 +41,6 @@ foreach ($case in @('valid','expired','not_yet_valid','wrong_kind','wrong_action
         if ($failed -or $script:scans -ne 1 -or !$script:acknowledged) { throw 'Approved exact scan was not submitted once' }
     } elseif (!$failed -or $script:scans -ne 0 -or $script:acknowledged) { throw "Unsafe scan submission: $case" }
 }
-# Exercise the real gate with isolated providers: absence, managed, unknown and
-# alternate source policy must not collapse to the same authorization outcome.
 $gate = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq 'MaintenanceGate' })
 if ($gate.Count -ne 1) { throw 'Missing maintenance gate' }
 . ([scriptblock]::Create($gate[0].Extent.Text))

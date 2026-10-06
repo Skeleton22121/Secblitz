@@ -1,5 +1,3 @@
-# Synthetic provider/serialization tests. Runs on pwsh and Windows PowerShell
-# 5.1; never queries Windows, profiles, registry, COM or a network endpoint.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $root = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..'))
@@ -10,7 +8,6 @@ function Parse([string]$relative) {
     return $ast
 }
 $common = Parse 'src/diagnostics/common.ps1'
-# Install definitions only; do not run the Windows module bootstrap.
 foreach ($definition in $common.EndBlock.Statements) {
     if ($definition -is [Management.Automation.Language.FunctionDefinitionAst]) {
         . ([scriptblock]::Create($definition.Extent.Text))
