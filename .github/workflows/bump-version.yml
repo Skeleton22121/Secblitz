@@ -1,0 +1,89 @@
+name: Bump version
+
+# Prepares a release: moves every version number and the changelog to the new
+# version on a branch and opens a pull request. It never pushes to main.
+# After the pull request is merged, tag-release.yml tags the release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version, for example 0.8.1 (must be greater than the current one)"
+        required: true
+        type: string
+      allow_empty_notes:
+        description: "Allow an empty Unreleased section in CHANGELOG.md"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Open the release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Needs the repository setting "Allow GitHub Actions to create and approve
+    # pull requests" (Settings, Actions, General).
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          # The token stays in the git config for the push below, in this job only.
+          persist-credentials: true
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$VERSION' is not a plain MAJOR.MINOR.PATCH version."; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+            echo "::error::Tag v$VERSION already exists."; exit 1
+          fi
+      - name: Bump the version and the changelog
+        env:
+          VERSION: ${{ inputs.version }}
+          ALLOW_EMPTY: ${{ inputs.allow_empty_notes }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$ALLOW_EMPTY" = "true" ]; then extra+=(--allow-empty); fi
+          python3 scripts/bump-version.py "$VERSION" "${extra[@]}"
+      - name: Test the tools
+        run: |
+          python3 -m pip install --disable-pip-version-check "cryptography==46.0.5"
+          python3 scripts/bump-version-tests.py
+          python3 scripts/release-tests.py
+      - name: Check the lock file still matches
+        env:
+          # Any installed toolchain is enough here, the pinned one is for builds.
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          # Cargo.lock was edited by the script. This proves it is still valid.
+          cargo metadata --locked --format-version 1 > /dev/null
+      - name: Commit, push and open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          branch="release/v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add -A
+          git commit -m "Release $VERSION"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "Release $VERSION" \
+            --body "Version bump to $VERSION. Check the changelog wording, then merge. After the merge the tag v$VERSION is created and the release build starts (docs/RELEASING.md)."
