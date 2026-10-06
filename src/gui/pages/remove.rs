@@ -1,5 +1,5 @@
-//! Removes Secblitz itself, never any other app: one sheet that asks what should happen to the changes
-//! Secblitz made, optionally puts everything back (with progress), and then
+//! Removing Secblitz itself, never any other app: one sheet that asks what should happen to
+//! the changes Secblitz made, optionally puts everything back (with progress), and then
 //! starts the uninstaller. Opened from the last group on the Settings page.
 use crate::broker::{Reply, Request};
 use crate::gui::pages::settings;
