@@ -67,12 +67,12 @@ fn a_fix_is_applied_verified_and_undone() {
     assert_eq!(status_of(&engine.audit().unwrap()), "attention");
     assert_eq!(*value.borrow(), json!(false), "an audit never writes");
 
-    engine.apply_selected(&[ID.to_owned()], |_, _| {}).unwrap();
+    engine.apply_selected(&[ID.to_owned()], |_| {}).unwrap();
     assert_eq!(*value.borrow(), json!(true));
     assert_eq!(status_of(&engine.audit().unwrap()), "compliant");
     assert_eq!(engine.undoable_changes().unwrap(), 1);
 
-    engine.revert(|_, _| {}).unwrap();
+    engine.revert(|_| {}).unwrap();
     assert_eq!(*value.borrow(), json!(false));
     assert_eq!(status_of(&engine.audit().unwrap()), "attention");
 }
@@ -82,13 +82,13 @@ fn saved_changes_survive_reopening_the_engine() {
     let dir = tempfile::tempdir().unwrap();
     let value = Rc::new(RefCell::new(json!(false)));
     open(dir.path(), &value)
-        .apply_selected(&[ID.to_owned()], |_, _| {})
+        .apply_selected(&[ID.to_owned()], |_| {})
         .unwrap();
 
     let mut reopened = open(dir.path(), &value);
     assert_eq!(reopened.undoable_changes().unwrap(), 1);
     assert!(!reopened.history().unwrap().is_empty());
-    reopened.revert(|_, _| {}).unwrap();
+    reopened.revert(|_| {}).unwrap();
     assert_eq!(*value.borrow(), json!(false));
 }
 
@@ -98,7 +98,7 @@ fn selecting_an_unknown_control_changes_nothing() {
     let value = Rc::new(RefCell::new(json!(false)));
     let mut engine = open(dir.path(), &value);
     assert!(engine
-        .apply_selected(&["no.such.control".to_owned()], |_, _| {})
+        .apply_selected(&["no.such.control".to_owned()], |_| {})
         .is_err());
     assert_eq!(*value.borrow(), json!(false));
 }

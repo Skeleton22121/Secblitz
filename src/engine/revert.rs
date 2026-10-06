@@ -2,7 +2,7 @@
 
 use super::catalog::{recorded_scope, restore_eligible, scope, target_for};
 use super::journal::{Record, State, Transaction};
-use super::{Engine, Outcome, Report};
+use super::{Engine, Outcome, Progress, ProgressStep, Report};
 use crate::model::CheckStatus;
 use anyhow::{ensure, Result};
 
@@ -11,7 +11,7 @@ impl Engine {
         &mut self,
         tx: &mut Transaction,
         report: &mut Report,
-        callback: &mut impl FnMut(&str, &str),
+        callback: &mut impl FnMut(Progress<'_>),
     ) -> Result<()> {
         if !tx.reverting {
             self.append(tx, Record::Reverting)?;
@@ -67,7 +67,7 @@ impl Engine {
                     Self::observed_outcome(&c, CheckStatus::Skipped, &fresh.reason, &fresh)
                 } else {
                     if let Err(e) = self.backend.write(&id, &before_eff) {
-                        callback(&id, "error");
+                        callback(Progress::new(&id, ProgressStep::Result(CheckStatus::Error)));
                         return Err(e.context(format!(
                             "Restore {id} has unknown outcome; pending transaction {} retained",
                             tx.name
@@ -102,7 +102,7 @@ impl Engine {
         Ok(())
     }
 
-    pub fn revert(&mut self, mut callback: impl FnMut(&str, &str)) -> Result<Report> {
+    pub fn revert(&mut self, mut callback: impl FnMut(Progress<'_>)) -> Result<Report> {
         let _lock = self.lock()?;
         self.mutation_interlocks(&_lock)?;
         let mut transactions = self.load()?;
@@ -153,7 +153,7 @@ impl Engine {
     }
 
     /// Newest first. A batch with a conflict stays unreverted and older batches are still processed.
-    pub fn revert_all(&mut self, mut callback: impl FnMut(&str, &str)) -> Result<Report> {
+    pub fn revert_all(&mut self, mut callback: impl FnMut(Progress<'_>)) -> Result<Report> {
         let _lock = self.lock()?;
         self.mutation_interlocks(&_lock)?;
         let mut transactions = self.load()?;

@@ -2,19 +2,19 @@
 //! never blocks. The GUI submits a `Job` and receives a stream of `Event`s.
 use iced::futures::channel::mpsc as stream;
 use iced::futures::Stream;
-use secblitz::engine::{Engine, Report};
+use secblitz::engine::{Engine, Progress, Report};
 use std::sync::{mpsc, Arc};
 
 pub trait Session {
     fn available(&self) -> Vec<String>;
     fn restart_ids(&self) -> Vec<String>;
-    fn audit(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report>;
+    fn audit(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report>;
     fn apply(
         &mut self,
         ids: &[String],
-        progress: &mut dyn FnMut(&str, &str),
+        progress: &mut dyn FnMut(Progress<'_>),
     ) -> anyhow::Result<Report>;
-    fn undo(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report>;
+    fn undo(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report>;
     fn history(&mut self) -> anyhow::Result<Vec<String>>;
     fn can_start(&mut self, undo: bool) -> anyhow::Result<()>;
 }
@@ -33,17 +33,17 @@ impl Session for Engine {
             .map(|c| c.id.clone())
             .collect()
     }
-    fn audit(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report> {
+    fn audit(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
         self.audit_with_progress(progress)
     }
     fn apply(
         &mut self,
         ids: &[String],
-        progress: &mut dyn FnMut(&str, &str),
+        progress: &mut dyn FnMut(Progress<'_>),
     ) -> anyhow::Result<Report> {
         self.apply_selected(ids, progress)
     }
-    fn undo(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report> {
+    fn undo(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
         self.revert(progress)
     }
     fn history(&mut self) -> anyhow::Result<Vec<String>> {
@@ -203,7 +203,7 @@ fn outcome(r: anyhow::Result<Report>) -> Outcome {
 fn apply_in_batches(
     session: &mut dyn Session,
     ids: &[String],
-    progress: &mut dyn FnMut(&str, &str),
+    progress: &mut dyn FnMut(Progress<'_>),
 ) -> anyhow::Result<Report> {
     let batches = secblitz::vbs::split_batches(ids);
     if batches.len() <= 1 {
@@ -239,11 +239,11 @@ fn apply_in_batches(
 fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Event>) {
     let progress = |phase: Phase| {
         let reply = reply.clone();
-        move |id: &str, status: &str| {
+        move |step: Progress<'_>| {
             let _ = reply.unbounded_send(Event::Progress {
                 phase,
-                id: id.to_owned(),
-                status: status.to_owned(),
+                id: step.id.to_owned(),
+                status: step.step.as_str().to_owned(),
             });
         }
     };
@@ -279,6 +279,8 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secblitz::engine::ProgressStep;
+    use secblitz::model::CheckStatus;
     use iced::futures::executor::block_on;
     use iced::futures::StreamExt;
 
@@ -310,9 +312,9 @@ mod tests {
         fn restart_ids(&self) -> Vec<String> {
             vec!["b".into()]
         }
-        fn audit(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report> {
+        fn audit(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
             self.note("audit");
-            progress("a", "compliant");
+            progress(Progress::new("a", ProgressStep::Result(CheckStatus::Compliant)));
             if self.fail_audit {
                 anyhow::bail!("audit broke");
             }
@@ -321,20 +323,20 @@ mod tests {
         fn apply(
             &mut self,
             ids: &[String],
-            progress: &mut dyn FnMut(&str, &str),
+            progress: &mut dyn FnMut(Progress<'_>),
         ) -> anyhow::Result<Report> {
             self.note(format!("apply {}", ids.join(",")));
             for id in ids {
-                progress(id, "applied");
+                progress(Progress::new(id, ProgressStep::Result(CheckStatus::Applied)));
             }
             if self.fail_apply {
                 anyhow::bail!("disk full");
             }
             Ok(report("apply"))
         }
-        fn undo(&mut self, progress: &mut dyn FnMut(&str, &str)) -> anyhow::Result<Report> {
+        fn undo(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
             self.note("undo");
-            progress("a", "restored");
+            progress(Progress::new("a", ProgressStep::Result(CheckStatus::Restored)));
             Ok(report("undo"))
         }
         fn history(&mut self) -> anyhow::Result<Vec<String>> {
