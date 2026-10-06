@@ -610,8 +610,23 @@ try {
                 try { $status = [string](Get-AuthenticodeSignature -LiteralPath $path).Status } catch { return }
                 if ($status -cne 'Valid') { $tally.risky++ }
             }
+            # An entry switched off the way Task Manager does it (StartupApproved,
+            # first byte odd) will not start, so it is no longer a risk.
+            $switchedOff = {
+                param($hive, [string]$approvedPath, [string]$name)
+                try {
+                    $approved = $hive.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\' + $approvedPath, $false)
+                    if ($null -eq $approved) { return $false }
+                    try {
+                        if ($approved.GetValueNames() -cnotcontains $name) { return $false }
+                        $bytes = $approved.GetValue($name)
+                        return ($bytes -is [byte[]] -and $bytes.Length -ge 4 -and ($bytes[0] -band 1) -eq 1)
+                    } finally { $approved.Dispose() }
+                } catch { return $false }
+            }
             # Run and RunOnce keys (values are read raw; nothing is expanded or executed).
-            foreach ($hive in @(@([Microsoft.Win32.Registry]::LocalMachine,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'),@([Microsoft.Win32.Registry]::LocalMachine,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'),@([Microsoft.Win32.Registry]::LocalMachine,'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'),@([Microsoft.Win32.Registry]::CurrentUser,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'),@([Microsoft.Win32.Registry]::CurrentUser,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'))) {
+            $HKLM = [Microsoft.Win32.Registry]::LocalMachine; $HKCU = [Microsoft.Win32.Registry]::CurrentUser
+            foreach ($hive in @(@($HKLM,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run','Run'),@($HKLM,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',''),@($HKLM,'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run','Run32'),@($HKCU,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run','Run'),@($HKCU,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',''))) {
                 try {
                     $key = $hive[0].OpenSubKey($hive[1], $false)
                     if ($null -eq $key) { continue }
@@ -619,6 +634,7 @@ try {
                         $names = @($key.GetValueNames())
                         if ($names.Count -gt 256) { throw 'Value cap' }
                         foreach ($name in $names) {
+                            if ($hive[2] -ne '' -and (& $switchedOff $hive[0] $hive[2] $name)) { continue }
                             $value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
                             if ($value -is [string] -and $value.Length -lt 2048) { & $examine $value '' $false }
                         }
@@ -626,13 +642,15 @@ try {
                 } catch { $complete = $false }
             }
             # Startup folders (shortcuts are resolved in memory).
-            foreach ($dir in @([Environment]::GetFolderPath('Startup'), [Environment]::GetFolderPath('CommonStartup'))) {
+            foreach ($folder in @(@([Environment]::GetFolderPath('Startup'), $HKCU), @([Environment]::GetFolderPath('CommonStartup'), $HKLM))) {
+                $dir = $folder[0]
                 try {
                     if ([string]::IsNullOrEmpty($dir) -or -not [IO.Directory]::Exists($dir)) { continue }
                     $files = @([IO.Directory]::GetFiles($dir))
                     if ($files.Count -gt 256) { throw 'File cap' }
                     foreach ($file in $files) {
                         if ([IO.Path]::GetFileName($file) -ceq 'desktop.ini') { continue }
+                        if (& $switchedOff $folder[1] 'StartupFolder' ([IO.Path]::GetFileName($file))) { continue }
                         if ($file.EndsWith('.lnk', [StringComparison]::OrdinalIgnoreCase)) {
                             $shell = New-Object -ComObject WScript.Shell
                             $link = $shell.CreateShortcut($file)
@@ -643,7 +661,7 @@ try {
             }
             # Scheduled tasks that do not belong to Microsoft.
             try {
-                $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | Select-Object -First 2049)
+                $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\Microsoft\*' -and [string]$_.State -cne 'Disabled' } | Select-Object -First 2049)
                 if ($tasks.Count -gt 2048) { throw 'Task cap' }
                 foreach ($task in $tasks) {
                     foreach ($action in @($task.Actions)) {

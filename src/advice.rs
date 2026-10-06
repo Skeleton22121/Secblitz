@@ -177,6 +177,16 @@ pub fn control_impact(id: &str) -> &'static str {
         "vbs.kernel_stack_protection" => {
             "Attackers hijacking the core of Windows through a driver bug"
         }
+        "services.unquoted_paths" => {
+            "A planted program being started with full power instead of the real one"
+        }
+        "firewall.user_dir_inbound_allow" => {
+            "A harmful download letting strangers connect straight to your PC"
+        }
+        "net.hosts_file" => "Trusted websites quietly sending you to fake ones",
+        "persistence.run_and_tasks" => {
+            "A harmful program starting again every time you turn on your PC"
+        }
         _ => "",
     }
 }
@@ -276,6 +286,10 @@ pub fn control_label(id: &str) -> &'static str {
         "smb1.disabled" => "Older file sharing",
         "vbs.memory_integrity" => "Core system protection",
         "vbs.kernel_stack_protection" => "Extra core protection",
+        "services.unquoted_paths" => "Risky background program setup",
+        "firewall.user_dir_inbound_allow" => "Firewall allowances for downloads",
+        "net.hosts_file" => "Redirected trusted websites",
+        "persistence.run_and_tasks" => "Risky start-up programs",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -387,7 +401,11 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.recall"
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
-        | "privacy.clipboard_sync" => (
+        | "privacy.clipboard_sync"
+        | "services.unquoted_paths"
+        | "firewall.user_dir_inbound_allow"
+        | "net.hosts_file"
+        | "persistence.run_and_tasks" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -513,6 +531,18 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "vbs.kernel_stack_protection" => {
             "Some older drivers may not load. Needs a restart. You can undo this in History."
         }
+        "services.unquoted_paths" => {
+            "Only the way the program's location is written changes. The program keeps running as before."
+        }
+        "firewall.user_dir_inbound_allow" => {
+            "Programs in your Downloads or Desktop folders lose their firewall allowance and may ask again."
+        }
+        "net.hosts_file" => {
+            "Redirected websites go to their real address again. Your other entries stay as they are."
+        }
+        "persistence.run_and_tasks" => {
+            "Risky programs stop starting with Windows. Nothing is deleted, and you can undo this."
+        }
         _ => "",
     }
 }
@@ -627,6 +657,18 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: a locked sign-in would stay locked until an administrator unlocks it" => {
             "A locked account here would stay locked until an administrator unlocks it, so we leave this alone."
+        }
+        "Not offered: the hosts file could not be found" => {
+            "The hosts file is missing, so there is nothing for us to change."
+        }
+        "Not offered: the hosts file is too large to change safely" => {
+            "The hosts file is too big to change safely, so we leave it alone."
+        }
+        "Not offered: the hosts file uses a format we cannot keep exactly" => {
+            "The hosts file is saved in a format we can't keep exactly, so we leave it alone."
+        }
+        "Not offered: too many items to switch off safely at once" => {
+            "There are too many to switch off safely at once, so we leave this alone."
         }
         _ => return None,
     })
@@ -1109,6 +1151,10 @@ mod tests {
             secblitz::vbs::UNREADABLE,
             secblitz::vbs::SET_BY_HAND,
             secblitz::vbs::OLD_WINDOWS,
+            "Not offered: the hosts file could not be found",
+            "Not offered: the hosts file is too large to change safely",
+            "Not offered: the hosts file uses a format we cannot keep exactly",
+            "Not offered: too many items to switch off safely at once",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -1215,6 +1261,40 @@ mod tests {
         assert_eq!(control_for_finding("Kernel stack protection not running"), None);
         assert_eq!(control_for_finding("A device may not be working"), None);
         assert_eq!(control_for_finding("Secure Boot"), None);
+    }
+
+    #[test]
+    fn every_reason_the_handled_item_scripts_give_has_a_calm_plain_sentence() {
+        let script = include_str!("platform/hardening.handled.ps1");
+        let mut found = 0;
+        for piece in script.split('\'') {
+            if piece.starts_with("Not offered: ") {
+                found += 1;
+                let line = not_offered(piece).unwrap_or_else(|| panic!("no sentence for {piece}"));
+                assert!(line.ends_with('.') && line.len() < 100, "{piece}");
+            }
+        }
+        assert!(found >= 4, "{found}");
+    }
+
+    #[test]
+    fn handled_item_controls_are_choices_with_a_plain_consequence() {
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            assert!(is_choice(id), "{id}");
+            let a = for_control(id, "attention", "Eligible");
+            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
+            assert!(!a.impact.is_empty() && a.next == choice_consequence(id));
+            // Never offered when somebody else manages the setting.
+            let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
+            assert_eq!(managed.status, "Managed elsewhere", "{id}");
+            // A change made after our fix is a conflict, never a silent overwrite.
+            assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
+        }
     }
 
     #[test]

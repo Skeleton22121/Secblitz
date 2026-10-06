@@ -84,9 +84,10 @@ fn hardening_script(action: &str, id: &str, value: Option<&Value>) -> Result<Str
         _ => bail!("Invalid platform action arguments"),
     };
     Ok(format!(
-        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson={}\n{}\n{}",
+        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson={}\n{}\n{}\n{}",
         ps_text(&spec.script_json()),
         backend_definitions()?,
+        include_str!("platform/hardening.handled.ps1"),
         include_str!("platform/hardening.ps1")
     ))
 }

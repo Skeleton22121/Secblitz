@@ -15,7 +15,7 @@ use crate::app::tools::{
 };
 use crate::broker;
 use crate::gui::widgets::anim::{self, Clock};
-use crate::gui::{blocking, blocking_stream, Ctx, Message};
+use crate::gui::{blocking, blocking_stream, Ctx, Message, Tone};
 use iced::{Subscription, Task};
 use secblitz::actions;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +32,8 @@ pub enum Sheet {
     Repair(RepairKind),
     InstallUpdates,
     Bitwarden,
+    /// Restart the PC to finish installing updates.
+    Restart,
 }
 
 /// Windows Settings pages reachable from the shortcut list.
@@ -112,6 +114,8 @@ pub enum Msg {
     /// Open the Windows page a health tip points to.
     OpenAction(actions::Action),
     OpenSecurity,
+    /// The restart request was answered: an error means nothing was restarted.
+    RestartDone(Result<(), String>),
     ToggleDetail(Detail),
     Personal(personal::Msg),
 }
@@ -320,7 +324,11 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Ask(sheet) => {
-            let changes_pc = matches!(sheet, Sheet::Repair(_) | Sheet::InstallUpdates);
+            // A restart would cut a running fix, repair or update short.
+            let changes_pc = matches!(
+                sheet,
+                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart
+            );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
             if !blocked {
                 state.sheet = Some(sheet);
@@ -566,6 +574,16 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             None => Task::none(),
         },
         Msg::OpenSecurity => super::fixes::open_page(ctx, crate::guide::Page::WindowsSecurity),
+        Msg::RestartDone(result) => match result {
+            Ok(()) => Task::done(Message::Toast(
+                ctx.t("Restarting now. Programs with unsaved work will ask you first."),
+                Tone::Good,
+            )),
+            Err(_) => Task::done(Message::Toast(
+                ctx.t("We couldn't restart your PC. Restart it from the Start menu instead."),
+                Tone::Warn,
+            )),
+        },
         Msg::Personal(msg) => personal::update(&mut state.personal, msg, ctx),
         Msg::ToggleDetail(detail) => {
             if state.open_details.contains(&detail) {
@@ -643,6 +661,10 @@ impl State {
 
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
     match sheet {
+        Sheet::Restart => Task::perform(
+            blocking(|| actions::restart_for_updates().map_err(plain)),
+            |r| tools(Msg::RestartDone(r)),
+        ),
         Sheet::Scan => {
             state.scan = Run::Working;
             Task::perform(
