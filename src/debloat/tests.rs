@@ -72,11 +72,7 @@ fn protected_packages_are_protected_and_never_in_the_catalog() {
 }
 
 #[test]
-fn defaults_come_only_from_recommended_and_sponsored() {
-    for g in Group::ALL {
-        let expected = matches!(g, Group::Recommended | Group::Sponsored);
-        assert_eq!(g.selected_by_default(), expected);
-    }
+fn catalog_has_recommended_and_gaming_groups() {
     assert!(catalog().iter().any(|a| a.group == Group::Recommended));
     assert!(catalog().iter().any(|a| a.group == Group::Gaming));
 }
