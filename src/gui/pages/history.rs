@@ -1,11 +1,5 @@
 //! History: score trend, compact Undo / removed-apps rows and a timeline of
-//! checks, fixes, undos and app clean-ups grouped by day. OWNER: fixes agent.
-//!
-//! Borderless (docs/DESIGN-SYSTEM.md): one region for the trend chart, then
-//! plain rows with overflow menus, then collapsible days (today open, older
-//! days collapsed). Restoring individual apps is owned by the "Clean up apps"
-//! page. Everything shown is derived once, when the log arrives
-//! (`Msg::Loaded`), so `view()` only builds widgets.
+//! checks, fixes, undos and app clean-ups grouped by day.
 use crate::app::history::{self as log, Day, Entry, Kind};
 use crate::app::worker::{self, Job};
 use crate::gui::icons::Icon;
@@ -21,22 +15,16 @@ use secblitz::debloat;
 use std::collections::HashSet;
 
 const TREND_POINTS: usize = 30;
-/// Days listed before "See more".
 const DAYS_PAGE: usize = 10;
-/// Height of the trend chart.
 const CHART_HEIGHT: f32 = 160.0;
 
 #[derive(Debug)]
 pub struct State {
     visited: bool,
-    /// `None` until the log has been read.
     data: Option<Data>,
-    /// `None` until the engine answered.
     engine: Option<Result<Vec<String>, String>>,
     days_shown: usize,
-    /// Days whose open / closed state differs from the default (today open).
     flipped: HashSet<u64>,
-    /// Trend chart geometry, owned by the chart widget.
     chart: Cache,
 }
 
@@ -53,20 +41,14 @@ impl Default for State {
     }
 }
 
-/// Everything the page shows, derived from the score log in `update()`.
 #[derive(Debug)]
 struct Data {
-    /// (unix seconds, protected ratio), oldest first.
     points: Vec<(u64, f32)>,
-    /// (protected, total) of the latest check.
     latest: Option<(usize, usize)>,
-    /// Apps removed right now (restored ones don't count).
     removed: usize,
     days: Vec<Day>,
 }
 
-/// Protected ratios (from the shared log helper) paired with the time of
-/// each check, newest `max` checks, oldest first.
 fn trend_points(entries: &[Entry], max: usize) -> Vec<(u64, f32)> {
     let mut times: Vec<u64> = entries
         .iter()
@@ -99,7 +81,6 @@ impl Data {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// The score log and how many apps are removed right now.
     Loaded(Vec<Entry>, usize),
     ShowMore,
     ToggleDay(u64),
@@ -137,7 +118,6 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             state.engine = Some(result.clone());
             Task::none()
         }
-        // The score log was just appended to: re-read it while this page is in use.
         E::Checked(_) | E::Applied { .. } | E::Undone { .. } if state.visited => refresh(ctx),
         _ => Task::none(),
     }
@@ -160,7 +140,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     Task::none()
 }
 
-/// The engine has at least one applied, not yet undone batch.
 fn can_undo(state: &State) -> bool {
     matches!(&state.engine, Some(Ok(lines)) if lines.iter().any(|l| l.ends_with(" applied")))
 }
@@ -190,14 +169,11 @@ pub(super) fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
     format!("{} {} {}", d, ctx.t(MONTHS[(m as usize - 1) % 12]), y)
 }
 
-/// "5 Oct" for chart labels.
 fn short_date(lang: Lang, t: u64) -> String {
     let (_, m, d) = log::civil(log::local_day(t));
     format!("{} {}", d, lang.t(MONTHS[(m as usize - 1) % 12]))
 }
 
-/// Chart date labeller for `lang`. One non-capturing closure per language so
-/// the reference is `'static` and the chart can hold on to it.
 fn date_fn(lang: Lang) -> &'static dyn Fn(u64) -> String {
     match lang {
         Lang::En => &|t| short_date(Lang::En, t),
@@ -209,7 +185,6 @@ fn date_fn(lang: Lang) -> &'static dyn Fn(u64) -> String {
     }
 }
 
-/// Sentence for the removed-apps row: how many apps are removed right now.
 fn removed_text(ctx: &Ctx, removed: usize) -> String {
     match removed {
         0 => ctx.t("No apps are removed right now."),
@@ -232,7 +207,6 @@ fn items_text(ctx: &Ctx, n: usize) -> String {
     }
 }
 
-/// One day of the timeline as a collapsible: today open, older days closed.
 fn day_section<'a>(state: &State, ctx: &Ctx, day: &Day, today: u64) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = (day.day == today) != state.flipped.contains(&day.day);
@@ -325,7 +299,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         .into();
     };
 
-    // Trend: the chart owns its look; a single check still draws a point.
     let solid = Palette::of(p.mode);
     let trend_body: Element<'a, Message> = if data.points.is_empty() {
         widgets::muted(
@@ -364,7 +337,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         .spacing(theme::S3),
     );
 
-    // Undo: one compact row, the action lives in its overflow menu.
     let (undo_body, undo_enabled) = match &state.engine {
         None => (ctx.t("Checking what can be undone…"), false),
         Some(Err(_)) => (
@@ -394,7 +366,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         None,
     );
 
-    // Removed apps (restoring happens on the Clean up apps page).
     let removed = widgets::row_item(
         p,
         Some(Icon::Package),
@@ -462,16 +433,12 @@ mod tests {
             ],
             1,
         );
-        // The count comes from the removed-apps list, not from adding up
-        // removal events: the log shows three removals but one app is left.
         assert_eq!(d.removed, 1);
         assert_eq!(d.latest, Some((4, 5)));
         assert_eq!(d.points.len(), 2);
     }
 }
 
-/// Warm the page in the background (shell: after the engine opens and after
-/// every check). Marks the page as in use so later checks keep it fresh.
 #[allow(clippy::items_after_test_module)]
 pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     state.visited = true;

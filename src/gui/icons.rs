@@ -1,9 +1,5 @@
 //! Icon set: Microsoft Fluent UI System Icons, 24px (MIT license, see
 //! assets/ICONS-LICENSE.txt). https://github.com/microsoft/fluentui-system-icons
-//!
-//! `svg()` returns the Regular (outline) artwork, `svg_filled()` the Filled
-//! artwork for selected / active states. Both use `fill="currentColor"` so the
-//! iced svg style can tint them. Variants are a contract; add, never remove.
 
 #![allow(dead_code)]
 
@@ -61,16 +57,13 @@ macro_rules! s {
     };
 }
 
-/// Brand mark: the app icon's shield and bolt (assets/secblitz.svg) in one colour.
 pub const BRAND_SVG: &[u8] = s!(r##"<path fill-rule="evenodd" d="M12 1Q7.95 3.66 2.14 3.91L2.14 9.34Q2.14 18.45 12 23Q21.86 18.45 21.86 9.34L21.86 3.91Q16.05 3.66 12 1ZM12 3.66Q8.59 5.68 4.29 5.93L4.29 9.47Q4.29 16.8 12 20.72Q19.71 16.8 19.71 9.47L19.71 5.93Q15.41 5.68 12 3.66ZM10.99 6.74L13.9 6.74L12.44 10.95L15.21 10.95L10.41 17.64L11.43 13.28L8.66 13.28Z" fill="currentColor"/>"##).as_bytes();
 
 impl Icon {
-    /// Regular (outline) artwork, tinted via the svg style.
     pub fn svg(self) -> &'static [u8] {
         self.regular().as_bytes()
     }
 
-    /// Filled artwork for selected / active states.
     pub fn svg_filled(self) -> &'static [u8] {
         self.filled().as_bytes()
     }

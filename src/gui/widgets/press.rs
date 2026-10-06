@@ -1,19 +1,4 @@
 //! Alive buttons: a drop-in for `iced::widget::button` with micro-interactions.
-//!
-//! * hover: background, text and border colours tween between the style's
-//!   `Active` and `Hovered` looks over `FAST` (150 ms, `STANDARD` curve);
-//! * press: the whole button scales to 0.97 around its centre in `FASTER`
-//!   (83 ms) and springs back with a small overshoot on release;
-//! * keyboard focus: a 2 px ring (Tab / Shift+Tab, Enter or Space activates);
-//! * disabled: the style's `Disabled` look, no hover, no press.
-//!
-//! The API mirrors iced's button (`width`, `height`, `padding`, `on_press`,
-//! `on_press_maybe`, `style`, `clip`) so existing style closures are reused
-//! unchanged. Animation state lives in the widget tree; a redraw is requested
-//! only while a tween runs, so an idle window draws nothing.
-//!
-//! Wide elements (rows, cards, wider than [`SCALE_MAX_WIDTH`]) skip the press
-//! scale: shrinking a 900 px row by 3% would move its edges by 13 px.
 use super::anim;
 use crate::gui::theme::mix;
 use iced::advanced::layout::{self, Layout};
@@ -28,18 +13,13 @@ use iced::{
 };
 use std::time::{Duration, Instant};
 
-/// Press shrinks the button by this fraction (0.97 scale).
 const PRESS_SCALE: f32 = 0.03;
-/// Press-down duration (WinUI `ControlFasterAnimationDuration`).
 const DOWN: Duration = anim::FASTER;
-/// Spring-back duration.
 const UP: Duration = Duration::from_millis(220);
-/// Elements wider than this do not scale on press.
 pub const SCALE_MAX_WIDTH: f32 = 260.0;
 
 type StyleFn<'a> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
 
-/// Creates a [`Press`] button around `content`.
 pub fn button<'a, Message: Clone + 'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> Press<'a, Message> {
@@ -92,7 +72,6 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
         self.on_press = Some(message);
         self
     }
-    /// `None` renders the button disabled.
     pub fn on_press_maybe(mut self, message: Option<Message>) -> Self {
         self.on_press = message;
         self
@@ -101,7 +80,6 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
         self.clip = clip;
         self
     }
-    /// Turn the press scale off (list rows, sidebar items).
     pub fn scale(mut self, scale: bool) -> Self {
         self.scale = scale;
         self
@@ -110,7 +88,6 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
         self.id = Some(id.into());
         self
     }
-    /// Colour of the keyboard focus ring (default: the button's text colour).
     pub fn focus_color(mut self, c: Color) -> Self {
         self.focus = Some(c);
         self
@@ -121,21 +98,17 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
     }
 }
 
-// ------------------------------------------------------------------ tweens
 
-/// One animated 0..1 value (may dip below 0 during the spring-back).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Track {
     pub value: f32,
     from: f32,
     to: f32,
     start: Option<Instant>,
-    /// Retargeted; the clock starts at the next redraw timestamp.
     fresh: bool,
 }
 
 impl Track {
-    /// A track resting at `v`.
     pub fn at(v: f32) -> Self {
         Track {
             value: v,
@@ -166,7 +139,6 @@ impl Track {
     pub fn running(&self) -> bool {
         self.fresh || self.start.is_some()
     }
-    /// Advance to `now`; true while still running.
     pub fn step(&mut self, now: Instant, dur: Duration, ease: impl Fn(f32) -> f32) -> bool {
         if self.fresh {
             self.fresh = false;
@@ -186,7 +158,6 @@ impl Track {
     }
 }
 
-/// Ease-out with a small overshoot (spring-back).
 fn back(t: f32) -> f32 {
     let c1 = 3.2_f32;
     let c3 = c1 + 1.0;
@@ -221,7 +192,6 @@ fn color_of(bg: Option<Background>) -> Option<Color> {
     }
 }
 
-/// Blend two optional fills; a missing fill fades from / to transparent.
 fn mix_fill(a: Option<Background>, b: Option<Background>, t: f32) -> Option<Background> {
     match (color_of(a), color_of(b)) {
         (None, None) => b.or(a),
@@ -400,7 +370,6 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
             st.focused = false;
         }
 
-        // Targets follow the pointer; the clocks start on the next frame.
         let (h0, p0) = (st.hover.to, st.press.to);
         st.hover.target(if over { 1.0 } else { 0.0 });
         let down = st.pressed && over;

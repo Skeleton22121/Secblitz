@@ -1,8 +1,4 @@
 //! Design tokens: colours, type scale, spacing, radii and fonts.
-//!
-//! OWNER: design-system agent. Public names are a contract used by every page; the
-//! values may be refined freely.
-// Tokens are a shared vocabulary; not every one is used by every build.
 #![allow(dead_code)]
 
 use iced::font::{Family, Weight};
@@ -15,7 +11,6 @@ pub enum Mode {
     Dark,
 }
 
-/// Semantic tone used for status colours, pills, icons and the score ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
     Good,
@@ -28,61 +23,39 @@ pub enum Tone {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette {
     pub mode: Mode,
-    /// Window background.
     pub bg: Color,
-    /// Sidebar background.
     pub sidebar: Color,
-    /// Regions (the one or two calm blocks per page) and sheets. One tonal
-    /// step from `bg`; separation is tone and whitespace, never a border.
     pub surface: Color,
-    /// Fields, selected rows, secondary fills: one more tonal step.
     pub surface_alt: Color,
     /// Floating layers (menus, dropdown lists). The only surface that may
     /// carry a faint outline, because nothing else separates it from the page.
     pub popup: Color,
-    /// Hairline: the rare divider and the popup outline. Not for surfaces.
     pub border: Color,
-    /// Legacy control outline, kept faint. Prefer filled tonal fields.
     pub border_strong: Color,
-    /// Row / ghost-button hover on `bg` and `surface`.
     pub hover: Color,
-    /// Hover on the sidebar and on `surface_alt` fills.
     pub hover_strong: Color,
-    /// Pressed state for rows, ghost and secondary buttons.
     pub pressed: Color,
-    /// Selected row / active sidebar item / selected segment track.
     pub selected: Color,
-    /// Keyboard focus and open-dropdown outline.
     pub focus_ring: Color,
-    /// Disabled control fill and text.
     pub disabled_bg: Color,
     pub disabled_fg: Color,
     pub text: Color,
     pub text_muted: Color,
-    /// Brand / primary action.
     pub brand: Color,
     pub on_brand: Color,
-    /// Primary button hover / pressed (brand, one step).
     pub brand_hover: Color,
     pub brand_pressed: Color,
     pub good: Color,
     pub warn: Color,
     pub bad: Color,
     pub neutral: Color,
-    /// Blue that marks work in progress inside drawings only (the hairline
-    /// illustrations): a lens looking, a switch turning on, water filling.
-    /// Never for buttons, text or status; those keep the neutral brand and
-    /// good, warn and bad.
     pub accent: Color,
-    /// Darker (light mode) variants of good/warn/bad for small text, >= 4.5:1.
     pub good_text: Color,
     pub warn_text: Color,
     pub bad_text: Color,
-    /// Solid destructive button fill (white text) and its hover / pressed steps.
     pub danger: Color,
     pub danger_hover: Color,
     pub danger_pressed: Color,
-    /// Modal backdrop.
     pub scrim: Color,
 }
 
@@ -90,7 +63,6 @@ const fn rgb(hex: u32) -> Color {
     Color::from_rgb8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
 
-// Neutral base; colour only carries meaning (status). Light is the default.
 pub const LIGHT: Palette = Palette {
     mode: Mode::Light,
     bg: rgb(0xF7F7F8),
@@ -163,7 +135,6 @@ pub const DARK: Palette = Palette {
     scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.60),
 };
 
-/// Linear blend of two colours (`t` 0 = `a`, 1 = `b`), for tiny animated regions.
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     Color {
@@ -190,7 +161,6 @@ impl Palette {
             Tone::Brand => self.brand,
         }
     }
-    /// Tone for small text on a tint: darker than `tone` in light mode.
     pub fn tone_text(&self, tone: Tone) -> Color {
         match tone {
             Tone::Good => self.good_text,
@@ -200,15 +170,12 @@ impl Palette {
             Tone::Brand => self.brand,
         }
     }
-    /// The same tone at low opacity, for status-pill backgrounds only (never
-    /// behind icons).
     pub fn tint(&self, tone: Tone) -> Color {
         Color {
             a: if self.mode == Mode::Dark { 0.16 } else { 0.10 },
             ..self.tone(tone)
         }
     }
-    /// iced theme so built-in widgets (checkbox, toggler, scrollbar…) match.
     pub fn theme(&self) -> Theme {
         Theme::custom(
             "Secblitz",
@@ -224,19 +191,15 @@ impl Palette {
     }
 }
 
-// Type scale (px). IBM Plex Sans runs a little wider than Inter, so the
-// sizes are one notch tighter. Plex's natural line height is 1.3 em.
 pub const DISPLAY: f32 = 28.0;
 pub const H1: f32 = 22.0;
 pub const H2: f32 = 17.0;
 pub const BODY: f32 = 14.0;
 pub const SMALL: f32 = 12.5;
 
-/// Absolute line heights (px) used for fixed-height controls.
 pub const LINE_BODY: f32 = 18.0;
 pub const LINE_SMALL: f32 = 16.0;
 
-// Spacing scale (px). Use only these.
 pub const S1: f32 = 4.0;
 pub const S2: f32 = 8.0;
 pub const S3: f32 = 12.0;
@@ -246,42 +209,26 @@ pub const S6: f32 = 24.0;
 pub const S8: f32 = 32.0;
 pub const S10: f32 = 40.0;
 
-// Control heights (px).
 pub const CONTROL: f32 = 36.0;
 pub const CONTROL_SMALL: f32 = 28.0;
-/// Minimum height of a list row.
 pub const ROW: f32 = 48.0;
-/// Minimum height of a `row_item` (Windows 11 Settings rhythm).
 pub const ROW_ITEM: f32 = 56.0;
-/// Plain row icon edge (no badge behind it).
 pub const ICON_ROW: f32 = 20.0;
-/// Height of a popup-menu row.
 pub const MENU_ROW: f32 = 32.0;
-/// Widest readable content block (sheet panels).
 pub const CONTENT_MAX: f32 = 560.0;
-/// The smallest window the app allows (logical px).
 pub const WINDOW_MIN_WIDTH: f32 = 880.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 600.0;
-/// Checkbox box edge.
 pub const CHECK: f32 = 18.0;
-/// Settings row height: ROW plus S2, so single and two line rows align.
 pub const SETTING_ROW: f32 = ROW + S2;
-/// Card bodies are at least this tall so neighbouring cards line up.
 pub const CARD_BODY_MIN: f32 = ROW * 2.0;
-/// Status dot (sidebar verdict).
 pub const DOT: f32 = 8.0;
-/// One-pixel divider / hairline.
 pub const HAIRLINE: f32 = 1.0;
-/// Narrow readable column for centred progress lists.
 pub const MAX_READABLE: f32 = 420.0;
-/// Tallest a scrolling details box grows before it scrolls.
 pub const DETAILS_MAX: f32 = 140.0;
 
-// Radii (px).
 pub const R_SMALL: f32 = 6.0;
 pub const R: f32 = 8.0;
 pub const R_LARGE: f32 = 12.0;
-/// Fully rounded (pills, badges).
 pub const R_PILL: f32 = 999.0;
 
 pub const FAMILY: &str = "IBM Plex Sans";
@@ -307,7 +254,6 @@ pub const BOLD: Font = Font {
     ..Font::DEFAULT
 };
 
-/// Font files to register with the application.
 pub const FONT_FILES: [&[u8]; 4] = [
     include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf"),
     include_bytes!("../../assets/fonts/IBMPlexSans-Medium.ttf"),
