@@ -111,7 +111,6 @@ fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
     widgets::row_item_below(
         p,
         Some(r.icon),
-        None,
         r.title,
         Some(r.sub),
         trailing(vec![more(p, r.menu)]),
@@ -174,7 +173,6 @@ fn finished_with<'a>(
     widgets::row_item_below(
         p,
         Some(o.icon),
-        None,
         o.title,
         o.sub,
         {
@@ -839,7 +837,6 @@ fn tips_running<'a>(ctx: &Ctx, profile: TipProfile) -> El<'a> {
     widgets::row_item_below(
         p,
         Some(Icon::ShieldCheck),
-        None,
         ctx.t("Looking at your PC…"),
         Some(format!(
             "{}  ·  {}",
@@ -893,7 +890,6 @@ fn tips_picker<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     widgets::row_item_below(
         p,
         Some(Icon::ShieldCheck),
-        None,
         ctx.t("What do you use this PC for?"),
         Some(ctx.t("This only looks at your PC. Nothing is changed.")),
         trailing(items),
@@ -1100,7 +1096,6 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     widgets::row_item_below(
         p,
         Some(Icon::Key),
-        None,
         ctx.t("Password generator"),
         Some(caption),
         space::horizontal().width(0),

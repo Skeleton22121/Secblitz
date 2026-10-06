@@ -257,19 +257,21 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         });
         rows.others.push(other(
             ctx,
-            rows.others.len(),
-            (r.id.as_str(), false),
-            lang.control(&r.id),
             &a,
-            bucket,
-            tone,
-            with_names(
-                ctx,
-                tech_line(&r.status, &a, lang),
-                "Drivers we were unsure about: {names}",
-                secblitz::vbs::reason_names(&r.detail),
-            ),
-            if finding_listed { None } else { Some(r.detail.as_str()) },
+            OtherSource {
+                index: rows.others.len(),
+                explain: (r.id.as_str(), false),
+                name: lang.control(&r.id),
+                bucket,
+                tone,
+                tech: with_names(
+                    ctx,
+                    tech_line(&r.status, &a, lang),
+                    "Drivers we were unsure about: {names}",
+                    secblitz::vbs::reason_names(&r.detail),
+                ),
+                detail: if finding_listed { None } else { Some(r.detail.as_str()) },
+            },
         ));
     }
     for f in &report.findings {
@@ -288,19 +290,21 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         };
         let mut row = other(
             ctx,
-            rows.others.len(),
-            (f.title.as_str(), true),
-            ctx.t(a.label),
             &a,
-            bucket,
-            tone,
-            with_names(
-                ctx,
-                tech_line(&f.status, &a, lang),
-                "Windows blocked: {names}",
-                secblitz::vbs::blocked_names(&f.detail),
-            ),
-            None,
+            OtherSource {
+                index: rows.others.len(),
+                explain: (f.title.as_str(), true),
+                name: ctx.t(a.label),
+                bucket,
+                tone,
+                tech: with_names(
+                    ctx,
+                    tech_line(&f.status, &a, lang),
+                    "Windows blocked: {names}",
+                    secblitz::vbs::blocked_names(&f.detail),
+                ),
+                detail: None,
+            },
         );
         if a.step == NextStep::Restart {
             row.guide = None;
@@ -313,18 +317,26 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
     rows
 }
 
-#[allow(clippy::too_many_arguments)]
-fn other(
-    ctx: &Ctx,
+struct OtherSource<'a> {
     index: usize,
-    explain: (&str, bool),
+    explain: (&'a str, bool),
     name: String,
-    a: &advice::Advice,
     bucket: Bucket,
     tone: Tone,
     tech: String,
-    detail: Option<&str>,
-) -> Other {
+    detail: Option<&'a str>,
+}
+
+fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
+    let OtherSource {
+        index,
+        explain,
+        name,
+        bucket,
+        tone,
+        tech,
+        detail,
+    } = source;
     let managed = bucket == Bucket::Managed;
     let guide = match bucket {
         Bucket::Look => guide::guide(explain.0),

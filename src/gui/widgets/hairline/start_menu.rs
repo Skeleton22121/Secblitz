@@ -748,17 +748,18 @@ impl<M> canvas::Program<M> for StartMenu {
                 ink.of(meaning),
                 mark,
                 scale,
-                phase(age, d, d + 0.15, STANDARD),
-                phase(age, d, d + 0.4, DECELERATE),
-                phase(age, d + 0.15, d + 0.55, DECELERATE),
+                MarkIn {
+                    alpha: phase(age, d, d + 0.15, STANDARD),
+                    ring: phase(age, d, d + 0.4, DECELERATE),
+                    drawn: phase(age, d + 0.15, d + 0.55, DECELERATE),
+                },
             );
         }
 
-        st.live.pulses.draw(&mut f, &stage, ink.accent);
         let mark = self.mark_shown(age);
         let spots = self.spots(&sc, mark);
         st.live
-            .draw_tooltip(&mut f, &self.palette, &stage, &spots, |part| {
+            .draw_overlay(&mut f, &self.palette, &stage, ink.accent, &spots, |part| {
                 self.label(part, &sc)
             });
         vec![f.into_geometry()]
@@ -921,7 +922,14 @@ fn ring_data(c: Point, r: f32) -> PathData {
         .map(|p| pt(c.x + p.x * r, c.y + p.y * r))
 }
 
-#[allow(clippy::too_many_arguments)]
+/// How far the result mark has faded in, drawn its ring and drawn its glyph.
+#[derive(Clone, Copy)]
+struct MarkIn {
+    alpha: f32,
+    ring: f32,
+    drawn: f32,
+}
+
 fn result_mark(
     f: &mut Frame,
     s: &Stage,
@@ -929,10 +937,9 @@ fn result_mark(
     color: Color,
     mark: Mark,
     scale: f32,
-    alpha: f32,
-    ring: f32,
-    drawn: f32,
+    shown: MarkIn,
 ) {
+    let MarkIn { alpha, ring, drawn } = shown;
     if alpha <= 0.0 {
         return;
     }
@@ -953,6 +960,7 @@ fn result_mark(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
     use std::time::Duration;
 
@@ -1253,14 +1261,7 @@ mod tests {
         height: HEIGHT,
     };
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     fn tick(st: &mut State, m: &StartMenu, cursor: mouse::Cursor, clock: &mut Instant) -> bool {
         *clock += Duration::from_millis(16);

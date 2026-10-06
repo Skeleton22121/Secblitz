@@ -8,7 +8,7 @@ use super::svg::PathData;
 use crate::gui::theme::{mix, Palette};
 use crate::gui::widgets::anim::{self, DECELERATE, EASE_IN_OUT, STANDARD};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Size, Theme};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -78,10 +78,7 @@ pub struct ShieldFill {
 
 impl ShieldFill {
     pub fn view<'a, M: 'a>(self) -> Element<'a, M> {
-        canvas::Canvas::new(self)
-            .width(Length::Fixed(SIZE.width))
-            .height(Length::Fixed(SIZE.height))
-            .into()
+        super::fixed_canvas(self, SIZE)
     }
 
     fn busy(&self, st: &State, age: f32, t: f32) -> bool {
@@ -444,9 +441,8 @@ impl<M> canvas::Program<M> for ShieldFill {
             Run::Working => {}
         }
 
-        st.live.pulses.draw(&mut f, &stage, color);
         st.live
-            .draw_tooltip(&mut f, &self.p, &stage, &spots(), |_| self.label.clone());
+            .draw_overlay(&mut f, &self.p, &stage, color, &spots(), |_| self.label.clone());
         vec![f.into_geometry()]
     }
 
@@ -473,11 +469,11 @@ fn excl_gap() -> &'static PathData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
     use crate::gui::widgets::hairline::parallax::Parallax;
     use crate::i18n::Lang;
     use iced::widget::canvas::Program;
-    use iced::window;
     use std::time::Duration;
 
     const BOUNDS: Rectangle = Rectangle {
@@ -499,14 +495,7 @@ mod tests {
         }
     }
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     #[test]
     fn constants_parse() {

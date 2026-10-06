@@ -235,7 +235,18 @@ impl PathData {
                     let large = r.flag()?;
                     let sweep = r.flag()?;
                     let p = pair(&mut r)?;
-                    svg_arc(&mut segs, cur, p, rx, ry, rot, large, sweep);
+                    svg_arc(
+                        &mut segs,
+                        cur,
+                        p,
+                        ArcShape {
+                            rx,
+                            ry,
+                            rot_deg: rot,
+                            large,
+                            sweep,
+                        },
+                    );
                     cur = p;
                 }
                 b'Z' => {
@@ -448,17 +459,23 @@ fn reflect(ctrl: Option<P64>, cur: P64) -> P64 {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn svg_arc(
-    segs: &mut Vec<Seg>,
-    from: P64,
-    to: P64,
+/// The `rx ry x-axis-rotation` and `large-arc sweep` parameters of an SVG arc command.
+struct ArcShape {
     rx: f64,
     ry: f64,
     rot_deg: f64,
     large: bool,
     sweep: bool,
-) {
+}
+
+fn svg_arc(segs: &mut Vec<Seg>, from: P64, to: P64, shape: ArcShape) {
+    let ArcShape {
+        rx,
+        ry,
+        rot_deg,
+        large,
+        sweep,
+    } = shape;
     if (from.x - to.x).abs() < 1e-9 && (from.y - to.y).abs() < 1e-9 {
         return;
     }

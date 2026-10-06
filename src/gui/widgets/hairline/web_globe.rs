@@ -1,6 +1,6 @@
 //! Web protection: a turning globe sends traffic down to your PC.
 use super::motion::{lerp, phase, Spring};
-use super::parts::monitor;
+use super::parts::{monitor, Monitor};
 use super::pointer::{Area, Gesture, Hotspots, Layer, Spot};
 use super::stage::{pt, stroke, tint, Ink, Plate, Stage, W_ACCENT, W_LINE, W_PART, W_THICK};
 use super::svg::{PathData, Seg};
@@ -9,7 +9,7 @@ use crate::gui::theme::{self, Palette};
 use crate::gui::widgets::anim::{self, DECELERATE, STANDARD};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry, Path, Text};
 use iced::widget::text::{LineHeight, Shaping};
-use iced::{mouse, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size, Theme};
+use iced::{mouse, Color, Element, Pixels, Point, Rectangle, Renderer, Size, Theme};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::LazyLock;
 use std::time::Instant;
@@ -628,38 +628,20 @@ impl State {
 }
 
 
-struct WebGlobe {
-    p: Palette,
-    plate: Plate,
-    guard: Guard,
-    changed: Instant,
-    now: Instant,
-    blocked: Option<[u64; 3]>,
-    labels: Labels,
+pub struct WebGlobe {
+    pub p: Palette,
+    pub plate: Plate,
+    pub guard: Guard,
+    pub changed: Instant,
+    pub now: Instant,
+    pub blocked: Option<[u64; 3]>,
+    pub labels: Labels,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn web_globe<'a, M: 'a>(
-    p: Palette,
-    plate: Plate,
-    guard: Guard,
-    changed: Instant,
-    now: Instant,
-    blocked: Option<[u64; 3]>,
-    labels: Labels,
-) -> Element<'a, M> {
-    canvas::Canvas::new(WebGlobe {
-        p,
-        plate,
-        guard,
-        changed,
-        now,
-        blocked,
-        labels,
-    })
-    .width(Length::Fixed(SIZE.width))
-    .height(Length::Fixed(SIZE.height))
-    .into()
+impl WebGlobe {
+    pub fn view<'a, M: 'a>(self) -> Element<'a, M> {
+        super::fixed_canvas(self, SIZE)
+    }
 }
 
 fn spots(guard: Guard, st: &State) -> Hotspots<Part> {
@@ -847,7 +829,19 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
 
         draw_globe(&mut f, &mid, &ink, st.spin);
-        monitor(&mut f, &mid, &ink, MON_CX, MON_TOP, MON_W, MON_H, ink.plate, 1.0);
+        monitor(
+            &mut f,
+            &mid,
+            &ink,
+            &Monitor {
+                cx: MON_CX,
+                top: MON_TOP,
+                w: MON_W,
+                h: MON_H,
+                screen: ink.plate,
+                alpha: 1.0,
+            },
+        );
 
         for d in &domes {
             draw_dome(&mut f, &front, &ink, d, st);
@@ -868,10 +862,10 @@ impl<M> canvas::Program<M> for WebGlobe {
         }
 
         let pulse = dome_look(self.guard, &ink).map_or(ink.line, |l| l.0);
-        st.live.pulses.draw(&mut f, &stage, pulse);
-        st.live.draw_tooltip(&mut f, &self.p, &stage, &spots(self.guard, st), |id| {
-            self.label(st, id)
-        });
+        st.live
+            .draw_overlay(&mut f, &self.p, &stage, pulse, &spots(self.guard, st), |id| {
+                self.label(st, id)
+            });
         vec![f.into_geometry()]
     }
 
@@ -1088,9 +1082,10 @@ fn draw_item(f: &mut Frame, front: &Stage, ink: &Ink, it: &Item, ad_mark: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::widgets::hairline::testing::{frame, wants_frame};
     use crate::gui::theme::LIGHT;
     use crate::gui::widgets::hairline::parallax::Parallax;
-    use iced::{window, Vector};
+    use iced::Vector;
     use std::time::Duration;
 
     const BOUNDS: Rectangle = Rectangle {
@@ -1112,14 +1107,7 @@ mod tests {
         }
     }
 
-    fn frame(at: Instant) -> Event {
-        Event::Window(window::Event::RedrawRequested(at))
-    }
 
-    fn wants_frame(a: Option<Action<()>>) -> bool {
-        a.map(|a| a.into_inner().1 == window::RedrawRequest::NextFrame)
-            .unwrap_or(false)
-    }
 
     fn run(p: &WebGlobe, st: &mut State, e: &Event, cursor: mouse::Cursor) -> Option<Action<()>> {
         canvas::Program::<()>::update(p, st, e, BOUNDS, cursor)
