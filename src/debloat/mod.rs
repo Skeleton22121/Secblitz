@@ -42,10 +42,6 @@ impl Group {
         Group::Utilities,
         Group::Gaming,
     ];
-
-    pub fn selected_by_default(self) -> bool {
-        matches!(self, Group::Recommended | Group::Sponsored)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
