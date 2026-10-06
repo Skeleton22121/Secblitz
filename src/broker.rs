@@ -19,6 +19,10 @@ pub enum Request {
     BlockSuggestedApps,
     /// Reinstall a removed app; arg = index into `secblitz::debloat::catalog()`.
     ReinstallStoreApp(u16),
+    /// Start a Store download for "put everything back" and answer at once.
+    StartStoreApp(u16),
+    /// How that download is doing: `Working`, `Done`, `Failed` or `Offline`.
+    StoreAppStatus(u16),
     OpenTamperProtection,
     OpenProtectionHistory,
     OpenAppBrowserControl,
@@ -60,6 +64,8 @@ pub enum Reply {
     Unknown,
     /// A newer version of the program is available.
     UpdateAvailable,
+    /// Still running (a Store download).
+    Working,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -92,6 +98,7 @@ impl Reply {
             Reply::NotApplicable => 9,
             Reply::Unknown => 10,
             Reply::UpdateAvailable => 11,
+            Reply::Working => 12,
         }
     }
     pub fn decode(byte: u8) -> Option<Self> {
@@ -107,6 +114,7 @@ impl Reply {
             9 => Reply::NotApplicable,
             10 => Reply::Unknown,
             11 => Reply::UpdateAvailable,
+            12 => Reply::Working,
             _ => return None,
         })
     }
@@ -137,6 +145,8 @@ impl Request {
             Request::AppUpdateQuery(i) => (15, i),
             Request::AppUpdate(i) => (16, i),
             Request::BitwardenStatus => (17, 0),
+            Request::StartStoreApp(i) => (18, i),
+            Request::StoreAppStatus(i) => (19, i),
         };
         let [lo, hi] = arg.to_le_bytes();
         [kind, lo, hi]
@@ -152,7 +162,7 @@ impl Request {
     pub fn decode_with(bytes: [u8; 3], catalog_len: usize) -> Option<Self> {
         let [kind, lo, hi] = bytes;
         let arg = u16::from_le_bytes([lo, hi]);
-        if !matches!(kind, 7 | 13 | 15 | 16) && arg != 0 {
+        if !matches!(kind, 7 | 13 | 15 | 16 | 18 | 19) && arg != 0 {
             return None;
         }
         let apps = user_apps::APPS.len();
@@ -174,6 +184,8 @@ impl Request {
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
             16 if usize::from(arg) < apps => Request::AppUpdate(arg),
             17 => Request::BitwardenStatus,
+            18 if usize::from(arg) < catalog_len => Request::StartStoreApp(arg),
+            19 if usize::from(arg) < catalog_len => Request::StoreAppStatus(arg),
             _ => return None,
         })
     }
@@ -491,6 +503,10 @@ mod tests {
             Request::AppUpdate(0),
             Request::AppUpdate(user_apps::APPS.len() as u16 - 1),
             Request::BitwardenStatus,
+            Request::StartStoreApp(0),
+            Request::StartStoreApp(41),
+            Request::StoreAppStatus(0),
+            Request::StoreAppStatus(41),
         ]
         .into_iter()
         .chain(Setting::ALL.iter().flat_map(|s| {
@@ -510,7 +526,7 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 18, 19, 100, 255] {
+        for kind in [0u8, 20, 21, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         for kind in (1..=6u8).chain(8..=12).chain([17]) {
@@ -551,6 +567,12 @@ mod tests {
         );
         assert_eq!(Request::decode_with([7, 255, 255], 100), None);
         assert_eq!(Request::decode([7, 255, 255]), None);
+        // Store downloads for "put everything back": catalog indices only.
+        for kind in [18u8, 19] {
+            assert!(Request::decode_with([kind, 4, 0], 5).is_some());
+            assert_eq!(Request::decode_with([kind, 5, 0], 5), None);
+            assert_eq!(Request::decode_with([kind, 255, 255], 100), None);
+        }
     }
 
     #[test]
@@ -567,10 +589,11 @@ mod tests {
             Reply::NotApplicable,
             Reply::Unknown,
             Reply::UpdateAvailable,
+            Reply::Working,
         ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
-        for byte in [0u8, 12, 13, 100, 255] {
+        for byte in [0u8, 13, 14, 100, 255] {
             assert_eq!(Reply::decode(byte), None);
         }
     }

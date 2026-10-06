@@ -63,7 +63,7 @@ const APP_FAILED: &str = "{name} could not be brought back.";
 const APP_NEEDS_STORE: &str =
     "{name} could not be brought back. You can get it again from the Microsoft Store.";
 const SUGGESTED_OLDER: &str =
-    "Suggested apps were blocked by an older version of Secblitz, so they were left as they are";
+    "Suggested apps were blocked by an older version of Secblitz, so they were left as they are.";
 const SUGGESTED_CHANGED: &str =
     "Suggested apps: you changed this yourself since, so it was left as it is";
 const WINDOWS_SETTINGS: &str = "Windows settings";
@@ -405,7 +405,7 @@ mod tests {
         );
         assert_eq!(
             left_line(&Left::SuggestedOlderVersion, Lang::En),
-            "Suggested apps were blocked by an older version of Secblitz, so they were left as they are"
+            "Suggested apps were blocked by an older version of Secblitz, so they were left as they are."
         );
     }
 
