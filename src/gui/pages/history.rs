@@ -148,7 +148,7 @@ fn kind_icon(kind: Kind) -> (Icon, Tone) {
     match kind {
         Kind::Check => (Icon::Scan, Tone::Neutral),
         Kind::Fix => (Icon::Wrench, Tone::Good),
-        Kind::Undo => (Icon::Undo, Tone::Warn),
+        Kind::Undo | Kind::UndoSome => (Icon::Undo, Tone::Warn),
         Kind::Debloat => (Icon::Package, Tone::Neutral),
         Kind::Restore => (Icon::Refresh, Tone::Good),
     }
@@ -366,6 +366,23 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         None,
     );
 
+    let choose_trailing: Element<'a, Message> = if undo_enabled && !ctx.busy {
+        widgets::overflow_menu(
+            p,
+            vec![(Icon::Undo, ctx.t("Choose…"), Message::PutBackChosen, true)],
+        )
+    } else {
+        nothing()
+    };
+    let choose = widgets::row_item(
+        p,
+        Some(Icon::Undo),
+        ctx.t("Put back chosen settings"),
+        Some(ctx.t("Pick the settings you want back the way they were. The rest stay as they are.")),
+        choose_trailing,
+        None,
+    );
+
     let removed = widgets::row_item(
         p,
         Some(Icon::Package),
@@ -382,7 +399,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ),
         None,
     );
-    let quick = column![undo, removed].spacing(theme::S1);
+    let quick = column![undo, choose, removed].spacing(theme::S1);
 
     let mut page = column![trend, quick].spacing(theme::S8);
     if data.days.is_empty() {

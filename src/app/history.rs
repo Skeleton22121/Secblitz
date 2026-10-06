@@ -12,6 +12,7 @@ pub enum Kind {
     Check,
     Fix,
     Undo,
+    UndoSome,
     Debloat,
     Restore,
 }
@@ -184,6 +185,8 @@ pub fn label(kind: Kind, n: usize) -> &'static str {
         (Kind::Fix, 1) => "Fixed 1 problem",
         (Kind::Fix, _) => "Fixed {n} problems",
         (Kind::Undo, _) => "Undid your last fixes",
+        (Kind::UndoSome, 0 | 1) => "Put back 1 setting",
+        (Kind::UndoSome, _) => "Put back {n} settings",
         (Kind::Debloat, 0 | 1) => "Removed 1 app",
         (Kind::Debloat, _) => "Removed {n} apps",
         (Kind::Restore, _) => "Restored an app",
@@ -269,6 +272,15 @@ mod tests {
     }
 
     #[test]
+    fn put_back_entries_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), &e(9, Kind::UndoSome, 4, 6, 2)).unwrap();
+        assert_eq!(load(dir.path()), vec![e(9, Kind::UndoSome, 4, 6, 2)]);
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(text.contains("\"undo_some\""));
+    }
+
+    #[test]
     fn n_defaults_when_absent() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -317,6 +329,8 @@ mod tests {
         assert_eq!(label(Kind::Fix, 1), "Fixed 1 problem");
         assert_eq!(label(Kind::Fix, 3), "Fixed {n} problems");
         assert_eq!(label(Kind::Undo, 0), "Undid your last fixes");
+        assert_eq!(label(Kind::UndoSome, 1), "Put back 1 setting");
+        assert_eq!(label(Kind::UndoSome, 4), "Put back {n} settings");
         assert_eq!(label(Kind::Debloat, 12), "Removed {n} apps");
         assert_eq!(label(Kind::Debloat, 1), "Removed 1 app");
         assert_eq!(label(Kind::Restore, 1), "Restored an app");

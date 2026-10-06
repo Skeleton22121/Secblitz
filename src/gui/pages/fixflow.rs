@@ -1,9 +1,7 @@
 //! Fix / undo flow drawn over any page: review sheet → working → result.
 use super::fixes::row_text;
 use secblitz::model::CheckStatus;
-use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
-use crate::app::history::{self as log, Entry, Kind};
 use crate::app::worker::{self, Job, Phase};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
@@ -12,7 +10,7 @@ use crate::gui::widgets::handoff;
 use crate::gui::widgets::controls::{fade_below, more_below, scroll_style, scrollbar};
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::{self, progress, ButtonKind};
-use crate::gui::{blocking, Ctx, Message};
+use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
 use std::time::Instant;
@@ -31,10 +29,11 @@ pub struct State {
     work: Clock,
     bar: Option<Tween>,
     since: Instant,
-    batches: Vec<Vec<String>>,
     plan: Vec<PlanRow>,
-    undo_note: Option<String>,
-    undo_count: usize,
+    /// Putting back chosen settings, not the last fixes.
+    chosen: bool,
+    /// A protection was added to the list because another one needs it.
+    together: bool,
     checking: bool,
     held: Option<Held>,
     steps_view: Option<scrollable::Viewport>,
@@ -60,10 +59,9 @@ impl Default for State {
             work: Clock::new(),
             bar: None,
             since: Instant::now(),
-            batches: Vec::new(),
             plan: Vec::new(),
-            undo_note: None,
-            undo_count: 0,
+            chosen: false,
+            together: false,
             checking: false,
             held: None,
             steps_view: None,
@@ -137,7 +135,6 @@ pub enum Msg {
     Frame(Instant),
     Steps(scrollable::Viewport),
     ResultList(scrollable::Viewport),
-    UndoInfo(Option<(u64, usize)>),
 }
 
 impl State {
@@ -210,6 +207,8 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
         return Task::none();
     }
     ctx.explain_open = None;
+    state.chosen = false;
+    state.together = false;
     state.plan = chosen.iter().map(|id| plan_row(ctx, id, true)).collect();
     state.stage = Stage::Review {
         ids: chosen,
@@ -218,23 +217,50 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
     Task::none()
 }
 
-fn last_fix(entries: &[Entry]) -> Option<(u64, usize)> {
-    let mut sorted: Vec<&Entry> = entries
+fn undo_row(ctx: &Ctx, id: &str) -> PlanRow {
+    let impact = secblitz::advice::control_impact(id);
+    PlanRow {
+        id: id.to_owned(),
+        name: ctx.lang.control(id),
+        line: (!impact.is_empty())
+            .then(|| format!("{} {}", ctx.t("You'll be less protected from:"), ctx.t(impact))),
+        restart: ctx.catalog.restart.iter().any(|x| x == id),
+    }
+}
+
+/// Only settings the last check says Secblitz changed can be put back; anything else is dropped.
+pub fn open_undo_some(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Message> {
+    if ctx.busy || state.is_open() || ctx.check_error.is_some() || ctx.checking.is_some() {
+        return Task::none();
+    }
+    let Some(report) = ctx.report.as_deref() else {
+        return Task::none();
+    };
+    let undoable: Vec<String> = report
+        .results
         .iter()
-        .filter(|e| matches!(e.kind, Kind::Fix | Kind::Undo))
+        .filter(|r| r.undoable)
+        .map(|r| r.id.clone())
         .collect();
-    sorted.sort_by_key(|e| std::cmp::Reverse(e.t));
-    let mut undone = 0usize;
-    for e in sorted {
-        if e.kind == Kind::Undo {
-            undone += 1;
-        } else if undone > 0 {
-            undone -= 1;
-        } else {
-            return Some((e.t, e.n));
+    let mut chosen: Vec<String> = Vec::new();
+    for id in ids {
+        if undoable.contains(&id) && !chosen.contains(&id) {
+            chosen.push(id);
         }
     }
-    None
+    if chosen.is_empty() {
+        return Task::none();
+    }
+    let (chosen, together) = flow::with_dependents(chosen, &undoable);
+    ctx.explain_open = None;
+    state.chosen = true;
+    state.together = together;
+    state.plan = chosen.iter().map(|id| undo_row(ctx, id)).collect();
+    state.stage = Stage::Review {
+        ids: chosen,
+        undo: true,
+    };
+    Task::none()
 }
 
 pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
@@ -242,25 +268,18 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         return Task::none();
     }
     ctx.explain_open = None;
-    state.plan = state
-        .batches
-        .last()
-        .map(|ids| ids.iter().map(|id| plan_row(ctx, id, false)).collect())
+    state.chosen = false;
+    state.together = false;
+    state.plan = ctx
+        .report
+        .as_deref()
+        .map(|r| r.undo_next.iter().map(|id| plan_row(ctx, id, false)).collect())
         .unwrap_or_default();
-    state.undo_note = None;
-    state.undo_count = 0;
     state.stage = Stage::Review {
         ids: Vec::new(),
         undo: true,
     };
-    match ctx.state_dir.clone() {
-        Some(dir) if state.plan.is_empty() => {
-            Task::perform(blocking(move || last_fix(&log::load(&dir))), |found| {
-                Message::Fix(Msg::UndoInfo(found))
-            })
-        }
-        _ => Task::none(),
-    }
+    Task::none()
 }
 
 pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
@@ -281,12 +300,8 @@ fn close(state: &mut State) {
     state.checking = false;
 }
 
-fn planned(state: &State, undo: bool) -> usize {
-    if undo && state.plan.is_empty() {
-        state.undo_count
-    } else {
-        state.plan.len()
-    }
+fn planned(state: &State) -> usize {
+    state.plan.len()
 }
 
 fn bar_target(planned: usize, finished: usize, verifying: bool) -> f32 {
@@ -344,23 +359,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Task::none()
             }
         }
-        Msg::UndoInfo(found) => {
-            if let (Stage::Review { undo: true, .. }, Some((t, n))) = (&state.stage, found) {
-                state.undo_count = n;
-                let when = day_title(ctx, log::local_day(t), log::local_day(log::now()));
-                let key = if n == 1 {
-                    "Your last fix changed 1 setting ({when}). We'll put it back the way it was."
-                } else {
-                    "Your last fix changed {n} settings ({when}). We'll put them back the way they were."
-                };
-                state.undo_note = Some(
-                    ctx.t(key)
-                        .replace("{when}", &when)
-                        .replace("{n}", &n.to_string()),
-                );
-            }
-            Task::none()
-        }
         Msg::Cancel | Msg::Done => {
             if matches!(
                 state.stage,
@@ -407,7 +405,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 
 fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task<Message> {
     ctx.busy = true;
-    let job = if undo {
+    let chosen = undo && !ids.is_empty();
+    state.chosen = chosen;
+    let job = if chosen {
+        Job::UndoSome(ids)
+    } else if undo {
         Job::Undo
     } else {
         Job::Apply(ids)
@@ -415,7 +417,7 @@ fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task
     state.now = Instant::now();
     state.work = Clock::at(state.now);
     state.since = state.now;
-    state.bar = (!undo || planned(state, true) > 0).then(|| Tween::new(0.0, 0.0, anim::NORMAL));
+    state.bar = (!undo || planned(state) > 0).then(|| Tween::new(0.0, 0.0, anim::NORMAL));
     state.steps_view = None;
     state.follow = None;
     state.steps_held = false;
@@ -455,7 +457,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             }
         };
     }
-    let planned = planned(state, matches!(state.stage, Stage::Working { undo: true, .. }));
+    let planned = planned(state);
     let Stage::Working {
         undo, phase, items, ..
     } = &mut state.stage
@@ -499,35 +501,24 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
             );
-            if let Ok(report) = result {
-                let applied: Vec<String> = report
-                    .results
-                    .iter()
-                    .filter(|r| r.status == CheckStatus::Applied && attempted.contains(&r.id))
-                    .map(|r| r.id.clone())
-                    .collect();
-                state
-                    .batches
-                    .extend(secblitz::vbs::split_batches(&applied));
-            }
             finish(state, false, summary, technical);
             ctx.busy = false;
         }
-        E::Undone { result, verify } if *undo => {
-            let summary = flow::summarize(
-                None,
+        E::Undone {
+            chosen,
+            result,
+            verify,
+        } if *undo => {
+            let (result, verify) = (
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
             );
-            let technical = technical_lines(
-                ctx,
-                &[],
-                result.as_deref().map_err(String::as_str),
-                verify.as_deref().map_err(String::as_str),
-            );
-            if !summary.done.is_empty() {
-                state.batches.pop();
-            }
+            let summary = if chosen.is_empty() {
+                flow::summarize(None, result, verify)
+            } else {
+                flow::summarize_chosen(chosen, result, verify)
+            };
+            let technical = technical_lines(ctx, chosen, result, verify);
             finish(state, true, summary, technical);
             ctx.busy = false;
         }
@@ -542,12 +533,13 @@ fn running_step(state: &State) -> Option<(usize, usize)> {
         return None;
     };
     let verifying = *phase == Some(Phase::Verifying) || state.held.is_some();
-    let rows = if *undo {
+    let by_progress = *undo && !state.chosen;
+    let rows = if by_progress {
         items.len().max(1) + 1
     } else {
         state.plan.len() + 1
     };
-    let running = if verifying || *undo {
+    let running = if verifying || by_progress {
         rows - 1
     } else {
         state
@@ -702,11 +694,11 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
         Stage::Closed => None,
         Stage::Review { ids, undo } => Some(review_view(state, ctx, ids, *undo)),
         Stage::Blocked {
+            ids,
             undo,
             reason,
             retry,
-            ..
-        } => Some(blocked_view(ctx, *undo, reason, *retry)),
+        } => Some(blocked_view(ctx, *undo, *undo && !ids.is_empty(), reason, *retry)),
         Stage::Working { undo, phase, items } => {
             Some(working_view(state, ctx, *undo, *phase, items))
         }
@@ -876,7 +868,12 @@ fn review_view<'a>(
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let n = ids.len();
-    let title = if undo {
+    let chosen = undo && n > 0;
+    let title = if chosen && n == 1 {
+        ctx.t("Put back 1 setting?")
+    } else if chosen {
+        ctx.t("Put back {n} settings?").replace("{n}", &n.to_string())
+    } else if undo {
         ctx.t("Undo your last fixes?")
     } else if n == 1 {
         ctx.t("Fix 1 problem?")
@@ -885,20 +882,39 @@ fn review_view<'a>(
     };
     let mut c = column![widgets::h2(p, title)].spacing(theme::S3);
     let restart_label = ctx.t("Needs restart");
-    if undo {
-        if !state.plan.is_empty() {
+    if chosen {
+        c = c.push(widgets::muted(
+            p,
+            ctx.t("We'll put these settings back the way they were before Secblitz changed them:"),
+        ));
+        c = c.push(plan_list(ctx, &state.plan, &restart_label));
+        if state.together {
+            c = c.push(widgets::small(
+                p,
+                ctx.t("These go back together, because one needs the other."),
+            ));
+        }
+        c = c.push(note(
+            p,
+            Icon::AlertTriangle,
+            ctx.t("Your PC will be less protected after this. You can fix these again at any time."),
+        ));
+        c = c.push(widgets::small(
+            p,
+            ctx.t("Anything you changed yourself since then is left as it is."),
+        ));
+    } else if undo {
+        if state.plan.is_empty() {
+            c = c.push(widgets::muted(
+                p,
+                ctx.t("We'll put your settings back the way they were before your last fix."),
+            ));
+        } else {
             c = c.push(widgets::muted(
                 p,
                 ctx.t("We'll put these settings back the way they were:"),
             ));
             c = c.push(plan_list(ctx, &state.plan, &restart_label));
-        } else if let Some(note) = &state.undo_note {
-            c = c.push(widgets::muted(p, note.clone()));
-        } else {
-            c = c.push(widgets::muted(
-                p,
-                ctx.t("We'll put your settings back the way they were before your last fix."),
-            ));
         }
         c = c.push(widgets::small(
             p,
@@ -929,6 +945,8 @@ fn review_view<'a>(
         },
         ctx.t(if state.checking {
             "Checking…"
+        } else if chosen {
+            "Put back"
         } else if undo {
             "Undo fixes"
         } else {
@@ -951,9 +969,17 @@ fn review_view<'a>(
         .into()
 }
 
-fn blocked_view<'a>(ctx: &'a Ctx, undo: bool, reason: &str, retry: bool) -> Element<'a, Message> {
+fn blocked_view<'a>(
+    ctx: &'a Ctx,
+    undo: bool,
+    chosen: bool,
+    reason: &str,
+    retry: bool,
+) -> Element<'a, Message> {
     let p = ctx.palette;
-    let title = if undo {
+    let title = if chosen {
+        "We can't put these settings back right now"
+    } else if undo {
         "We can't undo your fixes right now"
     } else {
         "We can't make these fixes right now"
@@ -1049,7 +1075,7 @@ fn working_view<'a>(
     };
     let settled = state.held.is_some();
     let verifying = phase == Some(Phase::Verifying) || settled;
-    let share = work_share(planned(state, undo), items.len(), verifying);
+    let share = work_share(planned(state), items.len(), verifying);
     let mut c = column![
         art(state, ctx, undo, Run::Working, share),
         widgets::h2_centred(p, title),
@@ -1068,7 +1094,7 @@ fn working_view<'a>(
 
     let mut list = column![].spacing(theme::S3);
     let finished = |d: &Done| done_mark(state, p, &d.status, d.at);
-    if undo {
+    if undo && !state.chosen {
         for d in items {
             list = list.push(step(p, finished(d), d.name.clone(), false));
         }
@@ -1136,6 +1162,9 @@ fn result_view<'a>(
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let title = match (undo, s.kind) {
+        (true, SummaryKind::Success) if state.chosen => "Your settings were put back",
+        (true, SummaryKind::Partial) if state.chosen => "Some settings were put back",
+        (true, SummaryKind::Failed) if state.chosen => "We couldn't put these settings back",
         (false, SummaryKind::Success) => "You're now more protected",
         (false, SummaryKind::Partial) => "Some fixes are done",
         (false, SummaryKind::Failed) => "We couldn't make these fixes",
@@ -1173,6 +1202,16 @@ fn result_view<'a>(
             s.done
                 .iter()
                 .map(|id| bullet(p, Tone::Good, ctx.lang.control(id)))
+                .collect(),
+        ));
+    }
+    if !s.less_protected.is_empty() {
+        body = body.push(block(
+            p,
+            ctx.t("You're now less protected from:"),
+            s.less_protected
+                .iter()
+                .map(|k| bullet(p, Tone::Neutral, ctx.t(k)))
                 .collect(),
         ));
     }
@@ -1271,37 +1310,12 @@ mod tests {
         assert_eq!(centred_offset(whole, whole, 5, rows), None);
     }
 
-    fn e(t: u64, kind: Kind, n: usize) -> Entry {
-        Entry {
-            t,
-            kind,
-            protected: 0,
-            total: 0,
-            n,
-        }
-    }
-
     #[test]
-    fn undo_of_an_earlier_fix_counts_from_the_log() {
-        let mut state = State {
-            undo_count: 3,
-            ..State::default()
-        };
-        assert_eq!(planned(&state, true), 3);
-        assert_eq!(planned(&state, false), 0);
-        state.plan = vec![PlanRow::default()];
-        assert_eq!(planned(&state, true), 1);
-    }
-
-    #[test]
-    fn last_fix_skips_fixes_already_undone() {
-        assert_eq!(last_fix(&[]), None);
-        let log = [e(1, Kind::Fix, 2), e(2, Kind::Check, 0), e(3, Kind::Fix, 4)];
-        assert_eq!(last_fix(&log), Some((3, 4)));
-        let log = [e(1, Kind::Fix, 2), e(2, Kind::Fix, 4), e(3, Kind::Undo, 0)];
-        assert_eq!(last_fix(&log), Some((1, 2)));
-        let log = [e(1, Kind::Fix, 2), e(3, Kind::Undo, 0)];
-        assert_eq!(last_fix(&log), None);
+    fn the_plan_decides_how_many_steps_there_are() {
+        let mut state = State::default();
+        assert_eq!(planned(&state), 0);
+        state.plan = vec![PlanRow::default(), PlanRow::default()];
+        assert_eq!(planned(&state), 2);
     }
 
     #[test]
