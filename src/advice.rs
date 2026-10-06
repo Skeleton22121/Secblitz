@@ -167,6 +167,10 @@ pub fn control_impact(id: &str) -> &'static str {
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
+        // Sign-in and remote access.
+        "accounts.autologon" => "Anyone who turns on your PC getting straight into your account",
+        "remote_desktop.disabled" => "Strangers trying to sign in to your PC from far away",
+        "smb1.disabled" => "Old file-sharing flaws that let malware spread between PCs",
         _ => "",
     }
 }
@@ -256,6 +260,9 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.delivery_optimization" => "Update sharing",
         "privacy.clipboard_sync" => "Clipboard sync",
         "defender.exclusions_risky" => "Antivirus skip list",
+        "accounts.autologon" => "Automatic sign-in",
+        "remote_desktop.disabled" => "Remote access",
+        "smb1.disabled" => "Older file sharing",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -357,6 +364,9 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "printer.spooler_remote"
         | "services.legacy_remote"
         | "update.store_autoupdate_policy"
+        | "accounts.autologon"
+        | "remote_desktop.disabled"
+        | "smb1.disabled"
         | "privacy.recall"
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
@@ -471,6 +481,15 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "defender.exclusions_risky" => {
             "Skipped places are scanned again, so some games or work tools may scan slower."
         }
+        "accounts.autologon" => {
+            "Your PC will ask for your password or PIN at startup. Make sure you know it."
+        }
+        "remote_desktop.disabled" => {
+            "Other devices can no longer connect to this PC with Remote Desktop. You can turn it back on."
+        }
+        "smb1.disabled" => {
+            "Very old network drives or printers that only use the old sharing may stop working. Needs a restart."
+        }
         _ => "",
     }
 }
@@ -510,6 +529,12 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: this edition of Windows does not include it" => {
             "This version of Windows doesn't include this protection."
         }
+        "Not offered: Windows Home cannot accept Remote Desktop connections" => {
+            "Windows Home can't accept Remote Desktop connections, so there is nothing to turn off."
+        }
+        "Not offered: this PC is set up as a kiosk" => {
+            "This PC is set up as a kiosk that signs in by itself, so we leave this alone."
+        }
         "Not offered: Defender behavior monitoring is off" => {
             "Turn on suspicious app detection first, then check again."
         }
@@ -533,6 +558,12 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: printing is busy right now" => {
             "Something is waiting to print, so we leave this for now. Try again when printing is finished."
+        }
+        "Not offered: you are connected to this PC from another device right now" => {
+            "You are connected from another device, so we leave this alone. Turning it off would cut you off."
+        }
+        "Not offered: something is using the old file sharing right now" => {
+            "Something is using the old file sharing right now, so we leave this alone."
         }
         "Not offered: your account has no password" => {
             "Give your account a password first, then check again."
@@ -989,6 +1020,10 @@ mod tests {
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: printing is busy right now",
             "Not offered: your account has no password",
+            "Not offered: you are connected to this PC from another device right now",
+            "Not offered: something is using the old file sharing right now",
+            "Not offered: Windows Home cannot accept Remote Desktop connections",
+            "Not offered: this PC is set up as a kiosk",
             "Not offered: Secblitz cannot tell who is signed in",
             "Not offered: a locked sign-in would stay locked until an administrator unlocks it",
         ] {
@@ -1002,6 +1037,24 @@ mod tests {
             for_control("lsa.run_as_ppl", "skipped", "Not offered: anything").status,
             "Not offered"
         );
+    }
+
+    #[test]
+    fn findings_with_an_automatic_fix_point_at_their_control() {
+        for (title, id) in [
+            ("Automatic logon", "accounts.autologon"),
+            ("Remote Desktop", "remote_desktop.disabled"),
+            ("SMB1", "smb1.disabled"),
+        ] {
+            assert_eq!(control_for_finding(title), Some(id));
+            assert!(secblitz::hardening::is_hardening(id));
+            // Same plain words on both, so the row reads the same either way.
+            assert_eq!(for_finding(title, "attention", "").label, control_label(id));
+            assert_eq!(for_finding(title, "attention", "").impact, control_impact(id));
+        }
+        assert_eq!(control_for_finding("Secure Boot"), None);
+        assert!(choice_consequence("accounts.autologon").contains("password or PIN"));
+        assert!(choice_consequence("smb1.disabled").contains("restart"));
     }
 
     #[test]

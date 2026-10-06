@@ -882,5 +882,225 @@ HAfterRegistry $spoolDef $null; Assert ($script:restarts -eq 3) 'undo restarts a
 Remove-Item -LiteralPath function:Get-Service, function:Restart-Service
 function Get-ItemProperty { Microsoft.PowerShell.Management\Get-ItemProperty @args }
 function Get-ChildItem { Microsoft.PowerShell.Management\Get-ChildItem @args }
+# ---- accounts.autologon: only the AutoAdminLogon text value is ever read or written
+$alJson = '{"id":"accounts.autologon","source":"WinlogonAutoLogon","dynamic":false,"reboot":false,"keys":[{"name":"AutoAdminLogon","path":"HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon","rule":"set","safe":[0],"absentSafe":true,"fix":0,"max":1}],' + $noGate + '}'
+MakeSpec $alJson
+function Test-Path { param($LiteralPath, $ErrorAction); if ($script:fakeFs) { return ($script:fakePaths -contains $LiteralPath) }; return $true }
+function Get-Item { param($LiteralPath, $ErrorAction); return $script:fakeKey }
+$script:fakeFs = $true; $script:fakePaths = @()
+function GuardedKey($map) {
+    $k = ValueKey $map
+    # Reading anything but AutoAdminLogon (saved password, user name) fails the test.
+    $k | Add-Member -Force ScriptMethod GetValue { param($n) if ($n -cne 'AutoAdminLogon') { throw "must not read $n" }; return $this.Map[$n] }
+    return $k
+}
+$script:fakeKey = GuardedKey @{ AutoAdminLogon = '1'; DefaultPassword = 'secret'; DefaultUserName = 'bob'; AutoLogonCount = 3 }
+$r = HReadAutoLogon
+Assert ($r['AutoAdminLogon'] -eq 1 -and (HAnyUnsafe $r)) 'automatic sign-in on is unsafe'
+$script:fakeKey = GuardedKey @{ AutoAdminLogon = '0'; DefaultPassword = 'secret' }
+$r = HReadAutoLogon
+Assert ($r['AutoAdminLogon'] -eq 0 -and !(HAnyUnsafe $r)) 'automatic sign-in off is protected'
+$script:fakeKey = GuardedKey @{ DefaultUserName = 'bob' }
+$r = HReadAutoLogon
+Assert ($null -eq $r['AutoAdminLogon'] -and !(HAnyUnsafe $r)) 'an absent value is protected'
+$script:fakeKey = GuardedKey @{ AutoAdminLogon = 1 }
+Reject { HReadAutoLogon } 'not text'
+$script:fakeKey = GuardedKey @{ AutoAdminLogon = 'maybe' }
+Reject { HReadAutoLogon } 'unknown setting'
+Assert ((HFixOf (HDef 'AutoAdminLogon') 1) -eq 0) 'only 1 is repaired, to 0'
+$script:calls = @()
+function New-ItemProperty { param($LiteralPath, $Name, $PropertyType, $Value, [switch]$Force, $ErrorAction); $script:calls += ,@('new', $Name, $PropertyType, $Value) }
+function Remove-ItemProperty { param($LiteralPath, $Name, $ErrorAction); $script:calls += ,@('remove', $Name) }
+HSetAutoLogon 'AutoAdminLogon' 0
+HSetAutoLogon 'AutoAdminLogon' 1
+HSetAutoLogon 'AutoAdminLogon' $null
+Assert ((CallLog) -ceq 'new:AutoAdminLogon:String:0,new:AutoAdminLogon:String:1,remove:AutoAdminLogon') "autologon writes: $(CallLog)"
+Reject { HSetAutoLogon 'DefaultPassword' 0 } 'Unknown hardening item'
+Reject { HSetAutoLogon 'AutoAdminLogon' 2 } 'Invalid automatic sign-in setting'
+$script:fakeFs = $false
+
+# ---- remote_desktop.disabled: not offered where it would cut the person off
+$rdJson = '{"id":"remote_desktop.disabled","source":"Registry","dynamic":false,"reboot":false,"keys":[{"name":"fDenyTSConnections","path":"HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server","rule":"set","safe":[1],"absentSafe":true,"fix":1,"max":1}],"gate":{"areas":["RemoteDesktopServices"],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[{"path":"HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services","name":"fDenyTSConnections"}]}}'
+MakeSpec $rdJson
+Assert (HIsSafe (HDef 'fDenyTSConnections') 1) 'denying connections is protected'
+Assert (!(HIsSafe (HDef 'fDenyTSConnections') 0)) 'allowing connections is unsafe'
+Assert ((HFixOf (HDef 'fDenyTSConnections') 0) -eq 1) 'repair denies connections'
+$oldSession = $env:SESSIONNAME
+$env:SESSIONNAME = 'RDP-Tcp#3'
+Assert (HRemoteSessionActive) 'a Remote Desktop session is recognised'
+$env:SESSIONNAME = $oldSession
+function HRemoteSessionActive { return $script:remote }
+$script:remote = $false
+$script:edition = 'Professional'
+function Get-ItemProperty { param($LiteralPath, $Name, $ErrorAction); return [pscustomobject]@{ EditionID = $script:edition } }
+HPreflight
+Assert $true 'offered on a local session of a capable edition'
+$script:remote = $true
+Reject { HPreflight } 'you are connected to this PC from another device right now'
+$script:remote = $false
+foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
+    $script:edition = $ed
+    Reject { HPreflight } 'Windows Home cannot accept Remote Desktop connections'
+}
+
+# ---- smb1.disabled: four parts, children first off, parent first on, files kept
+$smbNames = @('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server', 'SMB1Protocol-Deprecation')
+$smbKeys = $smbNames | ForEach-Object {
+    '{"name":"' + $_ + '","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}'
+}
+$smbJson = '{"id":"smb1.disabled","source":"SmbFeature","dynamic":false,"reboot":true,"keys":[' + ($smbKeys -join ',') + '],' + $noGate + '}'
+MakeSpec $smbJson
+# What Windows reports (one query for all parts) and what is pending a restart.
+function SmbFeatures([string]$root, [string]$client, [string]$server, [string]$deprecation = 'Disabled') {
+    $script:smbState = @{ 'SMB1Protocol' = $root; 'SMB1Protocol-Client' = $client; 'SMB1Protocol-Server' = $server; 'SMB1Protocol-Deprecation' = $deprecation }
+}
+function SmbCode([string]$state) { switch ($state) { 'Enabled' { return 1 } 'Disabled' { return 2 } default { return 3 } } }
+$script:cimQueries = 0
+function Get-CimInstance {
+    param($ClassName, $Filter, $OperationTimeoutSec)
+    if ($ClassName -cne 'Win32_OptionalFeature') { throw "Unexpected probe $ClassName" }
+    $script:cimQueries++
+    $rows = @(1..6 | ForEach-Object { [pscustomobject]@{ Name = "Filler$_"; InstallState = [uint32]1 } })
+    foreach ($n in @($script:smbState.Keys)) {
+        if ($script:smbState[$n] -cne 'Missing') { $rows += [pscustomobject]@{ Name = $n; InstallState = [uint32](SmbCode $script:smbState[$n]) } }
+    }
+    if (!$Filter) { return $rows }
+    if ($Filter -ceq "Name LIKE 'SMB1Protocol%'") { return @($rows | Where-Object { $_.Name -clike 'SMB1Protocol*' }) }
+    if ($Filter -cnotmatch "^Name='([A-Za-z0-9-]+)'$") { throw 'Unexpected feature filter' }
+    $name = $Matches[1]
+    return @($rows | Where-Object { $_.Name -ceq $name })
+}
+# The small "what was asked for" note lives in an in-memory double.
+$script:notes = @{}; $script:noteFails = $false
+function HSmbNoteGet([string]$name) { if ($script:notes.ContainsKey($name)) { return [int]$script:notes[$name] }; return $null }
+function HSmbNotePut([string]$name, $want) {
+    if ($script:noteFails) { throw 'note fixture failure' }
+    if ($null -eq $want) { $script:notes.Remove($name) } else { $script:notes[$name] = [string][int]$want }
+}
+$script:calls = @(); $script:restart = $true; $script:parentBringsBack = $false; $script:sawLimit = $true
+function Disable-WindowsOptionalFeature { param([switch]$Online, $FeatureName, [switch]$NoRestart, $ErrorAction); $script:calls += ,@('disable', $FeatureName); if (!$script:restart) { $script:smbState[$FeatureName] = 'Disabled' }; return [pscustomobject]@{ RestartNeeded = $script:restart } }
+function Enable-WindowsOptionalFeature {
+    param([switch]$Online, $FeatureName, [switch]$NoRestart, [switch]$LimitAccess, $ErrorAction)
+    $script:calls += ,@('enable', $FeatureName)
+    if (!$LimitAccess) { $script:sawLimit = $false }
+    if (!$script:restart) { $script:smbState[$FeatureName] = 'Enabled' }
+    if ($script:parentBringsBack -and $FeatureName -ceq 'SMB1Protocol') { $script:smbState['SMB1Protocol-Deprecation'] = 'Enabled' }
+    return [pscustomobject]@{ RestartNeeded = $script:restart }
+}
+
+SmbFeatures 'Enabled' 'Enabled' 'Disabled' 'Enabled'
+$script:cimQueries = 0
+$r = HReadSmb1
+Assert ($r['SMB1Protocol'] -eq 1 -and $r['SMB1Protocol-Client'] -eq 1 -and $r['SMB1Protocol-Server'] -eq 0 -and $r['SMB1Protocol-Deprecation'] -eq 1 -and (HAnyUnsafe $r) -and !$script:hSmb1Unreadable) 'only the parts that are on are listed as on'
+Assert ($script:cimQueries -eq 1) "one query reads every part: $script:cimQueries"
+SmbFeatures 'Disabled' 'Missing' 'Disabled' 'Missing'
+$r = HReadSmb1
+Assert (!(HAnyUnsafe $r)) 'disabled or absent parts are protected'
+# A feature list that cannot be read is never treated as protected.
+$script:smbState = @{}
+function Get-CimInstance { param($ClassName, $Filter, $OperationTimeoutSec); return @() }
+$r = HReadSmb1
+Assert ($script:hSmb1Unreadable -and (HAnyUnsafe $r)) 'an unreadable feature list is flagged and looks unsafe'
+Reject { HPreflight } 'the old file-sharing version could not be checked'
+function Get-CimInstance {
+    param($ClassName, $Filter, $OperationTimeoutSec)
+    $rows = @(1..6 | ForEach-Object { [pscustomobject]@{ Name = "Filler$_"; InstallState = [uint32]1 } })
+    foreach ($n in @($script:smbState.Keys)) { if ($script:smbState[$n] -cne 'Missing') { $rows += [pscustomobject]@{ Name = $n; InstallState = [uint32](SmbCode $script:smbState[$n]) } } }
+    if (!$Filter) { return $rows }
+    if ($Filter -ceq "Name LIKE 'SMB1Protocol%'") { return @($rows | Where-Object { $_.Name -clike 'SMB1Protocol*' }) }
+    $name = ([regex]::Match($Filter, "^Name='([A-Za-z0-9-]+)'$")).Groups[1].Value
+    return @($rows | Where-Object { $_.Name -ceq $name })
+}
+# Live use of the old version blocks the change.
+SmbFeatures 'Enabled' 'Enabled' 'Enabled' 'Enabled'
+$null = HReadSmb1
+function Get-SmbConnection { param($ErrorAction); return @([pscustomobject]@{ Dialect = $script:dialect }) }
+function Get-SmbSession { param($ErrorAction); return @() }
+$script:dialect = '3.1.1'
+HPreflight
+Assert $true 'modern connections do not block'
+$script:dialect = '1.50'
+Reject { HPreflight } 'something is using the old file sharing right now'
+function Get-SmbConnection { param($ErrorAction); throw 'not available' }
+HPreflight
+Assert $true 'an unreadable connection list does not block'
+
+# Writers: no -Remove (the cmdlet doubles reject it), only parts that are on.
+SmbFeatures 'Enabled' 'Enabled' 'Disabled'
+$script:calls = @(); $script:notes = @{}
+HSetSmb1 'SMB1Protocol-Server' 0
+Assert ((CallLog) -ceq '') 'a part that is already off is not touched'
+HSetSmb1 'SMB1Protocol-Client' 0
+Assert ((CallLog) -ceq 'disable:SMB1Protocol-Client') "part turned off: $(CallLog)"
+Assert ($script:notes['SMB1Protocol-Client'] -ceq '0') 'the change that needs a restart is noted'
+$r = HReadSmb1
+Assert ($r['SMB1Protocol-Client'] -eq 0 -and $r['SMB1Protocol'] -eq 1) 'until the restart the note says what was asked for'
+$script:notes = @{}
+$r = HReadSmb1
+Assert ($r['SMB1Protocol-Client'] -eq 1) 'after a restart the note is gone and Windows is believed'
+SmbFeatures 'Disabled' 'Disabled' 'Disabled'
+$script:calls = @(); $script:notes = @{}; $script:sawLimit = $true
+HSetSmb1 'SMB1Protocol' 1
+HSetSmb1 'SMB1Protocol-Client' 1
+Assert ((CallLog) -ceq 'enable:SMB1Protocol,enable:SMB1Protocol-Client') "undo turns parts back on one by one: $(CallLog)"
+Assert $script:sawLimit 'turning a part back on never goes online'
+$script:restart = $false
+SmbFeatures 'Enabled' 'Disabled' 'Disabled'
+$script:notes = @{ 'SMB1Protocol' = '1' }
+HSetSmb1 'SMB1Protocol' 0
+Assert (!$script:notes.ContainsKey('SMB1Protocol')) 'a change that needs no restart leaves no note'
+Reject { HSetSmb1 'SMB1Protocol-Other' 0 } 'Unknown hardening item'
+Reject { HSetSmb1 'SMB1Protocol' 2 } 'Invalid feature state'
+# If the note cannot be kept, the change is put back before the error is raised.
+$script:restart = $true; $script:noteFails = $true
+SmbFeatures 'Enabled' 'Disabled' 'Disabled'
+$script:calls = @(); $script:notes = @{}
+Reject { HSetSmb1 'SMB1Protocol' 0 } 'note fixture failure'
+Assert ((CallLog) -ceq 'disable:SMB1Protocol,enable:SMB1Protocol') "a part whose note failed is turned back: $(CallLog)"
+$script:noteFails = $false
+
+# Whole writes through the real HWrite (the state and writer are the real SMB ones).
+function HRead { return (HReadSmb1) }
+function HSet([string]$name, $v) { HSetSmb1 $name $v }
+function HPreflight { }
+function HGate { }
+$script:restart = $true
+SmbFeatures 'Enabled' 'Enabled' 'Enabled' 'Enabled'
+$script:calls = @(); $script:notes = @{}
+HWrite (Input '{"items":{"SMB1Protocol":0,"SMB1Protocol-Client":0,"SMB1Protocol-Server":0,"SMB1Protocol-Deprecation":0}}')
+Assert ((CallLog) -ceq 'disable:SMB1Protocol-Server,disable:SMB1Protocol-Deprecation,disable:SMB1Protocol-Client,disable:SMB1Protocol') "turning off goes children first: $(CallLog)"
+# Undo: the recorded-on parts come back parent first; a part that was off stays off.
+SmbFeatures 'Disabled' 'Disabled' 'Disabled' 'Disabled'
+$script:calls = @(); $script:notes = @{}; $script:parentBringsBack = $false
+HWrite (Input '{"items":{"SMB1Protocol":1,"SMB1Protocol-Client":1,"SMB1Protocol-Server":0,"SMB1Protocol-Deprecation":1}}')
+Assert ((CallLog) -ceq 'enable:SMB1Protocol,enable:SMB1Protocol-Client,enable:SMB1Protocol-Deprecation') "turning on goes parent first: $(CallLog)"
+SmbFeatures 'Disabled' 'Disabled' 'Disabled' 'Disabled'
+$script:calls = @(); $script:notes = @{}; $script:parentBringsBack = $true
+HWrite (Input '{"items":{"SMB1Protocol":1,"SMB1Protocol-Client":1,"SMB1Protocol-Server":0,"SMB1Protocol-Deprecation":0}}')
+Assert ((CallLog) -ceq 'enable:SMB1Protocol,enable:SMB1Protocol-Client,disable:SMB1Protocol-Deprecation') "a part that came back by itself is turned off again: $(CallLog)"
+$script:parentBringsBack = $false
+
+# ---- accounts.autologon: not offered on a kiosk
+MakeSpec $alJson
+${function:HPreflight} = $realHPreflight
+$script:kioskKey = $null
+function Test-Path { param($LiteralPath, $ErrorAction); if ($LiteralPath -clike '*AssignedAccessConfiguration') { return ($null -ne $script:kioskKey) }; return $true }
+function Get-Item { param($LiteralPath, $ErrorAction); return $script:kioskKey }
+function KioskKey($values, $subs) {
+    $k = [pscustomobject]@{ V = $values; S = $subs }
+    $k | Add-Member ScriptMethod GetValueNames { return @($this.V) }
+    $k | Add-Member ScriptMethod GetSubKeyNames { return @($this.S) }
+    return $k
+}
+HPreflight
+Assert $true 'offered when no kiosk is set up'
+$script:kioskKey = KioskKey @() @()
+HPreflight
+Assert $true 'an empty kiosk key does not block'
+$script:kioskKey = KioskKey @() @('Configs')
+Reject { HPreflight } 'this PC is set up as a kiosk'
+$script:kioskKey = KioskKey @('Version') @()
+Reject { HPreflight } 'this PC is set up as a kiosk'
+$script:fakeFs = $false
 
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

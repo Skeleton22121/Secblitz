@@ -138,15 +138,9 @@ pub enum ToCheck<'a> {
     Finding(&'a secblitz::model::Finding),
 }
 
-/// A finding whose own control row carries it: only when that control can be
-/// fixed, needs a choice or is already protected. A control that could not be
-/// checked or is managed elsewhere counts for nothing, so the finding stays.
+/// A finding whose own control row carries it (see [`finding_has_fix`]).
 pub fn superseded(report: &Report, f: &secblitz::model::Finding) -> bool {
-    crate::advice::control_for_finding(&f.title).is_some_and(|id| {
-        report.results.iter().any(|r| {
-            r.id == id && matches!(classify(r), Class::Fixable | Class::Review | Class::Protected)
-        })
-    })
+    finding_has_fix(report, f)
 }
 
 /// What the person should look at, in report order: control results that need
@@ -166,6 +160,30 @@ pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
         .filter(|f| matches!(classify_finding(f), Class::Fixable | Class::Review))
         .map(ToCheck::Finding);
     controls.chain(findings).collect()
+}
+
+/// True when a fix row for the same thing is on this report (a fix the person
+/// can authorize, one that was just applied, or one already in place). The fix
+/// row then replaces the manual tip, so nothing is listed twice. A fix that is
+/// not offered, managed elsewhere or unchecked leaves the tip and its steps.
+pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
+    let Some(id) = advice::control_for_finding(&f.title) else {
+        return false;
+    };
+    // A saved sign-in password can be reported while automatic sign-in itself
+    // is off. The control then reads "protected", but this warning is a
+    // different thing and must stay visible.
+    if f.title == "Automatic logon" && f.detail.contains("AutoAdminLogon enabled=False") {
+        return false;
+    }
+    report.results.iter().any(|r| {
+        r.id == id
+            && (matches!(classify(r), Class::Fixable | Class::Review | Class::Protected)
+                // These two reasons already say, on the control's own row, why
+                // the manual tip would only contradict it.
+                || r.detail == "Not offered: you are connected to this PC from another device right now"
+                || r.detail == "Not offered: this PC is set up as a kiosk")
+    })
 }
 
 pub fn to_check_count(report: &Report) -> usize {
@@ -417,6 +435,67 @@ mod tests {
             ..out("uac.enabled", "skipped")
         };
         assert_eq!(classify(&u), Class::Protected);
+    }
+
+    #[test]
+    fn a_fix_row_replaces_the_manual_tip_for_the_same_thing() {
+        let tip = |title: &str| secblitz::model::Finding {
+            title: title.into(),
+            status: "attention".into(),
+            detail: String::new(),
+        };
+        let eligible = |id: &str| Outcome {
+            detail: "Eligible unmanaged local preference".into(),
+            ..out(id, "attention")
+        };
+        for (title, id) in [
+            ("Automatic logon", "accounts.autologon"),
+            ("Remote Desktop", "remote_desktop.disabled"),
+            ("SMB1", "smb1.disabled"),
+        ] {
+            // Alone, the tip is listed.
+            let mut r = rep(vec![out("uac.enabled", "compliant")]);
+            r.findings.push(tip(title));
+            assert_eq!(to_check_count(&r), 1, "{title}");
+            // With a fix row, only the fix row is.
+            let mut r = rep(vec![eligible(id)]);
+            r.findings.push(tip(title));
+            assert!(finding_has_fix(&r, &r.findings[0]), "{title}");
+            assert_eq!(to_check_count(&r), 1, "{title}");
+            assert!(matches!(to_check(&r)[0], ToCheck::Control(_)));
+            // Not offered or managed: the tip and its steps stay.
+            let not_offered = Outcome {
+                detail: "Not offered: this edition of Windows does not include it".into(),
+                ..out(id, "skipped")
+            };
+            let mut r = rep(vec![not_offered]);
+            r.findings.push(tip(title));
+            assert!(!finding_has_fix(&r, &r.findings[0]), "{title}");
+            assert_eq!(to_check_count(&r), 1, "{title}");
+        }
+        let mut r = rep(vec![eligible("accounts.autologon")]);
+        r.findings.push(tip("Secure Boot"));
+        assert_eq!(to_check_count(&r), 2);
+        // A saved password with automatic sign-in off is a separate warning.
+        let mut r = rep(vec![out("accounts.autologon", "compliant")]);
+        r.findings.push(secblitz::model::Finding {
+            title: "Automatic logon".into(),
+            status: "attention".into(),
+            detail: "AutoAdminLogon enabled=False; Winlogon DefaultPassword value present=True.".into(),
+        });
+        assert!(!finding_has_fix(&r, &r.findings[0]));
+        assert_eq!(to_check_count(&r), 1);
+        // While connected remotely or on a kiosk, the control's own reason replaces the tip.
+        for reason in [
+            "Not offered: you are connected to this PC from another device right now",
+            "Not offered: this PC is set up as a kiosk",
+        ] {
+            let id = if reason.contains("kiosk") { "accounts.autologon" } else { "remote_desktop.disabled" };
+            let title = if reason.contains("kiosk") { "Automatic logon" } else { "Remote Desktop" };
+            let mut r = rep(vec![Outcome { detail: reason.into(), ..out(id, "skipped") }]);
+            r.findings.push(tip(title));
+            assert!(finding_has_fix(&r, &r.findings[0]), "{reason}");
+        }
     }
 
     #[test]
