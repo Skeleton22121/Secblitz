@@ -1,16 +1,4 @@
 //! Read-only, bounded diagnostics; deliberately independent of the repair engine.
-//!
-//! Integration: `diagnostics::collect(Profile::Everyday, &Context::default())`
-//! returns a serializable machine-scoped snapshot, including per-probe failures.
-//! Set `context.original_user = OriginalUserScope::VerifyCurrentDesktopUser` to
-//! request an attached browser inventory. Native token checks are mandatory and
-//! cannot be overridden by a caller-supplied account, SID, path or command.
-//!
-//! Collection does not elevate, scan online, refresh update metadata, enable
-//! protections, run software, repair disks, test restores or write output files.
-//! Callers choose whether/where to serialize the returned report. Timestamps are
-//! UTC Unix seconds and describe observation, not freshness of cached evidence.
-//! Rule references are advisory mappings, not a compliance certification.
 
 #[path = "diagnostics/types.rs"]
 mod types;
@@ -36,9 +24,6 @@ pub const MAX_ITEMS: usize = 512;
 pub const PROBE_TIMEOUT_SECONDS: u64 = 15;
 pub const COLLECTION_TIMEOUT_SECONDS: u64 = 180;
 
-/// Conservative, versioned product-lifecycle mapping. All releases of these
-/// exact legacy products have ended support. Other products are not assessed.
-/// Registration strings are inventory evidence, not binary authenticity.
 pub fn support_assessment(app: &Application) -> SupportAssessment {
     let lifecycle = if matches!(
         app.publisher.as_str(),
@@ -73,8 +58,6 @@ pub fn support_assessment(app: &Application) -> SupportAssessment {
     })
 }
 
-/// Partial failures are data, not an all-or-nothing error. No machine identifiers,
-/// account names, network addresses, credentials or recovery keys are returned.
 pub fn collect(profile: Profile, context: &Context) -> Report {
     #[cfg(windows)]
     let probes = windows::collect(context);
@@ -111,7 +94,6 @@ fn unavailable(id: ProbeId, reason: UnknownReason) -> Diagnostic {
 }
 
 fn assemble(profile: Profile, context: &Context, mut probes: Vec<Diagnostic>) -> Report {
-    // Missing probes are explicit even when a collector exits early.
     for &id in ProbeId::ALL {
         if !probes.iter().any(|p| p.id == id) {
             probes.push(unavailable(id, UnknownReason::NotCollected));

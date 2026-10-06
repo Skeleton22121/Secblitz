@@ -26,7 +26,6 @@ try {
     $result.frameworks = @($frameworks.Keys | Sort-Object)
     $result.users = @($users.Keys | Sort-Object)
     $result.provisioned = @(Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq $name }).Count -gt 0
-    # A registered Microsoft app whose folder security is copied for restore.
     $t = Get-AppxPackage -PackageTypeFilter Main | Where-Object {
         $_.PackageFamilyName -like '*_8wekyb3d8bbwe' -and -not $_.IsFramework -and $_.SignatureKind -eq 'Store' -and
         $_.Name -ne $name -and [string]$_.Status -eq 'Ok'

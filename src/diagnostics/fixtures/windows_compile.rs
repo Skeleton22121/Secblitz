@@ -1,7 +1,4 @@
-//! Compile-only Windows launcher harness. No native evidence is generated.
-//! This type-shaped, panicking audit boundary permits independent typechecking
-//! before the coordinator exports diagnostics, without editing shared files.
-//! The production call uses the real crate::permissions::audit() API.
+//! Compile-only Windows launcher harness; generates no native evidence.
 pub mod permissions {
     pub struct Finding { pub title: String, pub status: String }
     pub fn audit() -> Result<Vec<Finding>, ()> {

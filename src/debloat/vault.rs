@@ -1,13 +1,9 @@
-//! App data in a saved copy: a plain archive of one account's app data
-//! folder, encrypted in 1 MB chunks with an AEAD (`Sealer`).
-//!
-//! Frame: `last: u8 | nonce: [u8; 12] | len: u32 LE | sealed: [u8; len]`.
-//! Associated data binds the family, the account and the chunk position,
-//! and marks the final chunk, so frames can't be swapped between files,
-//! reordered, dropped or extended.
-//!
-//! Archive (plaintext): `'D' len:u16 path` | `'F' len:u16 path size:u64 bytes`
-//! | `'E'`. Paths are '/'-separated and checked with `backup::valid_relative`.
+//! App data in a saved copy: an archive of one account's app data folder, sealed
+//! in 1 MB chunks with an AEAD (`Sealer`).
+//! Frame: `last: u8 | nonce: [u8; 12] | len: u32 LE | sealed: [u8; len]`; the
+//! associated data binds family, account and chunk position so frames can't be
+//! swapped, reordered, dropped or extended.
+//! Archive (plaintext): `'D' len:u16 path` | `'F' len:u16 path size:u64 bytes` | `'E'`.
 use super::backup::{valid_relative, MAX_BYTES, MAX_FILES};
 use anyhow::{bail, ensure, Result};
 use rand::RngCore;
@@ -30,9 +26,7 @@ pub enum Item {
 }
 
 pub trait Source {
-    /// Every folder and file to save, parents before children.
     fn items(&mut self) -> Result<Vec<Item>>;
-    /// Copy one file into `out`; returns bytes written.
     fn read(&mut self, rel: &str, out: &mut dyn Write) -> Result<u64>;
 }
 
@@ -52,7 +46,6 @@ fn aad(family: &str, sid: &str, index: u64, last: bool) -> Vec<u8> {
     a
 }
 
-/// Buffers plaintext and writes sealed frames.
 struct FrameWriter<'a> {
     sealer: &'a dyn Sealer,
     family: &'a str,
@@ -96,7 +89,6 @@ impl Write for FrameWriter<'_> {
             return Ok(0);
         }
         if self.buf.len() == CHUNK {
-            // More data follows a full chunk: it is not the last one.
             self.frame(false).map_err(std::io::Error::other)?;
         }
         let n = (CHUNK - self.buf.len()).min(data.len());
@@ -112,7 +104,6 @@ impl Write for FrameWriter<'_> {
     }
 }
 
-/// Seal an already-built plaintext (used by tests to build hostile archives).
 #[cfg(test)]
 pub(crate) fn write_frames(
     plain: &[u8],
@@ -178,7 +169,6 @@ pub fn encrypt(
     w.finish()
 }
 
-/// Reads frames in order and yields plaintext.
 struct FrameReader<'a> {
     sealer: &'a dyn Sealer,
     family: &'a str,
@@ -270,9 +260,6 @@ pub fn decrypt(
         index: 0,
         done: false,
     };
-    // Data can be large, so nothing is buffered whole: every frame is
-    // authenticated before its bytes are used, and each path is checked
-    // before anything is created.
     let mut count = 0usize;
     loop {
         let mut tag = [0u8; 1];
@@ -304,8 +291,6 @@ pub fn decrypt(
     Ok(())
 }
 
-/// Plain folder walker (tests and documentation of the contract; the
-/// Windows reader in `winfs` adds link and ownership checks).
 #[cfg(test)]
 pub struct DirSource {
     root: std::path::PathBuf,
@@ -385,8 +370,6 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// Deterministic stand-in for AES-GCM: XOR keystream from SHA-256 and a
-    /// 16-byte tag over nonce, aad and ciphertext. Enough to test framing.
     struct Fake([u8; 32]);
     impl Fake {
         fn stream(&self, nonce: &[u8; 12], len: usize) -> Vec<u8> {
@@ -529,22 +512,18 @@ mod tests {
                 &mut DirSink::new(dst.path()),
             )
         };
-        // Drop the last frame: the final-chunk flag is missing.
         let frame = 1 + 12 + 4 + CHUNK + 16;
         let without_last = &out[..MAGIC.len() + 3 * frame];
         assert!(open(without_last).is_err());
-        // Swap the first two frames.
         let mut swapped = out.clone();
         let (a, b) = (MAGIC.len(), MAGIC.len() + frame);
         let first = out[a..a + frame].to_vec();
         swapped[a..a + frame].copy_from_slice(&out[b..b + frame]);
         swapped[b..b + frame].copy_from_slice(&first);
         assert!(open(&swapped).is_err());
-        // Flip one byte.
         let mut flipped = out.clone();
         flipped[MAGIC.len() + 40] ^= 1;
         assert!(open(&flipped).is_err());
-        // Trailing junk after the final frame.
         let mut junk = out.clone();
         junk.push(0);
         assert!(open(&junk).is_err());

@@ -1,10 +1,5 @@
 //! Plain-words explanations for the raw reasons the app clean-up records.
-//!
-//! The raw text (Windows messages, error chains) stays in the journal and the
-//! logs. Only what this module returns is ever shown on screen, and an
-//! unknown reason never reaches the screen as it is.
 
-/// Why one app could not be removed.
 pub fn removal_failure(raw: &str) -> &'static str {
     let r = raw.to_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| r.contains(w));
@@ -31,7 +26,6 @@ pub fn removal_failure(raw: &str) -> &'static str {
     }
 }
 
-/// Why a safety copy could not be saved, so the app was left in place.
 pub fn no_copy(raw: &str) -> &'static str {
     let r = raw.to_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| r.contains(w));
@@ -48,7 +42,6 @@ pub fn no_copy(raw: &str) -> &'static str {
     }
 }
 
-/// Why the whole list of apps could not be read.
 pub fn run_failure(raw: &str) -> &'static str {
     let r = raw.to_lowercase();
     if r.contains("took too long") {
@@ -60,7 +53,6 @@ pub fn run_failure(raw: &str) -> &'static str {
     }
 }
 
-/// Why a whole removal run failed.
 pub fn removal_run_failure(raw: &str) -> &'static str {
     let r = raw.to_lowercase();
     if r.contains("took too long") {

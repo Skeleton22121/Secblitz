@@ -31,7 +31,6 @@ pub enum OriginalUserScope {
     VerifyCurrentDesktopUser,
 }
 
-/// Declared needs inform advice, never authorize disabling a protection.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompatibilityNeeds {
@@ -66,8 +65,6 @@ pub enum UnknownReason {
     Busy,
 }
 
-/// A malformed or missing individual fact remains Unknown. Deserialization does
-/// not coerce strings, integers or null into booleans, or failures into empty lists.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "state", content = "value")]
 pub enum Reading<T> {
@@ -191,7 +188,6 @@ pub struct UpdateEvent {
     pub result_code: u32,
     pub hresult: i32,
     pub date_unix_seconds: u64,
-    /// History lacks category metadata. A title hint is not a proven classification.
     pub quality_title_hint: bool,
 }
 facts!(DefenderHealth {
@@ -219,7 +215,6 @@ facts!(Providers { antivirus: Inventory<SecurityProvider>, firewall: Inventory<S
 pub struct SecurityProvider {
     pub name: String,
     pub instance_guid: String,
-    /// Preserved, not decoded using undocumented productState bit heuristics.
     pub product_state: u32,
 }
 facts!(Management {
@@ -254,7 +249,6 @@ facts!(Vbs {
     status: u32,
     configured_services: Vec<u32>,
     running_services: Vec<u32>,
-    // Kernel-mode hardware-enforced stack protection: On, Off or Absent (not reported).
     kernel_shadow_stacks: String,
 });
 facts!(WinRe { enabled: bool });
@@ -358,23 +352,16 @@ facts!(OsSupport {
     edition_id: String,
 });
 facts!(SecureBootCerts {
-    // Event 1808: the certificate update completed.
     update_completed_event: bool,
-    // Event 1801: the update is staged and waiting.
     update_staged_event: bool,
-    // Events 1795-1798: the update failed or was blocked.
     update_error_event: bool,
-    // Servicing status text, limited to the compiled known values.
     servicing_status: String,
-    // The 2023 Windows certificate is present in the Secure Boot database.
     ca2023_in_db: bool,
     secure_boot_enabled: bool,
 });
 facts!(DefenderProtection {
-    // Antivirus running mode; scan, threat and exclusion checks apply to Normal only.
     running_mode: String,
     tamper_protected: bool,
-    // Raw TamperProtection feature value (5 = on, 4 = off).
     tamper_feature_value: u32,
     active_threats: u32,
     recent_detections: u32,
@@ -389,7 +376,6 @@ facts!(SmartScreen {
     apps_off_policy: bool,
     edge_off_policy: bool,
     chrome_off_policy: bool,
-    // One of On, Evaluation, Off, Absent.
     smart_app_control: String,
 });
 facts!(UpdatePolicy {
@@ -425,28 +411,21 @@ facts!(FirewallRules {
     user_folder_inbound_allow_rules: u32,
 });
 facts!(AccountSetup {
-    // The account running Secblitz is directly a member of local Administrators.
     current_user_is_admin: bool,
-    // One of On, Off, NotApplicable (desktop PC or no Microsoft account).
     find_my_device: String,
 });
 facts!(WindowsHello { pin_set: bool });
 facts!(DnsEncryption {
     dns_servers: u32,
-    // Servers that Windows upgrades to encrypted lookups automatically.
     encrypted_dns_servers: u32,
-    // Servers that support encrypted lookups but are not upgraded yet.
     upgradeable_dns_servers: u32,
 });
 facts!(WifiSecurity {
-    // One of None, Open, Wep, Old, Strong, Other.
     current_network: String
 });
 facts!(Autostart {
     entries_checked: u32,
-    // Unsigned programs started from Temp, Downloads, Public or the Roaming root.
     risky_unsigned: u32,
-    // Start-up commands that hide an encoded script or fetch from the internet.
     suspicious_command: u32,
 });
 facts!(Permissions { services: Inventory<PermissionFinding> });
