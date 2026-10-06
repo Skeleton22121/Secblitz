@@ -139,6 +139,12 @@ impl Ctx {
     pub fn t(&self, key: &str) -> String {
         self.lang.t(key)
     }
+
+    /// Something is about to change the PC: the next opening must check again
+    /// instead of showing the saved check.
+    pub fn forget_check(&self) {
+        forget_check(self.state_dir.clone());
+    }
     pub fn score(&self) -> Option<Score> {
         self.report.as_deref().map(Score::of)
     }
@@ -151,6 +157,9 @@ impl Ctx {
         let Some(client) = self.broker.clone() else {
             return Task::done(map(Err("unavailable".into())));
         };
+        if !request.is_read_only() {
+            self.forget_check();
+        }
         // The page is opened by the launcher, which is not the foreground
         // process, so Windows would put it behind this window. This window
         // has the focus (the person just clicked), so it may hand that on.
@@ -280,29 +289,75 @@ pub struct App {
     recheck: Recheck,
     /// Whether the window has focus now (updated on every focus event).
     focused: bool,
+    /// The Windows account's SID: a saved check is shown only to the same account.
+    user: Option<String>,
 }
 
-/// Write the history entry and the tray status off the UI thread: both fsync
-/// and rename, which can stall for a visible moment on slow disks or under a
-/// virus scanner. The lock keeps the history read-modify-write in order.
+/// What a write does with the saved last check (`app::last_check`).
+enum Cache {
+    Keep,
+    Save(String, u64, Arc<secblitz::engine::Report>),
+    Forget,
+}
+
+/// Write the history entry, the tray status and the saved check off the UI
+/// thread: each fsyncs and renames, which can stall for a visible moment on
+/// slow disks or under a virus scanner.
 fn persist(
     dir: Option<PathBuf>,
     entry: Option<app::history::Entry>,
     status: secblitz::status::Status,
+    cache: Cache,
 ) {
-    static ORDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    // Counted before the thread starts so a reader never misses a pending write.
-    PENDING_WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    std::thread::spawn(move || {
-        {
-            let _guard = ORDER.lock().unwrap_or_else(|e| e.into_inner());
-            if let (Some(dir), Some(entry)) = (&dir, &entry) {
-                let _ = app::history::record(dir, entry);
-            }
-            let _ = secblitz::status::write(&status);
+    write_in_order(move || {
+        if let (Some(dir), Some(entry)) = (&dir, &entry) {
+            let _ = app::history::record(dir, entry);
         }
-        PENDING_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = secblitz::status::write(&status);
+        if let Some(dir) = &dir {
+            match cache {
+                Cache::Keep => {}
+                Cache::Save(user, at, report) => {
+                    let _ = app::last_check::save(dir, &user, at, &report);
+                }
+                Cache::Forget => app::last_check::forget(dir),
+            }
+        }
     });
+}
+
+/// Forget the saved check (on a background thread, after earlier writes).
+fn forget_check(dir: Option<PathBuf>) {
+    let Some(dir) = dir else { return };
+    write_in_order(move || app::last_check::forget(&dir));
+}
+
+/// Run file writes one after another on a single background thread, in the
+/// order they were queued: a later "forget" must never land before an
+/// earlier save, and history read-modify-writes must not interleave.
+fn write_in_order(job: impl FnOnce() + Send + 'static) {
+    type Job = Box<dyn FnOnce() + Send>;
+    static QUEUE: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<Job>>> =
+        std::sync::OnceLock::new();
+    // Counted before queueing so a reader never misses a pending write.
+    PENDING_WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let queue = QUEUE.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Job>();
+        std::thread::spawn(move || {
+            for job in rx {
+                job();
+                PENDING_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        std::sync::Mutex::new(tx)
+    });
+    let sent = queue
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .send(Box::new(job));
+    if sent.is_err() {
+        PENDING_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 static PENDING_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -372,19 +427,29 @@ impl App {
             .as_deref()
             .and_then(|id| crate::broker::Client::connect(id).ok())
             .map(Arc::new);
+        let state_dir = secblitz::platform::app_dir().ok();
+        let user = crate::launcher::user_sid();
+        // Reopened soon after a check: show that check instead of a new one.
+        let now = app::history::now();
+        let cached = match (&state_dir, &user, app::last_check::boot_time(now)) {
+            (Some(dir), Some(user), Some(boot)) => app::last_check::load(dir, user, now, boot),
+            _ => None,
+        };
+        let checked_at = cached.as_ref().map(|(_, at)| *at);
+        let report = cached.map(|(report, _)| Arc::new(report));
         let ctx = Ctx {
             lang,
             palette: Palette::of(mode),
             worker: worker.clone(),
             catalog: worker::Catalog::default(),
             engine_error: None,
-            report: None,
             check_error: None,
-            checked_at: None,
-            checking: Some(CheckProgress::default()),
+            checked_at,
+            checking: report.is_none().then(CheckProgress::default),
+            report,
             busy: false,
             broker,
-            state_dir: secblitz::platform::app_dir().ok(),
+            state_dir,
             prefs,
             toast: None,
             explain_open: None,
@@ -409,9 +474,14 @@ impl App {
             warm_at: [None; 3],
             recheck: Recheck::default(),
             focused: true,
+            user,
         };
         let opened = Task::run(worker.opened(), Message::Worker);
-        let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
+        let first_check = if app.ctx.checking.is_some() {
+            Task::run(worker.run(worker::Job::Check), Message::Worker)
+        } else {
+            Task::none()
+        };
         // Opening straight on a page (hidden `--self-test`) must load it too.
         let enter = app.enter_page(app.page);
         // Home's optional card needs to know whether web protection is off.
@@ -423,6 +493,17 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let was_busy = self.ctx.busy;
+        let task = self.handle(message);
+        // A fix, undo, removal or repair may change what a check finds: the
+        // next opening must check again (a fix or undo saves its own re-check).
+        if self.ctx.busy && !was_busy {
+            self.ctx.forget_check();
+        }
+        task
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Navigate(page) => {
                 if page == self.page {
@@ -652,10 +733,15 @@ impl App {
                 self.ctx.checked_at = Some(now);
                 let score = Score::of(report);
                 let entry = (!operation || n > 0).then(|| self.entry(now, kind, &score, n));
+                let cache = match &self.user {
+                    Some(user) => Cache::Save(user.clone(), now, report.clone()),
+                    None => Cache::Keep,
+                };
                 persist(
                     self.ctx.state_dir.clone(),
                     entry,
                     status_of(report, &score, now),
+                    cache,
                 );
             }
             Err(e) => {
@@ -674,6 +760,7 @@ impl App {
                     self.ctx.state_dir.clone(),
                     entry,
                     secblitz::status::summarize(&[], false, now),
+                    Cache::Forget,
                 );
             }
         }

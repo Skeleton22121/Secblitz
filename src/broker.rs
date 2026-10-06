@@ -156,6 +156,47 @@ impl Reply {
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Request {
     /// Requests that open a Windows page or window for the person to look at.
+    /// Only reads, so whatever a check found still holds afterwards. Opening a
+    /// Windows page is not read only: the person may change things there.
+    pub fn is_read_only(self) -> bool {
+        match self {
+            Request::StoreAppStatus(_)
+            | Request::StartStoreApp(_)
+            | Request::AppUpdatesScan
+            | Request::AppUpdateQuery(_)
+            | Request::BitwardenStatus
+            | Request::UserSetting(_, Op::Query) => true,
+            Request::UserSetting(_, Op::Apply | Op::Undo)
+            | Request::InstallBitwarden
+            | Request::BlockSuggestedApps
+            | Request::ReinstallStoreApp(_)
+            | Request::AppUpdate(_) => false,
+            Request::OpenWindowsUpdate
+            | Request::OpenWindowsSecurity
+            | Request::OpenEncryption
+            | Request::OpenSignIn
+            | Request::OpenTamperProtection
+            | Request::OpenProtectionHistory
+            | Request::OpenProtectionHistoryList
+            | Request::OpenNetwork
+            | Request::OpenAppBrowserControl
+            | Request::OpenOptionalFeatures
+            | Request::OpenAccounts
+            | Request::OpenCoreIsolation
+            | Request::OpenFirewall
+            | Request::OpenDeviceSecurity
+            | Request::OpenWorkAccounts
+            | Request::OpenRecovery
+            | Request::OpenRemoteDesktop
+            | Request::OpenFindMyDevice
+            | Request::OpenBitLocker
+            | Request::OpenWifi
+            | Request::OpenBackup
+            | Request::OpenStorage
+            | Request::OpenInstalledApps => false,
+        }
+    }
+
     pub fn opens_window(self) -> bool {
         matches!(
             self,
@@ -635,6 +676,21 @@ mod tests {
             let page = format!("{request:?}").starts_with("Open");
             assert_eq!(request.opens_window(), page, "{request:?}");
         }
+    }
+
+    #[test]
+    fn only_queries_keep_the_saved_check() {
+        for request in all() {
+            if request.opens_window() {
+                assert!(!request.is_read_only(), "{request:?}");
+            }
+        }
+        assert!(Request::UserSetting(Setting::SuggestedApps, Op::Query).is_read_only());
+        assert!(!Request::UserSetting(Setting::SuggestedApps, Op::Apply).is_read_only());
+        assert!(!Request::UserSetting(Setting::SuggestedApps, Op::Undo).is_read_only());
+        assert!(!Request::BlockSuggestedApps.is_read_only());
+        assert!(!Request::AppUpdate(0).is_read_only());
+        assert!(Request::AppUpdatesScan.is_read_only());
     }
 
     #[test]

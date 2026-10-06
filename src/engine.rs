@@ -45,27 +45,27 @@ const LEGACY_UPDATE_FILES: [&str; 5] = [
     "update-worker.exe",
 ];
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Report {
     pub transaction: Option<String>,
     pub results: Vec<Outcome>,
     pub findings: Vec<Finding>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<Readiness>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Outcome {
     pub id: String,
     pub title: String,
     pub status: String,
     pub detail: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective: Option<EffectiveFirewall>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
     /// The exact items a fix would change (plain names, display only).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<crate::model::ItemLabel>,
 }
 

@@ -702,6 +702,9 @@ impl State {
 }
 
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
+    // Every sheet confirms a change (a scan or new virus information can
+    // change what a check finds too).
+    ctx.forget_check();
     match sheet {
         Sheet::Restart => Task::perform(
             blocking(|| actions::restart_for_updates().map_err(plain)),

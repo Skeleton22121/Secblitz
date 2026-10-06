@@ -27,6 +27,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - A build pipeline on GitHub that builds the app from source, publishes checksums and can attach a proof of where each file was built.
 
 ### Changed
+- **Opens without waiting.** If Secblitz checked your PC less than an hour ago, opening it again shows that check instead of checking everything again. "Check again" always runs a new check, and Secblitz checks again by itself after Windows restarts or after anything was changed from Secblitz.
 - **Clearer messages when something goes wrong.** Every error now says in plain words what happened and what you can do about it, such as signing in with an administrator account, restarting, or checking your internet. "More details" explains the cause instead of showing technical text.
 - "Block suggested apps" can now be undone, because Secblitz records what was there before.
 - Secblitz now starts PowerShell with a plain command and a normal safety policy, instead of an encoded command and "Bypass". This avoids looking like malware to security software.
