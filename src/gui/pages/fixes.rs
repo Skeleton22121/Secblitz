@@ -171,8 +171,11 @@ enum Bucket {
     GoodToKnow,
 }
 
-fn tech_line(id: &str, status: &str, detail: &str, lang: Lang) -> String {
-    format!("{} · {} · {}", id, status, lang.detail(&sanitize(detail)))
+/// Plain-words "More details" text: what the status means and what to do.
+/// The raw backend detail is never shown.
+fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
+    let (st, next) = crate::app::flow::plain_detail(status, a);
+    format!("{} · {}", lang.t(st), lang.t(next))
 }
 
 fn build(ctx: &Ctx, report: &Report) -> Rows {
@@ -205,7 +208,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             name: lang.control(id),
             line,
             why: ctx.t(a.next),
-            tech: tech_line(&r.id, &r.status, &r.detail, lang),
+            tech: tech_line(&r.status, &a, lang),
             restart,
             choice,
         });
@@ -248,7 +251,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&r.id, &r.status, &r.detail, lang),
+            tech_line(&r.status, &a, lang),
         ));
     }
     for f in &report.findings {
@@ -271,7 +274,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&f.title, &f.status, &f.detail, lang),
+            tech_line(&f.status, &a, lang),
         ));
     }
     rows
@@ -444,22 +447,6 @@ pub fn open_settings(ctx: &Ctx, request: Request) -> Task<Message> {
             Tone::Warn,
         ),
     })
-}
-
-/// Raw evidence made safe to display: control characters removed, bounded.
-pub fn sanitize(s: &str) -> String {
-    let clean: String = s
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
-    if clean.chars().count() > 300 {
-        let mut cut: String = clean.chars().take(300).collect();
-        cut.push('…');
-        cut
-    } else {
-        clean
-    }
 }
 
 // ------------------------------------------------------- shared row pieces
@@ -818,7 +805,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("More details"),
             state.show_error,
             Message::Fixes(Msg::ErrorDetails),
-            widgets::small(p, sanitize(error)),
+            widgets::small(p, ctx.t(crate::app::flow::plain_failure(error))),
         );
         return page(body.push(widgets::region(
             p,
@@ -845,7 +832,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 ctx.t("More details"),
                 state.show_error,
                 Message::Fixes(Msg::ErrorDetails),
-                widgets::small(p, sanitize(error)),
+                widgets::small(p, ctx.t(crate::app::flow::plain_failure(error))),
             );
             let again = widgets::action(
                 p,
@@ -861,7 +848,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                         p,
                         Icon::ShieldAlert,
                         ctx.t("We couldn't finish checking"),
-                        ctx.t("Nothing was changed. Please check again in a moment."),
+                        ctx.t("Nothing was changed. Press Check again. If it keeps failing, restart your PC."),
                         Some(
                             column![again, details]
                                 .spacing(theme::S3)
@@ -1114,15 +1101,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sanitize_strips_controls_and_bounds_length() {
-        assert_eq!(sanitize("a\u{1b}[31m\nb\t c"), "a [31m b c");
-        let long = "x".repeat(1000);
-        let s = sanitize(&long);
-        assert_eq!(s.chars().count(), 301);
-        assert!(s.ends_with('…'));
-    }
 
     #[test]
     fn flip_toggles_membership() {

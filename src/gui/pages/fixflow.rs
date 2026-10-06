@@ -9,7 +9,7 @@
 //! draw-in as each item finishes, the overall bar easing to each new value and
 //! one check draw on the result. Frames are requested by `subscription()` only
 //! while one of these runs; the shell must batch it into its subscriptions.
-use super::fixes::{row_text, sanitize};
+use super::fixes::row_text;
 use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
 use crate::app::history::{self as log, Entry, Kind};
@@ -407,6 +407,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 verify.as_deref().map_err(String::as_str),
             );
             let technical = technical_lines(
+                ctx,
                 attempted,
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
@@ -432,6 +433,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 verify.as_deref().map_err(String::as_str),
             );
             let technical = technical_lines(
+                ctx,
                 &[],
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
@@ -459,8 +461,10 @@ fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<S
     };
 }
 
-/// Raw evidence lines for the "More details" expander.
+/// Plain-words lines for the "More details" expander. Raw backend text is
+/// mapped to a friendly sentence with its fix and never shown.
 fn technical_lines(
+    ctx: &Ctx,
     attempted: &[String],
     result: Result<&secblitz::engine::Report, &str>,
     verify: Result<&secblitz::engine::Report, &str>,
@@ -470,14 +474,24 @@ fn technical_lines(
         Ok(report) => {
             for r in &report.results {
                 if attempted.is_empty() || attempted.contains(&r.id) {
-                    lines.push(format!("{} · {} · {}", r.id, r.status, sanitize(&r.detail)));
+                    let a = crate::advice::for_outcome(r);
+                    let (status, next) = flow::plain_detail(&r.status, &a);
+                    lines.push(format!(
+                        "{} · {} · {}",
+                        ctx.lang.control(&r.id),
+                        ctx.t(status),
+                        ctx.t(next)
+                    ));
                 }
             }
         }
-        Err(e) => lines.push(format!("result · {}", sanitize(e))),
+        Err(e) => lines.push(ctx.t(flow::plain_failure(e))),
     }
     if let Err(e) = verify {
-        lines.push(format!("check · {}", sanitize(e)));
+        let line = ctx.t(flow::plain_failure(e));
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
     }
     lines.truncate(60);
     lines

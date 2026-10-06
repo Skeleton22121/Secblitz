@@ -105,13 +105,61 @@ pub enum SummaryKind {
     Failed,
 }
 
-pub const REASON_BLOCKED: &str = "Windows didn't allow this change";
-pub const REASON_RESTART: &str = "Needs a restart first";
-pub const REASON_MANAGED: &str = "Someone else manages this setting";
-pub const REASON_UNDO_FIRST: &str = "Undo your last fixes first";
-pub const REASON_CHANGED: &str = "It changed while we were working";
-pub const REASON_STILL_OPEN: &str = "This still needs attention after the fix";
-pub const REASON_KEPT: &str = "We kept your current setting to stay safe";
+pub const REASON_BLOCKED: &str =
+    "Windows didn't allow this change. Restart your PC, then check again and try once more.";
+pub const REASON_RESTART: &str = "Restart your PC first, then try again.";
+pub const REASON_MANAGED: &str =
+    "Your organization manages this setting, so we left it alone. Ask whoever looks after this PC.";
+pub const REASON_UNDO_FIRST: &str = "Press Undo to put back your last fixes, then try again.";
+pub const REASON_CHANGED: &str =
+    "Something else changed this while we were working. Check again, then try again.";
+pub const REASON_STILL_OPEN: &str =
+    "This still needs attention after the fix. Restart your PC and check again.";
+pub const REASON_KEPT: &str = "We kept your current setting to stay safe. Nothing needs doing.";
+
+/// Shown when something fails in a way we do not recognise. Never echoes raw text.
+pub const FAILURE_GENERAL: &str = "Something went wrong and nothing was changed. Close Secblitz and open it again. If it keeps happening, restart your PC or check for a Secblitz update.";
+pub const COULDNT_READ: &str = "We couldn't read this from Windows. Check again in a moment. If it keeps happening, restart your PC.";
+pub const NOT_DONE: &str = "This change did not go through. Restart your PC, then try again.";
+
+/// Plain-words explanation for a whole-operation failure (the engine could not
+/// start, a check or a fix stopped). The raw text only ever picks the message;
+/// it is never shown.
+pub fn plain_failure(raw: &str) -> &'static str {
+    let r = raw.to_ascii_lowercase();
+    if r.contains("holds the journal lock") || r.contains("another secblitz") {
+        "Another Secblitz window is already making changes. Close it, wait a moment, then try again."
+    } else if r.contains("journal") || r.contains("transaction") {
+        "Secblitz can't read its record of your earlier changes, so it stopped to stay safe. Restart your PC and try again. If it keeps happening, check for a Secblitz update."
+    } else if r.contains("administrator")
+        || r.contains("access is denied")
+        || r.contains("elevat")
+        || r.contains("split-token")
+        || r.contains("permission")
+    {
+        "Secblitz needs an account that can make changes to this PC. Sign in with one, then open Secblitz again."
+    } else if r.contains("could not be read") || r.contains("could not be collected") {
+        COULDNT_READ
+    } else if r.contains("engine stopped") {
+        "Secblitz stopped unexpectedly. Close it and open it again."
+    } else if r.contains("select at least one") {
+        "Pick at least one fix first."
+    } else {
+        FAILURE_GENERAL
+    }
+}
+
+/// Plain (status, next step) pair for a "More details" line. Raw backend text
+/// is never part of the answer.
+pub fn plain_detail(status: &str, a: &advice::Advice) -> (&'static str, &'static str) {
+    match status {
+        "unknown" | "error" => ("Couldn't check", COULDNT_READ),
+        "skipped" if a.status == "Needs your choice" => ("Left as it is", REASON_KEPT),
+        "applied" | "unchanged" | "restored" | "skipped" | "conflict" | "pending"
+        | "attention" | "compliant" | "ok" | "info" => (a.status, a.next),
+        _ => ("Not done", NOT_DONE),
+    }
+}
 
 /// Plain reason key for an outcome that did not complete.
 fn reason(status: &str, detail: &str, id: &str) -> &'static str {
@@ -492,5 +540,32 @@ mod tests {
             summarize(None, Ok(&Report::default()), Ok(&verified)).kind,
             SummaryKind::Failed
         );
+    }
+
+    #[test]
+    fn known_raw_failures_get_a_friendly_fix() {
+        assert!(plain_failure("Another Secblitz operation holds the journal lock")
+            .contains("Close it"));
+        assert!(plain_failure("Interactive split-token administrator required; service/over-the-shoulder elevation unsupported")
+            .contains("Sign in with"));
+        assert!(plain_failure("Journal exceeds size limit").contains("Restart your PC"));
+    }
+
+    #[test]
+    fn unknown_failures_never_echo_raw_text() {
+        let raw = "HRESULT 0x80070005 at C:\\secret\\path";
+        let msg = plain_failure(raw);
+        assert_eq!(msg, FAILURE_GENERAL);
+        assert!(!msg.contains("HRESULT") && !msg.contains("secret"));
+    }
+
+    #[test]
+    fn detail_lines_never_use_raw_detail() {
+        let a = advice::for_control("uac.enabled", "error", "boom 0xdead");
+        let (st, next) = plain_detail("error", &a);
+        assert_eq!(st, "Couldn't check");
+        assert!(!next.contains("0xdead"));
+        let (st, next) = plain_detail("weird", &a);
+        assert_eq!((st, next), ("Not done", NOT_DONE));
     }
 }
