@@ -213,33 +213,49 @@ mod tests {
         }
     }
 
+    /// Rust sources under `src/` for the given files or folders, test files excluded.
+    fn rust_sources(roots: &[&str]) -> Vec<(String, String)> {
+        fn walk(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            if path.is_dir() {
+                let mut entries: Vec<_> = std::fs::read_dir(path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .collect();
+                entries.sort();
+                for entry in entries {
+                    walk(&entry, out);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path.to_path_buf());
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        for root in roots {
+            let path = src.join(root);
+            assert!(path.exists(), "missing source {root}");
+            walk(&path, &mut files);
+        }
+        files
+            .into_iter()
+            .filter(|path| {
+                let name = path.file_name().unwrap().to_string_lossy();
+                name != "tests.rs" && !name.ends_with("_tests.rs") && name != "testing.rs"
+            })
+            .map(|path| {
+                let name = path.strip_prefix(&src).unwrap().display().to_string();
+                (name, std::fs::read_to_string(&path).unwrap())
+            })
+            .collect()
+    }
+
     #[test]
     fn literal_gui_keys_are_in_the_catalog() {
-        const SOURCES: &[(&str, &str)] = &[
-            ("gui/mod.rs", include_str!("gui/mod.rs")),
-            ("gui/widgets/parts.rs", include_str!("gui/widgets/parts.rs")),
-            ("gui/pages/home.rs", include_str!("gui/pages/home.rs")),
-            ("gui/pages/fixes.rs", include_str!("gui/pages/fixes.rs")),
-            ("gui/pages/fixflow.rs", include_str!("gui/pages/fixflow.rs")),
-            ("gui/pages/history.rs", include_str!("gui/pages/history.rs")),
-            (
-                "gui/pages/settings.rs",
-                include_str!("gui/pages/settings.rs"),
-            ),
-            ("gui/pages/debloat.rs", include_str!("gui/pages/debloat.rs")),
-            ("gui/pages/web.rs", include_str!("gui/pages/web.rs")),
-            ("gui/pages/tools.rs", include_str!("gui/pages/tools.rs")),
-            (
-                "gui/pages/tools/view.rs",
-                include_str!("gui/pages/tools/view.rs"),
-            ),
-            ("tray/logic.rs", include_str!("tray/logic.rs")),
-            ("tray/windows.rs", include_str!("tray/windows.rs")),
-        ];
+        let sources = rust_sources(&["gui", "tray"]);
         const UNTRANSLATED: &[&str] = &["Secblitz"];
         let known: std::collections::HashSet<_> = all_keys().collect();
         let mut missing = Vec::new();
-        for (file, text) in SOURCES {
+        for (file, text) in &sources {
             let code = text.split("#[cfg(test)]").next().unwrap_or(text);
             let mut rest = code;
             while let Some(i) = rest.find(".t(\"") {
@@ -371,36 +387,35 @@ mod tests {
     #[test]
     fn fixed_rust_diagnostic_prose_has_catalog_coverage() {
         let mut missing = Vec::new();
-        for (name, source) in [
-            ("main", include_str!("main.rs")),
-            ("advice", include_str!("advice.rs")),
-            ("advice/choice", include_str!("advice/choice.rs")),
-            ("advice/impact", include_str!("advice/impact.rs")),
-            ("advice/labels", include_str!("advice/labels.rs")),
-            ("advice/reasons", include_str!("advice/reasons.rs")),
-            ("actions", include_str!("actions.rs")),
-            ("actions/windows", include_str!("actions/windows.rs")),
-            ("tools", include_str!("tools.rs")),
-            ("engine", include_str!("engine.rs")),
-            ("model", include_str!("model.rs")),
-            ("readiness", include_str!("readiness.rs")),
-            ("readiness/windows", include_str!("readiness/windows.rs")),
-            ("platform", include_str!("platform.rs")),
-            ("windows", include_str!("platform/windows.rs")),
-            ("journal", include_str!("platform/journal.rs")),
-            ("service", include_str!("service.rs")),
-            ("service/windows", include_str!("service/windows.rs")),
-            ("permissions", include_str!("permissions.rs")),
-            ("permissions/state", include_str!("permissions/state.rs")),
-            (
-                "permissions/descriptor",
-                include_str!("permissions/descriptor.rs"),
-            ),
-            (
-                "permissions/windows",
-                include_str!("permissions/windows.rs"),
-            ),
-        ] {
+        for (name, source) in rust_sources(&[
+            "main.rs",
+            "advice.rs",
+            "advice",
+            "actions.rs",
+            "actions",
+            "tools.rs",
+            "engine.rs",
+            "engine",
+            "model.rs",
+            "readiness.rs",
+            "readiness",
+            "platform.rs",
+            "platform",
+            "service.rs",
+            "service",
+            "permissions.rs",
+            "permissions",
+        ]) {
+            // Journal integrity and VBS probe errors never reach the screen:
+            // callers replace them with fixed plain text (friendly_problem,
+            // vbs::UNREADABLE) before anything is shown.
+            if matches!(
+                name.as_str(),
+                "engine/journal.rs" | "engine/recovery.rs" | "engine/fsio.rs" | "platform/vbs_native.rs"
+            ) {
+                continue;
+            }
+            let source = source.as_str();
             for text in literals(source) {
                 if all_keys().any(|key| key == text) {
                     continue;
