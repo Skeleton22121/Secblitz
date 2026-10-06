@@ -1,1 +1,3 @@
+# Embedded scripts are checked byte for byte, so Windows checkouts must keep LF.
+* text=auto eol=lf
 tests/fixtures/journals/** -text
