@@ -4,5 +4,6 @@ pub mod history;
 pub mod last_check;
 pub mod maintenance;
 pub mod score;
+pub mod search;
 pub mod settings;
 pub mod worker;

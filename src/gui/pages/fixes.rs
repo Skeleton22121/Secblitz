@@ -3,6 +3,7 @@ use secblitz::advice::{self, Group, NextStep};
 use secblitz::model::CheckStatus;
 use crate::app::flow;
 use crate::app::score::{self, Class};
+use crate::app::search::{Haystack, Query};
 use crate::broker::Reply;
 use crate::guide::{self, Guide, Page};
 use crate::gui::icons::Icon;
@@ -23,6 +24,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
+pub const SEARCH_ID: &str = "fixes-search";
 const FIRST_ROWS: usize = 8;
 const TICKER_LINES: usize = 6;
 const INDENT: f32 =
@@ -41,6 +43,7 @@ pub struct State {
     all_attention: bool,
     all_protected: bool,
     show_error: bool,
+    search: String,
     cache: RefCell<Option<Cached>>,
     scan: Option<Instant>,
     now: Instant,
@@ -61,6 +64,7 @@ impl Default for State {
             all_attention: false,
             all_protected: false,
             show_error: false,
+            search: String::new(),
             cache: RefCell::new(None),
             scan: None,
             now: Instant::now(),
@@ -83,6 +87,8 @@ pub enum Msg {
     AllAttention,
     AllProtected,
     ErrorDetails,
+    Search(String),
+    ClearSearch,
     Frame(Instant),
     Open(Page),
 }
@@ -102,6 +108,41 @@ struct Rows {
     protected: Vec<Prot>,
 }
 
+/// The rows that match what was typed, in their normal order.
+struct Shown<'r> {
+    attention: Vec<&'r Att>,
+    privacy: Vec<&'r Att>,
+    others: Vec<&'r Other>,
+    protected: Vec<&'r Prot>,
+}
+
+impl Rows {
+    fn shown(&self, query: &Query) -> Shown<'_> {
+        Shown {
+            attention: self.attention.iter().filter(|r| query.matches(&r.hay)).collect(),
+            privacy: self.privacy.iter().filter(|r| query.matches(&r.hay)).collect(),
+            others: self.others.iter().filter(|r| query.matches(&r.hay)).collect(),
+            protected: self.protected.iter().filter(|r| query.matches(&r.hay)).collect(),
+        }
+    }
+}
+
+impl Shown<'_> {
+    fn is_empty(&self) -> bool {
+        self.attention.is_empty()
+            && self.privacy.is_empty()
+            && self.others.is_empty()
+            && self.protected.is_empty()
+    }
+
+    fn selectable(&self) -> impl Iterator<Item = &str> {
+        self.attention
+            .iter()
+            .chain(&self.privacy)
+            .map(|a| a.id.as_str())
+    }
+}
+
 #[derive(Debug)]
 struct Att {
     id: String,
@@ -112,6 +153,7 @@ struct Att {
     restart: bool,
     choice: bool,
     items: Vec<String>,
+    hay: Haystack,
 }
 
 #[derive(Debug)]
@@ -129,6 +171,7 @@ struct Other {
     tech: String,
     guide: Option<&'static Guide>,
     page: Option<Page>,
+    hay: Haystack,
 }
 
 #[derive(Debug)]
@@ -136,6 +179,7 @@ struct Prot {
     id: String,
     name: String,
     line: String,
+    hay: Haystack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +195,19 @@ fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) ->
         Some(names) => format!("{tech} · {}", ctx.t(template).replace("{names}", &names)),
         None => tech,
     }
+}
+
+/// What a typed search is compared with: the row as shown, the same row in
+/// English (so English words work in every language), and its id.
+fn search_text(shown: &[&str], sources: &[&str], id: &str) -> Haystack {
+    let english: Vec<String> = sources.iter().map(|s| Lang::En.t(s)).collect();
+    Haystack::new(
+        shown
+            .iter()
+            .copied()
+            .chain(english.iter().map(String::as_str))
+            .chain([id]),
+    )
 }
 
 fn tech_line(status: &CheckStatus, a: &advice::Advice, lang: Lang) -> String {
@@ -205,15 +262,22 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         } else {
             &mut rows.attention
         };
+        let name = lang.control(id);
+        let hay = search_text(
+            &[&name, &line, &ctx.t(impact)],
+            &[advice::control_label(id), a.next, impact],
+            id,
+        );
         list.push(Att {
             id: id.clone(),
-            name: lang.control(id),
+            name,
             line,
             why: ctx.t(a.next),
             tech: tech_line(&r.status, &a, lang),
             restart,
             choice,
             items: item_lines(ctx, &r.items),
+            hay,
         });
     }
 
@@ -236,10 +300,17 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             } else {
                 format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(impact))
             };
+            let name = lang.control(&r.id);
+            let hay = search_text(
+                &[&name, &line, &ctx.t(impact)],
+                &[advice::control_label(&r.id), a.next, impact],
+                &r.id,
+            );
             rows.protected.push(Prot {
                 id: r.id.clone(),
-                name: lang.control(&r.id),
+                name,
                 line,
+                hay,
             });
             continue;
         }
@@ -263,6 +334,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 index: rows.others.len(),
                 explain: (r.id.as_str(), false),
                 name: lang.control(&r.id),
+                name_source: advice::control_label(&r.id),
                 bucket,
                 tone,
                 tech: with_names(
@@ -296,6 +368,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 index: rows.others.len(),
                 explain: (f.title.as_str(), true),
                 name: ctx.t(a.label),
+                name_source: a.label,
                 bucket,
                 tone,
                 tech: with_names(
@@ -322,6 +395,7 @@ struct OtherSource<'a> {
     index: usize,
     explain: (&'a str, bool),
     name: String,
+    name_source: &'a str,
     bucket: Bucket,
     tone: Tone,
     tech: String,
@@ -333,6 +407,7 @@ fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
         index,
         explain,
         name,
+        name_source,
         bucket,
         tone,
         tech,
@@ -351,15 +426,21 @@ fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
         Bucket::GoodToKnow => Icon::Info,
         Bucket::Look => Icon::AlertTriangle,
     };
+    let line = match other_line(bucket, guide.is_some(), a) {
+        (Some(prefix), text) => format!("{} {}", ctx.t(prefix), ctx.t(text)),
+        (None, text) => ctx.t(text),
+    };
+    let hay = search_text(
+        &[&name, &line, &ctx.t(a.impact)],
+        &[name_source, a.next, a.impact],
+        explain.0,
+    );
     Other {
         key: format!("other:{index}"),
         explain: explain.0.to_owned(),
         report_only: explain.1,
         name,
-        line: match other_line(bucket, guide.is_some(), a) {
-            (Some(prefix), text) => format!("{} {}", ctx.t(prefix), ctx.t(text)),
-            (None, text) => ctx.t(text),
-        },
+        line,
         status: if managed {
             ctx.t("For your information")
         } else if guide.is_some() && bucket == Bucket::Look {
@@ -374,6 +455,7 @@ fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
         tech,
         guide,
         page,
+        hay,
     }
 }
 
@@ -507,8 +589,21 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 state.selected.insert(id);
             }
         }
-        Msg::SelectAll => state.selected = candidates(ctx).into_iter().collect(),
-        Msg::SelectNone => state.selected.clear(),
+        Msg::SelectAll if !searching(state) => {
+            state.selected = candidates(ctx).into_iter().collect();
+        }
+        Msg::SelectAll => state.selected.extend(visible_candidates(state, ctx)),
+        Msg::SelectNone if !searching(state) => state.selected.clear(),
+        Msg::SelectNone => {
+            for id in visible_candidates(state, ctx) {
+                state.selected.remove(&id);
+            }
+        }
+        Msg::Search(text) => state.search = text,
+        Msg::ClearSearch => {
+            state.search.clear();
+            return iced::widget::operation::focus(SEARCH_ID);
+        }
         Msg::Expand(id) => flip(&mut state.expanded, id),
         Msg::ShowProtected => state.open_protected = !state.open_protected,
         Msg::ToggleCant => state.open_cant = !state.open_cant,
@@ -521,6 +616,59 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Open(page) => return open_page(ctx, page),
     }
     Task::none()
+}
+
+/// The ids of the fixable rows that match the search.
+fn visible_candidates(state: &State, ctx: &Ctx) -> Vec<String> {
+    let Some(report) = ctx.report.as_ref() else {
+        return Vec::new();
+    };
+    ensure(state, ctx, report);
+    let cache = state.cache.borrow();
+    let rows = &cache.as_ref().expect("filled by ensure").rows;
+    let shown = rows.shown(&Query::new(&state.search));
+    shown.selectable().map(str::to_owned).collect()
+}
+
+/// The keys of every row on screen, section by section.
+#[cfg(test)]
+pub fn visible_rows(state: &State, ctx: &Ctx) -> Vec<String> {
+    let Some(report) = ctx.report.as_ref() else {
+        return Vec::new();
+    };
+    ensure(state, ctx, report);
+    let cache = state.cache.borrow();
+    let rows = &cache.as_ref().expect("filled by ensure").rows;
+    let shown = rows.shown(&Query::new(&state.search));
+    let mut keys: Vec<String> = shown.selectable().map(str::to_owned).collect();
+    keys.extend(shown.others.iter().map(|o| o.explain.clone()));
+    keys.extend(shown.protected.iter().map(|r| r.id.clone()));
+    keys
+}
+
+#[cfg(test)]
+pub fn selected_ids(state: &State) -> Vec<String> {
+    let mut ids: Vec<String> = state.selected.iter().cloned().collect();
+    ids.sort();
+    ids
+}
+
+#[cfg(test)]
+pub fn shown_fixable(state: &State, ctx: &Ctx) -> Vec<String> {
+    visible_candidates(state, ctx)
+}
+
+pub fn escape(state: &mut State) {
+    state.search.clear();
+}
+
+fn searching(state: &State) -> bool {
+    !Query::new(&state.search).is_empty()
+}
+
+/// Whether the page has its search box on screen right now.
+pub fn shows_search(ctx: &Ctx) -> bool {
+    ctx.engine_error.is_none() && !fills_window(ctx) && ctx.report.is_some()
 }
 
 fn track_scan(state: &mut State, ctx: &Ctx, now: Instant) {
@@ -988,8 +1136,13 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ctx.t("Everything we check on your PC, in plain words.")
     };
     let header = widgets::page_header(p, ctx.t("Protection"), Some(subtitle));
+    let bar = shows_search(ctx).then(|| search_bar(state, ctx));
     let page = |body: Column<'a, Message>| -> Element<'a, Message> {
-        column![header, space::vertical().height(theme::S6), body].into()
+        let mut top = column![header, space::vertical().height(theme::S4)];
+        if let Some(bar) = bar {
+            top = top.push(bar).push(space::vertical().height(theme::S6));
+        }
+        top.push(body).into()
     };
     let mut body = column![].spacing(theme::S8);
 
@@ -1021,6 +1174,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     ensure(state, ctx, report);
     let cache = state.cache.borrow();
     let rows = &cache.as_ref().expect("filled by ensure").rows;
+    let query = Query::new(&state.search);
+    let shown = rows.shown(&query);
 
     if ctx.checking.is_some() {
         body = body.push(checking_region(state, ctx));
@@ -1040,7 +1195,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         body = body.push(widgets::inline_notice(p, Tone::Warn, ctx.t(sentence)));
     }
 
-    if rows.attention.is_empty() && ctx.checking.is_none() {
+    if rows.attention.is_empty() && ctx.checking.is_none() && query.is_empty() {
         body = body.push(widgets::region(
             p,
             widgets::empty_state(
@@ -1052,10 +1207,13 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ),
         ));
     }
-    let mut groups = attention_groups(state, ctx, report, rows);
-    groups.extend(other_groups(state, ctx, rows));
-    if !rows.protected.is_empty() {
-        groups.push(protected_group(state, ctx, rows));
+    let mut groups = attention_groups(state, ctx, report, rows, &shown);
+    groups.extend(other_groups(state, ctx, &shown));
+    if !shown.protected.is_empty() {
+        groups.push(protected_group(state, ctx, &shown));
+    }
+    if !query.is_empty() && shown.is_empty() {
+        body = body.push(widgets::region(p, no_matches(ctx, &state.search)));
     }
     for (i, group) in groups.into_iter().enumerate() {
         body = body.push(widgets::appear::settle_after(
@@ -1065,6 +1223,21 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
     page(body)
+}
+
+fn search_bar<'a>(state: &State, ctx: &Ctx) -> Element<'a, Message> {
+    widgets::search_field(
+        ctx.palette,
+        SEARCH_ID,
+        &ctx.t("Search settings"),
+        &state.search,
+        |text| Message::Fixes(Msg::Search(text)),
+        Message::Fixes(Msg::ClearSearch),
+    )
+}
+
+fn no_matches<'a>(ctx: &Ctx, typed: &str) -> Element<'a, Message> {
+    widgets::no_matches(ctx, typed, Message::Fixes(Msg::ClearSearch))
 }
 
 fn error_details<'a>(state: &State, ctx: &Ctx, error: &str) -> Element<'a, Message> {
@@ -1131,10 +1304,12 @@ fn attention_groups<'a>(
     ctx: &'a Ctx,
     report: &Report,
     rows: &Rows,
+    shown: &Shown,
 ) -> Vec<Element<'a, Message>> {
-    if rows.attention.is_empty() && rows.privacy.is_empty() {
+    if shown.attention.is_empty() && shown.privacy.is_empty() {
         return Vec::new();
     }
+    let narrowed = searching(state);
     let p = ctx.palette;
     let all: Vec<String> = rows
         .attention
@@ -1146,7 +1321,7 @@ fn attention_groups<'a>(
     let n = chosen.len();
     let restart_label = ctx.t("Restart needed");
     let choice_label = ctx.t("Your choice");
-    let rows_of = |list: &[Att], extra: bool| -> Vec<Element<'a, Message>> {
+    let rows_of = |list: &[&Att], extra: bool| -> Vec<Element<'a, Message>> {
         list.iter()
             .map(|a| {
                 attention_row(
@@ -1161,8 +1336,18 @@ fn attention_groups<'a>(
             })
             .collect()
     };
+    let hidden = if narrowed {
+        let on_screen: HashSet<&str> = shown.selectable().collect();
+        chosen.iter().filter(|id| !on_screen.contains(id.as_str())).count()
+    } else {
+        0
+    };
     let count = match n {
         0 => ctx.t("Nothing selected"),
+        _ if hidden > 0 => ctx
+            .t("{n} selected, {k} hidden by search")
+            .replace("{n}", &n.to_string())
+            .replace("{k}", &hidden.to_string()),
         1 => ctx.t("1 selected"),
         _ => ctx.t("{n} selected").replace("{n}", &n.to_string()),
     };
@@ -1170,7 +1355,9 @@ fn attention_groups<'a>(
         && ctx.checking.is_none()
         && ctx.check_error.is_none()
         && flow::repairs_blocked(report).is_none();
-    let select = if n == all.len() {
+    let every_shown_chosen =
+        narrowed && shown.selectable().all(|id| chosen.iter().any(|c| c == id));
+    let select = if (narrowed && every_shown_chosen) || (!narrowed && n == all.len()) {
         (
             Icon::X,
             ctx.t("Select none"),
@@ -1198,15 +1385,17 @@ fn attention_groups<'a>(
         .align_y(Alignment::Center),
     );
     let mut groups = Vec::new();
-    if !rows.attention.is_empty() {
-        let shown = widgets::limited(&rows.attention, FIRST_ROWS, state.all_attention);
-        let mut list = rows_of(shown, false);
+    if !shown.attention.is_empty() {
+        let visible = widgets::limited(&shown.attention, FIRST_ROWS, state.all_attention || narrowed);
+        let mut list = rows_of(visible, false);
         if let Some(m) = more(
             ctx,
-            rows.attention.len(),
+            shown.attention.len(),
             state.all_attention,
             Msg::AllAttention,
-        ) {
+        )
+        .filter(|_| !narrowed)
+        {
             list.push(m);
         }
         groups.push(widgets::group(
@@ -1217,7 +1406,7 @@ fn attention_groups<'a>(
             list,
         ));
     }
-    if !rows.privacy.is_empty() {
+    if !shown.privacy.is_empty() {
         let note = ctx.t("Optional. Not part of your protection score.");
         let subtitle = if trailing.is_some() {
             format!("{note} · {count}")
@@ -1229,17 +1418,19 @@ fn attention_groups<'a>(
             ctx.t("Privacy extras"),
             Some(subtitle),
             trailing.take().map(Into::into),
-            rows_of(&rows.privacy, true),
+            rows_of(&shown.privacy, true),
         ));
     }
     groups
 }
 
 /// The "Worth a look" group and the collapsed groups for checks that need no action from the user.
-fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<'a, Message>> {
+fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, shown: &Shown) -> Vec<Element<'a, Message>> {
     let p = ctx.palette;
-    let bucket =
-        |b: Bucket| -> Vec<&Other> { rows.others.iter().filter(|o| o.bucket == b).collect() };
+    let narrowed = searching(state);
+    let bucket = |b: Bucket| -> Vec<&Other> {
+        shown.others.iter().copied().filter(|o| o.bucket == b).collect()
+    };
     let collapsed = |list: Vec<&Other>, title: String, open: bool, toggle: Msg| {
         let mut items = column![].spacing(theme::S1);
         for o in &list {
@@ -1270,7 +1461,7 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<
         groups.push(collapsed(
             cant,
             ctx.t("Can't check right now"),
-            state.open_cant,
+            state.open_cant || narrowed,
             Msg::ToggleCant,
         ));
     }
@@ -1279,7 +1470,7 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<
         groups.push(collapsed(
             managed,
             ctx.t("Managed elsewhere"),
-            state.open_managed,
+            state.open_managed || narrowed,
             Msg::ToggleManaged,
         ));
     }
@@ -1288,32 +1479,35 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, rows: &Rows) -> Vec<Element<
         groups.push(collapsed(
             info,
             ctx.t("Good to know"),
-            state.open_info,
+            state.open_info || narrowed,
             Msg::ToggleInfo,
         ));
     }
     groups
 }
 
-fn protected_group<'a>(state: &State, ctx: &Ctx, rows: &Rows) -> Element<'a, Message> {
-    let shown = widgets::limited(&rows.protected, FIRST_ROWS, state.all_protected);
+fn protected_group<'a>(state: &State, ctx: &Ctx, shown: &Shown) -> Element<'a, Message> {
+    let narrowed = searching(state);
+    let visible = widgets::limited(&shown.protected, FIRST_ROWS, state.all_protected || narrowed);
     let mut list = column![].spacing(theme::S1);
-    for r in shown {
+    for r in visible {
         list = list.push(protected_row(ctx, r));
     }
     if let Some(m) = more(
         ctx,
-        rows.protected.len(),
+        shown.protected.len(),
         state.all_protected,
         Msg::AllProtected,
-    ) {
+    )
+    .filter(|_| !narrowed)
+    {
         list = list.push(m);
     }
     widgets::collapsible(
         ctx.palette,
         ctx.t("Protected"),
-        Some(count_text(ctx, rows.protected.len())),
-        state.open_protected,
+        Some(count_text(ctx, shown.protected.len())),
+        state.open_protected || narrowed,
         Message::Fixes(Msg::ShowProtected),
         list,
     )
