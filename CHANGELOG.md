@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- **Three more fixes you can choose, with undo.** Secblitz can now turn off automatic sign-in, stop Remote Desktop connections and switch off the very old file-sharing feature (SMB1) for you, instead of only telling you where to click. Each one is your choice, shows what will change, and can be undone from History. Remote Desktop is never turned off while you are connected remotely, and the old file sharing is left alone while something is using it.
+
 ## [0.8.0] - Unreleased
 
 ### Added

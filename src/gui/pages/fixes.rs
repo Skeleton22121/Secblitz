@@ -256,7 +256,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
     }
     for f in &report.findings {
         let a = advice::for_finding(&f.title, &f.status, &f.detail);
-        if a.group == Group::Protected {
+        if a.group == Group::Protected || score::finding_has_fix(report, f) {
             continue;
         }
         // Same classes as the count (score::to_check), so they always agree.

@@ -4,6 +4,7 @@
 //!
 //! Each area keeps its own table so the catalogs stay small and readable.
 
+mod access;
 mod core;
 mod detect;
 mod network;
@@ -26,6 +27,7 @@ pub struct Explainer {
 /// Explanation for a control id, diagnostics rule id or finding title.
 pub fn for_check(id: &str) -> Option<Explainer> {
     core::get(id)
+        .or_else(|| access::get(id))
         .or_else(|| network::get(id))
         .or_else(|| system::get(id))
         .or_else(|| user::get(id))

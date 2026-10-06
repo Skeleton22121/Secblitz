@@ -152,8 +152,22 @@ pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
         .findings
         .iter()
         .filter(|f| matches!(classify_finding(f), Class::Fixable | Class::Review))
+        .filter(|f| !finding_has_fix(report, f))
         .map(ToCheck::Finding);
     controls.chain(findings).collect()
+}
+
+/// True when a fix row for the same thing is on this report (a fix the person
+/// can authorize, one that was just applied, or one already in place). The fix
+/// row then replaces the manual tip, so nothing is listed twice. A fix that is
+/// not offered, managed elsewhere or unchecked leaves the tip and its steps.
+pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
+    let Some(id) = advice::control_for_finding(&f.title) else {
+        return false;
+    };
+    report.results.iter().any(|r| {
+        r.id == id && matches!(classify(r), Class::Fixable | Class::Review | Class::Protected)
+    })
 }
 
 pub fn to_check_count(report: &Report) -> usize {
@@ -367,6 +381,47 @@ mod tests {
             ..out("uac.enabled", "skipped")
         };
         assert_eq!(classify(&u), Class::Protected);
+    }
+
+    #[test]
+    fn a_fix_row_replaces_the_manual_tip_for_the_same_thing() {
+        let tip = |title: &str| secblitz::model::Finding {
+            title: title.into(),
+            status: "attention".into(),
+            detail: String::new(),
+        };
+        let eligible = |id: &str| Outcome {
+            detail: "Eligible unmanaged local preference".into(),
+            ..out(id, "attention")
+        };
+        for (title, id) in [
+            ("Automatic logon", "accounts.autologon"),
+            ("Remote Desktop", "remote_desktop.disabled"),
+            ("SMB1", "smb1.disabled"),
+        ] {
+            // Alone, the tip is listed.
+            let mut r = rep(vec![out("uac.enabled", "compliant")]);
+            r.findings.push(tip(title));
+            assert_eq!(to_check_count(&r), 1, "{title}");
+            // With a fix row, only the fix row is.
+            let mut r = rep(vec![eligible(id)]);
+            r.findings.push(tip(title));
+            assert!(finding_has_fix(&r, &r.findings[0]), "{title}");
+            assert_eq!(to_check_count(&r), 1, "{title}");
+            assert!(matches!(to_check(&r)[0], ToCheck::Control(_)));
+            // Not offered or managed: the tip and its steps stay.
+            let not_offered = Outcome {
+                detail: "Not offered: this edition of Windows does not include it".into(),
+                ..out(id, "skipped")
+            };
+            let mut r = rep(vec![not_offered]);
+            r.findings.push(tip(title));
+            assert!(!finding_has_fix(&r, &r.findings[0]), "{title}");
+            assert_eq!(to_check_count(&r), 1, "{title}");
+        }
+        let mut r = rep(vec![eligible("accounts.autologon")]);
+        r.findings.push(tip("Secure Boot"));
+        assert_eq!(to_check_count(&r), 2);
     }
 
     #[test]
