@@ -1,23 +1,8 @@
-//! Compiled catalog of the extended hardening controls (schema "items").
-//!
-//! Every control here observes a small, typed *slice* of machine state as
-//! `{"items": {"<key>": <u32 | null>, ...}}` where `null` means "not configured".
-//! The same table drives the engine (target, validation, eligibility, undo
-//! domain), the platform wire validation and the PowerShell backend (the
-//! backend receives the spec as JSON from [`Spec::script_json`], so Rust and
-//! PowerShell can never disagree about what is safe).
-//!
-//! Rules of the model:
-//! * A write may only move a key between an unsafe original and its fixed
-//!   value ([`fix_of`]). Safe keys are never touched (nothing is "improved"
-//!   beyond what we recorded), and a key that drifted to anything else
-//!   blocks the write.
-//! * Absent values that equal Windows' own safe default count as protected.
-//! * Journal data names only keys of this table (or, for the two dynamic
-//!   controls, keys that pass a strict name check and exist at write time).
+//! Compiled catalog of the extended hardening controls (schema "items"). Each control observes a typed slice `{"items": {"<key>": <u32 | null>}}`, where `null` means "not configured".
+//! The same table drives the engine, the platform wire validation and the PowerShell backend, which receives the spec as JSON from [`Spec::script_json`] so Rust and PowerShell cannot disagree about what is safe.
+//! A write only moves a key between an unsafe original and its fixed value ([`fix_of`]); safe keys are never touched and a key that drifted to anything else blocks the write. Absent values equal to Windows' own safe default count as protected. Journal data names only keys of this table (or, for dynamic controls, keys that pass a strict name check and exist at write time).
 use serde_json::{json, Map, Value};
 
-/// How one key is judged and repaired.
 #[derive(Clone, Copy, Debug)]
 pub enum Rule {
     /// Safe when the value is in `safe` (or absent and `absent_safe`).
@@ -35,54 +20,36 @@ pub enum Rule {
 #[derive(Clone, Copy, Debug)]
 pub struct Key {
     pub name: &'static str,
-    /// PowerShell registry path (registry-backed keys only).
     pub path: &'static str,
     /// Registry value name when it differs from `name` ("" = same as `name`).
     /// Lets one control hold the same value under several keys.
     pub value: &'static str,
     pub rule: Rule,
-    /// Highest value this key can legally hold.
     pub max: u32,
-    /// Exact legal values; empty means any value up to `max`.
     pub allowed: &'static [u32],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// Fixed registry DWORD values.
     Registry,
-    /// Fixed Microsoft Defender preference properties.
     DefenderPref,
-    /// Fixed Defender attack-surface-reduction rule ids.
     DefenderAsr,
-    /// Local account lockout threshold.
     Lockout,
-    /// Built-in Administrator (RID 500) enabled state.
     BuiltinAdmin,
-    /// Dynamic: built-in file-sharing / discovery firewall rules.
     FirewallExposure,
-    /// Dynamic: saved Wi-Fi profiles with a weak or no security type.
     WifiProfiles,
-    /// Dynamic: NetBIOS-over-TCP/IP setting of each network adapter.
     NetbiosAdapters,
-    /// One named outbound firewall rule owned by Secblitz (1 = present).
     FirewallOutbound,
-    // --- OS / credentials / update / privacy controls ---
     /// System-wide exploit protection (DEP, SEHOP, ASLR, CFG): 0 off, 1 on, 2 default.
     ExploitMitigations,
     /// Windows PowerShell 2.0 optional feature: 1 installed, 0 removed or absent.
     PowerShellV2,
-    /// Dynamic: leftover remote-access services (start type + running bit).
     LegacyServices,
-    /// "Require sign-in when the PC wakes" on the active power plan (AC and DC).
     LockOnWake,
     /// Windows Update pause markers (minutes since 1970, 0 = nothing to resume).
     UpdatePause,
-    /// SmartScreen for apps and files (string setting plus the policy value).
     SmartScreen,
-    /// Dynamic: risky Microsoft Defender exclusions (1 present, 0 removed).
     DefenderExclusions,
-    // --- sign-in and remote access controls ---
     /// Winlogon `AutoAdminLogon`, a text value ("1" on, "0" off, absent = off).
     /// Only this one value is ever written; the saved password is never read.
     WinlogonAutoLogon,
@@ -103,7 +70,6 @@ pub enum Source {
     /// Dynamic: risky start-up entries and scheduled tasks (1 enabled, 0 switched
     /// off by us, 2 switched off by us and changed since).
     StartupItems,
-    /// Dynamic: old local accounts that are still switched on (1 on, 0 off).
     StaleAccounts,
     /// Dynamic: one broad grant (Everyone, Anonymous or Guests) on a shared
     /// folder's permission list (1 present, 0 removed).
@@ -116,15 +82,10 @@ pub enum Source {
     RecoveryTools,
 }
 
-/// Value of an item a fix switched off: the state Secblitz left behind.
 pub const ITEM_FIXED: u32 = 0;
-/// Value of an item that is flagged and still in its original state.
 pub const ITEM_FLAGGED: u32 = 1;
-/// Value of an item Secblitz fixed that someone changed again afterwards.
 pub const ITEM_CHANGED: u32 = 2;
-/// Safe values of the four "handled" sources: ours (0) or changed since (2).
 const HANDLED_SAFE: &[u32] = &[ITEM_FIXED, ITEM_CHANGED];
-/// Start-up item key prefixes (the rest is the entry or task name).
 pub const STARTUP_PREFIXES: [&str; 6] = [
     "run-machine:",
     "run-machine32:",
@@ -134,21 +95,15 @@ pub const STARTUP_PREFIXES: [&str; 6] = [
     "task:",
 ];
 
-/// Management and capability evidence the backend must find clean.
 #[derive(Clone, Copy, Debug)]
 pub struct Gate {
-    /// PolicyManager (MDM) areas whose configured values mean "managed".
     pub areas: &'static [&'static str],
-    /// Regex for value names within those areas.
     pub pattern: &'static str,
     /// Defender controls only: tamper protection does not block strengthening
     /// these (non tamper-protected) preferences.
     pub tamper_exempt: bool,
-    /// Veto when a local security-settings template exists.
     pub secedit: bool,
-    /// Veto when this policy key holds values/subkeys other than ours.
     pub own_policy_key: &'static str,
-    /// (path, value) pairs whose presence means somebody else configures it.
     pub policy_values: &'static [(&'static str, &'static str)],
 }
 
@@ -182,7 +137,6 @@ pub struct Spec {
     pub description: &'static str,
     pub source: Source,
     pub reboot: bool,
-    /// A choice the person makes; never pre-selected.
     pub ask: bool,
     pub keys: &'static [Key],
     pub gate: Gate,
@@ -232,7 +186,6 @@ const DEVICE_GUARD_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\De
 const HVCI_SCENARIO: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
 const STACK_SCENARIO: &str =
     r"HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks";
-/// Exploit protection states: 0 off, 1 on, 2 not set (Windows default).
 const MITIGATION_STATES: &[u32] = &[0, 1, 2];
 /// Pause markers are minutes since 1970; the cap keeps them inside a PowerShell int.
 const PAUSE_MAX: u32 = 2_000_000_000;
@@ -253,7 +206,6 @@ const fn asr(guid: &'static str, fix: u32) -> Key {
     }
 }
 
-/// A rule that must be Block (1) to count as protected.
 const fn asr_block(guid: &'static str) -> Key {
     Key {
         name: guid,
@@ -837,10 +789,6 @@ static SPECS: &[Spec] = &[
         ],
         gate: NO_GATE,
     },
-    // ======================================================================
-    // OS / credentials / update / privacy controls (system area).
-    // Keep this block self-contained: other areas append their own blocks.
-    // ======================================================================
     Spec {
         id: "ntlm.extras",
         title: "No stored old password hashes, no anonymous sign-in fallback",
@@ -1268,7 +1216,6 @@ pub fn is_hardening(id: &str) -> bool {
     spec(id).is_some()
 }
 
-/// True for choices the person makes (never pre-selected).
 pub fn is_ask(id: &str) -> bool {
     spec(id).is_some_and(|s| s.ask)
 }
@@ -1282,7 +1229,6 @@ pub fn is_safe(rule: Rule, v: Option<u32>) -> bool {
     }
 }
 
-/// The only value an unsafe original may be moved to. Safe values are kept.
 pub fn fix_of(rule: Rule, v: Option<u32>) -> Option<u32> {
     if is_safe(rule, v) {
         return v;
@@ -1383,9 +1329,7 @@ fn stale_account_name_ok(name: &str) -> bool {
             .is_ok_and(|rid| (1000..=u64::from(u32::MAX)).contains(&rid))
 }
 
-/// Who counts as "everyone" on a share: Everyone, Anonymous logon, Guests.
 pub const BROAD_SIDS: &[&str] = &["S-1-1-0", "S-1-5-7", "S-1-5-32-546"];
-/// The share rights broad enough to matter (the same ones the check flags).
 pub const BROAD_RIGHTS: &[&str] = &["Change", "Full"];
 
 /// `<share name>|<SID>|<right>`: one entry of a share's permission list.
@@ -1412,18 +1356,15 @@ fn share_grant_name_ok(name: &str) -> bool {
         && BROAD_RIGHTS.contains(&right)
 }
 
-/// Administrative shares Windows makes itself: never touched.
 fn builtin_share(name: &str) -> bool {
     let up = name.to_ascii_uppercase();
     if matches!(up.as_str(), "ADMIN$" | "IPC$" | "PRINT$") {
         return true;
     }
-    // Drive shares: a single letter followed by `$`.
     let b = up.as_bytes();
     b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b'$'
 }
 
-/// The only services the legacy-remote-access control may stop and disable.
 pub const LEGACY_SERVICES: &[&str] = &[
     "RemoteRegistry",
     "WinRM",
@@ -1531,7 +1472,6 @@ impl Spec {
         self.parse(value).map(|_| ())
     }
 
-    /// Any key that is not safe, i.e. there is something to repair.
     pub fn any_unsafe(&self, value: &Value) -> bool {
         self.parse(value).is_ok_and(|items| {
             items
@@ -1540,7 +1480,6 @@ impl Spec {
         })
     }
 
-    /// The exact state a repair of `before` must produce.
     pub fn derive_target(&self, before: &Value) -> anyhow::Result<Value> {
         let mut items = Map::new();
         for (name, v) in self.parse(before)? {
@@ -1600,7 +1539,6 @@ impl Spec {
         json!({ "items": items })
     }
 
-    /// JSON handed to the PowerShell backend (compiled data, never user data).
     pub fn script_json(&self) -> String {
         let keys: Vec<Value> = self
             .keys
@@ -1652,7 +1590,6 @@ mod tests {
         json!({ "items": m })
     }
 
-    /// Every legal value of a key (bounded: huge DWORD keys list `allowed`).
     fn candidate_values(k: &Key) -> Vec<u32> {
         if k.allowed.is_empty() {
             // Wide ranges (timestamps, minutes) are sampled at the low end.
@@ -1676,7 +1613,6 @@ mod tests {
                     fix,
                 } = k.rule
                 {
-                    // A repair must always converge on a safe state.
                     match fix {
                         Some(f) => {
                             assert!(safe.contains(&f), "{} fix {f} is not safe", s.id);
@@ -1695,7 +1631,6 @@ mod tests {
             assert_eq!(s.dynamic(), s.keys[0].name == "*");
             assert!(!s.script_json().contains("\\u0027"));
             assert!(!s.script_json().contains('\''));
-            // Catalog target validates (fixed controls) and is itself safe.
             if !s.dynamic() {
                 s.validate(&s.catalog_target()).unwrap();
                 assert!(!s.any_unsafe(&s.catalog_target()), "{}", s.id);
@@ -1708,7 +1643,6 @@ mod tests {
     #[test]
     fn fixed_controls_repair_only_unsafe_keys_and_converge() {
         for s in all().iter().filter(|s| !s.dynamic()) {
-            // Every key unsafe in turn, with the others at a safe value.
             for (i, k) in s.keys.iter().enumerate() {
                 let Rule::Set {
                     safe,
@@ -1745,7 +1679,6 @@ mod tests {
                     s.validate(&target).unwrap();
                     assert!(!s.any_unsafe(&target), "{} target unsafe", s.id);
                     assert_ne!(before, target);
-                    // Other keys are preserved exactly.
                     for (j, v) in vals.iter().enumerate() {
                         if j != i {
                             assert_eq!(
@@ -1760,7 +1693,6 @@ mod tests {
                     );
                 }
             }
-            // All-safe states have nothing to repair and equal their own target.
             let all_safe: Vec<Option<u32>> = s
                 .keys
                 .iter()
@@ -1786,13 +1718,11 @@ mod tests {
             pnp.derive_target(&bad).unwrap(),
             items(pnp, &[None, None, None])
         );
-        // Partially unsafe: only the unsafe keys move.
         let part = items(pnp, &[Some(1), Some(1), Some(1)]);
         assert_eq!(
             pnp.derive_target(&part).unwrap(),
             items(pnp, &[Some(1), None, Some(1)])
         );
-        // Absent is unsafe where Windows' default is unprotected.
         for id in [
             "net.llmnr",
             "lsa.run_as_ppl",
@@ -1803,7 +1733,6 @@ mod tests {
             let vals = vec![None; s.keys.len()];
             assert!(s.any_unsafe(&items(s, &vals)), "{id}");
         }
-        // Stronger settings are preserved.
         let ppl = spec("lsa.run_as_ppl").unwrap();
         assert!(!ppl.any_unsafe(&items(ppl, &[Some(1)])));
         let asr = spec("defender.asr.standard").unwrap();
@@ -1865,14 +1794,12 @@ mod tests {
         ] {
             assert!(fw.validate(&bad).is_err(), "accepted {bad}");
         }
-        // Enabled on Public -> repaired by dropping Public; Public-only -> disabled.
         let before = json!({"items": {"FPS-A": 15, "FPS-B": 12, "FPS-C": 3, "FPS-D": 7}});
         assert!(fw.any_unsafe(&before));
         assert_eq!(
             fw.derive_target(&before).unwrap(),
             json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
         );
-        // Undo of recorded rules ignores rules that appeared later.
         let now =
             json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7, "FPS-NEW": 15}});
         assert_eq!(
@@ -1898,7 +1825,6 @@ mod tests {
                 .unwrap(),
             json!({"items": {"Open": 0, "Done": 0}})
         );
-        // Fixed controls are never narrowed.
         let ppl = spec("lsa.run_as_ppl").unwrap();
         let v = json!({"items": {"RunAsPPL": 2}});
         assert_eq!(ppl.view(&v, &json!({"items": {}})), v);
@@ -1906,7 +1832,6 @@ mod tests {
 
     #[test]
     fn network_and_defender_extensions_follow_the_research_specs() {
-        // Every new control is a choice, never pre-selected.
         for id in [
             "defender.asr.office",
             "defender.asr.ransomware_usb",
@@ -1921,7 +1846,6 @@ mod tests {
         ] {
             assert!(spec(id).unwrap().ask, "{id} must be an ASK item");
         }
-        // Defender extensions use the add-only ASR source and tamper-exempt strengthening.
         for id in ["defender.asr.office", "defender.asr.ransomware_usb"] {
             assert_eq!(spec(id).unwrap().source, Source::DefenderAsr);
             assert!(spec(id).unwrap().gate.tamper_exempt);
@@ -1932,7 +1856,6 @@ mod tests {
         assert!(!office.any_unsafe(&items(office, &vals)));
         vals[2] = Some(6);
         assert!(office.any_unsafe(&items(office, &vals)));
-        // Ransomware and USB rules are offered in Warn mode.
         let usb = spec("defender.asr.ransomware_usb").unwrap();
         let before = items(usb, &[Some(0), None]);
         assert_eq!(
@@ -1947,7 +1870,6 @@ mod tests {
             np.derive_target(&items(np, &[Some(0)])).unwrap(),
             items(np, &[Some(1)])
         );
-        // Cloud block level: High and 20 seconds, never zero tolerance; stronger is kept.
         let cbl = spec("defender.cloud_block_level").unwrap();
         assert_eq!(
             cbl.derive_target(&items(cbl, &[Some(0), Some(0)])).unwrap(),
@@ -1961,7 +1883,6 @@ mod tests {
                 assert_ne!(fix, Some(6));
             }
         }
-        // Stack hardening: both IP versions, one registry value name.
         let stack = spec("net.stack_hardening").unwrap();
         let ver: Vec<Value> = serde_json::from_str::<Value>(&stack.script_json()).unwrap()["keys"]
             .as_array()
@@ -2022,7 +1943,6 @@ mod tests {
         assert!(tls
             .validate(&json!({"items": {"ssl3.client.enabled": 2}}))
             .is_err());
-        // NetBIOS: per adapter, id must be a braced GUID, Disabled (2) is the fix.
         let nb = spec("net.netbios").unwrap();
         assert!(nb.dynamic());
         let a = "{11111111-1111-1111-1111-111111111111}";
@@ -2041,11 +1961,9 @@ mod tests {
             nb.derive_target(&json!({"items": {a: 0, b: 2}})).unwrap(),
             json!({"items": {a: 2, b: 2}})
         );
-        // Outbound SMB rule: present is safe; its absence is the repairable state.
         let fw = spec("firewall.outbound_smb_internet").unwrap();
         assert!(fw.any_unsafe(&json!({"items": {"RulePresent": 0}})));
         assert!(!fw.any_unsafe(&json!({"items": {"RulePresent": 1}})));
-        // The research [K] values: ASK, readable in the descriptions.
         assert!(spec("net.mdns").unwrap().keys[0].name == "EnableMDNS");
         assert!(spec("net.wpad").unwrap().keys[0].name == "DisableWpad");
     }
@@ -2064,14 +1982,12 @@ mod tests {
                 assert!(k.path.ends_with(&format!("Scenarios\\{scenario}")), "{id}");
                 assert!(!k.name.contains("Lock") && !k.value.contains("Lock"));
             }
-            // Absent is unsafe and becomes Enabled=1, WasEnabledBy=2.
             let absent = items(s, &[None, None]);
             assert!(s.any_unsafe(&absent));
             assert_eq!(
                 s.derive_target(&absent).unwrap(),
                 items(s, &[Some(1), Some(2)])
             );
-            // Explicitly off keeps whatever marker Windows left.
             let off = items(s, &[Some(0), Some(2)]);
             assert_eq!(
                 s.derive_target(&off).unwrap(),
@@ -2082,16 +1998,13 @@ mod tests {
                 s.derive_target(&marker).unwrap(),
                 items(s, &[Some(1), Some(2)])
             );
-            // Already on: nothing to fix and nothing rewritten.
             let on = items(s, &[Some(1), Some(2)]);
             assert!(!s.any_unsafe(&on));
             assert_eq!(s.derive_target(&on).unwrap(), on);
-            // Enabled can only ever be 0 or 1.
             assert!(s
                 .validate(&json!({"items": {"Enabled": 2, "WasEnabledBy": 2}}))
                 .is_err());
             assert!(s.validate(&json!({"items": {"Enabled": 1}})).is_err());
-            // Anyone else's policy for this area means assessment only.
             let gate = serde_json::from_str::<Value>(&s.script_json()).unwrap()["gate"].clone();
             assert!(gate["ownPolicyKey"]
                 .as_str()
@@ -2101,9 +2014,7 @@ mod tests {
         }
     }
 
-    /// When SECBLITZ_PARITY_OUT names a file, write every spec with the Rust
-    /// verdict (safe / fix) for each candidate value. The PowerShell fixture
-    /// replays it so both implementations of the rules provably agree.
+    /// With SECBLITZ_PARITY_OUT set, writes every spec with the Rust verdict (safe / fix) per candidate value; the PowerShell fixture replays it so both implementations provably agree.
     #[test]
     fn export_rule_parity_fixture_for_powershell() {
         let Ok(path) = std::env::var("SECBLITZ_PARITY_OUT") else {
@@ -2153,7 +2064,6 @@ mod tests {
         ] {
             assert!(svc.validate(&bad).is_err(), "accepted {bad}");
         }
-        // Running or automatic is unsafe; the fix is "disabled and stopped".
         let before = json!({"items": {"WinRM": 10, "sshd": 3, "SNMP": 12, "FTPSVC": 5}});
         assert_eq!(
             svc.derive_target(&before).unwrap(),
@@ -2178,14 +2088,12 @@ mod tests {
         ] {
             assert!(ex.validate(&bad).is_err(), "accepted {bad}");
         }
-        // A removed exclusion disappears from the listing; the view reads it as 0.
         let template = json!({"items": {"ext:exe": 1, "path:C:\\": 1}});
         let now = json!({"items": {"ext:dll": 1}});
         assert_eq!(
             ex.view(&now, &template),
             json!({"items": {"ext:dll": 1, "ext:exe": 0, "path:C:\\": 0}})
         );
-        // Other dynamic controls keep ignoring recorded names that vanished.
         let fw = spec("net.public_sharing_exposure").unwrap();
         assert_eq!(
             fw.view(&json!({"items": {}}), &json!({"items": {"FPS-A": 15}})),
@@ -2250,7 +2158,6 @@ mod tests {
         ] {
             assert!(startup.validate(&bad).is_err(), "accepted {bad}");
         }
-        // A fix only ever moves a flagged item (1) to handled (0).
         for id in [
             "services.unquoted_paths",
             "firewall.user_dir_inbound_allow",
@@ -2272,7 +2179,6 @@ mod tests {
                 assert!(!s.any_unsafe(&state), "{id} {safe}");
                 assert_eq!(s.derive_target(&state).unwrap(), state);
             }
-            // Items that were fixed and changed since stay in the view for the conflict check.
             let template = json!({"items": {key: 1}});
             assert_eq!(s.view(&json!({"items": {key: 2, "other": 1}}), &template), json!({"items": {key: 2}}));
         }
@@ -2298,7 +2204,6 @@ mod tests {
             .unwrap();
         let pattern = risky.split('\'').nth(1).unwrap();
         let rules = include_str!("diagnostics/probes.ps1");
-        // The firewall probe writes the same alternatives inside a -match test.
         assert!(
             rules.contains(pattern),
             "the firewall pattern drifted from the probe"
@@ -2335,7 +2240,6 @@ mod tests {
             );
         }
         assert!(st.validate(&json!({"items": {a: 2}})).is_err());
-        // Switching off is the only repair; off stays off.
         assert!(st.any_unsafe(&json!({"items": {a: 1}})));
         assert!(!st.any_unsafe(&json!({"items": {a: 0}})));
         assert_eq!(
@@ -2360,14 +2264,12 @@ mod tests {
             sh.validate(&json!({"items": {ok: 1}})).unwrap();
         }
         for bad in [
-            // Built-in and hidden shares are never named.
             "C$|S-1-1-0|Full",
             "ADMIN$|S-1-1-0|Full",
             "IPC$|S-1-1-0|Change",
             "print$|S-1-1-0|Full",
             "c$|S-1-1-0|Full",
             "Print$|S-1-1-0|Full",
-            // Only the broad SIDs and the two rights the check flags.
             "Photos|S-1-5-11|Change",
             "Photos|S-1-1-0|Read",
             "Photos|S-1-1-0|change",
@@ -2406,19 +2308,16 @@ mod tests {
                 )
             };
             let recorded = json!({"items": {a: 1, b: 1}});
-            // Gone from the listing reads as "0"; an item that appeared since is ignored.
             let observed = json!({"items": {a: 0, new: 1}});
             assert_eq!(
                 s.view(&observed, &recorded),
                 json!({"items": {a: 0, b: 0}})
             );
-            // Still listed as on: that is the recorded original.
             assert_eq!(
                 s.view(&json!({"items": {a: 1, b: 1}}), &recorded),
                 recorded
             );
         }
-        // The older dynamic controls keep their own narrowing.
         assert!(!spec("net.public_sharing_exposure").unwrap().exact_recorded());
         assert!(!spec("defender.exclusions_risky").unwrap().exact_recorded());
     }
@@ -2433,7 +2332,6 @@ mod tests {
             names,
             ["SmartScreenEnabled", "SafeBrowsingProtectionLevel", "SafeBrowsingEnabled"]
         );
-        // Every key is only ever removed, never written to a new value.
         for k in b.keys {
             let Rule::Set { fix, absent_safe, .. } = k.rule else {
                 unreachable!()
@@ -2442,21 +2340,17 @@ mod tests {
             assert!(absent_safe, "{}", k.name);
             assert!(k.path.starts_with("HKLM:\\SOFTWARE\\Policies\\"), "{}", k.name);
         }
-        // Absent and "on" values are protected; only an explicit 0 is repaired.
         assert!(!b.any_unsafe(&items(b, &[None, None, None])));
         assert!(!b.any_unsafe(&items(b, &[Some(1), Some(2), Some(1)])));
         assert!(b.any_unsafe(&items(b, &[Some(0), None, None])));
         assert!(b.any_unsafe(&items(b, &[None, Some(0), None])));
         assert!(b.any_unsafe(&items(b, &[None, None, Some(0)])));
-        // Chrome's "standard" and "enhanced" levels stay; only 0 goes.
         assert_eq!(
             b.derive_target(&items(b, &[Some(0), Some(2), Some(0)])).unwrap(),
             items(b, &[None, Some(2), None])
         );
         assert!(b.validate(&items(b, &[Some(3), None, None])).is_err());
-        // Groups of other policy values are left alone: the gate lists browser areas only.
         assert!(b.gate.areas.contains(&"Edge"));
-        // A browser enrolled in cloud management belongs to an organization.
         assert!(b.gate.policy_values.contains(&(CHROME_POLICY, "CloudManagementEnrollmentToken")));
         assert!(b.gate.policy_values.contains(&(EDGE_POLICY, "EdgeManagementEnrollmentToken")));
     }
@@ -2472,13 +2366,11 @@ mod tests {
             unreachable!()
         };
         assert_eq!(fix, Some(1));
-        // UseMachineId is deliberately not part of ntlm.extras.
         assert!(spec("ntlm.extras")
             .unwrap()
             .keys
             .iter()
             .all(|k| k.name != "UseMachineId"));
-        // Every choice with an uncertain value is an ASK, only mitigations drift-repair automatically.
         for id in [
             "ntlm.extras",
             "driver.vulnerable_blocklist",
@@ -2498,7 +2390,6 @@ mod tests {
             assert!(is_ask(id), "{id} must be a choice");
         }
         assert!(!is_ask("system.exploit_mitigations"));
-        // Pause markers cannot overflow a PowerShell int.
         assert!(spec("update.paused")
             .unwrap()
             .keys
@@ -2511,7 +2402,6 @@ mod tests {
         for id in ["accounts.autologon", "remote_desktop.disabled", "smb1.disabled"] {
             assert!(is_ask(id), "{id} must be a choice");
         }
-        // Automatic sign-in: only AutoAdminLogon, only 1 is unsafe, absent is fine.
         let a = spec("accounts.autologon").unwrap();
         assert_eq!(a.source, Source::WinlogonAutoLogon);
         assert!(!a.reboot && !a.dynamic());
@@ -2528,7 +2418,6 @@ mod tests {
         for never in ["DefaultPassword", "DefaultUserName", "AutoLogonCount"] {
             assert!(!json.contains(never), "{never} must never be touched");
         }
-        // Remote Desktop: registry value only, managed by the Terminal Services policy.
         let r = spec("remote_desktop.disabled").unwrap();
         assert_eq!(r.source, Source::Registry);
         assert!(!r.reboot && r.keys.len() == 1);
@@ -2542,7 +2431,6 @@ mod tests {
             r.derive_target(&items(r, &[Some(0)])).unwrap(),
             items(r, &[Some(1)])
         );
-        // Old file sharing: four parts, each repaired only if it is on, restart needed.
         let s = spec("smb1.disabled").unwrap();
         assert_eq!(s.source, Source::SmbFeature);
         assert!(s.reboot && !s.dynamic());
@@ -2569,21 +2457,17 @@ mod tests {
     fn recovery_tools_are_a_plain_fix_that_only_turns_them_back_on() {
         let r = spec("recovery.winre_enabled").unwrap();
         assert_eq!(r.source, Source::RecoveryTools);
-        // A normal fix: no trade-off to choose, no restart, one fixed key.
         assert!(!r.ask && !r.reboot && !r.dynamic());
         assert_eq!(r.keys.len(), 1);
         assert_eq!((r.keys[0].name, r.keys[0].path), ("Enabled", ""));
-        // Off is the only state to repair, and it is repaired to on.
         let off = items(r, &[Some(0)]);
         assert!(r.any_unsafe(&off));
         assert_eq!(r.derive_target(&off).unwrap(), items(r, &[Some(1)]));
         assert!(!r.any_unsafe(&items(r, &[Some(1)])));
-        // The state is always read as on or off, never "not set".
         assert!(r.any_unsafe(&items(r, &[None])));
         assert!(r.validate(&items(r, &[Some(2)])).is_err());
         assert!(r.validate(&json!({"items": {"Enabled": 1, "Other": 0}})).is_err());
         assert!(r.validate(&json!({"items": {}})).is_err());
-        // Nothing but the switch itself is described to the backend.
         let json = r.script_json();
         assert!(json.contains("\"source\":\"RecoveryTools\""), "{json}");
         for never in ["bcdedit", "BitLocker", "manage-bde", "diskpart"] {

@@ -10,7 +10,7 @@ mod descriptor;
 #[cfg(windows)]
 mod windows;
 
-/// Catalog marker only. Never pass this sentinel to observe/write/repair_target.
+/// Catalog marker only; never pass it to observe/write/repair_target.
 pub const TARGET_SENTINEL: &str = "service-dacl-repair-v1";
 
 pub fn controls() -> Vec<Control> {
@@ -30,9 +30,7 @@ fn service_name(id: &str) -> Result<&'static str> {
     }
 }
 
-/// Validate the bounded exact state, including canonical encoding and offsets.
-/// Unsupported ACEs are retained as bounded opaque records for observation;
-/// their semantics are not validated and repair_target always rejects them.
+/// Unsupported ACEs are kept as bounded opaque records for observation; repair_target always rejects them.
 pub fn validate_value(id: &str, value: &Value) -> Result<()> {
     service_name(id)?;
     state::State::parse(value)?;
@@ -57,9 +55,7 @@ pub fn observe(id: &str) -> Result<Observation> {
     }
 }
 
-/// Privileged engine boundary, not an untrusted restore API. The engine must
-/// authorize rollback against its protected durable before-image: the native
-/// inverse-transform check constrains the change but cannot prove provenance.
+/// Privileged engine boundary, not an untrusted restore API: the engine must authorize rollback against its durable before-image, which the native inverse check cannot prove.
 pub fn write(id: &str, value: &Value) -> Result<()> {
     validate_value(id, value)?;
     #[cfg(windows)]
@@ -72,8 +68,7 @@ pub fn write(id: &str, value: &Value) -> Result<()> {
     }
 }
 
-/// Adds fixed repair controls plus advisory findings. The native boundary repeats
-/// platform::permission_gate(id) on observe and immediately before every write.
+/// Adds fixed repair controls plus advisory findings; the native boundary repeats platform::permission_gate(id) on observe and before every write.
 pub fn with_permissions(delegate: Box<dyn Backend>) -> Box<dyn Backend> {
     Box::new(PermissionBackend {
         delegate: with_audit(delegate),
@@ -130,8 +125,7 @@ impl Backend for PermissionBackend {
     }
 }
 
-/// Audit a fixed set of local service objects. Individual failures are findings,
-/// not a reason to omit the remaining services. This is not an AccessCheck.
+/// Individual failures are findings, not a reason to skip other services. Not an AccessCheck.
 pub fn audit() -> Result<Vec<Finding>> {
     #[cfg(windows)]
     {

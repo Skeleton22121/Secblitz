@@ -1,6 +1,5 @@
 use super::Explainer;
 
-/// Network and Defender extension controls.
 pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "defender.asr.office" => Explainer {

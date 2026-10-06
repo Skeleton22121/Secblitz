@@ -43,9 +43,7 @@ pub struct ActionResult {
 #[path = "actions/windows.rs"]
 mod windows;
 
-/// SHUTDOWN_RESTART (0x4) | SHUTDOWN_INSTALL_UPDATES (0x40): restart, do not
-/// power off, and install updates that wait for the restart. No force flags:
-/// programs with unsaved work can still ask to stay open.
+/// SHUTDOWN_RESTART (0x4) | SHUTDOWN_INSTALL_UPDATES (0x40). No force flags, so programs with unsaved work can still stay open.
 #[cfg(any(windows, test))]
 const RESTART_FLAGS: u32 = 0x0000_0004 | 0x0000_0040;
 /// SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_SECURITYFIX |
@@ -53,8 +51,6 @@ const RESTART_FLAGS: u32 = 0x0000_0004 | 0x0000_0040;
 #[cfg(any(windows, test))]
 const RESTART_REASON: u32 = 0x0002_0000 | 0x0000_0012 | 0x8000_0000;
 
-/// Restart the PC to finish installing updates. Only ever called after the
-/// person confirmed, with a reminder to save their work first.
 pub fn restart_for_updates() -> Result<()> {
     #[cfg(windows)]
     {
@@ -66,20 +62,14 @@ pub fn restart_for_updates() -> Result<()> {
     }
 }
 
-/// True only for the elevated half of a split (UAC) administrator token.
-/// Shared by the launcher's start-up check and the page-opening check.
 #[cfg(windows)]
 pub fn split_token_elevated() -> Result<bool> {
     windows::split_token_elevated()
 }
 
-/// The classic Control Panel item for BitLocker, for Windows editions that
-/// have no device-encryption page. Opened through the system's own
-/// `control.exe` by absolute path; the name below is the only argument.
+/// Opened through control.exe by absolute path; the name below is the only argument.
 const BITLOCKER_CONTROL: &str = "Microsoft.BitLockerDriveEncryption";
 
-/// Where an action goes: a Settings or Windows Security page by address, or a
-/// fixed Control Panel item. Nothing here is built from input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
     Uri(&'static str),
@@ -129,13 +119,7 @@ fn settings_uri(action: Action) -> Option<&'static str> {
     }
 }
 
-/// `split_elevated` is true only for the elevated half of a split (UAC) token:
-/// someone chose "Run as administrator" while a normal-rights copy of the same
-/// account is also running and could plant a protocol handler. A full-token
-/// administrator (the built-in Administrator account, or UAC turned off) has no
-/// less-trusted twin, so there is nobody to steer the handler and opening is
-/// allowed there. Refusing every elevated token, as before, made every "Open"
-/// fail on those accounts.
+/// Only the elevated half of a split (UAC) token is refused: it has a normal-rights twin that could plant a protocol handler. A full-token administrator has none.
 #[cfg(any(windows, test))]
 fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
     anyhow::ensure!(
@@ -175,7 +159,6 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
     Ok(())
 }
 
-/// Same boundary for the one Control Panel item.
 #[cfg(any(windows, test))]
 fn validate_control_request(name: &str, split_elevated: bool) -> Result<()> {
     anyhow::ensure!(name == BITLOCKER_CONTROL, "Unknown control panel item");
@@ -229,9 +212,7 @@ pub fn run(action: Action) -> Result<ActionResult> {
 
 pub use crate::platform::ThreatRemoval;
 
-/// Blocking, explicitly confirmed: ask Defender to remove the threats it has
-/// found. What Defender removes goes to quarantine, where Windows Security can
-/// restore it. Only Defender's own counts are returned, never a claim of safety.
+/// What Defender removes goes to quarantine; only its own counts are returned, never a claim of safety.
 pub fn remove_threats() -> Result<ThreatRemoval> {
     crate::platform::remove_threats()
 }
@@ -292,7 +273,6 @@ mod tests {
             validate_settings_request(uri, false).unwrap();
             assert!(validate_settings_request(uri, true).is_err());
         }
-        // BitLocker goes through its one fixed Control Panel item.
         assert_eq!(
             target(Action::OpenBitLocker),
             Some(Target::Control("Microsoft.BitLockerDriveEncryption"))

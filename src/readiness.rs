@@ -5,8 +5,7 @@ pub use crate::model::{PowerReadiness, Probe, Readiness, VolumeReadiness};
 #[path = "readiness/windows.rs"]
 mod windows;
 
-/// Collect independent native facts without creating state or writing a journal.
-/// Unsupported platforms return all Unknown. No paths or error details escape.
+/// No paths or error details escape; unsupported platforms return all Unknown.
 pub fn collect() -> Readiness {
     #[cfg(windows)]
     {
@@ -51,7 +50,6 @@ fn bounded_probe(
     if let Some(receiver) = slot.as_ref() {
         match receiver.try_recv() {
             Err(mpsc::TryRecvError::Empty) => return None,
-            // Discard a stale result, including Known(false), then query anew.
             _ => *slot = None,
         }
     }
@@ -186,8 +184,6 @@ mod tests {
         }
         assert!(!cleaned.load(Ordering::SeqCst));
         finish.send(()).unwrap();
-        // Observe completion deterministically, then put a stale result back to
-        // exercise discard/restart without scheduler-dependent sleeps.
         worker
             .lock()
             .unwrap()
