@@ -21,3 +21,16 @@ __pycache__/
 /scripts/capture-v060*
 /scripts/test-video.py
 /scorecard.png
+
+# local working notes: per-version VM results, review handoffs, research scratch
+/docs/review-*.md
+/docs/windows-*-results.md
+/docs/vm-status.md
+/docs/*-handoff.md
+/docs/tavily-research.md
+/docs/production-web-check.md
+/docs/research/
+/docs/keyboard-review.md
+/docs/marketing-copy-review.md
+/docs/platform-gate-review.md
+/docs/readiness.md
