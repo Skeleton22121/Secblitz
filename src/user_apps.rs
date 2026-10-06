@@ -1,4 +1,6 @@
-//! WinGet app updates, run by the unelevated launcher for a short allowlist of apps.
+//! Apps the person installed themselves (browsers and the like): the short allowlist
+//! Secblitz can update through WinGet, run by the unelevated launcher.
+//! Windows built-in apps are in `debloat`; removing Secblitz itself is in `uninstall`.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::sync::Mutex;
