@@ -845,7 +845,7 @@ function HSetMitigation([string]$name, $v) {
 
 function HFeatureState([string]$name) { return (FeatureState $name) }
 function HPackageInstalled([string]$name) {
-    $root = 'HKLM:\SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
+    $root = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications'
     if (!(Test-Path -LiteralPath $root)) { throw 'The installed apps could not be listed' }
     $prefix = $name + '_'
     return (@(Get-ChildItem -LiteralPath $root -Name -ErrorAction Stop | Where-Object { $_.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0)

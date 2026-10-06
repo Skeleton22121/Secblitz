@@ -930,7 +930,7 @@ $script:fakeKey = FakeKey @('DisableAIDataAnalysis', 'DisableClickToDo')
 Reject { HGatePolicy } 'Relevant policy is configured'
 $script:fakePaths = @(); $script:fakeFs = $false
 
-$pkgRoot = 'HKLM:\SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
+$pkgRoot = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications'
 $script:pkgNames = @(); $script:pkgRootExists = $true
 $savedTestPath = ${function:Test-Path}; $savedChildItem = ${function:Get-ChildItem}; $savedCim = ${function:Get-CimInstance}
 function Test-Path { param($LiteralPath, $ErrorAction); return ($LiteralPath -ceq $pkgRoot -and $script:pkgRootExists) }
@@ -938,9 +938,9 @@ function Get-ChildItem { param($LiteralPath, [switch]$Name, $ErrorAction); Asser
 Assert (!(HPackageInstalled 'Microsoft.Paint')) 'no apps listed means Paint is missing'
 $script:pkgNames = @('Microsoft.MSPaint_6.2.0.0_x64__8wekyb3d8bbwe', 'Microsoft.Paint.Beta_1.0.0.0_x64__8wekyb3d8bbwe')
 Assert (!(HPackageInstalled 'Microsoft.Paint')) 'other apps with a similar name are not Paint'
-$script:pkgNames += 'Microsoft.Paint_11.2508.371.0_x64__8wekyb3d8bbwe'
+$script:pkgNames += 'Microsoft.Paint_11.2605.81.0_neutral_~_8wekyb3d8bbwe'
 Assert (HPackageInstalled 'Microsoft.Paint') 'Paint is found by its package name'
-$script:pkgNames = @('microsoft.windowsnotepad_11.2508.38.0_x64__8wekyb3d8bbwe')
+$script:pkgNames = @('microsoft.windowsnotepad_11.2607.14.0_neutral_~_8wekyb3d8bbwe')
 Assert (HPackageInstalled 'Microsoft.WindowsNotepad') 'package names match without regard to case'
 $script:pkgRootExists = $false
 Reject { HPackageInstalled 'Microsoft.Paint' } 'could not be listed'
@@ -949,7 +949,7 @@ $script:pkgRootExists = $true
 MakeSpec '{"id":"ai.paint","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
 $script:pkgNames = @()
 Reject { HPreflight } 'Paint was not found on this PC'
-$script:pkgNames = @('Microsoft.Paint_11.2508.371.0_x64__8wekyb3d8bbwe')
+$script:pkgNames = @('Microsoft.Paint_11.2605.81.0_neutral_~_8wekyb3d8bbwe')
 HPreflight
 Assert $true 'offered where Paint is installed'
 MakeSpec '{"id":"ai.notepad","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
