@@ -56,6 +56,26 @@ pub fn body<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
         .color(p.text)
         .into()
 }
+/// [`h2`] centred across the width (under a centred drawing).
+pub fn h2_centred<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
+    text(s.into())
+        .size(theme::H2)
+        .font(theme::SEMIBOLD)
+        .color(p.text)
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center)
+        .into()
+}
+/// [`muted`] centred across the width, every wrapped line too.
+pub fn muted_centred<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
+    text(s.into())
+        .size(theme::BODY)
+        .font(theme::REGULAR)
+        .color(p.text_muted)
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center)
+        .into()
+}
 pub fn muted<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
         .size(theme::BODY)
@@ -283,6 +303,14 @@ pub fn icon_button<'a>(
             .style(button_style(p, kind)),
     )
 }
+
+/// The tallest sheet content that fits the smallest window: the scrim's
+/// and the panel's S6 padding on both sides come off. Sheets with a drawing
+/// at the top (fixing, undo, putting back) are exactly this tall in their
+/// working and result views, so the centred panel never moves and the
+/// drawing stays put while rows arrive and when the result replaces the
+/// work.
+pub const SHEET_FIT_HEIGHT: f32 = theme::WINDOW_MIN_HEIGHT - 4.0 * theme::S6;
 
 /// Modal sheet layer (scrim + panel) to stack above the page. The scrim is one static flat colour (no
 /// blur), the panel is a borderless surface tone, R_LARGE corners and S6 padding. Esc

@@ -333,7 +333,8 @@ impl<M> canvas::Program<M> for ShieldFill {
         cursor: mouse::Cursor,
     ) -> Option<Action<M>> {
         let first = st.live.seen_change.is_none();
-        if st.live.fresh(self.changed) {
+        let fresh = st.live.fresh(self.changed);
+        if fresh {
             match self.run {
                 Run::Working => st.level = Spring::with(0.06, LEVEL_K, LEVEL_C),
                 // Shown straight away as a result: rise from where the work
@@ -347,15 +348,22 @@ impl<M> canvas::Program<M> for ShieldFill {
         let age = st.live.age(self.changed, self.now);
         let t = st.live.ambient(self.now, STILL);
         let target = level_target(self.run, self.progress, age);
-        // Each fix that lands makes a small splash.
-        if self.run == Run::Working && target > st.level.target + 0.01 && !anim::reduced() {
+        // Each fix that lands makes a small splash (not the run's first aim,
+        // which only lifts the empty shield to its starting level).
+        if self.run == Run::Working
+            && !fresh
+            && target > st.level.target + 0.01
+            && !anim::reduced()
+        {
             st.ripple = Some((t, 0.6));
         }
         st.level.aim(target);
         if let Some(dt) = step.dt {
             st.level.tick(dt);
         }
-        if let Some(at) = step.click() {
+        // Only a click on the shield itself; the canvas is wider than the
+        // drawing (room for the hover name) and the rest is plain sheet.
+        if let Some(at) = step.click().filter(|&at| spots().hit(at, &st.live.tilt).is_some()) {
             if !anim::reduced() {
                 st.ripple = Some((t, 1.0));
             }
@@ -689,6 +697,37 @@ mod tests {
         }
         assert!(frames as f32 * 0.016 >= RESULT_END - 0.05);
         assert_eq!(st.level.value, 1.04);
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn no_splash_at_the_start_and_clicks_beside_it_do_nothing() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
+        let mut st = State::default();
+        let working = prog(Run::Working, Some(0.0), t0);
+        // The run's first aim lifts the empty shield without a splash.
+        Program::<()>::update(&working, &mut st, &frame(t0), BOUNDS, off);
+        assert!(st.ripple.is_none() && st.level.target > 0.1);
+        let stage = Stage::fit(UNITS, BOUNDS.size());
+        let click = |st: &mut State, at: Point| {
+            let c = mouse::Cursor::Available(at);
+            for e in [
+                mouse::Event::CursorMoved { position: at },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                Program::<()>::update(&working, st, &Event::Mouse(e), BOUNDS, c);
+            }
+        };
+        // A click on the empty canvas beside the drawing: no ripple, no ring.
+        click(&mut st, Point::new(8.0, SIZE.height / 2.0));
+        assert!(st.ripple.is_none() && !st.live.pulses.alive());
+        // A click on the shield ripples the water and pulses.
+        click(&mut st, stage.point(C));
+        assert!(st.ripple.is_some() && st.live.pulses.alive());
         anim::set_reduced_override(None);
     }
 

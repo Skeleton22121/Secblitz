@@ -29,9 +29,6 @@ use std::time::Instant;
 
 /// Tallest the list inside a sheet grows before it scrolls.
 const LIST_MAX_HEIGHT: f32 = 300.0;
-/// The same under the drawing (working and result), so the sheet still fits
-/// the smallest window (600 px tall).
-const ART_LIST_MAX_HEIGHT: f32 = 240.0;
 /// Status mark size in working rows (matches the row icon size).
 const MARK: f32 = theme::ICON_ROW;
 /// Edge of the quiet dot shown for items that have not started.
@@ -527,16 +524,25 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
 
 /// A bounded, scrollable list so a long selection never overflows the window.
 fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
-    bounded_to(p, content, LIST_MAX_HEIGHT)
-}
-
-fn bounded_to<'a>(p: Palette, content: Element<'a, Message>, max: f32) -> Element<'a, Message> {
     container(
         scrollable(content)
             .direction(scrollbar())
             .style(scroll_style(p)),
     )
-    .max_height(max)
+    .max_height(LIST_MAX_HEIGHT)
+    .into()
+}
+
+/// The list under the drawing: it takes whatever height the fixed-height
+/// sheet has left ([`widgets::SHEET_FIT_HEIGHT`]) and scrolls beyond it, so
+/// rows arriving never move the drawing.
+fn below_art<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
+    container(
+        scrollable(content)
+            .direction(scrollbar())
+            .style(scroll_style(p)),
+    )
+    .height(Length::Fill)
     .into()
 }
 
@@ -795,13 +801,14 @@ fn working_view<'a>(
     let share = work_share(planned(state, undo), items.len(), verifying);
     let mut c = column![
         art(state, ctx, undo, Run::Working, share),
-        widgets::h2(p, title),
-        widgets::muted(
+        widgets::h2_centred(p, title),
+        widgets::muted_centred(
             p,
             ctx.t("Please keep this window open. This can take a minute.")
         ),
     ]
-    .spacing(theme::S3);
+    .spacing(theme::S3)
+    .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT));
     if let Some(bar) = &state.bar {
         c = c.push(progress::bar(p, bar, Tone::Brand, state.now));
     } else if undo {
@@ -847,8 +854,7 @@ fn working_view<'a>(
         ctx.t("Checking the result"),
         verifying,
     ));
-    c.push(bounded_to(p, list.into(), ART_LIST_MAX_HEIGHT))
-        .into()
+    c.push(below_art(p, list.into())).into()
 }
 
 fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
@@ -986,11 +992,13 @@ fn result_view<'a>(
     column![
         art(state, ctx, undo, run, share),
         container(widgets::h1(p, ctx.t(title))).center_x(Length::Fill),
-        bounded_to(p, body.into(), ART_LIST_MAX_HEIGHT),
+        below_art(p, body.into()),
         space::vertical().height(theme::S3),
         footer(buttons),
     ]
     .spacing(theme::S3)
+    // The working view's height: the drawing stays where it was.
+    .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
     .into()
 }
 

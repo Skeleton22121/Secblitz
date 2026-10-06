@@ -277,37 +277,46 @@ beside the title and the 40 to 60 px result marks in the fix flow sheet
 (`pages/remove.rs`). Each sits centred at the top of its sheet in a fixed
 360 x 132 px canvas (the drawing itself about 138 x 132), the same widget in
 the same place in the working view and the result, so it carries straight on
-from one into the other and the layout never jumps. The lists under it scroll
-from 240 px (fix flow) and 168 px (what was left) so the sheet still fits a
-600 px window. The small per-row spinners and marks stay as they were. Each
-drawing asks for its own frames while it moves and none once it has settled.
+from one into the other. Both views are exactly `SHEET_FIT_HEIGHT` tall (the
+smallest window, 600 px, less the scrim's and the panel's padding), so the
+centred sheet never moves: not while rows arrive, not when the result
+replaces the work. The fix flow lists take the height left and scroll beyond
+it; Remove's "what was left" list scrolls from 168 px and its buttons sit at
+the bottom. The heading and help line under the drawing are centred. The
+small per-row spinners and marks stay as they were. Each drawing asks for its
+own frames while it moves and none once it has settled.
 
 **Shield fills up** (applying fixes). An empty shield in grey fills with blue
 "water": a tinted pool with faint lines and a wavy surface, plus rising
 bubbles. The level follows the real share of fixes made (0.12 to 0.88 of the
 shield, full once the check runs), on a slow water-like spring; each fix that
-lands makes a small splash. Done: the water reaches the top and turns green,
+lands makes a small splash (not the run's start). Done: the water reaches the top and turns green,
 the outline draws in green, a tick draws in and a ring of ten short rays
 fades out (all within 2.4 s, then still). Partly done: the water settles at
 the share that went through and turns amber, the outline half draws in, an
 exclamation mark draws in over a plate-coloured gap. Failed: the water drains
 and turns red, the outline draws in red, a crack draws across and the shield
 shakes once. The shield turns a little towards the pointer (squash and skew
-mapped by hand, so lines stay 1 to 2.5 px), a click makes a ripple and a
-pulse, hovering names the state.
+mapped by hand, so lines stay 1 to 2.5 px), a click on it makes a ripple and
+a pulse (a click on the empty canvas beside it does nothing), hovering names
+the state.
 
 **Rewind** (undo, and putting everything back). A clock whose hands spin
 backwards (minute 4.2 rad/s, hour 12 times slower, with a faint blue trail)
-inside a back arrow turning the other way at 70 degrees a second. When the
+inside a back arrow turning backwards too at 70 degrees a second. When the
 work reports progress, the arrow is a grey track that fills in blue from its
-tail to its head. Done: everything eases (1.1 s, `DECELERATE`) back to ten
-past ten, the face and arrow turn green and a tick draws in on a small badge.
-Partly done: the hands stop short (about eight minutes), amber, with an
-exclamation mark. Failed: the hands stay, the face goes grey, the clock
-shakes once and a red cross draws in. Drag round the clock (the face or the
-arrow) to turn the hands yourself: they follow how far the pointer went
-round, so nothing jumps, and a finished clock eases back to its time when let
-go. A click spins it (faster while working, one more turn back afterwards, a
+tail to its head, and it stays a track through the result: the fill takes the
+result's colour and, when done, runs on to the head (partly done and failed
+leave it where the work stopped). Done: everything eases (1.1 s,
+`DECELERATE`) back to ten past ten, the face and arrow turn green and a tick
+draws in on a small badge. Partly done: the hands stop short (about eight
+minutes), amber, with an exclamation mark. Failed: the hands stay, the face
+goes grey on the plate, the clock shakes once and a red cross draws in. Drag
+round the clock (the face or the arrow) to turn the hands yourself: they
+follow how far the pointer went round, so nothing jumps; near the centre
+(12 units) they hold still, so a drag straight through the middle does not
+swing them. A finished clock eases back to its time when let go. A click on
+the clock spins it (faster while working, one more turn back afterwards, a
 shake when failed). Hovering the face names it.
 
 Colours: greys for lines and plates, accent only while working, then good,
