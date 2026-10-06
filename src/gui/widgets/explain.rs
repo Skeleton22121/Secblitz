@@ -98,3 +98,19 @@ pub fn with_disclosure<'a>(
         None => line.into(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_pair_the_page_with_the_check() {
+        assert_eq!(key("fixes", "firewall.on"), "fixes:firewall.on");
+        assert_ne!(key("fixes", "a"), key("home", "a"));
+    }
+
+    #[test]
+    fn the_panel_lines_up_with_row_text() {
+        assert_eq!(INDENT, theme::S4 + theme::ICON_ROW + theme::S4);
+    }
+}

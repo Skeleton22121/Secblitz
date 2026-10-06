@@ -189,3 +189,15 @@ pub fn arrow<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Eleme
         content: content.into(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_hand_is_swapped_for_the_arrow() {
+        assert_eq!(arrow_only(mouse::Interaction::Pointer), mouse::Interaction::Idle);
+        assert_eq!(arrow_only(mouse::Interaction::Text), mouse::Interaction::Text);
+        assert_eq!(arrow_only(mouse::Interaction::None), mouse::Interaction::None);
+    }
+}
