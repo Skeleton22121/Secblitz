@@ -96,6 +96,32 @@ pub fn elevate_and_wait(args: &[String]) -> anyhow::Result<i32> {
     }
 }
 
+/// A "Run as administrator" start has no broker: start again the normal way
+/// and let this copy close. False when that is not possible or not needed.
+pub fn reopen_normally(lang: Lang) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(imp::split_token_elevated(), Ok(true)) && imp::reopen_normally(lang).is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = lang;
+        false
+    }
+}
+
+/// True when this account has normal rights to fall back to (a UAC split token).
+pub fn has_split_token() -> bool {
+    #[cfg(windows)]
+    {
+        imp::split_token_elevated().unwrap_or(true)
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 pub enum Instance {
     First(#[allow(dead_code)] Guard),
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -150,8 +176,10 @@ mod imp {
                 ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
                 ConvertStringSidToSidW, SDDL_REVISION_1,
             },
-            GetTokenInformation, TokenUser, PSID,
-            SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+            DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, TokenElevation,
+            TokenPrimary, TokenUser, PSID, SECURITY_ATTRIBUTES, TOKEN_ADJUST_DEFAULT,
+            TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_ELEVATION,
+            TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
@@ -168,16 +196,19 @@ mod imp {
             Threading::{
                 AddIntegrityLabelToBoundaryDescriptor, AddSIDToBoundaryDescriptor,
                 ClosePrivateNamespace, CreateBoundaryDescriptorW, CreateEventW, CreateMutexW,
-                CreatePrivateNamespaceW, DeleteBoundaryDescriptor, GetCurrentProcess,
-                GetExitCodeProcess, GetProcessId, OpenPrivateNamespaceW, OpenProcessToken,
-                ResetEvent, WaitForMultipleObjects, WaitForSingleObject,
+                CreatePrivateNamespaceW, CreateProcessWithTokenW, DeleteBoundaryDescriptor,
+                GetCurrentProcess, GetExitCodeProcess, GetProcessId, OpenPrivateNamespaceW,
+                OpenProcess, OpenProcessToken, ResetEvent, WaitForMultipleObjects,
+                WaitForSingleObject, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+                STARTUPINFOW,
             },
             IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
         },
         UI::{
             Shell::{ShellExecuteExW, ShellExecuteW, SHELLEXECUTEINFOW},
             WindowsAndMessaging::{
-                EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+                EnumWindows, GetShellWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+                IsWindowVisible,
                 SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
             },
         },
@@ -290,8 +321,97 @@ mod imp {
     /// user-context actions (winget, HKCU, protocol handlers) would carry the
     /// admin token while the same user's unelevated programs can steer them.
     /// Built-in Administrator and UAC-off accounts have no split token.
-    fn split_token_elevated() -> Result<bool> {
+    pub fn split_token_elevated() -> Result<bool> {
         secblitz::actions::split_token_elevated()
+    }
+
+    /// Starts Secblitz again with the desktop user's normal rights, so it goes
+    /// through the launcher (and its UAC prompt) and gets a broker.
+    pub fn reopen_normally(lang: Lang) -> Result<()> {
+        // SAFETY: GetShellWindow has no preconditions.
+        let shell = unsafe { GetShellWindow() };
+        ensure!(!shell.is_null(), "No desktop shell");
+        let mut pid = 0;
+        // SAFETY: `shell` is non-null and `pid` is a valid out pointer.
+        ensure!(
+            unsafe { GetWindowThreadProcessId(shell, &mut pid) } != 0 && pid != 0,
+            "No desktop shell"
+        );
+        // SAFETY: plain value arguments; a null result is checked below.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        ensure!(!process.is_null(), "Cannot open the desktop shell");
+        let process = Owned(process);
+        let mut token: HANDLE = null_mut();
+        // SAFETY: `process` is a live handle and `token` a valid out pointer.
+        ensure!(
+            unsafe { OpenProcessToken(process.0, TOKEN_QUERY | TOKEN_DUPLICATE, &mut token) } != 0,
+            "Cannot read the desktop shell's rights"
+        );
+        let token = Owned(token);
+        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 1 };
+        let mut len = 0u32;
+        // SAFETY: `elevation` is a live TOKEN_ELEVATION and the length passed is exactly its size.
+        let read = unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenElevation,
+                (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut len,
+            )
+        };
+        ensure!(
+            read != 0 && elevation.TokenIsElevated == 0,
+            "The desktop shell has no normal rights to start from"
+        );
+        let mut primary: HANDLE = null_mut();
+        // SAFETY: `token` is a live handle opened with TOKEN_DUPLICATE; `primary` is a valid out pointer.
+        ensure!(
+            unsafe {
+                DuplicateTokenEx(
+                    token.0,
+                    TOKEN_QUERY
+                        | TOKEN_DUPLICATE
+                        | TOKEN_ASSIGN_PRIMARY
+                        | TOKEN_ADJUST_DEFAULT
+                        | TOKEN_ADJUST_SESSIONID,
+                    std::ptr::null(),
+                    SecurityImpersonation,
+                    TokenPrimary,
+                    &mut primary,
+                )
+            } != 0,
+            "Cannot copy the desktop shell's rights"
+        );
+        let primary = Owned(primary);
+        let exe = std::env::current_exe()?;
+        let application: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut command = wide(&format!("\"{}\" gui --lang {}", exe.display(), lang.code()));
+        // SAFETY: plain C structs for which all-zero bytes are valid initial values.
+        let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+        startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        // SAFETY: as above.
+        let mut started: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: every pointer refers to a live, NUL-terminated buffer or struct owned above.
+        ensure!(
+            unsafe {
+                CreateProcessWithTokenW(
+                    primary.0,
+                    0,
+                    application.as_ptr(),
+                    command.as_mut_ptr(),
+                    0,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    &startup,
+                    &mut started,
+                )
+            } != 0,
+            "Cannot start Secblitz with normal rights"
+        );
+        drop(Owned(started.hThread));
+        drop(Owned(started.hProcess));
+        Ok(())
     }
 
     fn create_pipe(id: &str) -> Result<Owned> {
@@ -480,13 +600,6 @@ mod imp {
     }
 
     pub fn run(lang: Lang) -> Result<i32> {
-        if split_token_elevated()? {
-            super::message_box(
-                "Secblitz",
-                &lang.t("Please open Secblitz the usual way, not with “Run as administrator”. It asks for permission by itself when it needs it."),
-            );
-            return Ok(1);
-        }
         let id = broker::new_id();
         let pipe = create_pipe(&id)?;
         let args: Vec<String> = ["gui", "--broker", &id, "--lang", lang.code()]
@@ -503,37 +616,11 @@ mod imp {
 
 
     fn handle(request: Request) -> Reply {
-        use secblitz::actions::{run, Action};
-        let open = |action| match run(action) {
+        let open = |action| match secblitz::actions::run(action) {
             Ok(_) => Reply::Done,
             Err(_) => Reply::Failed,
         };
         match request {
-            Request::OpenWindowsUpdate => open(Action::OpenWindowsUpdate),
-            Request::OpenWindowsSecurity => open(Action::OpenWindowsSecurity),
-            Request::OpenEncryption => open(Action::OpenEncryptionSettings),
-            Request::OpenSignIn => open(Action::OpenSignInSettings),
-            Request::OpenTamperProtection => open(Action::OpenTamperProtection),
-            Request::OpenProtectionHistory => open(Action::OpenProtectionHistory),
-            Request::OpenAppBrowserControl => open(Action::OpenAppBrowserControl),
-            Request::OpenOptionalFeatures => open(Action::OpenOptionalFeatures),
-            Request::OpenAccounts => open(Action::OpenAccounts),
-            Request::OpenCoreIsolation => open(Action::OpenCoreIsolation),
-            Request::OpenFirewall => open(Action::OpenFirewall),
-            Request::OpenDeviceSecurity => open(Action::OpenDeviceSecurity),
-            Request::OpenWorkAccounts => open(Action::OpenWorkAccounts),
-            Request::OpenRecovery => open(Action::OpenRecovery),
-            Request::OpenRemoteDesktop => open(Action::OpenRemoteDesktop),
-            Request::OpenFindMyDevice => open(Action::OpenFindMyDevice),
-            Request::OpenBitLocker => open(Action::OpenBitLocker),
-            Request::OpenWifi => open(Action::OpenWifi),
-            Request::OpenNetwork => open(Action::OpenNetwork),
-            Request::OpenBackup => open(Action::OpenBackup),
-            Request::OpenStorage => open(Action::OpenStorage),
-            Request::OpenInstalledApps => open(Action::OpenInstalledApps),
-            Request::OpenReportProblem => open(Action::OpenReportProblem),
-            Request::OpenSuggestFeature => open(Action::OpenSuggestFeature),
-            Request::OpenProtectionHistoryList => open(Action::OpenProtectionHistoryList),
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,
                 Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,
@@ -574,6 +661,7 @@ mod imp {
                 Some(AppState::Unknown) | None => Reply::Unknown,
             },
             Request::AppUpdate(index) => update_app(usize::from(index)),
+            _ => request.page().map_or(Reply::Failed, open),
         }
     }
 
