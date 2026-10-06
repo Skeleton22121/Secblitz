@@ -5,7 +5,7 @@
   <img src="docs/banner-light.webp" width="900" alt="Secblitz">
 </picture>
 
-Secblitz checks the security, privacy and cleanup settings on a Windows PC and fixes the ones you approve. Every change can be undone.
+Secblitz maximizes Windows security and privacy by fixing security holes and misconfigurations in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.
 
 [**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
@@ -20,18 +20,18 @@ Secblitz checks the security, privacy and cleanup settings on a Windows PC and f
 
 ## How it works
 
-1. **Check.** Secblitz reads your antivirus, firewall, sign-in, update and privacy settings. It takes about a minute and changes nothing.
-2. **Choose.** Each item says what it does, what can go wrong without it, and what changes once it is on.
-3. **Fix.** Secblitz applies the fixes you approved, then checks again to confirm each one.
-4. **Undo.** Your original settings are saved first. History puts them back.
+1. **Scan.** Secblitz scans Windows for security holes and privacy problems. It takes about a minute and changes nothing.
+2. **Review.** Each problem says what it protects against and what changes for you.
+3. **Fix.** One click fixes everything you approved. Secblitz then confirms each fix worked.
+4. **Undo.** Every change is recorded. History puts your old settings back.
 
 ## Features
 
-- **Over 50 checks** for virus protection, network, sign-in, updates, startup, disk and privacy. Settings that are already on are left alone.
-- **Clean up apps.** Remove apps that came with Windows. Secblitz keeps a copy of each, so you can restore it later, even offline.
-- **Web protection.** Optional blocking of ads, trackers and dangerous websites.
+- **One-click fixes** for more than 50 security and privacy settings: virus protection, firewall and network, sign-in, updates, startup, disk and privacy. Anything already secure is left alone.
+- **Bloatware removal.** Removes unwanted apps that came with Windows. Secblitz keeps a copy of each, so you can restore it later, even offline.
+- **Ad and malware blocker.** Blocks ads, trackers and malware sites in every browser and app.
 - **Tools.** Microsoft Defender scans and updates, Windows repair, security updates and an optional Bitwarden install.
-- **Background checks** from the notification area, which tell you when a setting changes.
+- **Background monitoring.** Tells you if your protection gets worse.
 - **History** of every change and every removed app.
 - **Six languages:** English, Spanish, French, German, Portuguese and Italian. Light and dark mode.
 
