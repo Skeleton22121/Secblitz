@@ -27,6 +27,10 @@ end;
     # fixed-directory precondition. Bypass Prepare only in this no-install harness.
     $prepare = "function PrepareToInstall(var NeedsRestart: Boolean): String;`r`nbegin`r`n  Result := '';`r`n  if '$case' = 'ResumeMonitor' then ResumeAfterUpgrade := True;`r`n  if '$case' = 'ResumeFilter' then ResumeFilterAfterUpgrade := True;`r`nend;`r`n`r`n"
     $testCode = [regex]::Replace($testCode, '(?s)function PrepareToInstall\(var NeedsRestart: Boolean\): String;.*?(?=procedure CurStepChanged)', $prepare)
+    $messages = @([regex]::Matches($code, "CustomMessage\('([A-Za-z0-9]+)'\)|\{cm:([A-Za-z0-9]+)") |
+        ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } } |
+        Where-Object { $_ -cne 'Failed' } | Sort-Object -Unique |
+        ForEach-Object { "$_=Test message" }) -join "`r`n"
     $harness = @"
 [Setup]
 AppName=SecblitzExitTest
@@ -43,6 +47,7 @@ OutputBaseFilename=$case
 Name: "monitor"; Description: "Monitor test"
 [CustomMessages]
 Failed=Injected maintenance failure
+$messages
 "@ + "`r`n" + $testCode
     $script = Join-Path $work "$case.iss"
     Set-Content -LiteralPath $script -Value $harness -Encoding UTF8
