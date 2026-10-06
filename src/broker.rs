@@ -159,34 +159,49 @@ impl Request {
     }
 
     pub fn opens_window(self) -> bool {
-        matches!(
-            self,
-            Request::OpenWindowsUpdate
-                | Request::OpenWindowsSecurity
-                | Request::OpenEncryption
-                | Request::OpenSignIn
-                | Request::OpenTamperProtection
-                | Request::OpenProtectionHistory
-                | Request::OpenProtectionHistoryList
-                | Request::OpenNetwork
-                | Request::OpenAppBrowserControl
-                | Request::OpenOptionalFeatures
-                | Request::OpenAccounts
-                | Request::OpenCoreIsolation
-                | Request::OpenFirewall
-                | Request::OpenDeviceSecurity
-                | Request::OpenWorkAccounts
-                | Request::OpenRecovery
-                | Request::OpenRemoteDesktop
-                | Request::OpenFindMyDevice
-                | Request::OpenBitLocker
-                | Request::OpenWifi
-                | Request::OpenBackup
-                | Request::OpenStorage
-                | Request::OpenInstalledApps
-                | Request::OpenReportProblem
-                | Request::OpenSuggestFeature
-        )
+        self.page().is_some()
+    }
+
+    /// The settings page or web page this request opens, if that is all it does.
+    pub fn page(self) -> Option<secblitz::actions::Action> {
+        use secblitz::actions::Action;
+        Some(match self {
+            Request::OpenWindowsUpdate => Action::OpenWindowsUpdate,
+            Request::OpenWindowsSecurity => Action::OpenWindowsSecurity,
+            Request::OpenEncryption => Action::OpenEncryptionSettings,
+            Request::OpenSignIn => Action::OpenSignInSettings,
+            Request::OpenTamperProtection => Action::OpenTamperProtection,
+            Request::OpenProtectionHistory => Action::OpenProtectionHistory,
+            Request::OpenProtectionHistoryList => Action::OpenProtectionHistoryList,
+            Request::OpenNetwork => Action::OpenNetwork,
+            Request::OpenAppBrowserControl => Action::OpenAppBrowserControl,
+            Request::OpenOptionalFeatures => Action::OpenOptionalFeatures,
+            Request::OpenAccounts => Action::OpenAccounts,
+            Request::OpenCoreIsolation => Action::OpenCoreIsolation,
+            Request::OpenFirewall => Action::OpenFirewall,
+            Request::OpenDeviceSecurity => Action::OpenDeviceSecurity,
+            Request::OpenWorkAccounts => Action::OpenWorkAccounts,
+            Request::OpenRecovery => Action::OpenRecovery,
+            Request::OpenRemoteDesktop => Action::OpenRemoteDesktop,
+            Request::OpenFindMyDevice => Action::OpenFindMyDevice,
+            Request::OpenBitLocker => Action::OpenBitLocker,
+            Request::OpenWifi => Action::OpenWifi,
+            Request::OpenBackup => Action::OpenBackup,
+            Request::OpenStorage => Action::OpenStorage,
+            Request::OpenInstalledApps => Action::OpenInstalledApps,
+            Request::OpenReportProblem => Action::OpenReportProblem,
+            Request::OpenSuggestFeature => Action::OpenSuggestFeature,
+            Request::InstallBitwarden
+            | Request::BlockSuggestedApps
+            | Request::ReinstallStoreApp(_)
+            | Request::StartStoreApp(_)
+            | Request::StoreAppStatus(_)
+            | Request::UserSetting(..)
+            | Request::AppUpdatesScan
+            | Request::AppUpdateQuery(_)
+            | Request::AppUpdate(_)
+            | Request::BitwardenStatus => return None,
+        })
     }
 
     pub fn encode(self) -> [u8; 3] {

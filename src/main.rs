@@ -574,6 +574,9 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
         if !platform::is_elevated().unwrap_or(false) {
             return launcher::run(lang);
         }
+        if broker.is_none() && launcher::reopen_normally(lang) {
+            return Ok(0);
+        }
         let _guard = match launcher::single_instance()? {
             launcher::Instance::First(guard) => guard,
             launcher::Instance::Existing => return Ok(0),

@@ -582,7 +582,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ButtonKind::Secondary,
             t(label),
             Some(Icon::ExternalLink),
-            Some(Message::Settings(Msg::Feedback(request))),
+            ctx.can_open_pages()
+                .then_some(Message::Settings(Msg::Feedback(request))),
         )
     };
     let feedback = widgets::group(

@@ -95,6 +95,17 @@ pub struct CheckProgress {
     pub items: Vec<(String, String)>,
 }
 
+/// Whether the helper that acts with the person's normal rights is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Helper {
+    Ready,
+    /// Started in an unusual way; opening Secblitz from its shortcut fixes it.
+    Reopen,
+    /// Built-in Administrator or UAC turned off: there are no normal rights to
+    /// act with, so per-account work is not possible. Pages still open.
+    NotOnThisAccount,
+}
+
 pub struct Ctx {
     pub lang: Lang,
     pub palette: Palette,
@@ -107,6 +118,7 @@ pub struct Ctx {
     pub checking: Option<CheckProgress>,
     pub busy: bool,
     pub broker: Option<Arc<crate::broker::Client>>,
+    pub helper: Helper,
     pub state_dir: Option<PathBuf>,
     pub prefs: app::settings::Prefs,
     pub toast: Option<(String, Tone)>,
@@ -126,13 +138,29 @@ impl Ctx {
     pub fn score(&self) -> Option<Score> {
         self.report.as_deref().map(Score::of)
     }
+    /// Settings pages and web links can open: through the helper, or directly
+    /// when this account has no normal rights to open them with.
+    pub fn can_open_pages(&self) -> bool {
+        self.helper != Helper::Reopen
+    }
+
     pub fn broker_task(
         &self,
         request: crate::broker::Request,
         map: impl Fn(Result<crate::broker::Reply, String>) -> Message + Send + 'static,
     ) -> Task<Message> {
         let Some(client) = self.broker.clone() else {
-            return Task::done(map(Err("unavailable".into())));
+            return match request.page() {
+                Some(action) if self.helper == Helper::NotOnThisAccount => Task::perform(
+                    blocking(move || {
+                        secblitz::actions::run(action)
+                            .map(|_| crate::broker::Reply::Done)
+                            .map_err(|e| format!("{e:#}"))
+                    }),
+                    map,
+                ),
+                _ => Task::done(map(Err("unavailable".into()))),
+            };
         };
         if !request.is_read_only() {
             self.forget_check();
@@ -265,6 +293,13 @@ impl App {
             .as_deref()
             .and_then(|id| crate::broker::Client::connect(id).ok())
             .map(Arc::new);
+        let helper = if broker.is_some() {
+            Helper::Ready
+        } else if crate::launcher::has_split_token() {
+            Helper::Reopen
+        } else {
+            Helper::NotOnThisAccount
+        };
         let state_dir = secblitz::platform::app_dir().ok();
         let user = crate::launcher::user_sid();
         let now = app::history::now();
@@ -286,6 +321,7 @@ impl App {
             report,
             busy: false,
             broker,
+            helper,
             state_dir,
             prefs,
             toast: None,
