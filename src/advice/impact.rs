@@ -97,6 +97,11 @@ pub fn control_impact(id: &str) -> &'static str {
             "Your PC sending files to unknown computers over your connection"
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
+        "ai.click_to_do" => "Windows offering to pass what is on your screen to AI tools",
+        "ai.paint" => "Your drawings being sent to online AI tools",
+        "ai.notepad" => "What you type in Notepad being sent to online AI tools",
+        "debloat.widgets_policy" => "News, ads and stories you did not ask for popping up on your PC",
+        "debloat.device_companion_apps" => "Extra apps being suggested when you plug in a new device",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
         "accounts.autologon" => "Anyone who turns on your PC getting straight into your account",
         "remote_desktop.disabled" => "Someone signing in to your PC from another place",

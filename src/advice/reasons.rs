@@ -85,6 +85,15 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: Recall is not available on this PC" => {
             "Recall is not on this PC, so there is nothing to change."
         }
+        "Not offered: Paint was not found on this PC" => {
+            "Paint isn't installed here, so there is nothing to turn off."
+        }
+        "Not offered: Notepad was not found on this PC" => {
+            "The Notepad app isn't installed here, so there is nothing to turn off."
+        }
+        "Not offered: this version of Windows does not have it" => {
+            "This version of Windows doesn't have it, so there is nothing to turn off."
+        }
         "Not offered: this setting is not available on Windows Home" => {
             "Windows Home does not support this setting, so we leave it alone."
         }
