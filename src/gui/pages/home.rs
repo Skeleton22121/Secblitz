@@ -177,14 +177,14 @@ pub fn fills_window(ctx: &Ctx) -> bool {
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     if let Some(error) = &ctx.engine_error {
-        return error_card(state, ctx, "We couldn't start Secblitz", error);
+        return error_card(state, ctx, "We couldn't start Secblitz", error, false);
     }
     let Some(report) = ctx.report.as_deref() else {
         if let Some(progress) = &ctx.checking {
             return scanning(state, ctx, progress);
         }
         if let Some(error) = &ctx.check_error {
-            return error_card(state, ctx, "We couldn't check your PC", error);
+            return error_card(state, ctx, "We couldn't check your PC", error, true);
         }
         return widgets::region(
             p,
@@ -242,32 +242,42 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
 
 // ----------------------------------------------------------------- errors
 
-fn error_card<'a>(state: &State, ctx: &'a Ctx, title: &str, raw: &'a str) -> Element<'a, Message> {
+fn error_card<'a>(
+    state: &State,
+    ctx: &'a Ctx,
+    title: &str,
+    reason: &'a str,
+    can_retry: bool,
+) -> Element<'a, Message> {
     let p = ctx.palette;
-    let content = column![
+    let advice = if can_retry {
+        ctx.t("Something got in the way. Trying again usually fixes it.")
+    } else {
+        ctx.t("Close Secblitz and open it again. If this keeps happening, restart your PC.")
+    };
+    let mut content = column![
         widgets::icon(Icon::ShieldAlert, theme::ICON_ROW, p.bad_text),
         widgets::h2(p, ctx.t(title)),
-        widgets::muted(
-            p,
-            ctx.t("Something got in the way. Trying again usually fixes it.")
-        ),
-        widgets::action(
+        widgets::muted(p, advice),
+    ]
+    .spacing(theme::S4)
+    .align_x(Alignment::Start);
+    if can_retry {
+        content = content.push(widgets::action(
             p,
             ButtonKind::Primary,
             ctx.t("Try again"),
             Some(Icon::Refresh),
-            Some(Message::CheckNow)
-        ),
-        widgets::expander(
-            p,
-            ctx.t("More details"),
-            state.details_open,
-            Message::Home(Msg::ToggleDetails),
-            widgets::small(p, ctx.t(crate::app::flow::plain_failure(raw))),
-        ),
-    ]
-    .spacing(theme::S4)
-    .align_x(Alignment::Start);
+            Some(Message::CheckNow),
+        ));
+    }
+    content = content.push(widgets::expander(
+        p,
+        ctx.t("More details"),
+        state.details_open,
+        Message::Home(Msg::ToggleDetails),
+        widgets::small(p, reason.to_owned()),
+    ));
     widgets::region(p, content).into()
 }
 
@@ -486,7 +496,7 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         Verdict::Unknown => (
             Tone::Neutral,
             ctx.t("We couldn't finish checking"),
-            ctx.t("Some checks didn't finish. Try again in a moment."),
+            ctx.t("Some checks didn't finish. Press Check again. If it keeps happening, restart your PC."),
         ),
     };
 

@@ -176,7 +176,10 @@ pub fn friendly_error(raw: &str) -> &'static str {
         || has(&["timed out"])
     {
         ERR_NETWORK
-    } else if has(&["elevation", "elevated", "administrator", "interactive"]) {
+    } else if has(&["elevation", "elevated", "administrator", "interactive"])
+        || r == "unavailable"
+        || has(&["broker", "launcher did not answer"])
+    {
         ERR_REOPEN
     } else {
         ERR_GENERAL
