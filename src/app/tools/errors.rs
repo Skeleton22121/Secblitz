@@ -107,9 +107,11 @@ pub fn friendly_error(raw: &str) -> &'static str {
     }
 }
 
-/// The plain reason this account cannot run Windows updates, or `None` when it can.
+/// The plain reason this sign-in cannot run Windows updates, or `None` when it
+/// can. Every refusal of the probe is about the account or desktop session, so
+/// the advice is always to use another administrator account or Windows Update.
 pub fn updates_account_note(probe: anyhow::Result<()>) -> Option<&'static str> {
-    probe.err().map(|e| friendly_error(&format!("{e:#}")))
+    probe.err().map(|_| ERR_USE_WINDOWS_UPDATE)
 }
 
 /// The first thing that would stop a repair or an update from starting, using
@@ -317,6 +319,8 @@ mod tests {
         assert_eq!(updates_account_note(Ok(())), None);
         let split = anyhow::anyhow!("Interactive split-token administrator required; service/over-the-shoulder elevation unsupported");
         assert_eq!(updates_account_note(Err(split)), Some(ERR_USE_WINDOWS_UPDATE));
+        let shoulder = anyhow::anyhow!("Elevated caller is not the original desktop user");
+        assert_eq!(updates_account_note(Err(shoulder)), Some(ERR_USE_WINDOWS_UPDATE));
     }
 
     #[test]

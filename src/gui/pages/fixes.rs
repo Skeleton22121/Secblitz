@@ -607,9 +607,19 @@ fn details(
     };
     let why = why.filter(|w| !w.trim().is_empty() && !seen(w));
     let items = items.filter(|(_, lines)| !lines.is_empty());
+    // A short status such as "Can fix" adds nothing under "We can fix this."
+    let echoed = |part: &str| {
+        let part = part.to_lowercase();
+        part.split_whitespace().count() >= 2
+            && shown
+                .iter()
+                .copied()
+                .chain(why.as_deref())
+                .any(|s| s.to_lowercase().contains(&part))
+    };
     let mut parts: Vec<&str> = Vec::new();
     for part in tech.split(" · ").map(str::trim) {
-        if !part.is_empty() && !seen(part) && why.as_deref() != Some(part) && !parts.contains(&part) {
+        if !part.is_empty() && !seen(part) && !echoed(part) && !parts.contains(&part) {
             parts.push(part);
         }
     }
@@ -1314,6 +1324,10 @@ mod tests {
         assert_eq!(more.items.unwrap().1, vec!["Firewall: on".to_string()]);
         let more = details(&["Leaves you open to: x"], Some("Do y.".into()), None, "Not protected · Do y.").unwrap();
         assert_eq!((more.why.as_deref(), more.tech.as_deref()), (Some("Do y."), Some("Not protected")));
+        let more = details(&["Leaves you open to: x"], Some("We can fix this. Junk is blocked.".into()), None, "Can fix").unwrap();
+        assert_eq!(more.tech, None);
+        let more = details(&["Turn it on"], None, None, "On · Managed by your organization").unwrap();
+        assert_eq!(more.tech.as_deref(), Some("On · Managed by your organization"));
     }
 
     #[test]
