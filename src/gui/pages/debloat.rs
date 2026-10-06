@@ -1704,10 +1704,22 @@ fn result_block<'a>(
     col.into()
 }
 
+struct Report<'a> {
+    head: Element<'a, Message>,
+    body: Vec<Element<'a, Message>>,
+    technical: Vec<String>,
+}
+
+type MenuFn<'m, 'a> = &'m dyn Fn(Outcome, &str) -> Element<'a, Message>;
+
+fn push_unique(lines: &mut Vec<String>, line: String) {
+    if !lines.contains(&line) {
+        lines.push(line);
+    }
+}
+
 fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = pal(ctx);
-    let mut head = column![].spacing(theme::S3);
-    let mut body: Vec<Element<'a, Message>> = Vec::new();
     let fates = done
         .steps
         .iter()
@@ -1723,167 +1735,19 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             title.to_string(),
         )
     };
-    let mut technical: Vec<String> = Vec::new();
-    match (&done.batch, &done.error) {
-        (Some(batch), _) => {
-            let removed = names(ctx, batch.removed.iter().map(|r| r.index));
-            let protected = names(ctx, batch.skipped.iter().copied());
-            let failed = names(ctx, batch.failed.iter().map(|f| f.index));
-            let title = if batch.removed.is_empty()
-                && failed.is_empty()
-                && protected.is_empty()
-                && done.kept.is_empty()
-            {
-                ctx.t("Nothing needed removing")
-            } else if removed.is_empty() {
-                ctx.t("No apps were removed")
-            } else {
-                count_text(ctx, removed.len(), "{n} app removed", "{n} apps removed")
-            };
-            let outcome = if failed.is_empty() && done.kept.is_empty() && !removed.is_empty() {
-                Outcome::Removed
-            } else if failed.is_empty() && done.kept.is_empty() {
-                Outcome::Unchanged
-            } else {
-                Outcome::Partly
-            };
-            head = head.push(menu(outcome, &title)).push(widgets::h2(p, title));
-            if !removed.is_empty() {
-                body.push(result_block(
-                    p,
-                    state,
-                    Icon::CheckCircle,
-                    Tone::Good,
-                    ctx.t("Removed"),
-                    removed,
-                ));
-            }
-            if !protected.is_empty() {
-                body.push(result_block(
-                    p,
-                    state,
-                    Icon::Info,
-                    Tone::Neutral,
-                    ctx.t("Windows protects these apps"),
-                    protected,
-                ));
-            }
-            for reason in [Kept::NoSpace, Kept::NoCopy(String::new())] {
-                let list = names(
-                    ctx,
-                    done.kept
-                        .iter()
-                        .filter(|(_, k)| {
-                            std::mem::discriminant(k) == std::mem::discriminant(&reason)
-                        })
-                        .map(|(i, _)| *i),
-                );
-                if !list.is_empty() {
-                    body.push(result_block(
-                        p,
-                        state,
-                        Icon::Info,
-                        Tone::Neutral,
-                        ctx.t(kept_text(&reason)),
-                        list,
-                    ));
-                }
-            }
-            if !failed.is_empty() {
-                body.push(result_block(
-                    p,
-                    state,
-                    Icon::AlertTriangle,
-                    Tone::Bad,
-                    ctx.t("Couldn't remove"),
-                    failed,
-                ));
-                body.push(widgets::small(
-                    p,
-                    ctx.t("Restart your PC and try again. Nothing else was changed."),
-                ));
-            }
-            for f in &batch.failed {
-                let line = format!(
-                    "{}: {}",
-                    ctx.t(app_of(f.index).name),
-                    ctx.t(debloat::friendly::removal_failure(&f.reason))
-                );
-                if !technical.contains(&line) {
-                    technical.push(line);
-                }
-            }
-            for (i, k) in &done.kept {
-                if let Kept::NoCopy(reason) = k {
-                    let line = format!(
-                        "{}: {}",
-                        ctx.t(app_of(*i).name),
-                        ctx.t(debloat::friendly::no_copy(reason))
-                    );
-                    if !technical.contains(&line) {
-                        technical.push(line);
-                    }
-                }
-            }
-        }
-        (None, error) => {
-            let title = ctx.t("We couldn't remove the apps");
-            head = head
-                .push(menu(Outcome::Failed, &title))
-                .push(widgets::h2(p, title));
-            body.push(widgets::muted(
-                p,
-                ctx.t("Nothing was changed. Please try again."),
-            ));
-            if let Some(e) = error {
-                technical.push(ctx.t(debloat::friendly::removal_run_failure(e)));
-            }
-        }
-    }
+    let mut report = match &done.batch {
+        Some(batch) => batch_report(state, done, batch, ctx, &menu),
+        None => failure_report(done, ctx, &menu),
+    };
     if done.asked_to_block {
-        let note: Element<'a, Message> = match (done.policy_ok, done.user_ok) {
-            (_, None) => row![
-                anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
-                widgets::muted(p, ctx.t("Asking Windows not to add suggested apps…"))
-            ]
-            .spacing(theme::S3)
-            .align_y(Alignment::Center)
-            .into(),
-            (Some(true), Some(true)) => widgets::inline_notice(
-                p,
-                Tone::Good,
-                ctx.t("Windows was asked not to add suggested apps again. This works best on Windows Enterprise and Education."),
-            ),
-            (Some(false), Some(false)) | (None, Some(false)) => widgets::inline_notice(
-                p,
-                Tone::Warn,
-                ctx.t("We couldn't change the setting that stops suggested apps."),
-            ),
-            _ => widgets::inline_notice(
-                p,
-                Tone::Neutral,
-                ctx.t("Windows was asked not to add suggested apps again, but this may not stop every suggestion."),
-            ),
-        };
-        body.push(note);
+        report.body.push(suggested_note(state, done, ctx));
     }
-    if !technical.is_empty() {
-        body.push(details(state, ctx, technical));
+    if !report.technical.is_empty() {
+        report.body.push(details(state, ctx, report.technical));
     }
-    let mut sheet = column![head].spacing(theme::S3);
-    if !body.is_empty() {
-        sheet = sheet.push(
-            container(
-                scrollable(
-                    container(column(body).spacing(theme::S3))
-                        .padding(Padding::ZERO.right(theme::S3))
-                        .width(Length::Fill),
-                )
-                .direction(widgets::controls::scrollbar())
-                .style(widgets::controls::scroll_style(p)),
-            )
-            .max_height(RESULT_BODY_MAX),
-        );
+    let mut sheet = column![report.head].spacing(theme::S3);
+    if !report.body.is_empty() {
+        sheet = sheet.push(result_scroll(p, report.body));
     }
     sheet
         .push(space::vertical().height(theme::S1))
@@ -1898,6 +1762,169 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
             )
         ])
         .into()
+}
+
+fn result_head<'a>(
+    p: Palette,
+    menu: MenuFn<'_, 'a>,
+    outcome: Outcome,
+    title: String,
+) -> Element<'a, Message> {
+    column![menu(outcome, &title), widgets::h2(p, title)]
+        .spacing(theme::S3)
+        .into()
+}
+
+fn result_scroll<'a>(p: Palette, body: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    container(
+        scrollable(
+            container(column(body).spacing(theme::S3))
+                .padding(Padding::ZERO.right(theme::S3))
+                .width(Length::Fill),
+        )
+        .direction(widgets::controls::scrollbar())
+        .style(widgets::controls::scroll_style(p)),
+    )
+    .max_height(RESULT_BODY_MAX)
+    .into()
+}
+
+fn batch_report<'a>(
+    state: &'a State,
+    done: &'a Finished,
+    batch: &Batch,
+    ctx: &'a Ctx,
+    menu: MenuFn<'_, 'a>,
+) -> Report<'a> {
+    let p = pal(ctx);
+    let removed = names(ctx, batch.removed.iter().map(|r| r.index));
+    let protected = names(ctx, batch.skipped.iter().copied());
+    let failed = names(ctx, batch.failed.iter().map(|f| f.index));
+    let title = if batch.removed.is_empty()
+        && failed.is_empty()
+        && protected.is_empty()
+        && done.kept.is_empty()
+    {
+        ctx.t("Nothing needed removing")
+    } else if removed.is_empty() {
+        ctx.t("No apps were removed")
+    } else {
+        count_text(ctx, removed.len(), "{n} app removed", "{n} apps removed")
+    };
+    let outcome = if failed.is_empty() && done.kept.is_empty() && !removed.is_empty() {
+        Outcome::Removed
+    } else if failed.is_empty() && done.kept.is_empty() {
+        Outcome::Unchanged
+    } else {
+        Outcome::Partly
+    };
+    let head = result_head(p, menu, outcome, title);
+    let mut body: Vec<Element<'a, Message>> = Vec::new();
+    let mut block = |icon: Icon, tone: Tone, title: &str, list: Vec<(u16, String)>| {
+        if !list.is_empty() {
+            body.push(result_block(p, state, icon, tone, ctx.t(title), list));
+        }
+    };
+    block(Icon::CheckCircle, Tone::Good, "Removed", removed);
+    block(
+        Icon::Info,
+        Tone::Neutral,
+        "Windows protects these apps",
+        protected,
+    );
+    for reason in [Kept::NoSpace, Kept::NoCopy(String::new())] {
+        let list = names(
+            ctx,
+            done.kept
+                .iter()
+                .filter(|(_, k)| std::mem::discriminant(k) == std::mem::discriminant(&reason))
+                .map(|(i, _)| *i),
+        );
+        block(Icon::Info, Tone::Neutral, kept_text(&reason), list);
+    }
+    let any_failed = !failed.is_empty();
+    block(Icon::AlertTriangle, Tone::Bad, "Couldn't remove", failed);
+    if any_failed {
+        body.push(widgets::small(
+            p,
+            ctx.t("Restart your PC and try again. Nothing else was changed."),
+        ));
+    }
+    let mut technical = Vec::new();
+    for f in &batch.failed {
+        push_unique(
+            &mut technical,
+            format!(
+                "{}: {}",
+                ctx.t(app_of(f.index).name),
+                ctx.t(debloat::friendly::removal_failure(&f.reason))
+            ),
+        );
+    }
+    for (i, k) in &done.kept {
+        if let Kept::NoCopy(reason) = k {
+            push_unique(
+                &mut technical,
+                format!(
+                    "{}: {}",
+                    ctx.t(app_of(*i).name),
+                    ctx.t(debloat::friendly::no_copy(reason))
+                ),
+            );
+        }
+    }
+    Report {
+        head,
+        body,
+        technical,
+    }
+}
+
+fn failure_report<'a>(done: &'a Finished, ctx: &'a Ctx, menu: MenuFn<'_, 'a>) -> Report<'a> {
+    let p = pal(ctx);
+    let head = result_head(p, menu, Outcome::Failed, ctx.t("We couldn't remove the apps"));
+    let body = vec![widgets::muted(
+        p,
+        ctx.t("Nothing was changed. Please try again."),
+    )];
+    let technical = done
+        .error
+        .iter()
+        .map(|e| ctx.t(debloat::friendly::removal_run_failure(e)))
+        .collect();
+    Report {
+        head,
+        body,
+        technical,
+    }
+}
+
+fn suggested_note<'a>(state: &State, done: &Finished, ctx: &Ctx) -> Element<'a, Message> {
+    let p = pal(ctx);
+    match (done.policy_ok, done.user_ok) {
+        (_, None) => row![
+            anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
+            widgets::muted(p, ctx.t("Asking Windows not to add suggested apps…"))
+        ]
+        .spacing(theme::S3)
+        .align_y(Alignment::Center)
+        .into(),
+        (Some(true), Some(true)) => widgets::inline_notice(
+            p,
+            Tone::Good,
+            ctx.t("Windows was asked not to add suggested apps again. This works best on Windows Enterprise and Education."),
+        ),
+        (Some(false), Some(false)) | (None, Some(false)) => widgets::inline_notice(
+            p,
+            Tone::Warn,
+            ctx.t("We couldn't change the setting that stops suggested apps."),
+        ),
+        _ => widgets::inline_notice(
+            p,
+            Tone::Neutral,
+            ctx.t("Windows was asked not to add suggested apps again, but this may not stop every suggestion."),
+        ),
+    }
 }
 
 fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a, Message> {
