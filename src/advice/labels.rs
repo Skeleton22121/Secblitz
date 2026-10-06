@@ -66,6 +66,11 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.diagnostic_data_level" => "Diagnostic data",
         "privacy.delivery_optimization" => "Update sharing",
         "privacy.clipboard_sync" => "Clipboard sync",
+        "ai.click_to_do" => "Click to Do",
+        "ai.paint" => "AI tools in Paint",
+        "ai.notepad" => "AI tools in Notepad",
+        "debloat.widgets_policy" => "Widgets button and news board",
+        "debloat.device_companion_apps" => "Extra apps for new devices",
         "defender.exclusions_risky" => "Antivirus skip list",
         "accounts.autologon" => "Automatic sign-in",
         "remote_desktop.disabled" => "Remote access",
@@ -192,6 +197,11 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
         | "privacy.clipboard_sync"
+        | "ai.click_to_do"
+        | "ai.paint"
+        | "ai.notepad"
+        | "debloat.widgets_policy"
+        | "debloat.device_companion_apps"
         | "services.unquoted_paths"
         | "firewall.user_dir_inbound_allow"
         | "net.hosts_file"
