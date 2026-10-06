@@ -29,10 +29,13 @@ pub enum Page {
     OptionalFeatures,
     Wifi,
     Network,
+    Backup,
+    Storage,
+    InstalledApps,
 }
 
 impl Page {
-    pub const ALL: [Page; 20] = [
+    pub const ALL: [Page; 23] = [
         Page::CoreIsolation,
         Page::Firewall,
         Page::DeviceSecurity,
@@ -53,6 +56,9 @@ impl Page {
         Page::OptionalFeatures,
         Page::Wifi,
         Page::Network,
+        Page::Backup,
+        Page::Storage,
+        Page::InstalledApps,
     ];
 
     /// The page's name as Windows shows it. Also what to type in Start.
@@ -78,6 +84,9 @@ impl Page {
             Page::OptionalFeatures => "Optional features",
             Page::Wifi => "Wi-Fi settings",
             Page::Network => "Network and internet",
+            Page::Backup => "Windows Backup",
+            Page::Storage => "Storage",
+            Page::InstalledApps => "Installed apps",
         }
     }
 
@@ -104,6 +113,9 @@ impl Page {
             Page::OptionalFeatures => "Open Optional features",
             Page::Wifi => "Open Wi-Fi settings",
             Page::Network => "Open Network and internet",
+            Page::Backup => "Open Windows Backup",
+            Page::Storage => "Open Storage",
+            Page::InstalledApps => "Open Installed apps",
         }
     }
 
@@ -129,6 +141,9 @@ impl Page {
             Page::OptionalFeatures => Action::OpenOptionalFeatures,
             Page::Wifi => Action::OpenWifi,
             Page::Network => Action::OpenNetwork,
+            Page::Backup => Action::OpenBackup,
+            Page::Storage => Action::OpenStorage,
+            Page::InstalledApps => Action::OpenInstalledApps,
         }
     }
 
@@ -155,6 +170,9 @@ impl Page {
             Page::OptionalFeatures => Request::OpenOptionalFeatures,
             Page::Wifi => Request::OpenWifi,
             Page::Network => Request::OpenNetwork,
+            Page::Backup => Request::OpenBackup,
+            Page::Storage => Request::OpenStorage,
+            Page::InstalledApps => Request::OpenInstalledApps,
         }
     }
 

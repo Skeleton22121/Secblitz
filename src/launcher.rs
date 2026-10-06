@@ -548,6 +548,9 @@ mod imp {
             Request::OpenBitLocker => open(Action::OpenBitLocker),
             Request::OpenWifi => open(Action::OpenWifi),
             Request::OpenNetwork => open(Action::OpenNetwork),
+            Request::OpenBackup => open(Action::OpenBackup),
+            Request::OpenStorage => open(Action::OpenStorage),
+            Request::OpenInstalledApps => open(Action::OpenInstalledApps),
             Request::OpenProtectionHistoryList => open(Action::OpenProtectionHistoryList),
             Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
                 Ok(()) => Reply::Done,

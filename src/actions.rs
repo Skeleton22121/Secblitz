@@ -28,6 +28,9 @@ pub enum Action {
     OpenBitLocker,
     OpenWifi,
     OpenNetwork,
+    OpenBackup,
+    OpenStorage,
+    OpenInstalledApps,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -110,6 +113,9 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenFindMyDevice => Uri("ms-settings:findmydevice"),
         Action::OpenWifi => Uri("ms-settings:network-wifi"),
         Action::OpenNetwork => Uri("ms-settings:network"),
+        Action::OpenBackup => Uri("ms-settings:backup"),
+        Action::OpenStorage => Uri("ms-settings:storagesense"),
+        Action::OpenInstalledApps => Uri("ms-settings:appsfeatures"),
         Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
         _ => return None,
     })
@@ -154,6 +160,9 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | "ms-settings:findmydevice"
                 | "ms-settings:network-wifi"
                 | "ms-settings:network"
+                | "ms-settings:backup"
+                | "ms-settings:storagesense"
+                | "ms-settings:appsfeatures"
         ),
         "Unknown settings URI"
     );
@@ -275,6 +284,9 @@ mod tests {
             (Action::OpenFindMyDevice, "ms-settings:findmydevice"),
             (Action::OpenWifi, "ms-settings:network-wifi"),
             (Action::OpenNetwork, "ms-settings:network"),
+            (Action::OpenBackup, "ms-settings:backup"),
+            (Action::OpenStorage, "ms-settings:storagesense"),
+            (Action::OpenInstalledApps, "ms-settings:appsfeatures"),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
@@ -363,6 +375,9 @@ mod tests {
             Action::OpenBitLocker,
             Action::OpenWifi,
             Action::OpenNetwork,
+            Action::OpenBackup,
+            Action::OpenStorage,
+            Action::OpenInstalledApps,
         ] {
             assert!(run(action).is_err());
         }

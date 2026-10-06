@@ -50,6 +50,12 @@ pub enum Request {
     OpenBitLocker,
     /// Settings > Network and internet > Wi-Fi.
     OpenWifi,
+    /// Settings > Accounts > Windows backup.
+    OpenBackup,
+    /// Settings > System > Storage.
+    OpenStorage,
+    /// Settings > Apps > Installed apps.
+    OpenInstalledApps,
     /// Read, apply or undo one per-user (HKCU) setting; see `user_settings`.
     UserSetting(Setting, Op),
     /// Run `winget upgrade` once as the signed-in user and remember which
@@ -173,6 +179,9 @@ impl Request {
                 | Request::OpenFindMyDevice
                 | Request::OpenBitLocker
                 | Request::OpenWifi
+                | Request::OpenBackup
+                | Request::OpenStorage
+                | Request::OpenInstalledApps
         )
     }
 
@@ -201,6 +210,9 @@ impl Request {
             Request::OpenWifi => (28, 0),
             Request::OpenProtectionHistoryList => (29, 0),
             Request::OpenNetwork => (30, 0),
+            Request::OpenBackup => (31, 0),
+            Request::OpenStorage => (32, 0),
+            Request::OpenInstalledApps => (33, 0),
             // One byte for the setting, one for the operation.
             Request::UserSetting(setting, op) => (
                 13,
@@ -255,6 +267,9 @@ impl Request {
             28 => Request::OpenWifi,
             29 => Request::OpenProtectionHistoryList,
             30 => Request::OpenNetwork,
+            31 => Request::OpenBackup,
+            32 => Request::OpenStorage,
+            33 => Request::OpenInstalledApps,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -584,6 +599,9 @@ mod tests {
             Request::OpenWifi,
             Request::OpenProtectionHistoryList,
             Request::OpenNetwork,
+            Request::OpenBackup,
+            Request::OpenStorage,
+            Request::OpenInstalledApps,
             Request::AppUpdatesScan,
             Request::AppUpdateQuery(0),
             Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
@@ -621,10 +639,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 31, 32, 100, 255] {
+        for kind in [0u8, 34, 35, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=30).chain([17]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=33).chain([17]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
