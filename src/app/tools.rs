@@ -1181,6 +1181,60 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
     }
 }
 
+/// The Windows page that helps with a whole area, for a tip whose checks
+/// have no page of their own. None only where Windows has no such page.
+pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
+    use crate::guide::Page;
+    use diag::ProbeId as P;
+    Some(match id {
+        P::UpdateCache | P::UpdateHistory | P::OsSupport | P::SecureBootCerts | P::UpdatePolicy => {
+            Page::WindowsUpdate
+        }
+        P::DefenderHealth | P::DefenderPolicy | P::DefenderProtection => Page::ProtectionHistory,
+        P::SecurityProviders => Page::WindowsSecurity,
+        P::Management => Page::WorkAccounts,
+        P::SecureBoot => Page::Recovery,
+        P::Tpm => Page::DeviceSecurity,
+        P::BitLocker => Page::Encryption,
+        P::Vbs => Page::CoreIsolation,
+        P::Accounts | P::AccountHygiene | P::AccountSetup => Page::OtherUsers,
+        P::RemoteAccess => Page::RemoteDesktop,
+        P::Software => Page::InstalledApps,
+        P::Storage | P::Backup => Page::Backup,
+        P::Ntfs => Page::Storage,
+        P::Adapters | P::Dns | P::Proxy | P::Vpn | P::DnsEncryption => Page::Network,
+        P::WifiSecurity => Page::Wifi,
+        P::SmartScreen => Page::AppBrowser,
+        P::LegacyFeatures => Page::OptionalFeatures,
+        P::FirewallRules => Page::Firewall,
+        P::WindowsHello => Page::SignIn,
+        // Settings has no page for these: browser add-ons live in the
+        // browser, recovery tools have no switch, and the rest are fixes or
+        // steps on their own checks.
+        P::BrowserExtensions
+        | P::WinRe
+        | P::Permissions
+        | P::HostsFile
+        | P::Persistence
+        | P::Sharing
+        | P::Autostart => return None,
+    })
+}
+
+/// The same steps Protection shows for an area, for a tip whose checks have
+/// none of their own.
+pub fn probe_guide(id: diag::ProbeId) -> Option<&'static crate::guide::Guide> {
+    use diag::ProbeId as P;
+    crate::guide::guide(match id {
+        P::UpdateCache | P::UpdateHistory => "Windows updates",
+        P::OsSupport => "Windows lifecycle",
+        P::BitLocker => "Device encryption",
+        P::SecureBoot => "Secure Boot",
+        P::Management => "Management and mutation eligibility",
+        _ => return None,
+    })
+}
+
 /// One friendly suggestion shown when something needs a look.
 pub fn tip_advice(id: diag::ProbeId) -> &'static str {
     use diag::ProbeId as P;
@@ -1199,7 +1253,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::Accounts => "Use a normal account every day, and switch off the guest account.",
         P::RemoteAccess => "Switch off remote access if you don't use it.",
         P::Software => "Remove old apps that no longer get safety updates.",
-        P::BrowserExtensions => "Remove browser add-ons you don't use.",
+        P::BrowserExtensions => "In your browser's menu, open Extensions or Add-ons and remove the ones you don't use.",
         P::Storage => "A drive is showing signs of wear. Back up your files soon.",
         P::Ntfs => "Free up disk space or check your drive for errors.",
         P::Backup => "No backup found. Set up a regular backup of your files.",
@@ -1626,22 +1680,22 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, Some(text)) => text,
                 (true, None) => tip_advice(id),
             },
-            open: match (look, lead.and_then(rule_open), id) {
-                (false, _, _) => None,
-                (true, _, _) if restart => None,
-                (true, Some(open), _) => Some(open),
-                (true, None, diag::ProbeId::UpdateCache | diag::ProbeId::UpdateHistory) => {
-                    Some(secblitz::actions::Action::OpenWindowsUpdate)
-                }
-                (true, None, _) => None,
+            open: match (look, lead.and_then(rule_open)) {
+                (false, _) => None,
+                (true, _) if restart => None,
+                (true, Some(open)) => Some(open),
+                (true, None) => probe_page(id).map(crate::guide::Page::action),
             },
             scan: look && scan,
             // The lead's own steps, else the first check that needs a look
             // and has steps (a fix that is not offered must not hide them).
-            guide: lead.filter(|_| !restart).and_then(|lead| {
-                crate::guide::guide(lead)
-                    .or_else(|| attention.iter().copied().find_map(crate::guide::guide))
-            }),
+            guide: lead
+                .filter(|_| !restart)
+                .and_then(|lead| {
+                    crate::guide::guide(lead)
+                        .or_else(|| attention.iter().copied().find_map(crate::guide::guide))
+                })
+                .or_else(|| probe_guide(id).filter(|_| look && !restart)),
             fix: lead.and_then(rule_fix),
             fix_advice: lead.map_or("", rule_fix_advice),
             restart,
@@ -2545,6 +2599,43 @@ mod tests {
 
     /// A tip that still needs the person never ends at a bare sentence: it
     /// has a Protection fix, an in-app action, or a guide with real steps.
+    #[test]
+    fn every_area_tip_without_its_own_check_opens_a_page_or_shows_steps() {
+        use diag::ProbeId as P;
+        // No Windows page exists for these; their checks bring their own fix,
+        // steps or plain instruction (see probe_page).
+        let none = [
+            P::BrowserExtensions,
+            P::WinRe,
+            P::Permissions,
+            P::HostsFile,
+            P::Persistence,
+            P::Sharing,
+            P::Autostart,
+        ];
+        for &id in P::ALL {
+            let tip = Tip {
+                title: tip_title(id),
+                state: TipState::Look,
+                advice: tip_advice(id),
+                open: probe_page(id).map(crate::guide::Page::action),
+                scan: false,
+                guide: probe_guide(id),
+                fix: None,
+                fix_advice: "",
+                restart: false,
+                remove_threats: false,
+                explain: None,
+            };
+            let action = tip_action(&tip, TipFix::Manual, true);
+            assert_eq!(action == TipAction::None, none.contains(&id), "{id:?}: {action:?}");
+            // Steps always start from the page the tip would open.
+            if let (Some(g), Some(page)) = (probe_guide(id), probe_page(id)) {
+                assert_eq!(g.page, page, "{id:?}");
+            }
+        }
+    }
+
     #[test]
     fn every_tip_that_needs_the_person_has_a_fix_an_action_or_steps() {
         for rule in [
