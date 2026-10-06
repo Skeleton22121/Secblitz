@@ -1,6 +1,7 @@
 //! The full-window checking screen and the status ticker.
 use super::anim::{self, arc_path, partial_line, stroke, EMPHASIZED};
 use super::hairline::magnifier::{self, Magnifier};
+use super::handoff;
 use super::progress;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets;
@@ -53,14 +54,22 @@ pub fn ticker_style(depth: f32) -> (f32, f32) {
 
 const SCREEN_REST: f32 = 64.0 + progress::HEIGHT + TICKER_HEIGHT + 3.0 * theme::S6 + theme::S8;
 
+/// What the status ticker shows: the lines so far, the clock, and whether the
+/// work is over.
+#[derive(Clone, Copy)]
+pub struct Feed<'a> {
+    pub lines: &'a [(String, Instant)],
+    pub now: Instant,
+    pub finished: bool,
+}
+
 pub fn checking_screen<'a>(
     p: Palette,
     title: String,
     subtitle: String,
     ratio: f32,
     art: Magnifier,
-    lines: &'a [(String, Instant)],
-    now: Instant,
+    feed: Feed<'a>,
 ) -> Element<'a, Message> {
     responsive(move |size| {
         let body = column![
@@ -71,8 +80,18 @@ pub fn checking_screen<'a>(
             ]
             .spacing(theme::S1)
             .align_x(Alignment::Center),
-            container(progress::bar_eased(p, ratio, Tone::Neutral)).max_width(theme::MAX_READABLE),
-            container(status_ticker(p, lines, now)).max_width(theme::MAX_READABLE),
+            container(progress::bar_eased_in(
+                p,
+                ratio,
+                Tone::Neutral,
+                if feed.finished {
+                    handoff::FILL
+                } else {
+                    anim::SLOW
+                },
+            ))
+            .max_width(theme::MAX_READABLE),
+            container(status_ticker(p, feed.lines, feed.now, feed.finished)).max_width(theme::MAX_READABLE),
         ]
         .spacing(theme::S6)
         .align_x(Alignment::Center)
@@ -93,6 +112,7 @@ struct Ticker<'a> {
     p: Palette,
     lines: &'a [(String, Instant)],
     now: Instant,
+    finished: bool,
 }
 
 impl canvas::Program<Message> for Ticker<'_> {
@@ -123,7 +143,7 @@ impl canvas::Program<Message> for Ticker<'_> {
             let y = (slot + 0.5) * ROW;
             let col = theme::mix(p.text, p.text_muted, muted).scale_alpha(alpha);
             let mx = 12.0;
-            if j == lines.len() - 1 && muted < 0.5 {
+            if j == lines.len() - 1 && muted < 0.5 && !self.finished {
                 let age = self.now.saturating_duration_since(*at).as_secs_f32();
                 let (a0, len) = anim::spinner_arc(age);
                 f.stroke(
@@ -164,14 +184,20 @@ impl canvas::Program<Message> for Ticker<'_> {
 }
 
 /// The last few status lines of the check. `lines` are `(text, started_at)`
-/// oldest first; when a line is appended it eases in from below (450 ms,
+/// oldest first; once `finished` the last one shows a tick too. When a line is appended it eases in from below (450 ms,
 /// emphasized decelerate) while the older ones glide up, soften and fade.
 pub fn status_ticker<'a>(
     p: Palette,
     lines: &'a [(String, Instant)],
     now: Instant,
+    finished: bool,
 ) -> Element<'a, Message> {
-    canvas::Canvas::new(Ticker { p, lines, now })
+    canvas::Canvas::new(Ticker {
+        p,
+        lines,
+        now,
+        finished,
+    })
         .width(Length::Fill)
         .height(Length::Fixed(TICKER_HEIGHT))
         .into()

@@ -886,9 +886,14 @@ fn count_text(ctx: &Ctx, n: usize) -> String {
 
 
 fn check_status(ctx: &Ctx) -> (f32, String) {
-    let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
-    let total = ctx.catalog.available.len().max(done + 1);
-    let ratio = (done as f32 / total as f32).min(0.96);
+    let seen = ctx.checking.as_ref().map_or(0, |c| c.items.len());
+    let (done, total, ratio) = if ctx.finishing {
+        let all = ctx.catalog.available.len().max(seen);
+        (all, all, 1.0)
+    } else {
+        let total = ctx.catalog.available.len().max(seen + 1);
+        (seen, total, (seen as f32 / total as f32).min(0.96))
+    };
     let sub = if done > 0 {
         ctx.t("{a} of {b} checked")
             .replace("{a}", &done.to_string())
@@ -903,7 +908,11 @@ fn check_art(state: &State, ctx: &Ctx, plate: Plate, ratio: f32) -> Magnifier {
     Magnifier {
         p: ctx.palette,
         plate,
-        status: Status::Checking,
+        status: if ctx.finishing {
+            Status::Done
+        } else {
+            Status::Checking
+        },
         progress: (!ctx.catalog.available.is_empty()).then_some(ratio),
         changed: state.scan.unwrap_or(state.now),
         now: state.now,
@@ -919,8 +928,11 @@ fn first_check<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         sub,
         ratio,
         check_art(state, ctx, Plate::Bg, ratio),
-        &state.lines,
-        state.now,
+        scan::Feed {
+            lines: &state.lines,
+            now: state.now,
+            finished: ctx.finishing,
+        },
     )
 }
 
@@ -937,7 +949,7 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if live {
         text = text
             .push(space::vertical().height(theme::S2))
-            .push(scan::status_ticker(p, &state.lines, state.now));
+            .push(scan::status_ticker(p, &state.lines, state.now, false));
     }
     let content = row![
         check_art(state, ctx, Plate::Surface, ratio).view(magnifier::COMPACT),
@@ -1040,14 +1052,17 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ),
         ));
     }
-    for group in attention_groups(state, ctx, report, rows) {
-        body = body.push(group);
-    }
-    for group in other_groups(state, ctx, rows) {
-        body = body.push(group);
-    }
+    let mut groups = attention_groups(state, ctx, report, rows);
+    groups.extend(other_groups(state, ctx, rows));
     if !rows.protected.is_empty() {
-        body = body.push(protected_group(state, ctx, rows));
+        groups.push(protected_group(state, ctx, rows));
+    }
+    for (i, group) in groups.into_iter().enumerate() {
+        body = body.push(widgets::appear::settle_after(
+            group,
+            p.bg,
+            widgets::appear::stagger_delay(i),
+        ));
     }
     page(body)
 }

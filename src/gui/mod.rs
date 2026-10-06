@@ -133,6 +133,8 @@ pub struct Ctx {
     pub check_error: Option<String>,
     pub checked_at: Option<u64>,
     pub checking: Option<CheckProgress>,
+    /// The first check has ended and its screen is settling before the result shows.
+    pub finishing: bool,
     pub busy: bool,
     pub broker: Option<Arc<crate::broker::Client>>,
     pub helper: Helper,
@@ -216,6 +218,7 @@ pub enum Message {
     ToastExpire(u32),
     ToastGone,
     PageFrame(std::time::Instant),
+    HandoffLeave(std::time::Instant),
     Tab(bool),
     Home(home::Msg),
     Fixes(fixes::Msg),
@@ -263,6 +266,13 @@ impl Recheck {
     }
 }
 
+/// A finished first check whose result waits for the checking screen to settle.
+struct Handoff {
+    start: std::time::Instant,
+    leaving: Option<std::time::Instant>,
+    event: worker::Event,
+}
+
 pub struct App {
     pub page: Page,
     pub ctx: Ctx,
@@ -278,6 +288,8 @@ pub struct App {
     toast_leaving: bool,
     entered: Option<std::time::Instant>,
     enter_t: f32,
+    handoff: Option<Handoff>,
+    leave_t: f32,
     warmed: [bool; 3],
     flight: [bool; 3],
     warm_at: [Option<std::time::Instant>; 3],
@@ -335,6 +347,7 @@ impl App {
             check_error: None,
             checked_at,
             checking: report.is_none().then(CheckProgress::default),
+            finishing: false,
             report,
             busy: false,
             broker,
@@ -359,6 +372,8 @@ impl App {
             toast_leaving: false,
             entered: None,
             enter_t: 1.0,
+            handoff: None,
+            leave_t: 0.0,
             warmed: [false; 3],
             flight: [false; 3],
             warm_at: [None; 3],
@@ -397,10 +412,12 @@ impl App {
                 if page == self.page {
                     return Task::none();
                 }
+                let finished = self.finish_handoff();
                 self.page = page;
                 self.ctx.explain_open = None;
                 self.begin_entrance();
                 Task::batch([
+                    finished,
                     self.enter_page(page),
                     iced::widget::operation::snap_to(
                         PAGE_SCROLL,
@@ -408,8 +425,11 @@ impl App {
                     ),
                 ])
             }
-            Message::PageFrame(now) => {
-                self.step_entrance(now);
+            Message::PageFrame(now) => self.step_frame(now),
+            Message::HandoffLeave(start) => {
+                if let Some(h) = self.handoff.as_mut().filter(|h| h.start == start) {
+                    h.leaving = Some(std::time::Instant::now());
+                }
                 Task::none()
             }
             Message::Tab(back) => {
@@ -535,6 +555,40 @@ impl App {
     }
 
     fn on_worker(&mut self, event: worker::Event) -> Task<Message> {
+        let first_result = matches!(&event, worker::Event::Checked(Ok(_)))
+            && self.ctx.report.is_none()
+            && self.ctx.checking.is_some()
+            && self.handoff.is_none()
+            && matches!(self.page, Page::Home | Page::Fixes)
+            && !widgets::anim::reduced();
+        if first_result {
+            let start = std::time::Instant::now();
+            self.ctx.finishing = true;
+            self.handoff = Some(Handoff {
+                start,
+                leaving: None,
+                event,
+            });
+            let wait = widgets::handoff::leave_at();
+            return Task::perform(blocking(move || std::thread::sleep(wait)), move |_| {
+                Message::HandoffLeave(start)
+            });
+        }
+        self.process_worker(event)
+    }
+
+    /// Shows the held result now. Called when the hand-off has run its course
+    /// or the person has moved on.
+    fn finish_handoff(&mut self) -> Task<Message> {
+        let Some(h) = self.handoff.take() else {
+            return Task::none();
+        };
+        self.ctx.finishing = false;
+        self.leave_t = 0.0;
+        self.process_worker(h.event)
+    }
+
+    fn process_worker(&mut self, event: worker::Event) -> Task<Message> {
         use worker::Event as E;
         match &event {
             E::Opened(Ok(catalog)) => self.ctx.catalog = catalog.clone(),
@@ -726,7 +780,6 @@ impl App {
         }
         self.entered = Some(std::time::Instant::now());
         self.enter_t = 0.0;
-        self.apply_fade();
     }
 
     fn step_entrance(&mut self, now: std::time::Instant) {
@@ -738,19 +791,27 @@ impl App {
             self.finish_entrance();
         } else {
             self.enter_t = t;
-            self.apply_fade();
         }
     }
 
     fn finish_entrance(&mut self) {
         self.entered = None;
         self.enter_t = 1.0;
-        self.ctx.palette = Palette::of(self.ctx.palette.mode);
     }
 
-    fn apply_fade(&mut self) {
-        let base = Palette::of(self.ctx.palette.mode);
-        self.ctx.palette = widgets::appear::fade_palette(&base, base.bg, 0.3 + 0.7 * self.enter_t);
+    fn step_frame(&mut self, now: std::time::Instant) -> Task<Message> {
+        let Some(at) = self.handoff.as_ref().and_then(|h| h.leaving) else {
+            self.step_entrance(now);
+            return Task::none();
+        };
+        let since = widgets::handoff::leave_at() + now.saturating_duration_since(at);
+        if let widgets::handoff::Stage::Leaving(t) = widgets::handoff::stage(since) {
+            self.leave_t = t;
+            return Task::none();
+        }
+        let task = self.finish_handoff();
+        self.begin_entrance();
+        task
     }
 
     fn begin_toast_exit(&mut self) -> Task<Message> {
@@ -784,12 +845,18 @@ impl App {
             Page::Fixes => fixes::fills_window(&self.ctx),
             _ => false,
         };
-        let column_content = widgets::appear::lift(
+        let look = if self.handoff.as_ref().is_some_and(|h| h.leaving.is_some()) {
+            widgets::appear::leave_look(self.leave_t)
+        } else {
+            widgets::appear::page_look(self.enter_t)
+        };
+        let column_content = widgets::appear::enter(
             container(content)
                 .max_width(PAGE_MAX_WIDTH)
                 .width(Length::Fill)
                 .height(if fills { Length::Fill } else { Length::Shrink }),
-            widgets::appear::ENTER_RISE * (1.0 - self.enter_t),
+            look,
+            p.bg,
         );
         let footer = match self.page {
             Page::Debloat => debloat::footer(&self.debloat, &self.ctx),
@@ -997,7 +1064,9 @@ impl App {
             } => Some(Message::Tab(modifiers.shift())),
             _ => None,
         });
-        let entrance = if self.entered.is_some() {
+        let entrance = if self.entered.is_some()
+            || self.handoff.as_ref().is_some_and(|h| h.leaving.is_some())
+        {
             iced::window::frames().map(Message::PageFrame)
         } else {
             Subscription::none()
