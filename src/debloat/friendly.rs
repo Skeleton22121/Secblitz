@@ -48,7 +48,7 @@ pub fn no_copy(raw: &str) -> &'static str {
     }
 }
 
-/// Why the whole list of apps could not be read, or a whole run failed.
+/// Why the whole list of apps could not be read.
 pub fn run_failure(raw: &str) -> &'static str {
     let r = raw.to_lowercase();
     if r.contains("took too long") {
@@ -57,6 +57,18 @@ pub fn run_failure(raw: &str) -> &'static str {
         "This works on Windows only."
     } else {
         "Windows didn't give Secblitz the list of apps. Restart your PC and try again. If it still fails, check for a Secblitz update."
+    }
+}
+
+/// Why a whole removal run failed.
+pub fn removal_run_failure(raw: &str) -> &'static str {
+    let r = raw.to_lowercase();
+    if r.contains("took too long") {
+        "Windows took too long to answer. Restart your PC and try again."
+    } else if r.contains("only available") {
+        "This works on Windows only."
+    } else {
+        "Windows couldn't remove the apps. Restart your PC and try again. If it still fails, check for a Secblitz update."
     }
 }
 
@@ -71,6 +83,21 @@ mod tests {
         assert!(removal_failure("Access is denied. (0x80070005)").contains("Sign in"));
         assert!(no_copy("not enough space").contains("Free up"));
         assert!(run_failure("Windows took too long to answer").contains("too long"));
+        assert!(removal_run_failure("Windows took too long to answer").contains("too long"));
+        assert!(removal_run_failure("odd failure").contains("remove the apps"));
+        assert!(!run_failure("odd failure").contains("remove the apps"));
+        assert_eq!(run_failure("Only available on Windows"), "This works on Windows only.");
+        assert_eq!(
+            removal_run_failure("Only available on Windows"),
+            "This works on Windows only."
+        );
+        for out in [
+            removal_failure("Only available on Windows"),
+            no_copy("Only available on Windows"),
+        ] {
+            assert!(!out.contains("Only available"));
+            assert!(out.contains("Restart your PC"));
+        }
     }
 
     #[test]

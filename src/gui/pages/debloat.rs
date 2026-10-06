@@ -1751,7 +1751,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
                     ctx.t("Nothing was changed. Please try again."),
                 ));
             if let Some(e) = error {
-                technical.push(ctx.t(debloat::friendly::run_failure(e)));
+                technical.push(ctx.t(debloat::friendly::removal_run_failure(e)));
             }
         }
     }
