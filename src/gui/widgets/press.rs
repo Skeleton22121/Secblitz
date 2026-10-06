@@ -518,6 +518,7 @@ mod tests {
 
     #[test]
     fn track_runs_and_stops() {
+        let _m = anim::forced::set(false);
         let mut t = Track::default();
         t.target(1.0);
         assert!(t.running());

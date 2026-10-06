@@ -65,6 +65,10 @@ const FILE: &str = "gui-prefs.json";
 const LIMIT: u64 = 8 * 1024;
 
 fn path() -> anyhow::Result<PathBuf> {
+    // Tests run elevated on Windows and must not share or overwrite the machine's file.
+    if cfg!(test) {
+        anyhow::bail!("Preferences are not stored during tests");
+    }
     Ok(secblitz::platform::app_dir()?.join(FILE))
 }
 
