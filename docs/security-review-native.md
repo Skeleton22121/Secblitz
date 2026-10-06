@@ -48,7 +48,7 @@ successfully through this runner. Coverage limits are explicit below.
 - Original app/data directories were archived before disposable state was
   created. No legitimate journal was poisoned, edited or deleted.
 - No Rust/application source, immutable release artifact or production feed was
-  modified. No malware, exploit executable or Defender disabling was used.
+  modified. Only Secblitz and Windows tools were run.
 - Disposable standard-account credentials were generated in memory, never
   logged or written to a credential file. Only a temporary **test** signing key
   was generated in host memory for one wrong-key fixture; no private key was
