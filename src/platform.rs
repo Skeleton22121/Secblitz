@@ -220,9 +220,17 @@ pub fn is_elevated() -> Result<bool> {
     }
 }
 
-/// Fails unless this process is elevated; an elevation query that itself fails counts as not elevated.
+/// Never assumes administrator rights: a failed elevation query counts as not elevated.
+pub fn is_admin() -> bool {
+    is_elevated().unwrap_or_else(|error| {
+        eprintln!("{error:#}");
+        false
+    })
+}
+
+/// Fails unless this process is elevated, and also when the query itself fails.
 pub fn require_admin(what: &str) -> Result<()> {
-    if !is_elevated()? {
+    if !is_admin() {
         bail!("{what}");
     }
     Ok(())
