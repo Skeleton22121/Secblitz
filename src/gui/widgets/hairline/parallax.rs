@@ -88,6 +88,7 @@ impl Parallax {
         }
     }
 
+    #[cfg(test)]
     pub fn layers(&self) -> [Vector; 3] {
         [
             self.offset(Layer::Back),

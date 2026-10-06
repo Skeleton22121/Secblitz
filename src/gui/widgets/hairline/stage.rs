@@ -2,9 +2,9 @@
 use super::glyph::Glyph;
 use super::svg::{ellipse_cubics, ellipse_point, PathData, Seg};
 use crate::gui::theme::{mix, Palette};
-use iced::widget::canvas::path::{arc::Elliptical, Builder};
+use iced::widget::canvas::path::Builder;
 use iced::widget::canvas::{LineCap, LineJoin, Path, Stroke};
-use iced::{mouse, Color, Point, Radians, Rectangle, Size, Vector};
+use iced::{Color, Point, Size, Vector};
 
 pub const fn pt(x: f32, y: f32) -> Point {
     Point::new(x, y)
@@ -70,15 +70,6 @@ impl Stage {
         Point::new((px.x - self.origin.x) / self.k, (px.y - self.origin.y) / self.k)
     }
 
-    pub fn cursor(&self, bounds: Rectangle, cursor: mouse::Cursor) -> Option<Point> {
-        let p = cursor.position()?;
-        Some(self.to_units(Point::new(p.x - bounds.x, p.y - bounds.y)))
-    }
-
-    pub fn contains(&self, p: Point) -> bool {
-        p.x >= 0.0 && p.y >= 0.0 && p.x <= self.units.width && p.y <= self.units.height
-    }
-
     pub fn path(&self, f: impl FnOnce(&mut Sketch<'_>)) -> Path {
         Path::new(|b| {
             let mut s = Sketch {
@@ -93,10 +84,6 @@ impl Stage {
 
     pub fn shape(&self, d: &PathData) -> Path {
         d.to_path(|p| self.point(p))
-    }
-
-    pub fn svg(&self, d: &str) -> Path {
-        self.shape(&PathData::of(d))
     }
 
     pub fn icon(&self, g: Glyph, centre: Point, size: f32) -> Path {
@@ -114,25 +101,8 @@ impl Stage {
         )
     }
 
-    pub fn rect(&self, x: f32, y: f32, w: f32, h: f32) -> Path {
-        Path::rectangle(self.px(x, y), Size::new(self.len(w), self.len(h)))
-    }
-
     pub fn circle(&self, c: Point, r: f32) -> Path {
         Path::circle(self.point(c), self.len(r.max(0.0)))
-    }
-
-    pub fn ellipse(&self, c: Point, rx: f32, ry: f32) -> Path {
-        Path::new(|b| {
-            b.ellipse(Elliptical {
-                center: self.point(c),
-                radii: Vector::new(self.len(rx.max(0.0)), self.len(ry.max(0.0))),
-                rotation: Radians(0.0),
-                start_angle: Radians(0.0),
-                end_angle: Radians(std::f32::consts::TAU),
-            });
-            b.close();
-        })
     }
 
     pub fn line(&self, a: Point, b: Point) -> Path {
@@ -226,9 +196,6 @@ impl Sketch<'_> {
         self.b.close();
         self.pen = self.start;
     }
-    pub fn stage(&self) -> Stage {
-        self.stage
-    }
 }
 
 
@@ -267,7 +234,6 @@ pub enum Plate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Meaning {
-    Working,
     Done,
     Attention,
     Failed,
@@ -308,7 +274,6 @@ impl Ink {
 
     pub fn of(&self, m: Meaning) -> Color {
         match m {
-            Meaning::Working => self.accent,
             Meaning::Done => self.good,
             Meaning::Attention => self.warn,
             Meaning::Failed => self.bad,
@@ -330,12 +295,6 @@ impl Ink {
     }
     pub fn strong(&self) -> Stroke<'static> {
         stroke(self.ink, W_INK)
-    }
-    pub fn part(&self, c: Color) -> Stroke<'static> {
-        stroke(c, W_PART)
-    }
-    pub fn accent_line(&self, c: Color) -> Stroke<'static> {
-        stroke(c, W_ACCENT)
     }
     pub fn thick(&self, c: Color) -> Stroke<'static> {
         stroke(c, W_THICK)
@@ -372,23 +331,12 @@ mod tests {
     }
 
     #[test]
-    fn cursor_maps_from_window_to_units() {
-        let s = Stage::fit(Size::new(100.0, 100.0), Size::new(200.0, 200.0));
-        let bounds = Rectangle::new(Point::new(50.0, 30.0), Size::new(200.0, 200.0));
-        let at = s.cursor(bounds, mouse::Cursor::Available(Point::new(150.0, 130.0)));
-        assert_eq!(at, Some(Point::new(50.0, 50.0)));
-        assert_eq!(s.cursor(bounds, mouse::Cursor::Unavailable), None);
-        assert!(s.contains(Point::new(50.0, 50.0)) && !s.contains(Point::new(-1.0, 5.0)));
-    }
-
-    #[test]
     fn inks_follow_the_theme_and_the_plate() {
         for p in [LIGHT, DARK] {
             let on_bg = Ink::new(&p, Plate::Bg);
             let on_surface = Ink::new(&p, Plate::Surface);
             assert_eq!(on_bg.plate, p.bg);
             assert_eq!(on_surface.plate, p.surface);
-            assert_eq!(on_bg.of(Meaning::Working), p.accent);
             assert_eq!(on_bg.of(Meaning::Done), p.good);
             assert_eq!(on_bg.of(Meaning::Attention), p.warn);
             assert_eq!(on_bg.of(Meaning::Failed), p.bad);

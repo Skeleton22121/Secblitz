@@ -11,7 +11,7 @@ use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{tree, Tree};
 use iced::advanced::{Clipboard, Shell, Widget};
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, container, pick_list, row, stack, text, text_input};
+use iced::widget::{button, container, pick_list, row, stack, text};
 use iced::{
     mouse, window, Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
     Point, Rectangle, Renderer, Shadow, Size, Theme, Vector,
@@ -912,48 +912,6 @@ pub fn slide_marker<'a>(
     })
 }
 
-
-pub fn text_field<'a>(
-    p: Palette,
-    placeholder: &str,
-    value: &str,
-    on_input: impl Fn(String) -> Message + 'a,
-) -> text_input::TextInput<'a, Message> {
-    text_input(placeholder, value)
-        .on_input(on_input)
-        .size(theme::BODY)
-        .font(theme::REGULAR)
-        .line_height(line(theme::LINE_BODY))
-        .padding([(theme::CONTROL - theme::LINE_BODY) / 2.0, theme::S3])
-        .style(move |_, status| {
-            let (border, width) = match status {
-                text_input::Status::Active => (Color::TRANSPARENT, 0.0),
-                text_input::Status::Hovered => (Color::TRANSPARENT, 0.0),
-                text_input::Status::Focused { .. } => (p.focus_ring, 2.0),
-                text_input::Status::Disabled => (Color::TRANSPARENT, 0.0),
-            };
-            let disabled = status == text_input::Status::Disabled;
-            let fill = match status {
-                text_input::Status::Hovered => p.hover_strong,
-                _ => p.surface_alt,
-            };
-            text_input::Style {
-                background: Background::Color(if disabled { p.disabled_bg } else { fill }),
-                border: Border {
-                    radius: theme::R.into(),
-                    width,
-                    color: border,
-                },
-                icon: p.text_muted,
-                placeholder: p.text_muted,
-                value: if disabled { p.disabled_fg } else { p.text },
-                selection: Color {
-                    a: 0.25,
-                    ..p.focus_ring
-                },
-            }
-        })
-}
 
 
 pub fn scroll_style(

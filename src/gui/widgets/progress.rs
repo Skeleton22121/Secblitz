@@ -8,9 +8,6 @@ use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Them
 use std::time::Instant;
 
 pub const HEIGHT: f32 = 3.0;
-pub const STEP_HEIGHT: f32 = 3.0;
-const STEP_GAP: f32 = 4.0;
-
 fn pixel_frame(r: &Renderer, b: Rectangle) -> Frame {
     let mut f = Frame::new(r, b.size());
     f.translate(Vector::new(-b.x.fract(), -b.y.fract()));
@@ -240,56 +237,6 @@ pub fn indeterminate<'a>(p: Palette, tone: Tone) -> Element<'a, Message> {
 }
 
 
-struct Steps {
-    p: Palette,
-    tone: Tone,
-    total: usize,
-    current: f32,
-}
-
-pub fn step_fill(current: f32, i: usize) -> f32 {
-    (current - i as f32).clamp(0.0, 1.0)
-}
-
-impl canvas::Program<Message> for Steps {
-    type State = ();
-    fn draw(
-        &self,
-        _: &(),
-        r: &Renderer,
-        _: &Theme,
-        b: Rectangle,
-        _: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut f = pixel_frame(r, b);
-        let n = self.total.max(1);
-        let h = f.height();
-        let seg = (f.width() - STEP_GAP * (n - 1) as f32) / n as f32;
-        for i in 0..n {
-            let x = (i as f32 * (seg + STEP_GAP)).round();
-            let end = (x + seg).round();
-            let fw = fill_width(step_fill(self.current, i), end - x, h).round();
-            track(&mut f, x + fw, end, track_color(&self.p));
-            if fw > 0.0 {
-                f.fill(&capsule(x, x + fw, h), self.p.tone(self.tone));
-            }
-        }
-        vec![f.into_geometry()]
-    }
-}
-
-pub fn steps<'a>(p: Palette, total: usize, current: f32, tone: Tone) -> Element<'a, Message> {
-    canvas_of(
-        Steps {
-            p,
-            tone,
-            total,
-            current,
-        },
-        STEP_HEIGHT,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,12 +259,5 @@ mod tests {
         assert!(lmid > 0.0 && lmid < 300.0);
         let (lend, _) = shimmer_span(1.7 * 0.85 - 1e-4, 300.0);
         assert!(lend > 290.0, "{lend}");
-    }
-
-    #[test]
-    fn step_fill_is_per_segment() {
-        assert_eq!(step_fill(2.5, 0), 1.0);
-        assert_eq!(step_fill(2.5, 2), 0.5);
-        assert_eq!(step_fill(2.5, 3), 0.0);
     }
 }

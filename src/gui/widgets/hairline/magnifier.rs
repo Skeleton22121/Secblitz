@@ -930,7 +930,7 @@ mod tests {
     #[test]
     fn rows_are_hit_where_they_are_drawn() {
         let h = spots();
-        let tilt = super::super::Parallax::off();
+        let tilt = crate::gui::widgets::hairline::parallax::Parallax::off();
         for i in 0..N {
             assert_eq!(h.hit(pt(120.0, row_y(i)), &tilt), Some(i));
             assert_eq!(h.hit(pt(SX1 - 2.0, row_y(i) + 8.0), &tilt), Some(i));
@@ -1278,7 +1278,7 @@ mod tests {
                 for y in [row_y(i) - LENS_R - 1.0, row_y(i) - ROW_H / 2.0 * 0.7] {
                     st.tip_y = Spring::new(y);
                     let anchor = s.point(tip_at(&st, &s));
-                    let r = super::super::tooltip_rect(anchor, 90.0, size);
+                    let r = super::super::pointer::tooltip_rect(anchor, 90.0, size);
                     assert!(r.y + r.height <= anchor.y + 0.5, "k {k} row {i}: {r:?} {anchor:?}");
                 }
             }
