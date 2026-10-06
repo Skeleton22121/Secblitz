@@ -554,8 +554,11 @@ function HNetbiosPreflight() {
 
 # --------------------------------------------------------------- observe
 function HObserve() {
+    $script:hLabels = @()
     $slice = HRead
     $o = @{ value = @{ items = $slice }; eligible = $true; reason = 'Eligible unmanaged local preference' }
+    # Names the person can recognise before approving (old accounts only).
+    if (@($script:hLabels).Count -gt 0) { $o.labels = @($script:hLabels) }
     try {
         HGate
         if (HAnyUnsafe $slice) { HPreflight }
@@ -1108,8 +1111,21 @@ function HEnabledAdminSids() {
     }
     return $out
 }
+function HAccountState([string]$sid) {
+    if (!(HStaleNameOk $sid)) { throw 'Invalid account state' }
+    Load 'Microsoft.PowerShell.LocalAccounts'
+    try { $user = Get-LocalUser -SID $sid -ErrorAction Stop }
+    catch {
+        # Deleted: nothing is switched on any more.
+        if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return 0 }
+        throw
+    }
+    if ($user.Enabled -eq $true) { return 1 }
+    return 0
+}
 function HReadStale() {
     $out = @{}
+    $script:hLabels = @()
     try { $skip = HAccountsInUse } catch {
         # Unreadable: list nothing the running account could be. The preflight
         # then refuses the repair with a plain reason.
@@ -1120,9 +1136,12 @@ function HReadStale() {
         $sid = [string]$u.SID.Value
         if ($skip.ContainsKey($sid)) { continue }
         $out[$sid] = 1
+        $script:hLabels += [string]$u.Name
     }
-    # A switched-off account is simply no longer listed: that is the safe state "0".
-    foreach ($name in @(HWantedNames)) { if (!$out.ContainsKey($name)) { $out[$name] = 0 } }
+    # Every account asked about reports its real state, never a guess from the
+    # candidate list: one that is signed in or runs a service is not listed
+    # above but is still switched on, and must read 1 so the write can refuse it.
+    foreach ($name in @(HWantedNames)) { if (!$out.ContainsKey($name)) { $out[$name] = HAccountState $name } }
     if ($out.Count -gt 256) { throw 'Too many old accounts to handle at once' }
     return $out
 }
@@ -1154,6 +1173,8 @@ function HSetStale([string]$sid, $v) {
     # Re-check at the moment of the write, whatever was true when it was offered.
     $inUse = HAccountsInUse
     if ($inUse.ContainsKey($sid)) { throw 'This account is in use; nothing was changed' }
+    # Still an old account right now, not one that signed in since it was offered.
+    if (@(HStaleAccounts | Where-Object { [string]$_.SID.Value -ceq $sid }).Count -eq 0) { throw 'This account is no longer an old account; nothing was changed' }
     $admins = @(HEnabledAdminSids)
     if (($admins -ccontains $sid) -and @($admins | Where-Object { $_ -cne $sid -and $_ -cnotmatch '-500$' }).Count -eq 0) { throw 'This is the last administrator account; nothing was changed' }
     Disable-LocalUser -SID $sid -ErrorAction Stop
@@ -1165,10 +1186,23 @@ function HSetStale([string]$sid, $v) {
 # Revoke-SmbShareAccess; undo grants the same right back. Other entries,
 # administrative shares and the share itself are never touched.
 function HShareParts([string]$name) {
-    if ($name -cnotmatch '^[^\x00-\x1f\x7f"/\\\[\]:|<>+=;,?*'']{1,80}\|(S-1-1-0|S-1-5-7|S-1-5-32-546)\|(Change|Full)\z') { return $null }
+    if ($name -cnotmatch '^[^\x00-\x1f\x7f"/\\\[\]:|<>+=;,?*]{1,80}\|(S-1-1-0|S-1-5-7|S-1-5-32-546)\|(Change|Full)\z') { return $null }
     $parts = $name.Split('|')
-    if ($parts.Count -ne 3 -or $parts[0].EndsWith('$') -or $parts[0].Trim() -cne $parts[0]) { return $null }
+    if ($parts.Count -ne 3 -or $parts[0].Trim() -cne $parts[0] -or (HBuiltinShare $parts[0])) { return $null }
     return @{ share = $parts[0]; sid = $parts[1]; right = $parts[2] }
+}
+# Windows' own shares (drive shares, ADMIN$, IPC$, print$) are never touched; a
+# hidden share the person made themselves is an ordinary share.
+function HBuiltinShare([string]$name) {
+    return ($name -imatch '^([A-Za-z]|ADMIN|IPC|print)\$\z')
+}
+function HFindShare([string]$name) {
+    try { return @(Get-SmbShare -Name $name -ErrorAction Stop) }
+    catch {
+        # Only "no such share" counts as gone; a failed read must not look like a deletion.
+        if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return @() }
+        throw
+    }
 }
 function HShareNameOk([string]$name) { return ($null -ne (HShareParts $name)) }
 function HBroadAccounts() {
@@ -1186,15 +1220,20 @@ function HBroadShareEntries() {
     if ($shares.Count -gt 64) { throw 'Too many shared folders to handle at once' }
     foreach ($share in $shares) {
         $shareName = [string]$share.Name
-        if ($shareName.EndsWith('$')) { continue }
-        foreach ($access in @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop)) {
+        if (HBuiltinShare $shareName) { continue }
+        $rows = @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop)
+        foreach ($access in $rows) {
             if ([string]$access.AccessControlType -cne 'Allow') { continue }
             $right = [string]$access.AccessRight
             if (@('Change', 'Full') -cnotcontains $right) { continue }
             foreach ($sid in @($broad.Keys)) {
                 if ([string]$access.AccountName -ine [string]$broad[$sid]) { continue }
                 $item = $shareName + '|' + $sid + '|' + $right
-                if (HShareNameOk $item) { $found += @{ name = $item; share = $shareName } }
+                # More than one row for the same account (for example Read and
+                # Change) cannot be removed and put back exactly, one right at a time.
+                $count = @($rows | Where-Object { [string]$_.AccountName -ieq [string]$broad[$sid] }).Count
+                if (HShareNameOk $item) { $found += @{ name = $item; share = $shareName; multi = ($count -ne 1) } }
+                else { $found += @{ name = $null; share = $shareName; multi = $false } }
             }
         }
     }
@@ -1202,7 +1241,7 @@ function HBroadShareEntries() {
 }
 function HReadShares() {
     $out = @{}
-    foreach ($e in @(HBroadShareEntries)) { $out[$e.name] = 1 }
+    foreach ($e in @(HBroadShareEntries)) { if ($null -ne $e.name) { $out[$e.name] = 1 } }
     # A removed entry is simply no longer listed: that is the safe state "0".
     foreach ($name in @(HWantedNames)) { if (!$out.ContainsKey($name)) { $out[$name] = 0 } }
     if ($out.Count -gt 256) { throw 'Too many shared folder entries to handle at once' }
@@ -1211,9 +1250,13 @@ function HReadShares() {
 function HSharesPreflight() {
     Load 'SmbShare'
     $broad = HBroadAccounts
-    $removing = @{}
     $entries = @(HBroadShareEntries)
+    # Something flagged that cannot be named exactly: leave the whole control alone.
+    if (@($entries | Where-Object { $null -eq $_.name }).Count -gt 0) { throw 'Not offered: a shared folder has permissions that could not be put back exactly' }
+    if (@($entries | Where-Object { $_.multi }).Count -gt 0) { throw 'Not offered: a shared folder has permissions that could not be put back exactly' }
+    $removing = @{}
     foreach ($e in $entries) { $removing[$e.name] = $true }
+    $keep = @(@('S-1-5-32-544', 'S-1-5-18') | ForEach-Object { HAccountOfSid $_ })
     foreach ($shareName in @($entries | ForEach-Object { $_.share } | Sort-Object -Unique)) {
         $left = @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop | Where-Object {
             if ([string]$_.AccessControlType -cne 'Allow') { return $false }
@@ -1223,6 +1266,9 @@ function HSharesPreflight() {
             return $true
         })
         if ($left.Count -eq 0) { throw 'Not offered: a shared folder would be left with no one who can open it' }
+        # Only administrators would still be able to open it from other devices.
+        $others = @($left | Where-Object { $keep -cnotcontains [string]$_.AccountName })
+        if ($others.Count -eq 0) { throw 'Not offered: a shared folder would be left that only administrators can open' }
     }
 }
 function HSetShare([string]$name, $v) {
@@ -1230,7 +1276,7 @@ function HSetShare([string]$name, $v) {
     if ($null -eq $p) { throw 'Unknown hardening item' }
     if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid shared folder state' }
     Load 'SmbShare'
-    $share = @(Get-SmbShare -Name $p.share -ErrorAction SilentlyContinue)
+    $share = @(HFindShare $p.share)
     if ($share.Count -eq 0) {
         # Removed since the fix: there is nothing to put back.
         if ([int]$v -eq 1) { return }
@@ -1239,9 +1285,11 @@ function HSetShare([string]$name, $v) {
     if ($share[0].Special -eq $true) { throw 'Built-in shares are never changed' }
     $account = [string](HBroadAccounts)[$p.sid]
     $rows = @(Get-SmbShareAccess -Name $p.share -ErrorAction Stop)
-    $mine = @($rows | Where-Object { [string]$_.AccountName -ieq $account -and [string]$_.AccessControlType -ceq 'Allow' })
+    $mine = @($rows | Where-Object { [string]$_.AccountName -ieq $account })
     if ([int]$v -eq 0) {
-        if (@($mine | Where-Object { [string]$_.AccessRight -ceq $p.right }).Count -ne 1) { throw 'The shared folder entry changed; nothing was changed' }
+        # Exactly one row for this account, and it is the recorded one: Revoke
+        # removes every row of the account, so anything more could not be put back.
+        if ($mine.Count -ne 1 -or [string]$mine[0].AccessControlType -cne 'Allow' -or [string]$mine[0].AccessRight -cne $p.right) { throw 'The shared folder entry changed; nothing was changed' }
         # Never leave a folder that nobody can open.
         $left = @($rows | Where-Object { [string]$_.AccessControlType -ceq 'Allow' -and [string]$_.AccountName -ine $account })
         if ($left.Count -eq 0) { throw 'Not offered: a shared folder would be left with no one who can open it' }
@@ -1249,7 +1297,7 @@ function HSetShare([string]$name, $v) {
         return
     }
     if ($mine.Count -gt 0) {
-        if (@($mine | Where-Object { [string]$_.AccessRight -ceq $p.right }).Count -eq $mine.Count) { return }
+        if ($mine.Count -eq 1 -and [string]$mine[0].AccessControlType -ceq 'Allow' -and [string]$mine[0].AccessRight -ceq $p.right) { return }
         throw 'The shared folder entry changed; it was left alone'
     }
     $null = Grant-SmbShareAccess -Name $p.share -AccountName $account -AccessRight $p.right -Force -ErrorAction Stop
@@ -1263,7 +1311,7 @@ function HItemGone([string]$name) {
     $p = HShareParts $name
     if ($null -eq $p) { return $false }
     Load 'SmbShare'
-    return (@(Get-SmbShare -Name $p.share -ErrorAction SilentlyContinue).Count -eq 0)
+    return (@(HFindShare $p.share).Count -eq 0)
 }
 
 function HParseInput($inputValue) {

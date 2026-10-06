@@ -120,6 +120,9 @@ pub enum Msg {
     ClearUpdates,
     PickTips(TipProfile),
     Tips(Box<TipsReport>),
+    /// The tips list read again quietly after a removal, so it stops
+    /// reporting what was just removed.
+    TipsRefreshed(Box<TipsReport>),
     TipChoice(TipProfile),
     NewPassword,
     CopyPassword,
@@ -373,8 +376,27 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::ThreatsDone(r) => {
+            let changed = r
+                .as_ref()
+                .is_ok_and(|t| crate::app::tools::threats_result(t) != crate::app::tools::ThreatsResult::Stuck);
             state.threats = Run::Done(r);
             state.finish(Slot::Threats);
+            // Look again so the tip no longer says "something harmful" for
+            // what was just removed.
+            match (&state.tips, changed) {
+                (Tips::Done(shown), true) => {
+                    let profile = shown.profile;
+                    Task::perform(blocking(move || logic::run_tips(profile)), |r| {
+                        tools(Msg::TipsRefreshed(Box::new(r)))
+                    })
+                }
+                _ => Task::none(),
+            }
+        }
+        Msg::TipsRefreshed(report) => {
+            if matches!(state.tips, Tips::Done(_)) {
+                state.tips = Tips::Done(report);
+            }
             Task::none()
         }
         Msg::ClearThreats => {

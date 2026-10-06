@@ -307,7 +307,7 @@ fn threats_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 logic::ThreatsResult::Removed => (
                     Tone::Good,
                     ctx.t("Harmful files removed"),
-                    ctx.t("{n} removed. Windows Security keeps them in quarantine, so you can restore one there if you need to.")
+                    ctx.t("{n} removed. Windows Security usually keeps them in quarantine, where you can restore one if you need to.")
                         .replace("{n}", &result.removed.to_string()),
                 ),
                 logic::ThreatsResult::Partly => (
@@ -936,18 +936,38 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     out
 }
 
+/// True when there is no check yet to say otherwise, or the latest check
+/// offers this fix on this PC.
+fn fix_offered(ctx: &Ctx, id: &str) -> bool {
+    match ctx.report.as_deref() {
+        None => true,
+        Some(report) => crate::app::flow::candidates(report, &ctx.catalog.available)
+            .iter()
+            .any(|c| c == id),
+    }
+}
+
 fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) -> El<'a> {
     let p = ctx.palette;
+    // A fix is promised only when the latest check really offers it; otherwise
+    // the manual steps stay (managed PC, account in use, nothing to change).
+    let fix = tip.fix.filter(|id| fix_offered(ctx, id));
+    let manual = tip.fix.is_some() && fix.is_none() && !tip.manual_advice.is_empty();
+    let open_now = if manual { tip.manual_open } else { tip.open };
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
-        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
+        TipState::Look => (
+            Tone::Warn,
+            Icon::AlertTriangle,
+            ctx.t(if manual { tip.manual_advice } else { tip.advice }),
+        ),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
     // One compact action: the usual scan (after its own confirmation), or the
     // Windows page that helps. Nothing starts without the person's say-so.
-    let action: El<'a> = match tip.open {
+    let action: El<'a> = match open_now {
         _ if tip.state != TipState::Look => space::horizontal().width(0).into(),
-        _ if tip.fix.is_some() => match tip.fix {
+        _ if fix.is_some() => match fix {
             Some(id) => widgets::action(
                 p,
                 ButtonKind::Secondary,
@@ -1260,7 +1280,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ctx.t("Remove the harmful files?"),
             vec![
                 ctx.t("Windows Security will remove the harmful files it has found on this PC."),
-                ctx.t("It keeps what it removes in quarantine. You can restore an item in Windows Security if it was a mistake."),
+                ctx.t("It usually keeps what it removes in quarantine. If it was a mistake, you can restore an item in Windows Security."),
                 ctx.t("You can keep using your PC while it works."),
             ],
             ctx.t("Remove them"),
