@@ -49,6 +49,30 @@ pub struct Report {
     pub readiness: Option<Readiness>,
 }
 
+impl Report {
+    fn push(&mut self, result: Outcome, callback: &mut impl FnMut(&str, &str)) {
+        callback(&result.id, &result.status);
+        self.results.push(result);
+    }
+
+    /// Reports every control as skipped for `reason`, keeping outcomes already computed in `owned`.
+    fn skip_all(
+        &mut self,
+        controls: &[Control],
+        owned: &mut Vec<Outcome>,
+        reason: &str,
+        callback: &mut impl FnMut(&str, &str),
+    ) {
+        for c in controls {
+            let result = match owned.iter().position(|r| r.id == c.id) {
+                Some(i) => owned.remove(i),
+                None => Engine::outcome(c, "skipped", reason),
+            };
+            self.push(result, callback);
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Outcome {
     pub id: String,
