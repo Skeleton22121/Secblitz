@@ -30,7 +30,6 @@ Secblitz maximizes Windows security and privacy by fixing security holes and mis
 - **One-click fixes** for more than 50 security and privacy settings: virus protection, firewall and network, sign-in, updates, startup, disk and privacy. Anything already secure is left alone.
 - **Bloatware removal.** Removes unwanted apps that came with Windows. Secblitz keeps a copy of each, so you can restore it later, even offline.
 - **Ad and malware blocker.** Blocks ads, trackers and malware sites in every browser and app.
-- **Tools.** Microsoft Defender scans and updates, Windows repair, security updates and an optional Bitwarden install.
 - **Background monitoring.** Tells you if your protection gets worse.
 - **History** of every change and every removed app.
 - **Six languages:** English, Spanish, French, German, Portuguese and Italian. Light and dark mode.
@@ -48,6 +47,27 @@ Get-FileHash .\secblitz-0.8.2-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Tested on Windows 11, 64-bit. Windows 10 is not tested.
+
+## Build from source
+
+On Windows 11, install:
+
+- [Rust](https://rustup.rs) (the pinned compiler in `rust-toolchain.toml` is selected automatically)
+- [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with "Desktop development with C++"
+- [Inno Setup 6.4 or later](https://jrsoftware.org/isinfo.php), only for the installer
+
+```powershell
+git clone https://github.com/Skeleton22121/Secblitz.git
+cd Secblitz
+
+# The app only: target\release\secblitz.exe
+cargo build --locked --release
+
+# Tests, the app and the installer: dist\
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
+```
+
+To build the Windows app from Linux, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Privacy
 
