@@ -1,6 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// Unlike operations' `Storage`, this also refuses to run while another engine is active.
 pub(super) trait Storage {
     fn load(&mut self) -> Result<Option<Vec<u8>>>;
     fn save(&mut self, bytes: &[u8]) -> Result<()>;
@@ -18,6 +19,7 @@ pub(super) enum Event {
     PhaseFinished,
     Timeout,
 }
+/// Patching backend: Windows Update discovery, then download/install phases and verification.
 pub(super) trait Backend {
     fn set_cancel(&mut self, _cancel: Arc<AtomicBool>) {}
     fn binding(&self) -> Result<Binding>;

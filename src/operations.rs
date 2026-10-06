@@ -1,4 +1,6 @@
 //! Durable, opt-in maintenance, independent of reversible hardening controls.
+//! `approve` stores a time-boxed digest binding and `start` runs the stored plan; patching
+//! instead re-checks the displayed digest at `start` because its plans are single-use.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use anyhow::{bail, ensure, Context, Result};
