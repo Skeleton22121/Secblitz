@@ -1090,19 +1090,35 @@ $script:kioskKey = $null
 function Test-Path { param($LiteralPath, $ErrorAction); if ($LiteralPath -clike '*AssignedAccessConfiguration') { return ($null -ne $script:kioskKey) }; return $true }
 function Get-Item { param($LiteralPath, $ErrorAction); return $script:kioskKey }
 function KioskKey($values, $subs) {
-    $k = [pscustomobject]@{ V = $values; S = $subs }
+    # $subs: name -> KioskKey, or name -> $null for a folder that cannot be opened.
+    $k = [pscustomobject]@{ V = $values; S = $subs; Closed = 0 }
     $k | Add-Member ScriptMethod GetValueNames { return @($this.V) }
-    $k | Add-Member ScriptMethod GetSubKeyNames { return @($this.S) }
+    $k | Add-Member ScriptMethod GetSubKeyNames { return @($this.S.Keys) }
+    $k | Add-Member ScriptMethod OpenSubKey { param($n) return $this.S[$n] }
+    $k | Add-Member ScriptMethod Close { $this.Closed++ }
     return $k
 }
+function StockKiosk { $s = [ordered]@{}; foreach ($n in 'Configs','GroupConfigs','Profiles','RawData') { $s[$n] = KioskKey @() ([ordered]@{}) }; return $s }
 HPreflight
 Assert $true 'offered when no kiosk is set up'
-$script:kioskKey = KioskKey @() @()
+$script:kioskKey = KioskKey @() ([ordered]@{})
 HPreflight
 Assert $true 'an empty kiosk key does not block'
-$script:kioskKey = KioskKey @() @('Configs')
+$stock = StockKiosk
+$script:kioskKey = KioskKey @() $stock
+HPreflight
+Assert $true 'the empty folders Windows 11 ships with do not block'
+Assert (@($stock.Values | Where-Object { $_.Closed -ne 1 }).Count -eq 0) 'every opened kiosk folder is closed'
+$s = StockKiosk; $s['Configs'] = KioskKey @() ([ordered]@{ 'S-1-5-21-1' = (KioskKey @('DefaultProfileId') ([ordered]@{})) })
+$script:kioskKey = KioskKey @() $s
 Reject { HPreflight } 'this PC is set up as a kiosk'
-$script:kioskKey = KioskKey @('Version') @()
+$s = StockKiosk; $s['RawData'] = KioskKey @('Configuration') ([ordered]@{})
+$script:kioskKey = KioskKey @() $s
+Reject { HPreflight } 'this PC is set up as a kiosk'
+$s = StockKiosk; $s['Profiles'] = $null
+$script:kioskKey = KioskKey @() $s
+Reject { HPreflight } 'this PC is set up as a kiosk'
+$script:kioskKey = KioskKey @('Version') ([ordered]@{})
 Reject { HPreflight } 'this PC is set up as a kiosk'
 $script:fakeFs = $false
 # ---- handled-item controls (hardening.handled.ps1)
@@ -1334,16 +1350,16 @@ foreach ($ok in @('Photos|S-1-1-0|Change', 'Work files|S-1-5-32-546|Full', 'Publ
 foreach ($bad in @('', 'C$|S-1-1-0|Full', 'ADMIN$|S-1-1-0|Full', 'IPC$|S-1-1-0|Change', 'print$|S-1-1-0|Full', 'c$|S-1-1-0|Full', 'Print$|S-1-1-0|Full', 'Photos|S-1-5-11|Change', 'Photos|S-1-1-0|Read', 'Photos|S-1-1-0|change', 'Photos|Everyone|Change', 'Photos|S-1-1-0', 'Photos|S-1-1-0|Change|x', '|S-1-1-0|Change', ' Photos|S-1-1-0|Change', 'Pho"tos|S-1-1-0|Change', "Pho`ntos|S-1-1-0|Change", 'Pho\tos|S-1-1-0|Change', 'Pho:tos|S-1-1-0|Change', "Photos|S-1-1-0|Change`n", ('x' * 81) + '|S-1-1-0|Full')) { Assert (!(HNameOk $bad)) "share entry accepted: $bad" }
 function HAccountOfSid([string]$sid) { switch ($sid) { 'S-1-1-0' { return 'Everyone' } 'S-1-5-7' { return 'NT AUTHORITY\ANONYMOUS LOGON' } 'S-1-5-32-546' { return 'BUILTIN\Guests' } 'S-1-5-32-544' { return 'BUILTIN\Administrators' } 'S-1-5-18' { return 'NT AUTHORITY\SYSTEM' } }; throw 'unexpected SID' }
 function Sh([string]$name, [bool]$special = $false) { [pscustomobject]@{ Name = $name; Special = $special } }
-function Ac([string]$account, [string]$right, [string]$type = 'Allow') { [pscustomobject]@{ AccountName = $account; AccessRight = $right; AccessControlType = $type } }
+function ShareAce([string]$account, [string]$right, [string]$type = 'Allow') { [pscustomobject]@{ AccountName = $account; AccessRight = $right; AccessControlType = $type } }
 $script:shares = @((Sh 'Photos'), (Sh 'Work files'), (Sh 'Music'), (Sh 'Locked'), (Sh 'C$' $true), (Sh 'Hidden$'), (Sh 'Weird''name'))
 $script:acl = @{
-    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
-    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'), (Ac 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
-    'Music' = @((Ac 'Everyone' 'Read'), (Ac 'PC\Bob' 'Full'))
-    'Locked' = @((Ac 'Everyone' 'Change' 'Deny'), (Ac 'PC\Amy' 'Read'))
-    'C$' = @((Ac 'Everyone' 'Full'))
-    'Hidden$' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Read'))
-    'Weird''name' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Read'))
+    'Photos' = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Administrators' 'Full'), (ShareAce 'PC\Amy' 'Read'))
+    'Work files' = @((ShareAce 'BUILTIN\Guests' 'Full'), (ShareAce 'PC\Bob' 'Change'), (ShareAce 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
+    'Music' = @((ShareAce 'Everyone' 'Read'), (ShareAce 'PC\Bob' 'Full'))
+    'Locked' = @((ShareAce 'Everyone' 'Change' 'Deny'), (ShareAce 'PC\Amy' 'Read'))
+    'C$' = @((ShareAce 'Everyone' 'Full'))
+    'Hidden$' = @((ShareAce 'Everyone' 'Full'), (ShareAce 'PC\Bob' 'Read'))
+    'Weird''name' = @((ShareAce 'Everyone' 'Full'), (ShareAce 'PC\Bob' 'Read'))
 }
 $script:smbFail = $false
 function Get-SmbShare { param($Name, $ErrorAction)
@@ -1363,28 +1379,28 @@ Assert (HAnyUnsafe $r) 'a broad entry is unsafe'
 Assert ($script:hLabels['Photos|S-1-1-0|Change'] -ceq 'Photos' -and $script:hLabels['Work files|S-1-5-32-546|Full'] -ceq 'Work files') 'each shared entry is named by its folder for the review sheet'
 Assert ((HLabelKind 'Photos|S-1-1-0|Change') -ceq 'share') 'shared entries are labelled as folders'
 $script:hWanted = @{ 'Photos|S-1-1-0|Change' = 1; 'Gone|S-1-1-0|Full' = 1 }
-$script:acl['Photos'] = @((Ac 'BUILTIN\Administrators' 'Full'))
+$script:acl['Photos'] = @((ShareAce 'BUILTIN\Administrators' 'Full'))
 $r = HReadShares
 Assert ($r['Photos|S-1-1-0|Change'] -eq 0 -and $r['Gone|S-1-1-0|Full'] -eq 0) 'a removed entry reads as 0, never dropped'
 $script:hWanted = @{}
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Administrators' 'Full'), (ShareAce 'PC\Amy' 'Read'))
 $script:shares = @($script:shares[0..6]) + @((Sh 'Extra1'))
 HSharesPreflight
 Assert $true 'folders that keep another allowed entry pass the preflight'
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'))
 Reject { HSharesPreflight } 'Not offered: a shared folder would be left with no one who can open it'
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'PC\Amy' 'Read' 'Deny'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'PC\Amy' 'Read' 'Deny'))
 Reject { HSharesPreflight } 'no one who can open it'
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
-$script:acl['Work files'] = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Administrators' 'Full'), (ShareAce 'PC\Amy' 'Read'))
+$script:acl['Work files'] = @((ShareAce 'BUILTIN\Guests' 'Full'), (ShareAce 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
 HSharesPreflight
 Assert $true 'a broad Read entry that stays counts as someone who can open it'
 # Writers: Revoke / Grant only, exactly the recorded entry.
 $script:calls = @()
 $script:rows = @{}
 function Revoke-SmbShareAccess { param($Name, $AccountName, [switch]$Force, $ErrorAction); $script:calls += ,@('revoke', $Name, $AccountName); $script:acl[$Name] = @($script:acl[$Name] | Where-Object { $_.AccountName -ine $AccountName }) }
-function Grant-SmbShareAccess { param($Name, $AccountName, $AccessRight, [switch]$Force, $ErrorAction); $script:calls += ,@('grant', $Name, $AccountName, $AccessRight); $script:acl[$Name] = @($script:acl[$Name]) + @((Ac $AccountName ([string]$AccessRight))) }
-$script:acl['Work files'] = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+function Grant-SmbShareAccess { param($Name, $AccountName, $AccessRight, [switch]$Force, $ErrorAction); $script:calls += ,@('grant', $Name, $AccountName, $AccessRight); $script:acl[$Name] = @($script:acl[$Name]) + @((ShareAce $AccountName ([string]$AccessRight))) }
+$script:acl['Work files'] = @((ShareAce 'BUILTIN\Guests' 'Full'), (ShareAce 'PC\Bob' 'Change'))
 HSetShare 'Photos|S-1-1-0|Change' 0
 HSetShare 'Photos|S-1-1-0|Change' 1
 Assert ((CallLog) -ceq 'revoke:Photos:Everyone,grant:Photos:Everyone:Change') "share writer: $(CallLog)"
@@ -1398,12 +1414,12 @@ Reject { HSetShare 'C$|S-1-1-0|Full' 0 } 'Unknown hardening item'
 Reject { HSetShare 'Photos|S-1-5-11|Change' 0 } 'Unknown hardening item'
 Reject { HSetShare 'Missing|S-1-1-0|Change' 0 } 'no longer exists'
 HSetShare 'Missing|S-1-1-0|Change' 1
-$script:acl['Locked'] = @((Ac 'Everyone' 'Change'))
+$script:acl['Locked'] = @((ShareAce 'Everyone' 'Change'))
 Reject { HSetShare 'Locked|S-1-1-0|Change' 0 } 'no one who can open it'
-$script:acl['Locked'] = @((Ac 'Everyone' 'Read'), (Ac 'PC\Amy' 'Read'))
+$script:acl['Locked'] = @((ShareAce 'Everyone' 'Read'), (ShareAce 'PC\Amy' 'Read'))
 Reject { HSetShare 'Locked|S-1-1-0|Change' 1 } 'left alone'
 Assert ($script:calls.Count -eq 0) 'nothing is written for a refused change'
-$script:acl['Locked'] = @((Ac 'Everyone' 'Change'), (Ac 'PC\Amy' 'Read'))
+$script:acl['Locked'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'PC\Amy' 'Read'))
 HSetShare 'Locked|S-1-1-0|Change' 1
 Assert ($script:calls.Count -eq 0) 'putting back an entry that is already there writes nothing'
 Assert (HItemGone 'Missing|S-1-1-0|Change') 'a removed share is gone'
@@ -1414,8 +1430,8 @@ Assert (!(HVerified 'Photos|S-1-1-0|Change' 0 1)) 'a missing entry on an existin
 $script:calls = @(); $script:hWanted = @{}
 $script:shares = @((Sh 'Photos'), (Sh 'Work files'))
 $script:acl = @{
-    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
-    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+    'Photos' = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Administrators' 'Full'), (ShareAce 'PC\Amy' 'Read'))
+    'Work files' = @((ShareAce 'BUILTIN\Guests' 'Full'), (ShareAce 'PC\Bob' 'Change'))
 }
 HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}')
 Assert ((CallLog) -ceq 'revoke:Photos:Everyone,revoke:Work files:BUILTIN\Guests' -and @($script:acl['Photos']).Count -eq 2 -and @($script:acl['Work files']).Count -eq 1) "both broad entries removed: $(CallLog)"
@@ -1424,7 +1440,7 @@ HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":1,"Work files|S-1-5-
 Assert ((CallLog) -ceq 'grant:Photos:Everyone:Change,grant:Work files:BUILTIN\Guests:Full' -and @($script:acl['Photos']).Count -eq 3 -and @($script:acl['Work files']).Count -eq 2) "undo put both entries back: $(CallLog)"
 # A folder that would be left empty blocks the repair before anything is written.
 $script:calls = @()
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'))
 Reject { HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}') } 'Not offered'
 Assert ($script:calls.Count -eq 0) 'no entry was removed from any folder'
 
@@ -1434,19 +1450,19 @@ $script:smbFail = $false
 $script:calls = @()
 $script:shares = @((Sh 'Photos'), (Sh 'Work files'))
 $script:acl = @{
-    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'Everyone' 'Read'), (Ac 'PC\Amy' 'Read'))
-    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+    'Photos' = @((ShareAce 'Everyone' 'Change'), (ShareAce 'Everyone' 'Read'), (ShareAce 'PC\Amy' 'Read'))
+    'Work files' = @((ShareAce 'BUILTIN\Guests' 'Full'), (ShareAce 'PC\Bob' 'Change'))
 }
 Reject { HSetShare 'Photos|S-1-1-0|Change' 0 } 'entry changed'
 Assert ($script:calls.Count -eq 0) 'nothing is revoked when the account has two rows'
 Reject { HSharesPreflight } 'could not be put back exactly'
 # A Deny row for the same account is also more than one row.
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'Everyone' 'Full' 'Deny'), (Ac 'PC\Amy' 'Read'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'Everyone' 'Full' 'Deny'), (ShareAce 'PC\Amy' 'Read'))
 Reject { HSetShare 'Photos|S-1-1-0|Change' 0 } 'entry changed'
 # Only administrators would be left: not offered.
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'NT AUTHORITY\SYSTEM' 'Full'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Administrators' 'Full'), (ShareAce 'NT AUTHORITY\SYSTEM' 'Full'))
 Reject { HSharesPreflight } 'only administrators'
-$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Change'))
+$script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Administrators' 'Full'), (ShareAce 'PC\Amy' 'Change'))
 HSharesPreflight
 # A failed read is not a deleted share.
 $script:smbFail = $true
@@ -1457,7 +1473,7 @@ $script:smbFail = $false
 Assert (HItemGone 'Gone|S-1-1-0|Change') 'a share that does not exist is gone'
 # Hidden user shares and apostrophes are handled like any other share; built-in ones never.
 $script:shares = @((Sh 'Mom''s files'), (Sh 'Backup$'), (Sh 'D$' $true), (Sh 'ADMIN$' $true))
-$script:acl = @{ 'Mom''s files' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Change')); 'Backup$' = @((Ac 'Everyone' 'Change'), (Ac 'PC\Bob' 'Change')); 'D$' = @((Ac 'Everyone' 'Full')); 'ADMIN$' = @((Ac 'Everyone' 'Full')) }
+$script:acl = @{ 'Mom''s files' = @((ShareAce 'Everyone' 'Full'), (ShareAce 'PC\Bob' 'Change')); 'Backup$' = @((ShareAce 'Everyone' 'Change'), (ShareAce 'PC\Bob' 'Change')); 'D$' = @((ShareAce 'Everyone' 'Full')); 'ADMIN$' = @((ShareAce 'Everyone' 'Full')) }
 $script:hWanted = @{}
 $r = HReadShares
 Assert ($r.Count -eq 2 -and $r["Mom's files|S-1-1-0|Full"] -eq 1 -and $r['Backup$|S-1-1-0|Change'] -eq 1) 'the check and the fix see the same shares'

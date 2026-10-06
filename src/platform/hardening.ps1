@@ -503,7 +503,17 @@ function HPreflight() {
             $kiosk = 'HKLM:\SOFTWARE\Microsoft\Windows\AssignedAccessConfiguration'
             if (Test-Path -LiteralPath $kiosk) {
                 $item = Get-Item -LiteralPath $kiosk -ErrorAction Stop
-                if (@($item.GetValueNames()).Count -gt 0 -or @($item.GetSubKeyNames()).Count -gt 0) { throw 'Not offered: this PC is set up as a kiosk' }
+                # Windows 11 ships this key with empty Configs, GroupConfigs,
+                # Profiles and RawData folders. Only something inside them is
+                # a kiosk; a folder that cannot be read counts as one.
+                $set = @($item.GetValueNames()).Count -gt 0
+                foreach ($name in @($item.GetSubKeyNames())) {
+                    if ($set) { break }
+                    $sub = $item.OpenSubKey($name)
+                    if ($null -eq $sub) { $set = $true; break }
+                    try { $set = @($sub.GetValueNames()).Count -gt 0 -or @($sub.GetSubKeyNames()).Count -gt 0 } finally { $sub.Close() }
+                }
+                if ($set) { throw 'Not offered: this PC is set up as a kiosk' }
             }
         }
         'remote_desktop.disabled' {
