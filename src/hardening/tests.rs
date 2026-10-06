@@ -832,6 +832,11 @@ fn system_controls_follow_the_research_exclusions() {
         "privacy.delivery_optimization",
         "privacy.clipboard_sync",
         "defender.exclusions_risky",
+        "ai.click_to_do",
+        "ai.paint",
+        "ai.notepad",
+        "debloat.widgets_policy",
+        "debloat.device_companion_apps",
     ] {
         assert!(is_ask_check_id(id), "{id} must be a choice");
     }
@@ -969,4 +974,89 @@ fn script_json_round_trips_and_is_single_quote_free() {
         assert_eq!(v["id"], s.id);
         assert_eq!(v["keys"].as_array().unwrap().len(), s.keys.len());
     }
+}
+
+#[test]
+fn optional_switches_set_exactly_the_documented_policy_values_and_undo_by_the_journal() {
+    for (id, path, names) in [
+        (
+            "debloat.widgets_policy",
+            r"HKLM:\SOFTWARE\Policies\Microsoft\Dsh",
+            &["AllowNewsAndInterests"][..],
+        ),
+        (
+            "debloat.device_companion_apps",
+            r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata",
+            &["PreventDeviceMetadataFromNetwork"][..],
+        ),
+        (
+            "ai.paint",
+            r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint",
+            &["DisableCocreator", "DisableGenerativeFill", "DisableImageCreator"][..],
+        ),
+        (
+            "ai.notepad",
+            r"HKLM:\SOFTWARE\Policies\WindowsNotepad",
+            &["DisableAIFeatures"][..],
+        ),
+        (
+            "ai.click_to_do",
+            r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI",
+            &["DisableClickToDo"][..],
+        ),
+    ] {
+        let s = spec(id).unwrap();
+        assert!(s.ask && !s.reboot && !s.dynamic(), "{id}");
+        assert_eq!(s.source, Source::Registry, "{id}");
+        assert_eq!(s.keys.iter().map(|k| k.name).collect::<Vec<_>>(), names, "{id}");
+        assert!(s.keys.iter().all(|k| k.path == path), "{id}");
+        let off = if id == "debloat.widgets_policy" { 0 } else { 1 };
+        let on = 1 - off;
+        for k in s.keys {
+            let Rule::Set { safe, absent_safe, fix } = k.rule else {
+                unreachable!()
+            };
+            assert_eq!((safe, absent_safe, fix), (&[off][..], false, Some(off)), "{id}");
+        }
+        let untouched = vec![None; names.len()];
+        assert!(s.any_unsafe(&items(s, &untouched)), "{id}: absent means still on");
+        assert!(s.any_unsafe(&items(s, &vec![Some(on); names.len()])), "{id}");
+        assert!(!s.any_unsafe(&items(s, &vec![Some(off); names.len()])), "{id}");
+        assert_eq!(
+            s.derive_target(&items(s, &untouched)).unwrap(),
+            items(s, &vec![Some(off); names.len()]),
+            "{id}"
+        );
+        assert!(s.validate(&items(s, &vec![Some(2); names.len()])).is_err(), "{id}");
+        assert_eq!(s.gate.own_policy_key, path, "{id}");
+    }
+}
+
+#[test]
+fn paint_turns_off_only_the_three_documented_tools_one_at_a_time() {
+    let s = spec("ai.paint").unwrap();
+    let partly = items(s, &[Some(1), None, Some(1)]);
+    assert!(s.any_unsafe(&partly));
+    assert_eq!(
+        s.derive_target(&partly).unwrap(),
+        items(s, &[Some(1), Some(1), Some(1)])
+    );
+}
+
+#[test]
+fn click_to_do_and_recall_share_one_policy_key_without_blocking_each_other() {
+    let recall = spec("privacy.recall").unwrap();
+    let click = spec("ai.click_to_do").unwrap();
+    assert_eq!(recall.gate.own_policy_key, click.gate.own_policy_key);
+    assert_eq!(recall.gate.areas, click.gate.areas);
+    assert!(recall.gate.shared_values.contains(&"DisableClickToDo"));
+    assert!(click.gate.shared_values.contains(&"DisableAIDataAnalysis"));
+    for s in all() {
+        for shared in s.gate.shared_values {
+            assert!(!s.keys.iter().any(|k| k.name == *shared), "{}", s.id);
+            assert!(!s.gate.own_policy_key.is_empty(), "{}", s.id);
+        }
+    }
+    let gate = serde_json::from_str::<Value>(&click.script_json()).unwrap()["gate"].clone();
+    assert_eq!(gate["sharedValues"], json!(["DisableAIDataAnalysis"]));
 }

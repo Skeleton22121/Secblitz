@@ -432,11 +432,34 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("privacy.diagnostic_data_level", json!({"AllowTelemetry": null})),
         ("privacy.delivery_optimization", json!({"DODownloadMode": null})),
         ("privacy.clipboard_sync", json!({"AllowCrossDeviceClipboard": null})),
+        ("ai.click_to_do", json!({"DisableClickToDo": null})),
+        ("ai.paint", json!({"DisableCocreator": null, "DisableGenerativeFill": null, "DisableImageCreator": null})),
+        ("ai.notepad", json!({"DisableAIFeatures": null})),
+        ("debloat.widgets_policy", json!({"AllowNewsAndInterests": null})),
+        ("debloat.device_companion_apps", json!({"PreventDeviceMetadataFromNetwork": null})),
         ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
     ] {
         let (_dir, _state, mut e) = fixture(id, json!({ "items": items }));
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
     }
+}
+
+#[test]
+fn optional_switches_change_only_the_chosen_setting_and_undo_restores_the_exact_earlier_value() {
+    let id = "ai.paint";
+    let before = json!({"items": {"DisableCocreator": null, "DisableGenerativeFill": 0, "DisableImageCreator": null}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"DisableCocreator": 1, "DisableGenerativeFill": 1, "DisableImageCreator": 1}})
+    );
+    e.revert(|_| {}).unwrap();
+    assert_eq!(state.borrow().values[id], before);
+    let done = json!({"items": {"AllowNewsAndInterests": 0}});
+    let (_dir, state, mut e) = fixture("debloat.widgets_policy", done);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    assert!(state.borrow().writes.is_empty());
 }
 
 #[test]

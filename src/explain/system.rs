@@ -22,6 +22,11 @@ const IDS: &[&str] = &[
     "privacy.diagnostic_data_level",
     "privacy.delivery_optimization",
     "privacy.clipboard_sync",
+    "ai.click_to_do",
+    "ai.paint",
+    "ai.notepad",
+    "debloat.widgets_policy",
+    "debloat.device_companion_apps",
     "defender.exclusions_risky",
     "recovery.winre_enabled",
 ];
@@ -97,6 +102,31 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Windows can copy what you cut or copy on one device to your other devices that use the same account.",
             "Anything you copy, like a password or a card number, can turn up on another device you forgot about.",
             "Copying and pasting works as usual on this PC. It just no longer appears on your other devices.",
+        ),
+        "ai.click_to_do" => e(
+            "Click to Do lets you pick text or pictures on your screen and send them to AI tools for quick actions.",
+            "What is on your screen, including private messages or details, can be handed to AI tools when you or a stray click chooses it.",
+            "Click to Do stops offering actions on your screen. Nothing else changes. Not every version of Windows has it.",
+        ),
+        "ai.paint" => e(
+            "Paint has AI tools that can make or change pictures for you, such as Cocreator, Generative fill and Image Creator.",
+            "Your drawings and what you ask for can be sent over the internet to online AI services.",
+            "Those AI tools turn off. Drawing, editing and saving in Paint work as before. You can undo this.",
+        ),
+        "ai.notepad" => e(
+            "Notepad has AI tools that can write, rewrite and sum up text for you.",
+            "The words you type or select can be sent over the internet to online AI services.",
+            "Those AI tools turn off. Typing, opening and saving notes work as before. You can undo this.",
+        ),
+        "debloat.widgets_policy" => e(
+            "Widgets is a button on the taskbar that opens a board of news, weather, stories and ads.",
+            "The board can fill your screen with news and ads you did not ask for, and it uses your internet connection.",
+            "The Widgets button and board go away for everyone on this PC. Windows Home does not support this. You can undo this.",
+        ),
+        "debloat.device_companion_apps" => e(
+            "When you plug in a new mouse, keyboard or monitor, Windows can look up its picture and suggest the maker's extra app.",
+            "Those suggestions can put extra apps on your PC that you never asked for.",
+            "Device pictures and details stop downloading, so devices may show a plain icon. They still work. You can undo this.",
         ),
         "defender.exclusions_risky" => e(
             "Your antivirus keeps a list of places and programs it was told to skip, and some entries cover far too much.",
