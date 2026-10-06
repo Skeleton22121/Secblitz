@@ -234,7 +234,6 @@ pub fn fade_palette(
         hover_strong: f(p.hover_strong),
         pressed: f(p.pressed),
         selected: f(p.selected),
-        focus_ring: f(p.focus_ring),
         disabled_bg: f(p.disabled_bg),
         disabled_fg: f(p.disabled_fg),
         text: f(p.text),

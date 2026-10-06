@@ -14,6 +14,7 @@ use iced::{
 use std::time::{Duration, Instant};
 
 const PRESS_SCALE: f32 = 0.03;
+const FOCUS_ALPHA: f32 = 0.14;
 const DOWN: Duration = anim::FASTER;
 const UP: Duration = Duration::from_millis(220);
 pub const SCALE_MAX_WIDTH: f32 = 260.0;
@@ -35,7 +36,6 @@ pub struct Press<'a, Message> {
     clip: bool,
     scale: bool,
     id: Option<widget::Id>,
-    focus: Option<Color>,
     style: StyleFn<'a>,
 }
 
@@ -52,7 +52,6 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
             clip: false,
             scale: true,
             id: None,
-            focus: None,
             style: Box::new(|_, _| Style::default()),
         }
     }
@@ -86,10 +85,6 @@ impl<'a, Message: Clone + 'a> Press<'a, Message> {
     }
     pub fn id(mut self, id: impl Into<widget::Id>) -> Self {
         self.id = Some(id.into());
-        self
-    }
-    pub fn focus_color(mut self, c: Color) -> Self {
-        self.focus = Some(c);
         self
     }
     pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self {
@@ -418,6 +413,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
         } else {
             0.0
         };
+        let focused = st.focused && self.enabled();
         let paint = |renderer: &mut Renderer| {
             if style.background.is_some() || style.border.width > 0.0 {
                 renderer.fill_quad(
@@ -430,6 +426,23 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
                     style
                         .background
                         .unwrap_or(Background::Color(Color::TRANSPARENT)),
+                );
+            }
+            if focused {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds,
+                        border: Border {
+                            radius: style.border.radius,
+                            ..Border::default()
+                        },
+                        shadow: Default::default(),
+                        snap: false,
+                    },
+                    Background::Color(Color {
+                        a: FOCUS_ALPHA,
+                        ..style.text_color
+                    }),
                 );
             }
             self.content.as_widget().draw(
@@ -452,24 +465,6 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
             renderer.with_transformation(m, |r| paint(r));
         } else {
             paint(renderer);
-        }
-
-        if st.focused && self.enabled() {
-            let ring = self.focus.unwrap_or(style.text_color);
-            let radius = style.border.radius;
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: bounds.expand(2.0),
-                    border: Border {
-                        color: ring,
-                        width: 2.0,
-                        radius: radius.top_left.max(radius.bottom_right).max(2.0).into(),
-                    },
-                    shadow: Default::default(),
-                    snap: false,
-                },
-                Background::Color(Color::TRANSPARENT),
-            );
         }
     }
     fn mouse_interaction(

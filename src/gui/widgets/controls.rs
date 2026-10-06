@@ -46,10 +46,10 @@ where
         })
         .handle(pick_list::Handle::None)
         .style(move |_, status| {
-            let (bg, border_color, width) = match status {
-                pick_list::Status::Active => (p.surface_alt, Color::TRANSPARENT, 0.0),
-                pick_list::Status::Hovered => (p.hover_strong, Color::TRANSPARENT, 0.0),
-                pick_list::Status::Opened { .. } => (p.surface_alt, p.focus_ring, 2.0),
+            let bg = match status {
+                pick_list::Status::Active => p.surface_alt,
+                pick_list::Status::Hovered => p.hover_strong,
+                pick_list::Status::Opened { .. } => p.pressed,
             };
             pick_list::Style {
                 text_color: p.text,
@@ -58,8 +58,7 @@ where
                 background: Background::Color(bg),
                 border: Border {
                     radius: theme::R.into(),
-                    width,
-                    color: border_color,
+                    ..Border::default()
                 },
             }
         })
@@ -754,7 +753,6 @@ pub fn checkbox<'a>(
             .scale(false)
             .padding([theme::S1, theme::S1])
             .on_press_maybe(on_press)
-            .focus_color(p.focus_ring)
             .style(move |_, status| button::Style {
                 background: match status {
                     button::Status::Hovered => Some(Background::Color(p.hover)),

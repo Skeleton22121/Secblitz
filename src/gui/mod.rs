@@ -944,7 +944,6 @@ impl App {
                     .height(theme::CONTROL)
                     .padding([0.0, theme::S3])
                     .scale(false)
-                    .focus_color(p.focus_ring)
                     .on_press(Message::Navigate(page))
                     .style(move |_, status| button::Style {
                         background: match status {

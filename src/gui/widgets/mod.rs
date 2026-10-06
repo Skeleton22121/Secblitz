@@ -255,7 +255,6 @@ pub fn action<'a>(
         press::button(container(content).center_y(Length::Fill))
             .height(theme::CONTROL)
             .padding([0.0, theme::S4])
-            .focus_color(p.focus_ring)
             .on_press_maybe(on_press)
             .style(button_style(p, kind)),
     )
@@ -273,7 +272,6 @@ pub fn icon_button<'a>(
             .width(theme::CONTROL)
             .height(theme::CONTROL)
             .padding(0)
-            .focus_color(p.focus_ring)
             .on_press_maybe(on_press)
             .style(button_style(p, kind)),
     )
