@@ -572,3 +572,18 @@ fn compiled_script_uses_only_encoded_data_and_fixed_actions() {
         assert!(start(p.id, &p.digest).is_err());
     }
 }
+#[test]
+fn compiled_discover_takes_no_plan_and_no_permit() {
+    let (_, _, _, p) = prepared();
+    let a = Approval {
+        digest: p.digest.clone(),
+        approved_at: 1,
+        expires_at: 2,
+        consent: consent(),
+    };
+    assert!(script::build(script::Action::Discover, None, None).is_ok());
+    assert!(script::build(script::Action::Discover, Some(&p), None).is_err());
+    assert!(script::build(script::Action::Discover, None, Some(&a)).is_err());
+    assert!(script::build(script::Action::Verify, None, None).is_err());
+    assert!(script::build(script::Action::Verify, Some(&p), None).is_ok());
+}
