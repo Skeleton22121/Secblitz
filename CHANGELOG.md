@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-06
+
 ### Added
 - **More optional switches on Protection.** You can now turn off the AI tools in Paint and Notepad, Click to Do, the Widgets button and news board, and the extra apps Windows suggests when you plug in a new device. Nothing is ticked for you, each one can be undone, and a switch only appears where the app or feature exists on your PC.
 - **More apps in Clean up apps.** Old Microsoft apps such as Finance, Sports, Travel, Food and Drink, Health and Fitness, Translator, Microsoft News, PC Manager, 3D Viewer, Paint 3D, Mobile Plans, Sway, Power BI, OneNote for Windows 10, Microsoft 365 Companions, Widgets helper, Mail and Calendar (older version) and Family Safety can now be removed when they are on your PC. Nothing is ticked for you, and each one can be brought back from the Removed apps tab. Apps with something to know first, like Widgets, Mail and Calendar and Family Safety, say so in a short line.
