@@ -163,7 +163,7 @@ Defender writes require a recognized active provider and no tamper block. Leave 
 
 Service repairs remove CHANGE_CONFIG, DELETE, WRITE_DAC and WRITE_OWNER from supported explicit ALLOW ACEs for Everyone, Authenticated Users and Builtin Users, mapping generic rights as needed. They preserve safe rights, other ACE bytes/order/padding, owner/group and supported flags. NULL/absent, deny/inherited/flagged/complex ACLs are ineligible. Only **BITS and wuauserv** are mutable, not arbitrary service executables, Windows files or third-party software. These controls reduce specific paths, not all privilege escalation.
 
-Historical v0.2.0 tests demonstrated four registry repairs and wuauserv DACL exact undo/access simulation; BITS was intentionally skipped for a flagged baseline ACE. Native BITS repair remains unproven. [winPEAS was blocked](winpeas-assessment.md); no zero-findings benchmark exists.
+Historical v0.2.0 tests demonstrated four registry repairs and wuauserv DACL exact undo/access simulation; BITS was intentionally skipped for a flagged baseline ACE. Native BITS repair remains unproven.
 
 ### 20 extended hardening controls (catalog: `src/hardening.rs`)
 

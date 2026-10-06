@@ -109,7 +109,7 @@ v0.2.0 results shows all four new registry fixtures applied/restored and wuauser
 
 BITS retained a baseline flagged ACE (0x02 ContainerInherit). It correctly stayed ineligible, leaving the unsafe fixture untouched until manual cleanup. There is **no native BITS repair success**. Benign wuauserv QUERY_STATUS ACE drift caused conflict, then explicit retry after the harness restored expected applied state performed exact undo. Eight controls changed in total; all 18 actual baseline states were restored after tool undo and independent fixture cleanup. Defender/tamper stayed enabled; WDigest was not tested across reboot.
 
-[winPEAS execution was blocked](winpeas-assessment.md); no completed before/after benchmark or permission finding count exists. Narrow service simulations are not a system-wide “zero findings” result. These repairs reduce the specific documented paths, not all privilege escalation, credential theft or malware. BITS/Windows Update service identity checks are not proof of executable/DLL/ancestor-path integrity.
+No system-wide before/after benchmark or permission finding count exists. Narrow service simulations are not a system-wide “zero findings” result. These repairs reduce the specific documented paths, not all privilege escalation, credential theft or malware. BITS/Windows Update service identity checks are not proof of executable/DLL/ancestor-path integrity.
 
 ## Researched surface catalog
 

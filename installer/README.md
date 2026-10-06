@@ -1,10 +1,9 @@
-# Secblitz 0.3.0 Windows packaging
+# Secblitz Windows packaging
 
-The v0.3.0 installer source review is recorded in
-[review-installer-v030.md](../docs/review-installer-v030.md). Compiled v0.3.0
-installer acceptance is pending; the v0.2.0 evidence below is historical.
+The evidence below is historical and comes from early versions. Current release
+steps are in [RELEASING.md](../docs/RELEASING.md).
 
-**Current evidence, 2026-10-02:** [v0.2.0 Windows 11 acceptance](../docs/windows-v020-results.md) passed **70 library + 16 CLI = 86 native tests**, Inno Setup **6.7.3** compilation, Italian optional-monitor installation, actual scan and running uninstall. The coordinating host run passed **84 Linux tests**. Windows 10 is targeted but **untested**; project artifacts are **unsigned GNU-cross-built development builds**, not signed/native-MSVC provenance.
+**Current evidence, 2026-10-02:** v0.2.0 Windows 11 acceptance passed **70 library + 16 CLI = 86 native tests**, Inno Setup **6.7.3** compilation, Italian optional-monitor installation, actual scan and running uninstall. The coordinating host run passed **84 Linux tests**. Windows 10 is targeted but **untested**; project artifacts are **unsigned GNU-cross-built development builds**, not signed/native-MSVC provenance.
 
 The initial installer warned that Italian `Monitor`/`Failed` fell back to English. **The corrected final repack now passed targeted verification:** warning-free ISCC compile, Italian optional-monitor install exit 0 with service Stopped, uninstall exit 0, unchanged executable/journal hashes and all 18 baseline states. The actual scan/running-uninstall evidence is from the preceding package with the identical executable and was not repeated for the two-string correction. Use `dist/SHA256SUMS` and the matching final acceptance record; the preceding package hash is historical.
 
@@ -213,13 +212,10 @@ Before packaging, actual registry/wuauserv repair/undo, idempotence and benign
 DACL-drift conflict/retry passed. Only eight controls changed. BITS's existing
 flagged ACE caused an intentional skip; it was not normalized to manufacture a
 passing repair. Tool undo plus manual fixture cleanup restored all 18 baseline
-states. Defender/tamper stayed enabled. winPEAS remained blocked, with findings
-unavailable - not zero. See [native results](../docs/windows-v020-results.md),
-[permissions design](../docs/permissions-design.md) and
-[blocked assessment](../docs/winpeas-assessment.md).
+states. See [permissions design](../docs/permissions-design.md).
 
 Historical v0.1.0 running-upgrade/locked-file-rejection acceptance is recorded in
-[the older results](../docs/windows-test-results.md). Archived v0.1.0 artifacts
+the older results. Archived v0.1.0 artifacts
 and matching checksums are under `dist/archive/0.1.0/`; they are not current
 downloads or proof of a corrected v0.2.0 repack. The corrected repack has its own
 targeted acceptance entry; exact hashes are kept there rather than duplicated here.
