@@ -211,9 +211,12 @@ struct Recheck {
 }
 
 impl Recheck {
-    fn arm(&mut self, now: std::time::Instant) {
+    /// `focused` is whether the window has focus right now. The Settings window
+    /// often takes focus before the open request is answered, so the window
+    /// may already be away when this arms.
+    fn arm(&mut self, now: std::time::Instant, focused: bool) {
         self.opened = Some(now);
-        self.left = false;
+        self.left = !focused;
     }
 
     /// True when a check should start now. `idle` is false while a check or a
@@ -265,6 +268,8 @@ pub struct App {
     warm_at: [Option<std::time::Instant>; 3],
     /// Re-check once when the person returns from a Windows page we opened.
     recheck: Recheck,
+    /// Whether the window has focus now (updated on every focus event).
+    focused: bool,
 }
 
 /// Write the history entry and the tray status off the UI thread: both fsync
@@ -393,6 +398,7 @@ impl App {
             flight: [false; 3],
             warm_at: [None; 3],
             recheck: Recheck::default(),
+            focused: true,
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
@@ -484,7 +490,7 @@ impl App {
             Message::Noop => Task::none(),
             Message::PageOpened(page, ok) => {
                 let text = if ok {
-                    self.recheck.arm(std::time::Instant::now());
+                    self.recheck.arm(std::time::Instant::now(), self.focused);
                     self.ctx.t("Opened in a new window.")
                 } else {
                     crate::guide::failure_text(self.ctx.lang, page)
@@ -492,6 +498,7 @@ impl App {
                 self.update(Message::Toast(text, if ok { Tone::Good } else { Tone::Warn }))
             }
             Message::WindowFocus(focused) => {
+                self.focused = focused;
                 let idle = self.ctx.checking.is_none() && !self.ctx.busy;
                 if self
                     .recheck
@@ -1244,7 +1251,7 @@ mod recheck_tests {
         let t0 = Instant::now();
         let mut r = Recheck::default();
         assert!(!r.focus(true, t0, true), "nothing opened yet");
-        r.arm(t0);
+        r.arm(t0, true);
         assert!(!r.focus(true, t0, true), "focus before leaving does nothing");
         assert!(!r.focus(false, t0, true));
         assert!(r.focus(true, t0 + Duration::from_secs(60), true));
@@ -1256,14 +1263,22 @@ mod recheck_tests {
     }
 
     #[test]
+    fn unfocused_before_armed_still_counts_as_left() {
+        let t0 = Instant::now();
+        let mut r = Recheck::default();
+        r.arm(t0, false);
+        assert!(r.focus(true, t0 + Duration::from_secs(20), true));
+    }
+
+    #[test]
     fn busy_waits_and_late_returns_are_ignored() {
         let t0 = Instant::now();
         let mut r = Recheck::default();
-        r.arm(t0);
+        r.arm(t0, true);
         assert!(!r.focus(false, t0, true));
         assert!(!r.focus(true, t0 + Duration::from_secs(5), false), "busy");
         assert!(r.focus(true, t0 + Duration::from_secs(9), true), "still armed");
-        r.arm(t0);
+        r.arm(t0, true);
         assert!(!r.focus(false, t0, true));
         assert!(!r.focus(true, t0 + RECHECK_WINDOW + Duration::from_secs(1), true));
         assert!(!r.focus(true, t0 + Duration::from_secs(5), true), "disarmed");

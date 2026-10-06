@@ -248,6 +248,12 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         } else {
             (Bucket::Look, Tone::Warn)
         };
+        // When the older finding for this control is still listed, it carries
+        // the steps; showing them on this row too would repeat them.
+        let finding_listed = report.findings.iter().any(|f| {
+            advice::control_for_finding(&f.title) == Some(r.id.as_str())
+                && !score::superseded(report, f)
+        });
         rows.others.push(other(
             ctx,
             rows.others.len(),
@@ -257,6 +263,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             bucket,
             tone,
             tech_line(&r.status, &a, lang),
+            if finding_listed { None } else { Some(r.detail.as_str()) },
         ));
     }
     for f in &report.findings {
@@ -283,6 +290,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             bucket,
             tone,
             tech_line(&f.status, &a, lang),
+            None,
         ));
     }
     rows
@@ -298,17 +306,23 @@ fn other(
     bucket: Bucket,
     tone: Tone,
     tech: String,
+    // The control's own result detail, for "Not offered" rows. None for
+    // findings, and for controls whose steps another row already shows.
+    detail: Option<&str>,
 ) -> Other {
     // Settings the PC's owner controls are plain information: nothing to
     // decide, nothing to open.
     let managed = bucket == Bucket::Managed;
     let guide = match bucket {
-        Bucket::Look | Bucket::GoodToKnow => guide::guide(explain.0),
+        Bucket::Look => guide::guide(explain.0),
+        // Steps only for a reason the person can act on (see the guide module).
+        Bucket::GoodToKnow => detail.and_then(|d| guide::guide_not_offered(explain.0, d)),
         _ => None,
     };
     let page = match bucket {
         Bucket::Look => guide
             .map(|g| g.page)
+            .or_else(|| Page::for_finding(explain.0))
             .or_else(|| Page::for_step(a.step)),
         Bucket::GoodToKnow => guide.map(|g| g.page),
         _ => None,
@@ -543,7 +557,12 @@ fn expanded<'a>(
 /// The numbered steps of a guide and the visible buttons that open its page.
 /// Shared by the Protection and Tools pages. `indent` lines the text up with
 /// the row's title.
-pub fn guide_block<'a>(ctx: &Ctx, g: &'static Guide, indent: f32) -> Element<'a, Message> {
+pub fn guide_block<'a>(
+    ctx: &Ctx,
+    g: &'static Guide,
+    indent: f32,
+    buttons: bool,
+) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut steps = column![].spacing(theme::S1);
     for (i, step) in g.steps.iter().enumerate() {
@@ -558,17 +577,17 @@ pub fn guide_block<'a>(ctx: &Ctx, g: &'static Guide, indent: f32) -> Element<'a,
             Some(Message::Fixes(Msg::Open(page))),
         )
     };
-    let mut buttons = row![open(g.page, ButtonKind::Secondary)]
-        .spacing(theme::S2)
-        .align_y(Alignment::Center);
-    if let Some(alt) = g.alt {
-        buttons = buttons.push(open(alt, ButtonKind::Ghost));
+    let mut body = column![steps].spacing(theme::S3).width(Length::Fill);
+    if buttons {
+        let mut bar = row![open(g.page, ButtonKind::Secondary)]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center);
+        if let Some(alt) = g.alt {
+            bar = bar.push(open(alt, ButtonKind::Ghost));
+        }
+        body = body.push(bar);
     }
-    row![
-        space::horizontal().width(indent),
-        column![steps, buttons].spacing(theme::S3).width(Length::Fill)
-    ]
-    .into()
+    row![space::horizontal().width(indent), body].into()
 }
 
 fn nothing<'a>() -> Element<'a, Message> {
@@ -696,7 +715,7 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     );
     let mut rows = column![head].spacing(theme::S1);
     if let Some(g) = o.guide {
-        rows = rows.push(guide_block(ctx, g, INDENT_PLAIN));
+        rows = rows.push(guide_block(ctx, g, INDENT_PLAIN, true));
     }
     if let Some(inset) =
         widgets::explain::panel(ctx, "fixes", &o.explain, o.report_only, INDENT_PLAIN)
@@ -1065,7 +1084,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         body = body.push(widgets::group(
             p,
             ctx.t("Worth a look"),
-            Some(ctx.t("Windows only lets you do these yourself. Each one shows the steps.")),
+            Some(ctx.t("Most of these are done in Windows itself. Steps are shown where they help.")),
             None,
             look.iter().map(|o| other_row(state, ctx, o)).collect(),
         ));

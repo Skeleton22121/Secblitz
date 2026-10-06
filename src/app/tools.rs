@@ -1982,7 +1982,7 @@ mod tests {
         );
         assert_eq!(
             rule_open("defender.threats"),
-            Some(A::OpenProtectionHistory)
+            Some(A::OpenProtectionHistoryList)
         );
         assert_eq!(
             rule_open("defender.scan_age"),
