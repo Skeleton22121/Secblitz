@@ -1,22 +1,4 @@
 //! Trend chart: a calm, smooth line with a soft area under it.
-//!
-//! * Monotone cubic line (Fritsch-Butland tangents): passes through every
-//!   point and never overshoots between them, so a score never dips or
-//!   exceeds what was really measured.
-//! * The area is four stacked, very low alpha bands that fade downward; no
-//!   gradients, so it renders the same on the CPU and GPU backends.
-//! * Three faint guide lines, percent labels on the top and bottom one, first
-//!   and last date underneath.
-//! * The latest point wears a small marker; hovering shows the value and date
-//!   of the nearest point.
-//! * The line draws in left to right once, 500 ms on the decelerate curve;
-//!   afterwards the geometry sits in the page's `canvas::Cache` and only the
-//!   hover layer is redrawn.
-//! * Zero or one point gets a quiet state instead of a flat slab.
-//!
-//! Values are ratios 0.0..=1.0 (shown as percent). X positions are even
-//! per check, not proportional to time: checks come in bursts and a true time
-//! axis would squash them.
 use super::anim::{self, DECELERATE};
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
@@ -32,11 +14,7 @@ const PAD_TOP: f32 = 12.0;
 const LABEL_H: f32 = 24.0;
 const BANDS: usize = 4;
 
-// ---------------------------------------------------------------------------
-// Pure maths
-// ---------------------------------------------------------------------------
 
-/// Slopes (per index step) for a monotone cubic through `ys`, evenly spaced.
 pub fn monotone_tangents(ys: &[f32]) -> Vec<f32> {
     let n = ys.len();
     if n < 2 {
@@ -57,7 +35,6 @@ pub fn monotone_tangents(ys: &[f32]) -> Vec<f32> {
     m
 }
 
-/// Cubic Hermite value between `y0` and `y1` at `u` in 0..=1 (unit spacing).
 pub fn hermite(y0: f32, y1: f32, m0: f32, m1: f32, u: f32) -> f32 {
     let (u2, u3) = (u * u, u * u * u);
     (2.0 * u3 - 3.0 * u2 + 1.0) * y0
@@ -66,8 +43,6 @@ pub fn hermite(y0: f32, y1: f32, m0: f32, m1: f32, u: f32) -> f32 {
         + (u3 - u2) * m1
 }
 
-/// Value range the chart shows: padded around the data, rounded to 10 %,
-/// at least 30 % tall and inside 0..=1.
 pub fn y_domain(values: impl Iterator<Item = f32>) -> (f32, f32) {
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for v in values {
@@ -88,7 +63,6 @@ pub fn y_domain(values: impl Iterator<Item = f32>) -> (f32, f32) {
     (lo, hi)
 }
 
-/// Index of the point nearest to `x` for `n` points spread over `left..right`.
 pub fn nearest(x: f32, left: f32, right: f32, n: usize) -> Option<usize> {
     if n == 0 {
         return None;
@@ -100,9 +74,6 @@ pub fn nearest(x: f32, left: f32, right: f32, n: usize) -> Option<usize> {
     Some(k.clamp(0.0, (n - 1) as f32) as usize)
 }
 
-// ---------------------------------------------------------------------------
-// Widget
-// ---------------------------------------------------------------------------
 
 struct Trend<'a> {
     p: Palette,
@@ -115,7 +86,6 @@ struct Trend<'a> {
 #[derive(Default)]
 pub struct TrendState {
     start: Option<Instant>,
-    /// 0..=1 entrance progress (eased).
     reveal: f32,
     entered: bool,
     hover: Option<usize>,
@@ -178,7 +148,6 @@ impl Trend<'_> {
             .collect()
     }
 
-    /// Everything that does not depend on the pointer.
     fn paint_static(&self, f: &mut Frame, reveal: f32) {
         let p = &self.p;
         let size = f.size();
@@ -248,7 +217,6 @@ impl Trend<'_> {
         let px = self.pixels(&plot, domain);
         let last = px[n - 1];
         if n == 1 {
-            // One check so far: a quiet level line and the value, not a slab.
             f.stroke(
                 &Path::line(
                     Point::new(plot.left, last.y),
@@ -281,7 +249,6 @@ impl Trend<'_> {
                 b.line_to(Point::new(px[0].x, plot.bottom));
                 b.close();
             });
-            // Entrance: everything is revealed left to right through a clip.
             let reveal_x = plot.left + (plot.right - plot.left) * reveal + 2.0;
             let top_y = px.iter().map(|q| q.y).fold(f32::MAX, f32::min) - 2.0;
             let band_alpha = if p.mode == theme::Mode::Dark {
@@ -444,7 +411,6 @@ impl canvas::Program<Message> for Trend<'_> {
                     .draw(renderer, bounds.size(), |f| self.paint_static(f, 1.0)),
             );
         } else {
-            // While the line draws in, bypass the cache (it would store a partial frame).
             let mut f = Frame::new(renderer, bounds.size());
             self.paint_static(&mut f, st.reveal);
             out.push(f.into_geometry());
@@ -467,10 +433,6 @@ impl canvas::Program<Message> for Trend<'_> {
     }
 }
 
-/// Score trend. `points` are `(unix seconds, ratio 0..=1)` oldest first;
-/// `cache` is the page's geometry cache (it is cleared automatically when the
-/// data, tone, theme or width change); `date` turns a timestamp into the short
-/// translated label shown under the line and in the hover tooltip.
 pub fn trend<'a>(
     p: Palette,
     tone: Tone,

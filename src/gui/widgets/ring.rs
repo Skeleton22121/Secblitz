@@ -1,14 +1,4 @@
 //! Score ring drawn on a canvas.
-//!
-//! A thin, calm ring: a barely-there track, a round-capped arc in the status
-//! tone, and the number in the middle. The arc eases to a new value on the
-//! Fluent decelerate curve ([`anim::SLOW`]); with [`ring_counting`] the number
-//! counts up in step with it.
-//!
-//! The geometry lives in a `canvas::Cache`: it is rebuilt only when the
-//! shown value, label, tone or theme changes, never on hover or unrelated
-//! redraws. The widget asks for redraws only while it is tweening, so it
-//! costs nothing at rest.
 use super::anim;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
@@ -18,33 +8,23 @@ use std::cell::RefCell;
 
 pub struct Ring {
     pub p: Palette,
-    /// 0.0..=1.0
     pub ratio: f32,
     pub tone: Tone,
-    /// Big centre label, e.g. "15/18".
     pub label: String,
-    /// Small caption under the label, e.g. "protected".
     pub caption: String,
 }
 
-/// Shown ratio bits, tone, hash of label + caption, theme mode, shown count.
-/// The text is hashed, not cloned, so an idle redraw allocates nothing.
 type RingKey = (u32, Tone, u64, theme::Mode, i64);
 
-/// Ring plus the optional number that counts up inside it.
 struct Counted {
     ring: Ring,
-    /// When set, the centre label is this number, counted up from the one
-    /// shown before; `ring.label` is ignored.
     count: Option<i64>,
 }
 
-/// Canvas state: the cached geometry and the inputs it was built from.
 #[derive(Default)]
 pub struct RingState {
     cache: canvas::Cache,
     key: RefCell<Option<RingKey>>,
-    /// Ratio currently drawn; eased towards `Ring::ratio` (motion tokens).
     shown: f32,
     from: f32,
     target: f32,
@@ -54,7 +34,6 @@ pub struct RingState {
     start: Option<std::time::Instant>,
 }
 
-/// Stroke width of the arc for a ring of `size` px: thin and calm.
 pub fn stroke_width(size: f32) -> f32 {
     (size * 0.045).clamp(4.0, 9.0)
 }
@@ -110,7 +89,6 @@ impl canvas::Program<Message> for Counted {
         let mut text = std::collections::hash_map::DefaultHasher::new();
         self.ring.label.hash(&mut text);
         self.ring.caption.hash(&mut text);
-        // The page-entrance fade swaps in a washed-out palette: colours count.
         let p = &self.ring.p;
         for c in [p.text, p.text_muted, p.tone(self.ring.tone)] {
             c.into_rgba8().hash(&mut text);
@@ -146,7 +124,6 @@ impl Ring {
         let center = frame.center();
         let w = stroke_width(size);
         let radius = size / 2.0 - w / 2.0 - 2.0;
-        // A whisper of the text colour: reads as a track on both bg and surface.
         frame.stroke(
             &Path::circle(center, radius),
             Stroke::default()
@@ -196,7 +173,6 @@ impl Ring {
     }
 }
 
-/// The ring with `ring.label` shown as given (the page may count it up).
 pub fn ring<'a>(ring: Ring, size: f32) -> Element<'a, Message> {
     canvas::Canvas::new(Counted { ring, count: None })
         .width(Length::Fixed(size))
@@ -204,8 +180,6 @@ pub fn ring<'a>(ring: Ring, size: f32) -> Element<'a, Message> {
         .into()
 }
 
-/// The ring whose centre number counts up (and down) to `number` together
-/// with the arc, so the page keeps no count-up state. `ring.label` is ignored.
 pub fn ring_counting<'a>(ring: Ring, number: i64, size: f32) -> Element<'a, Message> {
     canvas::Canvas::new(Counted {
         ring,

@@ -1,22 +1,13 @@
-//! Objects several drawings share (the prototype's `PARTS`): a laptop, a
-//! monitor, a round badge holding an icon, and a big shield that draws a
-//! mark in. Each draws straight into a frame through a stage (pass a
-//! parallax layer's stage to move it with that layer) and takes an `alpha`
-//! where the prototype faded a whole group.
+//! Objects several drawings share: a laptop, a monitor, a round badge and a big shield.
 use super::glyph::Glyph;
 use super::stage::{pt, stroke, tint_by, Ink, Stage, W_MARK};
 use iced::widget::canvas::Frame;
 use iced::{Color, Point, Rectangle, Size};
 
-/// A screen's inner box, in units, as the laptop and monitor return it.
 fn screen_box(x0: f32, y0: f32, x1: f32, y1: f32) -> Rectangle {
     Rectangle::new(Point::new(x0, y0), Size::new(x1 - x0, y1 - y0))
 }
 
-/// A laptop seen from the front and a little above, its lid `w` by `h`
-/// units with the top edge at `top`, centred on `cx`. `screen` fills the
-/// screen (the plate, or a faint tint while it works). Returns the
-/// screen's inner box. 7 strokes and fills.
 #[allow(clippy::too_many_arguments)]
 pub fn laptop(
     f: &mut Frame,
@@ -63,8 +54,6 @@ pub fn laptop(
     screen_box(x0 + 6.0, top + 6.0, x0 + w - 6.0, y1 - 6.0)
 }
 
-/// A desktop monitor on a stand, its panel `w` by `h` units with the top
-/// edge at `top`, centred on `cx`. Returns the screen's inner box.
 #[allow(clippy::too_many_arguments)]
 pub fn monitor(
     f: &mut Frame,
@@ -104,28 +93,19 @@ pub fn monitor(
     screen_box(x0 + 6.0, top + 6.0, x0 + w - 6.0, y1 - 6.0)
 }
 
-/// How a [`badge`] looks this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BadgeLook {
-    /// Outline and icon colour: `ink.line` for a plain thing, or a
-    /// meaning's colour. The fill is its tint.
     pub color: Color,
-    /// Size factor (1 at rest; a spring's value when hovered or lit).
     pub scale: f32,
-    /// The ring 4 units outside, 0..=1 (lit by a sweep, hovered).
     pub glow: f32,
     pub glow_color: Color,
-    /// The small done tick at the top right, 0..=1.
     pub done: f32,
-    /// The small attention flag at the top right, 0..=1.
     pub flag: f32,
     pub flag_color: Color,
-    /// Whole badge.
     pub alpha: f32,
 }
 
 impl BadgeLook {
-    /// A plain grey badge at rest.
     pub fn new(ink: &Ink) -> BadgeLook {
         BadgeLook {
             color: ink.line,
@@ -140,8 +120,6 @@ impl BadgeLook {
     }
 }
 
-/// A round badge of radius `r` holding `glyph`, for things being checked.
-/// Up to 10 strokes and fills.
 pub fn badge(
     f: &mut Frame,
     s: &Stage,
@@ -202,7 +180,6 @@ pub fn badge(
     }
 }
 
-/// The mark a [`shield_mark`] draws inside.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
     Tick,
@@ -220,22 +197,14 @@ impl Mark {
     }
 }
 
-/// How a [`shield_mark`] looks this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShieldLook {
-    /// The plate behind the shield, 0..=1 (hides what is under it).
     pub back: f32,
-    /// How much of the outline has drawn in, 0..=1.
     pub outline: f32,
-    /// The mark and how much of it has drawn in.
     pub mark: Option<(Mark, f32)>,
-    /// Outline and mark colour (the result's meaning).
     pub color: Color,
 }
 
-/// A big shield `size` units tall centred on `centre` whose outline and
-/// mark draw themselves in (the prototype's `shieldMark`). Up to 3 strokes
-/// and fills.
 pub fn shield_mark(
     f: &mut Frame,
     s: &Stage,

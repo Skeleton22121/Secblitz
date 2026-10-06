@@ -1,8 +1,5 @@
 //! Home: one hero region (score ring, verdict, one primary, extras in the
 //! overflow menu), then flat row groups; first-run PC-check view.
-//!
-//! Motion (see docs/MOTION.md): `window::frames()` is subscribed only while the
-//! scan view is live or the score number is counting up, never when idle.
 use crate::advice::{self, Group, NextStep};
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
@@ -17,7 +14,6 @@ use secblitz::engine::Report;
 use secblitz::model::Probe;
 use std::time::Instant;
 
-/// Score number counting from the previously shown value to a new one.
 #[derive(Debug, Clone, Copy)]
 struct Count {
     from: i64,
@@ -27,29 +23,16 @@ struct Count {
 
 #[derive(Debug)]
 pub struct State {
-    /// "More details" expander of the error card.
     details_open: bool,
-    /// Latest frame timestamp (views never call `Instant::now()`).
     now: Instant,
-    /// Started when the scan view appears; the magnifying glass's state
-    /// change.
     scan: Option<anim::Clock>,
-    /// When the Ready view's resting glass was first made (its state never
-    /// changes, so this stays put).
     ready_since: Instant,
-    /// Status lines of the live check, oldest first, with their start time.
     lines: Vec<(String, Instant)>,
-    /// How many progress items were already turned into status lines.
     processed: usize,
-    /// "Protected" list expanded.
     protected_open: bool,
-    /// "Protected" list shows every row instead of the first few.
     protected_all: bool,
-    /// Web protection is installable and still off: show the optional card.
     web_suggest: bool,
-    /// `checked_at` of the check whose result is already on screen.
     seen_check: Option<u64>,
-    /// Protected count currently shown beside the ring.
     shown: i64,
     count: Option<Count>,
 }
@@ -75,25 +58,16 @@ impl Default for State {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// Animation frame (only while something animates).
     Frame(Instant),
-    /// Open / close the details on the error card.
     ToggleDetails,
-    /// Expand / collapse the protected list.
     ToggleProtected,
-    /// Show every protected row / only the first few.
     ToggleProtectedAll,
-    /// Web protection page report: is the suggestion card due?
     WebSuggest(bool),
 }
 
-/// Free space below which the user is warned (decimal GB, as Windows shows it).
 const LOW_DISK_BYTES: u64 = 5_000_000_000;
-/// Status lines kept in memory for the ticker (it shows the last few).
 const KEPT_LINES: usize = 8;
-/// Rows of the protected list shown before "Show more".
 const PROTECTED_ROWS: usize = 8;
-/// Attention rows shown on Home.
 const ATTENTION_ROWS: usize = 4;
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
@@ -163,7 +137,6 @@ fn frame(state: &mut State, ctx: &Ctx, now: Instant) {
     }
 }
 
-/// Frames only while a scan is live or a number is counting up.
 pub fn subscription(state: &State, ctx: &Ctx) -> Subscription<Message> {
     let live = ctx.checking.is_some()
         || state.count.is_some()
@@ -175,8 +148,6 @@ pub fn subscription(state: &State, ctx: &Ctx) -> Subscription<Message> {
     }
 }
 
-/// Whether the page is the first check's screen, which fills the window
-/// instead of scrolling.
 pub fn fills_window(ctx: &Ctx) -> bool {
     ctx.engine_error.is_none() && ctx.report.is_none() && ctx.checking.is_some()
 }
@@ -223,7 +194,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     assessed(state, ctx, report)
 }
 
-// ---------------------------------------------------------------- scanning
 
 fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Element<'a, Message> {
     let p = ctx.palette;
@@ -244,7 +214,6 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
         p,
         plate: Plate::Bg,
         status: Status::Checking,
-        // Without a known total the lens wanders over every row instead.
         progress: (!ctx.catalog.available.is_empty()).then_some(ratio),
         changed: state.scan.map_or(state.now, |c| c.start()),
         now: state.now,
@@ -261,7 +230,6 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
     )
 }
 
-// ----------------------------------------------------------------- errors
 
 fn error_card<'a>(
     state: &State,
@@ -302,10 +270,7 @@ fn error_card<'a>(
     widgets::region(p, content).into()
 }
 
-// ---------------------------------------------------------------- assessed
 
-/// How the things to check split up: fixes we apply (ticked by default),
-/// optional choices we can apply if the person wants, and steps left to them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Split {
     fixable: usize,
@@ -313,9 +278,6 @@ struct Split {
     manual: usize,
 }
 
-/// The recommended fix ids among `items`, and how `items` split up.
-/// Also orders the list the way the headline reads it:
-/// what we can fix first, then the person's choices, then their own steps.
 fn split(report: &Report, available: &[String], items: &mut [ToCheck]) -> (Vec<String>, Split) {
     let recommended = crate::app::flow::recommended(report, available);
     let candidates = crate::app::flow::candidates(report, available);
@@ -361,7 +323,6 @@ fn protected_labels(report: &Report) -> (usize, Vec<&'static str>) {
     (count, labels)
 }
 
-/// Plain readiness notices; only conditions that matter to the user.
 fn readiness_notices(ctx: &Ctx, report: &Report) -> Vec<(Tone, String)> {
     let mut out = Vec::new();
     let Some(r) = &report.readiness else {
@@ -484,7 +445,6 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
             } else {
                 String::new()
             };
-            // Name every part that the subtitle does not already cover.
             let mixed =
                 (fixable > 0) as u8 + (split.choices > 0) as u8 + (split.manual > 0) as u8 > 1;
             if mixed && split.choices > 0 {
@@ -521,7 +481,6 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         ),
     };
 
-    // The number counts up from the previous value after each check.
     let protected = i64::try_from(score.protected).unwrap_or(0);
     let shown = if anim::reduced() {
         protected
@@ -636,7 +595,6 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     if !items.is_empty() {
         page = page.push(attention_group(ctx, report, &items));
     }
-    // An optional suggestion: never part of the score or the headline.
     if state.web_suggest {
         page = page.push(web_card(ctx));
     }
@@ -674,8 +632,6 @@ fn attention_group<'a>(ctx: &'a Ctx, report: &Report, items: &[ToCheck]) -> Elem
             let (id, report_only, title, line) = match item {
                 ToCheck::Control(r) => {
                     let a = advice::for_outcome(r);
-                    // A fix or a choice says what it protects against; any
-                    // other state (restart, conflict, ...) says what to do.
                     let line = if a.step == NextStep::Repair && !a.impact.is_empty() {
                         format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(a.impact))
                     } else {
@@ -733,7 +689,6 @@ fn attention_group<'a>(ctx: &'a Ctx, report: &Report, items: &[ToCheck]) -> Elem
     )
 }
 
-/// Everything that is fine, folded away with a one-line summary.
 fn protected_group<'a>(
     state: &State,
     ctx: &'a Ctx,
@@ -854,7 +809,6 @@ mod tests {
         assert_eq!(split.fixable + split.choices + split.manual, items.len());
         assert_eq!(ids.len(), split.fixable);
         assert!(ids.iter().all(|id| !advice::is_choice(id)));
-        // The list leads with what the button fixes, in the headline's order.
         let lead: Vec<&str> = items
             .iter()
             .take(ids.len())

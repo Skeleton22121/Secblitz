@@ -1,18 +1,4 @@
 //! The Secblitz window (iced, CPU renderer).
-//!
-//! OWNER: design-system agent (routing below is the shared contract; page agents add
-//! variants only inside their own `pages::<page>::Msg`).
-//!
-//! Conventions for every page module `pages::<name>`:
-//! ```ignore
-//! #[derive(Debug, Default)] pub struct State { .. }
-//! #[derive(Debug, Clone)]   pub enum Msg { .. }
-//! pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message>;
-//! pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message>;
-//! ```
-//! Pages wrap their own messages: `Message::Tools(tools::Msg::X)`.
-//! Long blocking work: use `blocking(..)` / `blocking_stream(..)` below, never
-//! block in `update`/`view`.
 pub mod icons;
 pub mod pages;
 pub mod render;
@@ -35,9 +21,7 @@ use theme::{Palette, Tone};
 #[derive(Debug, Clone)]
 pub struct Options {
     pub lang: Lang,
-    /// Broker pipe id from the launcher (`None` = no user-context actions).
     pub broker: Option<String>,
-    /// Hidden `--self-test <page>`: open directly on this page.
     pub start: Option<Page>,
 }
 
@@ -75,7 +59,6 @@ impl Page {
             _ => return None,
         })
     }
-    /// English source key for the sidebar label.
     pub fn label(self) -> &'static str {
         match self {
             Page::Home => "Home",
@@ -100,38 +83,27 @@ impl Page {
     }
 }
 
-/// Live progress of the read-only check (first run, Check again, post-check).
 #[derive(Debug, Clone, Default)]
 pub struct CheckProgress {
     pub phase: Option<worker::Phase>,
-    /// (control id, status) in arrival order.
     pub items: Vec<(String, String)>,
 }
 
-/// Shared, read-mostly application context passed to every page.
 pub struct Ctx {
     pub lang: Lang,
     pub palette: Palette,
     pub worker: worker::Worker,
     pub catalog: worker::Catalog,
-    /// Engine could not open (shown as a calm error card with Retry).
     pub engine_error: Option<String>,
-    /// Latest full assessment.
     pub report: Option<Arc<Report>>,
-    /// The latest check failed (protection unverified).
     pub check_error: Option<String>,
-    /// Unix seconds of `report`.
     pub checked_at: Option<u64>,
-    /// Some while a check / post-check runs.
     pub checking: Option<CheckProgress>,
-    /// True while any change (fix, undo, app removal, repair…) is running.
-    /// Navigation stays possible; starting another change is disabled.
     pub busy: bool,
     pub broker: Option<Arc<crate::broker::Client>>,
     pub state_dir: Option<PathBuf>,
     pub prefs: app::settings::Prefs,
     pub toast: Option<(String, Tone)>,
-    /// Key of the one check row whose explanation is open (`widgets::explain`).
     pub explain_open: Option<String>,
 }
 
@@ -148,7 +120,6 @@ impl Ctx {
     pub fn score(&self) -> Option<Score> {
         self.report.as_deref().map(Score::of)
     }
-    /// Run a broker request off the UI thread; result arrives as `map(reply)`.
     pub fn broker_task(
         &self,
         request: crate::broker::Request,
@@ -168,6 +139,7 @@ impl Ctx {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
                 AllowSetForegroundWindow, ASFW_ANY,
             };
+            // SAFETY: plain Win32 call with no pointers.
             unsafe { AllowSetForegroundWindow(ASFW_ANY) };
         }
         Task::perform(
@@ -180,28 +152,19 @@ impl Ctx {
 #[derive(Debug, Clone)]
 pub enum Message {
     Navigate(Page),
-    /// Start a read-only check (ignored while one is running).
     CheckNow,
     Worker(worker::Event),
-    /// Open the fix review sheet with these ids pre-selected.
     ReviewFixes(Vec<String>),
-    /// Open the undo review sheet.
     ReviewUndo,
     Escape,
-    /// Does nothing (animated triggers that act through their own state).
     Noop,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
-    /// Open or close the explanation under one check row (key from `widgets::explain::key`).
     Explain(String),
     DismissToast,
-    /// Slow clock used to auto-dismiss toasts.
     ToastTick(std::time::Instant),
-    /// The toast's exit animation has finished: remove it.
     ToastGone,
-    /// Frame clock of the page entrance (only while it runs).
     PageFrame(std::time::Instant),
-    /// Tab / Shift+Tab: move keyboard focus between buttons.
     Tab(bool),
     Home(home::Msg),
     Fixes(fixes::Msg),
@@ -211,35 +174,24 @@ pub enum Message {
     Tools(tools::Msg),
     History(history::Msg),
     Settings(settings::Msg),
-    /// A fixed Windows page was asked for: did it open?
     PageOpened(crate::guide::Page, bool),
-    /// The Secblitz window gained (true) or lost (false) focus.
     WindowFocus(bool),
 }
 
-/// How long after opening a Windows page coming back may start one re-check.
 const RECHECK_WINDOW: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
-/// One read-only re-check per opened Windows page: armed when the page opens,
-/// fired when the person comes back to the Secblitz window, never twice.
 #[derive(Debug, Default)]
 struct Recheck {
     opened: Option<std::time::Instant>,
-    /// The window really lost focus since the page opened.
     left: bool,
 }
 
 impl Recheck {
-    /// `focused` is whether the window has focus right now. The Settings window
-    /// often takes focus before the open request is answered, so the window
-    /// may already be away when this arms.
     fn arm(&mut self, now: std::time::Instant, focused: bool) {
         self.opened = Some(now);
         self.left = !focused;
     }
 
-    /// True when a check should start now. `idle` is false while a check or a
-    /// change is running; the re-check then waits for the next return.
     fn focus(&mut self, focused: bool, now: std::time::Instant, idle: bool) -> bool {
         let Some(at) = self.opened else {
             return false;
@@ -271,38 +223,24 @@ pub struct App {
     pub tools: tools::State,
     pub history: history::State,
     pub settings: settings::State,
-    /// The toast currently shown and when it was first seen (auto-dismiss).
     toast_seen: Option<(String, std::time::Instant)>,
-    /// The toast is sliding out; it is removed on `ToastGone`.
     toast_leaving: bool,
-    /// When the running page entrance began (`None` = settled).
     entered: Option<std::time::Instant>,
-    /// Eased 0..1 progress of the entrance (1 = settled).
     enter_t: f32,
-    /// History, Clean up apps, Settings: loaded in the background once.
     warmed: [bool; 3],
-    /// A background load of that page is running (no duplicate loads).
     flight: [bool; 3],
-    /// When each warmable page last started loading.
     warm_at: [Option<std::time::Instant>; 3],
-    /// Re-check once when the person returns from a Windows page we opened.
     recheck: Recheck,
-    /// Whether the window has focus now (updated on every focus event).
     focused: bool,
-    /// The Windows account's SID: a saved check is shown only to the same account.
     user: Option<String>,
 }
 
-/// What a write does with the saved last check (`app::last_check`).
 enum Cache {
     Keep,
     Save(String, u64, Arc<secblitz::engine::Report>),
     Forget,
 }
 
-/// Write the history entry, the tray status and the saved check off the UI
-/// thread: each fsyncs and renames, which can stall for a visible moment on
-/// slow disks or under a virus scanner.
 fn persist(
     dir: Option<PathBuf>,
     entry: Option<app::history::Entry>,
@@ -326,7 +264,6 @@ fn persist(
     });
 }
 
-/// Forget the saved check (on a background thread, after earlier writes).
 fn forget_check(dir: Option<PathBuf>) {
     let Some(dir) = dir else { return };
     write_in_order(move || app::last_check::forget(&dir));
@@ -339,7 +276,6 @@ fn write_in_order(job: impl FnOnce() + Send + 'static) {
     type Job = Box<dyn FnOnce() + Send>;
     static QUEUE: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<Job>>> =
         std::sync::OnceLock::new();
-    // Counted before queueing so a reader never misses a pending write.
     PENDING_WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let queue = QUEUE.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<Job>();
@@ -362,15 +298,12 @@ fn write_in_order(job: impl FnOnce() + Send + 'static) {
 
 static PENDING_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Block (on a worker thread, never the UI thread) until queued history and
-/// status writes have landed, so a reload sees the newest entry.
 pub fn wait_persisted() {
     while PENDING_WRITES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
-/// Run a blocking closure on a fresh thread and await its result.
 pub fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
 ) -> impl Future<Output = T> + Send + 'static {
@@ -388,8 +321,6 @@ pub fn blocking<T: Send + 'static>(
     }
 }
 
-/// Run a blocking closure that reports progress through `emit`; the stream
-/// yields every emitted item and ends when the closure returns.
 pub fn blocking_stream<T: Send + 'static>(
     f: impl FnOnce(&dyn Fn(T)) + Send + 'static,
 ) -> impl Stream<Item = T> + Send + 'static {
@@ -429,7 +360,6 @@ impl App {
             .map(Arc::new);
         let state_dir = secblitz::platform::app_dir().ok();
         let user = crate::launcher::user_sid();
-        // Reopened soon after a check: show that check instead of a new one.
         let now = app::history::now();
         let cached = match (&state_dir, &user, app::last_check::boot_time(now)) {
             (Some(dir), Some(user), Some(boot)) => app::last_check::load(dir, user, now, boot),
@@ -484,9 +414,7 @@ impl App {
         };
         // Opening straight on a page (hidden `--self-test`) must load it too.
         let enter = app.enter_page(app.page);
-        // Home's optional card needs to know whether web protection is off.
         let web_state = web::on_enter(&mut app.web, &mut app.ctx);
-        // Put back app data that was waiting for an account, silently.
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
         (app, Task::batch([opened, first_check, enter, web_state, pending]))
@@ -514,7 +442,6 @@ impl App {
                 self.begin_entrance();
                 Task::batch([
                     self.enter_page(page),
-                    // A new page starts at its top.
                     iced::widget::operation::snap_to(
                         PAGE_SCROLL,
                         iced::widget::operation::RelativeOffset::START,
@@ -551,7 +478,6 @@ impl App {
                 }
             }
             Message::Explain(key) => {
-                // One explanation open at a time; pressing it again closes it.
                 self.ctx.explain_open = match self.ctx.explain_open.take() {
                     Some(open) if open == key => None,
                     _ => Some(key),
@@ -610,7 +536,6 @@ impl App {
                 Task::none()
             }
             Message::ToastTick(now) => {
-                // Pages may set `ctx.toast` directly: stamp whatever is shown.
                 let current = self.ctx.toast.as_ref().map(|(text, _)| text.clone());
                 match (current, &self.toast_seen) {
                     (None, _) => self.toast_seen = None,
@@ -679,7 +604,6 @@ impl App {
                 verify,
             } => {
                 self.ctx.checking = None;
-                // Count only fixes that really took effect.
                 let n = match result {
                     Ok(r) => attempted
                         .iter()
@@ -703,16 +627,11 @@ impl App {
             }
             E::History(_) => {}
         }
-        // The engine just opened or a check just finished: warm the other
-        // pages in the background so navigating to them is instant.
-        // Later checks need no reload here: History refreshes itself on every
-        // log write and Debloat / Settings data does not depend on a check.
         let warm = if matches!(&event, E::Opened(Ok(_))) {
             self.preload_all()
         } else {
             Task::none()
         };
-        // Let the flows react (fix result card, history list).
         Task::batch([
             fixflow::on_worker(&mut self.fix, &event, &mut self.ctx),
             history::on_worker(&mut self.history, &event, &mut self.ctx),
@@ -720,9 +639,6 @@ impl App {
         ])
     }
 
-    /// Store a fresh assessment, log the score and refresh the tray status.
-    /// Fix and undo entries are logged only when something changed (`n > 0`),
-    /// even if the post-check failed (then with the last known score).
     fn assessed(&mut self, outcome: &worker::Outcome, kind: app::history::Kind, n: usize) {
         let operation = kind != app::history::Kind::Check;
         let now = app::history::now();
@@ -782,7 +698,6 @@ impl App {
         }
     }
 
-    /// `sub` only while `page` is the visible page.
     fn on_page(&self, page: Page, sub: Subscription<Message>) -> Subscription<Message> {
         if self.page == page {
             sub
@@ -791,9 +706,6 @@ impl App {
         }
     }
 
-    /// Load whatever a page needs when it becomes the visible one. A page
-    /// that was already warmed in the background is refreshed silently (its
-    /// data stays on screen), never reset to a spinner.
     fn enter_page(&mut self, page: Page) -> Task<Message> {
         match page {
             Page::History => self.revisit(WARM_HISTORY),
@@ -815,8 +727,6 @@ impl App {
         }
     }
 
-    /// Start (or silently refresh) the background load of one warmable page,
-    /// unless one is already running.
     fn warm(&mut self, which: usize) -> Task<Message> {
         if self.flight[which] {
             return Task::none();
@@ -839,7 +749,6 @@ impl App {
         task
     }
 
-    /// Debloat refuses to reload under an open sheet; nothing will arrive.
     fn page_declined(&self, which: usize) -> bool {
         which == WARM_DEBLOAT && self.debloat_busy()
     }
@@ -848,7 +757,6 @@ impl App {
         debloat::is_busy(&self.debloat)
     }
 
-    /// Warm every page that has data to load.
     fn preload_all(&mut self) -> Task<Message> {
         Task::batch([
             self.warm(WARM_HISTORY),
@@ -857,7 +765,6 @@ impl App {
         ])
     }
 
-    /// Start the short fade + rise of the incoming page.
     fn begin_entrance(&mut self) {
         if widgets::anim::reduced() {
             self.finish_entrance();
@@ -887,14 +794,11 @@ impl App {
         self.ctx.palette = Palette::of(self.ctx.palette.mode);
     }
 
-    /// The page is built from a palette faded towards the background: it
-    /// starts at 30% strength and reaches full colour with the rise.
     fn apply_fade(&mut self) {
         let base = Palette::of(self.ctx.palette.mode);
         self.ctx.palette = widgets::appear::fade_palette(&base, base.bg, 0.3 + 0.7 * self.enter_t);
     }
 
-    /// Start the short slide-out; `ToastGone` removes the toast afterwards.
     fn begin_toast_exit(&mut self) -> Task<Message> {
         if self.ctx.toast.is_none() || self.toast_leaving {
             return Task::none();
@@ -905,7 +809,6 @@ impl App {
             return Task::none();
         }
         self.toast_leaving = true;
-        // A little longer than the exit so the last frame is drawn.
         let wait = widgets::anim::FAST + std::time::Duration::from_millis(40);
         Task::perform(blocking(move || std::thread::sleep(wait)), |_| {
             Message::ToastGone
@@ -913,7 +816,6 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // Chrome (sidebar, footer) keeps full colour while the page fades in.
         let p = Palette::of(self.ctx.palette.mode);
         let content: Element<'_, Message> = match self.page {
             Page::Home => home::view(&self.home, &self.ctx),
@@ -924,14 +826,11 @@ impl App {
             Page::History => history::view(&self.history, &self.ctx),
             Page::Settings => settings::view(&self.settings, &self.ctx),
         };
-        // The first check's screen fills the window, centred, instead of
-        // scrolling with the other pages.
         let fills = match self.page {
             Page::Home => home::fills_window(&self.ctx),
             Page::Fixes => fixes::fills_window(&self.ctx),
             _ => false,
         };
-        // Content is centred with a readable maximum width.
         let column_content = widgets::appear::lift(
             container(content)
                 .max_width(PAGE_MAX_WIDTH)
@@ -939,7 +838,6 @@ impl App {
                 .height(if fills { Length::Fill } else { Length::Shrink }),
             widgets::appear::ENTER_RISE * (1.0 - self.enter_t),
         );
-        // A page may pin an action bar below its scrolling content.
         let footer = match self.page {
             Page::Debloat => debloat::footer(&self.debloat, &self.ctx),
             _ => None,
@@ -989,12 +887,7 @@ impl App {
                 ..container::Style::default()
             });
         let body: Element<'_, Message> = row![self.sidebar(), main].into();
-        // Constant tree shape: the page is always child 0 of one stack and each
-        // overlay is its own layer (an empty Space when inactive). Opening or
-        // closing a sheet or toast therefore never rebuilds the page, so its
-        // scroll position and animation state survive.
         let none = || -> Element<'_, Message> { iced::widget::space().into() };
-        // Page sheets (clean-up apps, tools) sit above the whole window.
         let modal = match self.page {
             Page::Debloat => debloat::modal(&self.debloat, &self.ctx),
             Page::Tools => tools::modal(&self.tools, &self.ctx),
@@ -1005,7 +898,6 @@ impl App {
             Some(content) => widgets::sheet_layer(p, content),
             None => none(),
         };
-        // The fix flow (review sheet / working / result) draws over any page.
         let fix_layer = match fixflow::overlay_content(&self.fix, &self.ctx) {
             Some(content) => widgets::sheet_layer(p, content),
             None => none(),
@@ -1026,7 +918,6 @@ impl App {
         stack![body, modal_layer, fix_layer, toast_layer].into()
     }
 
-    /// Colour of the small status dot next to Home.
     fn verdict_tone(&self) -> Tone {
         match self.ctx.report.as_deref().map(app::score::overall) {
             Some(app::score::Verdict::Protected) => Tone::Good,
@@ -1089,8 +980,6 @@ impl App {
                         }),
                 );
             }
-            // The selected look is drawn by the sliding marker behind the
-            // list, so an item only paints its hover / press tint.
             nav = nav.push(widgets::arrow(
                 widgets::press::button(container(item).center_y(Length::Fill))
                     .width(Length::Fill)
@@ -1156,7 +1045,6 @@ impl App {
             } => Some(Message::Tab(modifiers.shift())),
             _ => None,
         });
-        // Frames run only for the ~220 ms page entrance; idle = no redraws.
         let entrance = if self.entered.is_some() {
             iced::window::frames().map(Message::PageFrame)
         } else {
@@ -1194,28 +1082,21 @@ impl App {
     }
 }
 
-/// Gap between sidebar items (the marker's pitch is `CONTROL + NAV_GAP`).
 const NAV_GAP: f32 = theme::S1;
-/// Id of the page scrollable (reset to the top on navigation).
 const PAGE_SCROLL: &str = "page-scroll";
-/// A page revisited within this long keeps what it already shows.
 const WARM_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Indexes into `warmed` / `flight`.
 const WARM_HISTORY: usize = 0;
 const WARM_DEBLOAT: usize = 1;
 const WARM_SETTINGS: usize = 2;
 
-/// Widest the page content grows on large windows.
 const PAGE_MAX_WIDTH: f32 = 960.0;
-/// How long a toast stays on screen.
 const TOAST_SECONDS: u64 = 4;
 
 fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant> + Send + 'static {
     let (tx, rx) = mpsc::unbounded();
     std::thread::spawn(move || loop {
         std::thread::sleep(period);
-        // The receiver is dropped when the subscription ends: stop then.
         if tx.unbounded_send(std::time::Instant::now()).is_err() {
             break;
         }
@@ -1223,16 +1104,11 @@ fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant>
     rx
 }
 
-/// Tick used for time-outs such as toast dismissal (fine enough that the
-/// visible time is within a tenth of a second).
 pub fn ticks_100ms() -> Subscription<std::time::Instant> {
     Subscription::run(|| ticker(std::time::Duration::from_millis(100)))
 }
 
-/// The application icon (white shield and bolt on an ink tile) as RGBA.
 pub fn window_icon_rgba(size: u32) -> Vec<u8> {
-    // The window and taskbar use the same artwork as the exe icon: the
-    // matching frame of the embedded .ico (each frame is an RGBA PNG).
     const ICO: &[u8] = include_bytes!("../../assets/secblitz.ico");
     ico_frame(ICO, size).unwrap_or_default()
 }
@@ -1270,7 +1146,6 @@ fn window_icon() -> Option<iced::window::Icon> {
     iced::window::icon::from_rgba(window_icon_rgba(64), 64, 64).ok()
 }
 
-/// Build the tray summary from a fresh report.
 pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::Status {
     let attention: Vec<String> = app::score::to_check_ids(report)
         .into_iter()
@@ -1291,7 +1166,6 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
 }
 
 pub fn run(options: Options) -> anyhow::Result<()> {
-    // GPU when a real adapter exists, tiny-skia otherwise (decided before iced starts).
     let renderer = render::select();
     let mut application =
         iced::application(move || App::new(options.clone()), App::update, App::view)

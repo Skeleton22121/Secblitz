@@ -1,11 +1,4 @@
-//! "Your account" and "App updates": settings that belong to the signed-in
-//! person, changed through the unelevated launcher (the broker), and updates
-//! for a short list of popular programs. Embedded in the Tools page with one
-//! call each to [`view`], [`update`] and [`on_enter`].
-//!
-//! Nothing here is pre-selected or changed on its own: every switch and every
-//! Update button is the person's own choice, and every change can be undone
-//! from the same switch (apps cannot be rolled back, and the page says so).
+//! "Your account" and "App updates" settings.
 use crate::broker::{Reply, Request};
 use crate::explain;
 use crate::gui::icons::Icon;
@@ -22,10 +15,8 @@ type El<'a> = Element<'a, Message>;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// Read every setting (and nothing else).
     Load,
     Reported(Setting, Result<Reply, String>),
-    /// The switch of a setting was flipped (true = turn the protection on).
     Toggle(Setting, bool),
     Changed(Setting, Result<Reply, String>),
     ToggleDetail(Detail),
@@ -62,7 +53,6 @@ enum Why {
 enum Apps {
     Idle,
     Scanning,
-    /// This many answers are still on their way.
     Reading(usize),
     Ready,
     Failed(Why),
@@ -70,12 +60,10 @@ enum Apps {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppCell {
-    /// Nothing to show (not installed, current, or not readable).
     Hidden,
     Available,
     Updating,
     Updated,
-    /// Updated, but the new version could not be confirmed.
     Unconfirmed,
     Failed(Why),
 }
@@ -111,11 +99,7 @@ fn toast(text: String, tone: Tone) -> Task<Message> {
     Task::done(Message::Toast(text, tone))
 }
 
-// ---------------------------------------------------------------------------
-// Logic
-// ---------------------------------------------------------------------------
 
-/// Read the settings when the Tools page opens (a cheap, read-only request).
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if ctx.broker.is_none() || state.cells.iter().any(|c| *c != Cell::Idle) {
         return Task::none();
@@ -149,7 +133,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     | Reply::NeedsAttention
                     | Reply::NotApplicable),
                 ) => r,
-                // Anything else, including a broken connection, is "unknown".
                 _ => Reply::Unknown,
             });
             Task::none()
@@ -175,7 +158,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Ok(Reply::ChangedSince) => Some(ctx.t("This setting was changed again after Secblitz set it. Whatever you changed was left as it is.")),
                 _ => Some(ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")),
             };
-            // Always read it back: the switch shows what is really set.
             let reread = query(ctx, setting);
             match note {
                 Some(text) => Task::batch([toast(text, Tone::Warn), reread]),
@@ -265,9 +247,6 @@ fn updating(state: &State) -> bool {
     state.app_cells.contains(&AppCell::Updating)
 }
 
-// ---------------------------------------------------------------------------
-// View
-// ---------------------------------------------------------------------------
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     column![account_group(state, ctx), apps_group(state, ctx)]
@@ -280,7 +259,6 @@ fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
     widgets::action(p, ButtonKind::Secondary, label, None, msg.map(wrap))
 }
 
-/// Extra lines under a row, lined up with its text.
 fn under<'a>(items: Vec<El<'a>>) -> El<'a> {
     container(column(items).spacing(theme::S2).width(Length::Fill))
         .padding(Padding {
@@ -300,7 +278,6 @@ fn block<'a>(head: El<'a>, extra: Option<El<'a>>) -> El<'a> {
     }
 }
 
-/// The three plain lines of an explainer behind "More details".
 fn explainer<'a>(state: &State, ctx: &Ctx, id: &str, detail: Detail) -> Option<El<'a>> {
     let e = explain::for_check(id)?;
     let p = ctx.palette;
@@ -338,7 +315,6 @@ fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
             Icon::Lock,
             ctx.t("Block macros in Office files from the internet"),
         ),
-        // Not listed on this page; kept so the match stays exhaustive.
         Setting::SuggestedApps => (
             Icon::Package,
             ctx.t("Stop Windows from adding suggested apps again"),
@@ -346,12 +322,10 @@ fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
     }
 }
 
-/// What the switch means: on = the safer choice.
 fn is_on(reply: Reply) -> bool {
     matches!(reply, Reply::Safe | Reply::SafeByUs)
 }
 
-/// Every switch is worded so that ON means the protection is on.
 fn account_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let mut rows: Vec<El<'a>> = Vec::new();
@@ -412,7 +386,6 @@ fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<E
             widgets::switch(p, false, None::<fn(bool) -> Message>),
         ),
         Cell::Known(Reply::NotApplicable) => return None,
-        // Not set on this PC: nothing reliable to show or change.
         Cell::Known(Reply::Unknown) if setting == Setting::NearbySharing => return None,
         Cell::Known(Reply::Unknown) => (
             ctx.t("We couldn't check this. Leave this page and open it again to try once more."),

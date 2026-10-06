@@ -1,10 +1,4 @@
 //! One-shot "slide in" for small overlays such as toasts.
-//!
-//! The child is drawn `distance` px lower and eases up to its place over
-//! `NORMAL` (250 ms) on `anim::DECELERATE`. When `leaving` is set it slides back
-//! down over `FAST` (150 ms) on `anim::ACCELERATE` (leave faster than enter).
-//! It asks for a redraw only while a slide runs (no subscription, no timer):
-//! when it ends the window is idle.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{tree, Operation, Tree};
@@ -14,16 +8,13 @@ use std::time::Instant;
 
 use super::anim;
 
-/// Slide duration: the shared "normal" motion token.
 const SLIDE_MS: f32 = anim::NORMAL.as_millis() as f32;
-/// Exit duration: the shared "fast" token.
 const LEAVE_MS: f32 = anim::FAST.as_millis() as f32;
 
 #[derive(Default)]
 struct State {
     start: Option<Instant>,
     done: bool,
-    /// When the exit began (set on the first redraw with `leaving`).
     leave_start: Option<Instant>,
 }
 
@@ -142,7 +133,6 @@ impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {
                     shell.request_redraw();
                 }
             } else if state.leave_start.take().is_some() {
-                // A new toast arrived mid-exit: stay put.
                 state.done = true;
             } else if !state.done {
                 let start = *state.start.get_or_insert(*now);
@@ -198,8 +188,6 @@ impl<Message> Widget<Message, Theme, Renderer> for SlideIn<'_, Message> {
     }
 }
 
-/// Slide `content` up by `distance` px once, when it first appears, and back
-/// down when `leaving` is set.
 pub fn slide_in<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
     distance: f32,
@@ -212,11 +200,8 @@ pub fn slide_in<'a, Message: 'a>(
     })
 }
 
-// ------------------------------------------------------------ page entrance
 
-/// Length of the page entrance (fade + rise).
 pub const ENTER: std::time::Duration = std::time::Duration::from_millis(220);
-/// How far the incoming page rises, in px.
 pub const ENTER_RISE: f32 = 12.0;
 
 /// Progress (0..1, decelerated) of a page entrance that began at `start`.
@@ -229,10 +214,6 @@ pub fn enter_progress(start: Instant, now: Instant) -> f32 {
     anim::DECELERATE.at(t)
 }
 
-/// `p` with every colour moved towards `to` by `1 - t` (t = 1: unchanged,
-/// t = 0: invisible against `to`). iced has no whole-subtree opacity, so a
-/// page that is built from a faded palette fades cheaply: nothing is drawn
-/// off-screen and no layer is composited.
 pub fn fade_palette(
     p: &crate::gui::theme::Palette,
     to: iced::Color,
@@ -319,9 +300,6 @@ impl<Message> Widget<Message, Theme, Renderer> for Lift<'_, Message> {
                 .as_widget()
                 .draw(tree, renderer, theme, style, layout, cursor, viewport);
         } else {
-            // The pointer sits over the shifted drawing, so hit-testing the
-            // content at its real place is off by at most `ENTER_RISE` px for
-            // 220 ms; hover colours are drawn for the unshifted cursor.
             renderer.with_translation(Vector::new(0.0, self.dy), |renderer| {
                 self.content
                     .as_widget()
@@ -381,8 +359,6 @@ impl<Message> Widget<Message, Theme, Renderer> for Lift<'_, Message> {
     }
 }
 
-/// Draw `content` shifted down by `dy` px (transparent to events and layout:
-/// the tree is the child's own, so state survives when `dy` goes back to 0).
 pub fn lift<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
     dy: f32,

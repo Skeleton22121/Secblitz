@@ -1,27 +1,4 @@
-//! The Start menu: the picture at the top of the Clean up apps sheet while
-//! apps are removed, and of its result (the prototype's `APPS.menu`).
-//!
-//! A grid of app tiles like the Windows Start menu. The apps being removed
-//! are the highlighted tiles (accent, with a marching outline). Each one
-//! lifts out and vanishes the moment that app is really removed, and the
-//! tiles after it glide in to close the gap; apps waiting beyond the grid
-//! slide in at the end, and the "+N" in the corner counts the ones still
-//! out of sight (in the accent colour, with a line sweeping under it, while
-//! one of those is the app being removed). An app that could not be removed
-//! lifts, drops back and shakes, and keeps a flag; one that was no longer
-//! installed turns grey and shrinks away quietly. When the run is over a
-//! small mark on the menu's corner says how it went (tick, exclamation or
-//! cross).
-//!
-//! Interaction: hover a tile to see the app's name (and what is happening
-//! to it), click a tile to nudge it, hover the "+N" to see how many more
-//! apps there are (or which one is being removed out of sight), click
-//! anywhere else for a pulse. Hovering the app being removed makes it
-//! wobble a little more.
-//!
-//! Everything is driven by real data: the page passes each app's [`Fate`]
-//! with the moment it changed, so a tile vanishes when its app is removed,
-//! not on a timer.
+//! The Start menu drawing on the Clean up apps sheet.
 use super::glyph::Glyph;
 use super::live::Live;
 use super::motion::{phase, Spring};
@@ -44,77 +21,41 @@ use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-/// The drawing's box in units: the prototype's 320 wide, its height cropped
-/// to what the menu uses (prototype y 0 to 230), so the sheet keeps its
-/// room for text. The 16 units above the corner mark are its tooltip's
-/// headroom.
 pub const UNITS: Size = Size::new(320.0, 230.0);
-/// Canvas height in pixels: the prototype's 0.75 scale (240 px wide).
 pub const HEIGHT: f32 = 173.0;
-/// Tiles in the grid (3 by 3).
 pub const SLOTS: usize = 9;
-/// Most highlighted tiles in the grid at the start; the rest wait beyond it.
 pub const MAX_LIT: usize = 6;
-/// Which grid slots the apps being removed take first, so they are spread
-/// across the menu instead of filling the top row.
 const SPREAD: [usize; SLOTS] = [1, 5, 6, 3, 8, 0, 4, 2, 7];
-/// Tile side, units.
 const TILE: f32 = 26.0;
-/// Ambient second shown under reduced motion.
 const STILL: f32 = 0.3;
-/// A removed tile keeps its place this long, then the others close the gap.
 pub const REFLOW: f32 = 0.85;
-/// When a removed tile's sparks have gone.
 const VANISH_END: f32 = 1.05;
-/// When a refused tile has stopped shaking.
 const REFUSE_END: f32 = 2.4;
-/// When a tile Windows protects has settled back.
 const STAY_END: f32 = 0.8;
-/// When a tile for an app that was no longer installed has shrunk away.
 const ABSENT_END: f32 = 0.7;
-/// How long a click nudge lasts.
 const BUMP_END: f32 = 0.8;
-/// The result mark on the menu's top right corner.
 const MARK_C: Point = pt(256.0, 30.0);
 const MARK_R: f32 = 14.0;
-/// The "+N" count, just before the prototype's "All apps" rule: the hover
-/// area covers both.
 const MORE_C: Point = pt(218.0, 74.0);
-/// Right edge of the "+N" text.
 const MORE_X: f32 = 212.0;
-/// Hover radius of a tile.
 const TILE_HIT: f32 = 16.0;
-/// Count text size, px: the app's smallest text.
 const COUNT_SIZE: f32 = theme::SMALL;
-/// The "All apps" rule, which sweeps while an app out of sight is being
-/// removed: its ends and the sweeping part's length, units.
 const RULE_X: (f32, f32) = (218.0, 240.0);
 const RULE_Y: f32 = 74.0;
 const SWEEP_LEN: f32 = 8.0;
-/// Seconds for one sweep there and back.
 const SWEEP_PERIOD: f32 = 1.6;
 
-/// What is happening to one app being removed. The instants are when that
-/// step finished, so each tile moves on its own clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fate {
-    /// In line, not started.
     Waiting,
-    /// A copy is being saved before removal.
     Saving,
-    /// Being removed now.
     Busy,
-    /// Removed: lifts out and vanishes.
     Removed(Instant),
-    /// Could not be removed: lifts, drops back, shakes, keeps a flag.
     Refused(Instant),
     /// Left installed on purpose (no copy could be saved): moves like
     /// `Refused`, named differently.
     Kept(Instant),
-    /// Windows protects it: drops back quietly and turns grey.
     Stays(Instant),
-    /// It was no longer installed, so there was nothing to remove: turns
-    /// grey and shrinks away quietly, without sparks.
     Absent(Instant),
 }
 
@@ -129,19 +70,15 @@ impl Fate {
             _ => None,
         }
     }
-    /// Still to be done (highlighted and wobbling).
     pub fn lit(self) -> bool {
         matches!(self, Fate::Waiting | Fate::Saving | Fate::Busy)
     }
-    /// Being worked on now (saving a copy or removing).
     fn active(self) -> bool {
         matches!(self, Fate::Saving | Fate::Busy)
     }
-    /// Leaves the menu: the tiles after it close the gap once it has gone.
     fn leaves(self) -> bool {
         matches!(self, Fate::Removed(_) | Fate::Absent(_))
     }
-    /// How long its own transition runs.
     fn end(self) -> f32 {
         match self {
             Fate::Removed(_) => VANISH_END,
@@ -151,7 +88,6 @@ impl Fate {
             _ => 0.0,
         }
     }
-    /// When, after its instant, the result mark may come in.
     fn settled(self) -> f32 {
         match self {
             Fate::Removed(_) | Fate::Absent(_) => REFLOW,
@@ -162,22 +98,16 @@ impl Fate {
     }
 }
 
-/// How the whole run is going.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Working,
-    /// Every app asked for was removed.
     Removed,
-    /// Nothing removed and nothing went wrong (protected apps only).
     Unchanged,
-    /// Some apps could not be removed or were kept.
     Partly,
-    /// The run itself failed.
     Failed,
 }
 
 impl Outcome {
-    /// The corner mark, if this outcome has one.
     pub fn mark(self) -> Option<(Meaning, Mark)> {
         match self {
             Outcome::Removed => Some((Meaning::Done, Mark::Tick)),
@@ -186,7 +116,6 @@ impl Outcome {
             Outcome::Working | Outcome::Unchanged => None,
         }
     }
-    /// Colour of a refused tile's flag: red only when the whole run failed.
     pub fn flag(self) -> Meaning {
         match self {
             Outcome::Failed => Meaning::Failed,
@@ -195,65 +124,44 @@ impl Outcome {
     }
 }
 
-/// One app being removed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuApp {
     pub glyph: Glyph,
-    /// Translated name.
     pub name: String,
     pub fate: Fate,
 }
 
-/// An app that stays (fills the rest of the grid).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Filler {
     pub glyph: Glyph,
-    /// Translated name.
     pub name: String,
 }
 
-/// Translated hover texts. `{name}` and `{n}` are replaced here.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Labels {
-    /// "Waiting to remove {name}"
     pub waiting: String,
-    /// "Saving a copy of {name}"
     pub saving: String,
-    /// "Removing {name}"
     pub removing: String,
-    /// "Couldn't remove {name}"
     pub refused: String,
-    /// "{name} stays on your PC"
     pub kept: String,
-    /// "Windows protects {name}"
     pub protected: String,
-    /// "1 more app"
     pub more_one: String,
-    /// "{n} more apps"
     pub more_many: String,
-    /// The result's title, named by the corner mark.
     pub result: String,
 }
 
-/// The drawing's inputs; see the module docs.
 #[derive(Debug, Clone)]
 pub struct StartMenu {
     pub palette: Palette,
     pub plate: Plate,
     pub outcome: Outcome,
-    /// When the sheet's state (working, or the result) began.
     pub changed: Instant,
-    /// The page's last frame time, or `changed`.
     pub now: Instant,
-    /// The apps being removed, in removal order.
     pub apps: Vec<MenuApp>,
-    /// Apps that stay, used to fill the grid.
     pub fillers: Vec<Filler>,
     pub labels: Labels,
 }
 
-/// The drawing as an element: full width (so long names fit in their
-/// tooltip), [`HEIGHT`] tall, the menu centred.
 pub fn start_menu<'a, M: 'a>(menu: StartMenu) -> Element<'a, M> {
     canvas::Canvas::new(menu)
         .width(Length::Fill)
@@ -261,22 +169,13 @@ pub fn start_menu<'a, M: 'a>(menu: StartMenu) -> Element<'a, M> {
         .into()
 }
 
-// ---------------------------------------------------------------------------
-// Pure layout
-// ---------------------------------------------------------------------------
 
-/// What one tile in the menu stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Who {
-    /// `apps[i]`
     App(usize),
-    /// `fillers[i]`
     Filler(usize),
 }
 
-/// The order tiles stand in: the first [`SLOTS`] fill the grid, apps being
-/// removed spread over it (up to [`MAX_LIT`]), apps that stay in the other
-/// slots, and the remaining apps wait after them to slide in later.
 pub fn sequence(apps: usize, fillers: usize) -> Vec<Who> {
     let lit = apps.min(MAX_LIT);
     let chosen = &SPREAD[..lit];
@@ -295,20 +194,13 @@ pub fn sequence(apps: usize, fillers: usize) -> Vec<Who> {
     out
 }
 
-/// Where a tile is now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
-    /// In grid slot 0..9.
     Slot(usize),
-    /// Waiting beyond the grid.
     Hidden,
-    /// Removed and gone.
     Gone,
 }
 
-/// Places for tiles in sequence order, given which have gone: every tile
-/// still there takes the next slot, the ones past the grid wait. Returns
-/// the places and how many wait.
 pub fn places(gone: &[bool]) -> (Vec<Place>, usize) {
     let mut k = 0;
     let mut hidden = 0;
@@ -331,12 +223,10 @@ pub fn places(gone: &[bool]) -> (Vec<Place>, usize) {
     (out, hidden)
 }
 
-/// Centre of grid slot `k`, in prototype units.
 pub fn slot_centre(k: usize) -> Point {
     pt(104.0 + (k % 3) as f32 * 56.0, 100.0 + (k / 3) as f32 * 34.0)
 }
 
-/// Seconds since `at` on `clock`, or settled under reduced motion.
 fn since(at: Instant, clock: Instant) -> f32 {
     if anim::reduced() {
         SETTLED_AGE
@@ -345,7 +235,6 @@ fn since(at: Instant, clock: Instant) -> f32 {
     }
 }
 
-/// Seconds from `from` to `to`, negative when `to` is earlier.
 fn rel(to: Instant, from: Instant) -> f32 {
     if to >= from {
         to.duration_since(from).as_secs_f32()
@@ -354,22 +243,15 @@ fn rel(to: Instant, from: Instant) -> f32 {
     }
 }
 
-/// A tile's pose this frame (all in units and degrees).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pose {
     pub lift: f32,
-    /// Degrees.
     pub rot: f32,
     pub scale: f32,
-    /// Selection outline strength 0..=1.
     pub ring: f32,
-    /// The outline marches (work in progress) instead of being solid.
     pub dashed: bool,
-    /// 0 = accent, 1 = the fate's end colour (flag colour, or grey).
     pub tone: f32,
-    /// Flag strength 0..=1.
     pub flag: f32,
-    /// Sparks flying out, 0..1, while a removed tile vanishes.
     pub spark: Option<f32>,
 }
 
@@ -386,9 +268,6 @@ impl Pose {
     };
 }
 
-/// Pose for a tile with `fate` (`None`: an app that stays), `age` seconds
-/// after its fate's instant, at ambient time `t`. `i` staggers wobbles;
-/// `wobble` grows the wobble (1 normally, up to 1.8 on hover).
 pub fn pose(fate: Option<Fate>, age: f32, t: f32, i: usize, wobble: f32) -> Pose {
     let i = i as f32;
     let busy = |amp: f32| 3.5 * amp * (t * 13.0 + i).sin();
@@ -444,8 +323,6 @@ pub fn pose(fate: Option<Fate>, age: f32, t: f32, i: usize, wobble: f32) -> Pose
             tone: phase(age, 0.5, 0.8, STANDARD),
             ..Pose::REST
         },
-        // It was waiting (faint outline): the outline goes, it greys and
-        // shrinks away where it stands. No lift, no sparks: nothing happened.
         Some(Fate::Absent(_)) => Pose {
             scale: 1.0 - phase(age, 0.25, ABSENT_END, ACCELERATE),
             ring: 0.55 * (1.0 - phase(age, 0.0, 0.25, STANDARD)),
@@ -456,8 +333,6 @@ pub fn pose(fate: Option<Fate>, age: f32, t: f32, i: usize, wobble: f32) -> Pose
     }
 }
 
-/// A Windows app's look-alike glyph from its package family name (the
-/// prototype's icon set has no logos). Unknown apps get a page.
 pub fn glyph_for(family: &str) -> Glyph {
     let f = family.to_ascii_lowercase();
     const TABLE: &[(&[&str], Glyph)] = &[
@@ -488,18 +363,11 @@ pub fn glyph_for(family: &str) -> Glyph {
         .unwrap_or(Glyph::Doc)
 }
 
-// ---------------------------------------------------------------------------
-// The program
-// ---------------------------------------------------------------------------
 
-/// The parts a person can point at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
-    /// A tile, by its index in the [`sequence`].
     Tile(usize),
-    /// The "+N" count.
     More,
-    /// The result mark.
     Mark,
 }
 
@@ -507,11 +375,8 @@ pub enum Part {
 struct TileSprings {
     x: Spring,
     y: Spring,
-    /// Hover grow.
     sc: Spring,
-    /// Pops in when the tile slides into the grid from beyond it.
     enter: Spring,
-    /// Ambient time of the last click on it.
     bump: Option<f32>,
 }
 
@@ -535,18 +400,14 @@ impl TileSprings {
 pub struct State {
     live: Live<Part>,
     tiles: Vec<TileSprings>,
-    /// The corner mark's hover grow and click pop.
     mark_sc: Spring,
     pop: Spring,
 }
 
-/// Everything derived from the inputs and the clock for one event.
 pub(crate) struct Scene {
     pub(crate) seq: Vec<Who>,
     pub(crate) places: Vec<Place>,
     pub(crate) hidden: usize,
-    /// The app (`apps` index) being worked on while it waits out of sight
-    /// beyond the grid: the "+N" shows the work instead.
     pub(crate) active_hidden: Option<usize>,
     clock: Instant,
 }
@@ -563,7 +424,6 @@ impl StartMenu {
         }
     }
 
-    /// Where every tile is at `clock`.
     pub(crate) fn scene(&self, clock: Instant) -> Scene {
         let seq = sequence(self.apps.len(), self.fillers.len());
         let gone: Vec<bool> = seq
@@ -588,8 +448,6 @@ impl StartMenu {
         }
     }
 
-    /// When the corner mark starts, in seconds after `changed`: once the
-    /// last tile has settled.
     fn mark_delay(&self) -> f32 {
         self.apps
             .iter()
@@ -598,17 +456,14 @@ impl StartMenu {
             .min(1.6)
     }
 
-    /// The mark is there (to hover) once it has started coming in.
     fn mark_shown(&self, age: f32) -> bool {
         self.outcome.mark().is_some() && age >= self.mark_delay()
     }
 
-    /// The hover targets, from the scene: one function for update and draw.
     fn spots(&self, sc: &Scene, mark: bool) -> Hotspots<Part> {
         let mut h = Hotspots::new();
         for (i, place) in sc.places.iter().enumerate() {
             let Place::Slot(k) = place else { continue };
-            // A tile on its way out is no longer something to point at.
             if self.fate(sc.seq[i]).is_some_and(Fate::leaves) {
                 continue;
             }
@@ -623,8 +478,6 @@ impl StartMenu {
         h
     }
 
-    /// The hover text for a part. The "+N" names the app being worked on
-    /// out of sight, when there is one, and otherwise how many wait.
     pub(crate) fn label(&self, part: Part, sc: &Scene) -> String {
         let l = &self.labels;
         match part {
@@ -646,7 +499,6 @@ impl StartMenu {
         }
     }
 
-    /// An app's name with what is happening to it.
     fn app_label(&self, j: usize) -> String {
         let l = &self.labels;
         let Some(app) = self.apps.get(j) else {
@@ -659,18 +511,15 @@ impl StartMenu {
             Fate::Refused(_) => &l.refused,
             Fate::Kept(_) => &l.kept,
             Fate::Stays(_) => &l.protected,
-            // Nothing happened to it: just its name.
             Fate::Absent(_) => return app.name.clone(),
         };
         template.replace("{name}", &app.name)
     }
 
-    /// Something still moves by itself (false under reduced motion).
     fn busy(&self, st: &State, sc: &Scene) -> bool {
         if anim::reduced() {
             return false;
         }
-        // Lit tiles wobble; an app removed out of sight sweeps under the "+N".
         let looping = self.outcome == Outcome::Working
             && (sc.active_hidden.is_some()
                 || sc.seq.iter().zip(&sc.places).any(|(w, p)| {
@@ -691,8 +540,6 @@ impl StartMenu {
         looping || settling || bumping || marking || st.pop.moving() || st.mark_sc.moving()
     }
 
-    /// Point the springs at this scene. A tile that slides into the grid
-    /// from beyond it starts at its slot and pops in.
     fn aim(&self, st: &mut State, sc: &Scene) {
         if st.tiles.len() != sc.seq.len() {
             st.tiles = sc
@@ -816,7 +663,6 @@ impl<M> canvas::Program<M> for StartMenu {
             });
         }
 
-        // Tiles, those resting first so a lifted one passes over them.
         let flag = ink.of(self.outcome.flag());
         let mut order: Vec<(usize, Pose)> = Vec::with_capacity(sc.seq.len());
         for (i, who) in sc.seq.iter().enumerate() {
@@ -827,7 +673,6 @@ impl<M> canvas::Program<M> for StartMenu {
             let fate = self.fate(*who);
             let fate_age = fate.and_then(Fate::at).map_or(0.0, |at| since(at, clock));
             let hov = ((s.sc.value - 1.0) / 0.14).clamp(0.0, 1.0);
-            // Reduced motion: upright tiles, not a frozen mid-wobble.
             let wobble = if anim::reduced() {
                 0.0
             } else if self.outcome == Outcome::Working {
@@ -929,13 +774,7 @@ impl<M> canvas::Program<M> for StartMenu {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Drawing pieces
-// ---------------------------------------------------------------------------
 
-/// The menu itself: plate, search box, "Pinned" and "All apps" rules (the
-/// second left to [`sweep`] when `rule` is false), footer with the account
-/// and power buttons. 11 strokes and fills.
 fn panel(f: &mut Frame, s: &Stage, ink: &Ink, rule: bool) {
     let plate = s.rounded_rect(62.0, 28.0, 196.0, 196.0, 12.0);
     f.fill(&plate, ink.plate);
@@ -966,9 +805,6 @@ struct TileLook {
     flag_color: Color,
 }
 
-/// The selection outline around a tile (prototype `rr(-17, -17, 34, 34,
-/// 9)`), as points one unit apart, for drawing it dashed by hand: the two
-/// renderers read a dash offset differently, so the dashes are cut here.
 fn ring_points() -> &'static [Point] {
     static RING: OnceLock<Vec<Point>> = OnceLock::new();
     RING.get_or_init(|| {
@@ -978,14 +814,9 @@ fn ring_points() -> &'static [Point] {
         .samples(121)
     })
 }
-/// Dash and gap, in ring steps (about a unit each). The round caps add
-/// the line width to each dash, so the gap is the longer of the two. The
-/// ring's 120 steps hold a whole number of periods.
 const DASH: usize = 3;
 const GAP: usize = 5;
 
-/// The dashes along a ring of `n` steps marched on by `shift` steps, as
-/// inclusive step ranges, including the one that wraps over the seam.
 fn dash_runs(shift: usize, n: usize) -> Vec<(usize, usize)> {
     let start = shift % (DASH + GAP);
     let mut runs = Vec::with_capacity(n / (DASH + GAP) + 2);
@@ -1000,9 +831,6 @@ fn dash_runs(shift: usize, n: usize) -> Vec<(usize, usize)> {
     runs
 }
 
-/// One app tile around unit (0, 0), drawn through a frame moved to its
-/// centre and turned (never scaled: widths stay in pixels). 4 to 8
-/// strokes and fills.
 fn tile(f: &mut Frame, stage: &Stage, ink: &Ink, look: TileLook) {
     let c = stage.point(look.centre);
     let local = Stage {
@@ -1062,9 +890,6 @@ fn tile(f: &mut Frame, stage: &Stage, ink: &Ink, look: TileLook) {
     });
 }
 
-/// The "All apps" rule while an app out of sight is being removed: the
-/// grey rule with a short accent stretch sweeping along it, there and back
-/// (still under reduced motion, where `t` is fixed). Two strokes.
 fn sweep(f: &mut Frame, s: &Stage, ink: &Ink, t: f32) {
     let (x0, x1) = RULE_X;
     f.stroke(&s.line(pt(x0, RULE_Y), pt(x1, RULE_Y)), ink.lo());
@@ -1076,7 +901,6 @@ fn sweep(f: &mut Frame, s: &Stage, ink: &Ink, t: f32) {
     );
 }
 
-/// Six short lines flying out of a vanished tile (`e` 0..1). One stroke.
 fn sparks(f: &mut Frame, s: &Stage, color: Color, c: Point, e: f32) {
     let r0 = 6.0 + 14.0 * e;
     let r1 = r0 + 6.0 * (1.0 - e);
@@ -1091,15 +915,12 @@ fn sparks(f: &mut Frame, s: &Stage, color: Color, c: Point, e: f32) {
     f.stroke(&path, stroke(color.scale_alpha(1.0 - e), W_PART));
 }
 
-/// A circle as path data from the top, clockwise, for drawing it in.
 fn ring_data(c: Point, r: f32) -> PathData {
     static UNIT: OnceLock<PathData> = OnceLock::new();
     UNIT.get_or_init(|| PathData::of("M0 -1a1 1 0 1 1 0 2a1 1 0 1 1 0-2"))
         .map(|p| pt(c.x + p.x * r, c.y + p.y * r))
 }
 
-/// The result on the menu's corner: a tinted disc whose ring and mark draw
-/// themselves in. 3 or 4 strokes and fills.
 #[allow(clippy::too_many_arguments)]
 fn result_mark(
     f: &mut Frame,
@@ -1174,19 +995,16 @@ mod tests {
 
     #[test]
     fn sequence_spreads_the_apps_and_queues_the_rest() {
-        // Two apps, like the prototype: slots 1 and 5, fillers around them.
         let s = sequence(2, 9);
         assert_eq!(s.len(), 9);
         assert_eq!(s[1], Who::App(0));
         assert_eq!(s[5], Who::App(1));
         assert_eq!(s[0], Who::Filler(0));
         assert_eq!(s.iter().filter(|w| matches!(w, Who::Filler(_))).count(), 7);
-        // Twenty apps: six in the grid, three that stay, fourteen queued.
         let s = sequence(20, 9);
         assert_eq!(s.len(), 23);
         assert_eq!(s[..SLOTS].iter().filter(|w| matches!(w, Who::App(_))).count(), MAX_LIT);
         assert_eq!(s[SLOTS..], (6..20).map(Who::App).collect::<Vec<_>>()[..]);
-        // Apps keep their removal order through the grid.
         let apps: Vec<usize> = s
             .iter()
             .filter_map(|w| match w {
@@ -1195,7 +1013,6 @@ mod tests {
             })
             .collect();
         assert_eq!(apps, (0..20).collect::<Vec<_>>());
-        // Few fillers: the grid simply has fewer tiles.
         let s = sequence(1, 2);
         assert_eq!(s, vec![Who::Filler(0), Who::App(0), Who::Filler(1)]);
         assert!(sequence(0, 0).is_empty());
@@ -1230,14 +1047,11 @@ mod tests {
             Outcome::Working,
             t0,
         );
-        // Just removed: still holds its slot while it lifts out.
         let sc = m.scene(done + Duration::from_millis(300));
         assert_eq!(sc.places[1], Place::Slot(1));
-        // After the reflow time it is gone and the next tile moves up.
         let sc = m.scene(done + Duration::from_secs(1));
         assert_eq!(sc.places[1], Place::Gone);
         assert_eq!(sc.places[2], Place::Slot(1));
-        // The refused app stays: eight tiles left.
         assert_eq!(sc.places.iter().filter(|p| matches!(p, Place::Slot(_))).count(), 8);
         anim::set_reduced_override(None);
     }
@@ -1255,7 +1069,6 @@ mod tests {
         assert!(mid.spark.is_some());
         let stays = pose(Some(Fate::Stays(Instant::now())), SETTLED_AGE, 0.0, 0, 1.0);
         assert_eq!((stays.ring, stays.tone, stays.flag), (0.0, 1.0, 0.0));
-        // Hovering the app being removed wobbles it more.
         let calm = pose(Some(Fate::Busy), 0.0, 0.1, 0, 1.0);
         let more = pose(Some(Fate::Busy), 0.0, 0.1, 0, 1.8);
         assert!(more.rot.abs() > calm.rot.abs());
@@ -1274,21 +1087,16 @@ mod tests {
         assert_eq!(sc.hidden, 5);
         let spots = m.spots(&sc, false);
         let still = super::super::Parallax::off();
-        // Six apps spread over the grid; slot 0 holds the one being removed.
         assert_eq!(spots.hit(slot_centre(0), &still), Some(Part::Tile(0)));
         assert_eq!(m.label(Part::Tile(0), &sc), "Suppression de App 0");
         assert_eq!(m.label(Part::Tile(1), &sc), "En attente : App 1");
         assert_eq!(m.label(Part::Tile(2), &sc), "Stay 0");
-        // Near a slot's edge, still that tile; between rows, nothing.
         assert_eq!(spots.hit(pt(104.0 + 10.0, 100.0), &still), Some(Part::Tile(0)));
         assert_eq!(spots.hit(pt(132.0, 117.0), &still), None);
-        // The count names how many wait, in the page's words.
         assert_eq!(spots.hit(MORE_C, &still), Some(Part::More));
         assert_eq!(m.label(Part::More, &sc), "5 apps de plus");
         assert_eq!(m.label(Part::More, &Scene { hidden: 1, ..m.scene(t0) }), "1 app de plus");
-        // No mark while working.
         assert_eq!(spots.hit(MARK_C, &still), None);
-        // The result: refused and protected apps say so; the mark names it.
         let m = menu(
             vec![Fate::Refused(t0), Fate::Stays(t0), Fate::Kept(t0)],
             9,
@@ -1324,7 +1132,6 @@ mod tests {
         anim::set_reduced_override(Some(false));
         let t0 = Instant::now();
         let m = menu(vec![Fate::Absent(t0), Fate::Removed(t0)], 9, Outcome::Removed, t0);
-        // No lift and no sparks while it goes; grey, not "Windows protects".
         let p = pose(Some(Fate::Absent(t0)), 0.5, 0.0, 1, 1.0);
         assert_eq!((p.lift, p.spark), (0.0, None));
         assert!(p.scale < 1.0 && p.tone == 1.0);
@@ -1334,7 +1141,6 @@ mod tests {
         assert_eq!(m.label(Part::Tile(1), &sc), "App 0");
         let still = super::super::Parallax::off();
         assert_eq!(m.spots(&sc, false).hit(slot_centre(1), &still), None);
-        // Then it leaves the menu like a removed app and the others close up.
         let sc = m.scene(t0 + Duration::from_secs(1));
         assert_eq!(sc.places[1], Place::Gone);
         assert_eq!(sc.places[5], Place::Gone);
@@ -1347,8 +1153,6 @@ mod tests {
         let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         anim::set_reduced_override(Some(false));
         let t0 = Instant::now();
-        // The first six could not be removed and stay in the grid; the
-        // seventh is being removed behind the "+N".
         let mut fates = vec![Fate::Refused(t0); 6];
         fates.extend([Fate::Busy, Fate::Waiting]);
         let m = menu(fates.clone(), 9, Outcome::Working, t0);
@@ -1361,7 +1165,6 @@ mod tests {
         for _ in 0..10 {
             assert!(tick(&mut st, &m, off, &mut clock));
         }
-        // Nothing being worked on: the drawing goes quiet.
         fates[6] = Fate::Waiting;
         let m = menu(fates, 9, Outcome::Working, t0);
         let sc = m.scene(clock);
@@ -1418,7 +1221,6 @@ mod tests {
         let t0 = Instant::now();
         let mut m = menu(vec![Fate::Removed(t0)], 3, Outcome::Removed, t0);
         assert!((m.mark_delay() - REFLOW).abs() < 1e-3);
-        // Apps finished long before the result: the mark comes in soon.
         m.changed = t0 + Duration::from_secs(5);
         assert!((m.mark_delay() - 0.15).abs() < 1e-3);
         assert_eq!(Outcome::Working.mark(), None);
@@ -1456,7 +1258,6 @@ mod tests {
         }
     }
 
-    // ---- the program: frames only while something moves --------------
 
     const BOUNDS: Rectangle = Rectangle {
         x: 0.0,
@@ -1479,7 +1280,6 @@ mod tests {
         wants_frame(canvas::Program::<()>::update(m, st, &frame(*clock), BOUNDS, cursor))
     }
 
-    /// Pixel position of a unit point (prototype coordinates).
     fn px(p: Point) -> Point {
         StartMenu::stage(BOUNDS.size()).point(p)
     }
@@ -1496,8 +1296,6 @@ mod tests {
         for _ in 0..20 {
             assert!(tick(&mut st, &working, off, &mut clock));
         }
-        // Both removed: frames until the tiles have gone, the others have
-        // glided into place and the tick has drawn in, then nothing.
         let done = menu(
             vec![Fate::Removed(clock), Fate::Removed(clock)],
             9,
@@ -1512,7 +1310,6 @@ mod tests {
         assert!(frames > 30);
         let sc = done.scene(clock);
         assert_eq!(sc.places.iter().filter(|p| **p == Place::Gone).count(), 2);
-        // The tiles after the first gap moved up by one slot.
         assert_eq!(st.tiles[2].x.value, slot_centre(1).x);
         anim::set_reduced_override(None);
     }
@@ -1574,11 +1371,9 @@ mod tests {
             BOUNDS,
             off
         )));
-        // The removed app is gone at once and the next tile is in place.
         let sc = m.scene(t0);
         assert_eq!(sc.places[5], Place::Gone);
         assert_eq!(st.tiles[6].x.value, slot_centre(5).x);
-        // Hover still names the app being removed.
         let p = px(slot_centre(1));
         let over = mouse::Cursor::Available(p);
         canvas::Program::<()>::update(

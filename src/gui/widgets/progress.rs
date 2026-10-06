@@ -1,16 +1,5 @@
 //! Progress bars in the Windows 11 style: a 1 px track with a 3 px rounded
 //! indicator, eased, borderless, drawn on whole pixels so edges stay crisp.
-//!
-//! * [`bar`]: draws the value of a [`Tween`] the page keeps (it controls the
-//!   clock, so it also works with a frame subscription it already runs).
-//! * [`bar_eased`]: give it the latest value and it eases there by itself,
-//!   asking for redraws only while it moves.
-//! * [`indeterminate`]: a segment gliding along the track; asks for redraws
-//!   itself for as long as it is on screen.
-//! * [`steps`]: a row of short segments for multi-step flows.
-//!
-//! The track is a hairline of the text colour, so it reads on `bg`,
-//! `surface`, `surface_alt` and hover tones alike. No borders, no shadows.
 use super::anim::{self, Tween, DECELERATE};
 use crate::gui::theme::{Palette, Tone};
 use crate::gui::Message;
@@ -18,14 +7,10 @@ use iced::widget::canvas::{self, Frame, Geometry, Path};
 use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use std::time::Instant;
 
-/// Height of a bar (the indicator; the track is a centred hairline).
 pub const HEIGHT: f32 = 3.0;
-/// Height of one segment of [`steps`].
 pub const STEP_HEIGHT: f32 = 3.0;
 const STEP_GAP: f32 = 4.0;
 
-/// A frame whose origin sits on a whole device pixel, so the hairline and the
-/// indicator's straight edges are not smeared across two pixel rows.
 fn pixel_frame(r: &Renderer, b: Rectangle) -> Frame {
     let mut f = Frame::new(r, b.size());
     f.translate(Vector::new(-b.x.fract(), -b.y.fract()));
@@ -36,7 +21,6 @@ fn track_color(p: &Palette) -> Color {
     p.text.scale_alpha(0.22)
 }
 
-/// The 1 px track from `x0` to `x1`, on the middle pixel row of the bar.
 fn track(f: &mut Frame, x0: f32, x1: f32, color: Color) {
     let y = ((f.height() - 1.0) / 2.0).round();
     if x1 > x0 {
@@ -44,7 +28,6 @@ fn track(f: &mut Frame, x0: f32, x1: f32, color: Color) {
     }
 }
 
-/// Capsule from `x0` to `x1` filling the frame height `h`.
 fn capsule(x0: f32, x1: f32, h: f32) -> Path {
     let w = (x1 - x0).max(0.0);
     Path::rounded_rectangle(
@@ -54,8 +37,6 @@ fn capsule(x0: f32, x1: f32, h: f32) -> Path {
     )
 }
 
-/// Width of the filled part for `value` 0..=1 on a track of `w`; a nonzero
-/// value is never thinner than the bar is tall, so it stays a clean dot.
 pub fn fill_width(value: f32, w: f32, h: f32) -> f32 {
     let v = if value.is_nan() {
         0.0
@@ -69,9 +50,6 @@ pub fn fill_width(value: f32, w: f32, h: f32) -> f32 {
     }
 }
 
-/// Position of the indeterminate highlight's left edge at `secs`: it enters
-/// from the left, glides across on an ease and leaves on the right, then
-/// rests briefly. Returns `(left, length)` for a track of `w`.
 pub fn shimmer_span(secs: f32, w: f32) -> (f32, f32) {
     const PERIOD: f32 = 1.7;
     let len = (w * 0.34).max(24.0);
@@ -83,14 +61,12 @@ pub fn shimmer_span(secs: f32, w: f32) -> (f32, f32) {
 fn paint_bar(f: &mut Frame, p: &Palette, tone: Tone, value: f32) {
     let (w, h) = (f.width(), f.height());
     let fw = fill_width(value, w, h).round();
-    // The track only shows where the indicator is not, so the two never blend.
     track(f, fw, w, track_color(p));
     if fw > 0.0 {
         f.fill(&capsule(0.0, fw, h), p.tone(tone));
     }
 }
 
-// --- stateless: value comes from the page's Tween --------------------------
 
 struct Plain {
     p: Palette,
@@ -121,9 +97,6 @@ fn canvas_of<'a, P: canvas::Program<Message> + 'a>(program: P, h: f32) -> Elemen
         .into()
 }
 
-/// Bar showing `tween` at the frame timestamp `now`. Retarget the tween with
-/// `Tween::retarget(now, value)` when the value changes and keep the frame
-/// subscription alive until `tween.done(now)`.
 pub fn bar<'a>(p: Palette, tween: &Tween, tone: Tone, now: Instant) -> Element<'a, Message> {
     canvas_of(
         Plain {
@@ -135,7 +108,6 @@ pub fn bar<'a>(p: Palette, tween: &Tween, tone: Tone, now: Instant) -> Element<'
     )
 }
 
-// --- self-easing -----------------------------------------------------------
 
 struct Eased {
     p: Palette,
@@ -202,7 +174,6 @@ pub fn bar_eased<'a>(p: Palette, value: f32, tone: Tone) -> Element<'a, Message>
     canvas_of(Eased { p, tone, value }, HEIGHT)
 }
 
-// --- indeterminate ---------------------------------------------------------
 
 struct Shimmer {
     p: Palette,
@@ -246,14 +217,10 @@ impl canvas::Program<Message> for Shimmer {
         let (w, h) = (f.width(), f.height());
         let color = self.p.tone(self.tone);
         if anim::reduced() {
-            // Still: a short segment in the middle, not a frozen "loading" bar.
             track(&mut f, 0.0, w, track_color(&self.p));
             f.fill(&capsule((w * 0.33).round(), (w * 0.67).round(), h), color);
             return vec![f.into_geometry()];
         }
-        // The same hairline track as every other bar, so a running row reads
-        // as progress even when the segment is between passes; the segment
-        // glides across and leaves cleanly at the edges.
         let (left, len) = shimmer_span(s.secs, w);
         let (x0, x1) = (left.max(0.0).round(), (left + len).min(w).round());
         let track_color = track_color(&self.p);
@@ -268,12 +235,10 @@ impl canvas::Program<Message> for Shimmer {
     }
 }
 
-/// Bar for work of unknown length. Redraws itself while on screen.
 pub fn indeterminate<'a>(p: Palette, tone: Tone) -> Element<'a, Message> {
     canvas_of(Shimmer { p, tone }, HEIGHT)
 }
 
-// --- steps -------------------------------------------------------------------
 
 struct Steps {
     p: Palette,
@@ -282,7 +247,6 @@ struct Steps {
     current: f32,
 }
 
-/// Fill of segment `i` for a progress of `current` segments (0..=total).
 pub fn step_fill(current: f32, i: usize) -> f32 {
     (current - i as f32).clamp(0.0, 1.0)
 }
@@ -314,8 +278,6 @@ impl canvas::Program<Message> for Steps {
     }
 }
 
-/// `total` short segments; `current` counts finished segments and may be
-/// fractional (e.g. 2.5 = two done, third half way). Feed it an eased value.
 pub fn steps<'a>(p: Palette, total: usize, current: f32, tone: Tone) -> Element<'a, Message> {
     canvas_of(
         Steps {

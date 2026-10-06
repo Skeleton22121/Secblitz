@@ -1,38 +1,4 @@
 //! Motion tokens and small animated icons drawn on a canvas.
-//!
-//! Design notes live in docs/MOTION.md. Everything here is a pure function of
-//! time: pages own the clock, this module only draws.
-//!
-//! # How a page drives an animation
-//!
-//! 1. Keep a [`Clock`] (or a plain `Instant`) in page state, set when the
-//!    animation starts, e.g. `self.scan_clock = Some(Clock::new())`.
-//! 2. In `subscription()` return `iced::window::frames()` ONLY while something
-//!    is animating, and nothing otherwise:
-//!
-//!    ```ignore
-//!    if self.scan_clock.is_some() && anim::animating() {
-//!        iced::window::frames().map(Message::Frame)
-//!    } else {
-//!        Subscription::none()
-//!    }
-//!    ```
-//!
-//! 3. On `Message::Frame(now)` store `now` (`self.now = now`). One-shot
-//!    animations (check/cross/warning draw-ins, value tweens) clear their
-//!    clock once `Clock::done(duration, now)` is true, so the subscription
-//!    switches off and the window goes back to zero redraws per second.
-//! 4. In `view()` build widgets from the stored time, for example
-//!    `anim::spinner(24.0, color, clock.elapsed_at(self.now))` or
-//!    `anim::check_draw(32.0, color, clock.progress_at(anim::SLOW, self.now))`.
-//!    Never call `Instant::now()` in `view()`; use the frame timestamp.
-//!
-//! When the Windows setting "Show animations in Windows" is off ([`reduced`])
-//! every helper returns its final state at once and [`animating`] is false,
-//! so no frame subscription is needed.
-//!
-//! Each icon is a tiny canvas (24 to 64 px). Static end states are cached with
-//! `canvas::Cache`; only the small canvas area is redrawn while moving.
 
 #![allow(dead_code)]
 
@@ -45,11 +11,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// Easing curves
-// ---------------------------------------------------------------------------
 
-/// A CSS-style cubic Bezier easing curve (P0 = 0,0 and P3 = 1,1 implied).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Curve {
     x1: f32,
@@ -58,28 +20,20 @@ pub struct Curve {
     y2: f32,
 }
 
-/// Build a curve from the two control points, like CSS `cubic-bezier()`.
 pub const fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Curve {
     Curve { x1, y1, x2, y2 }
 }
 
-/// Fluent "Fast out, slow in": things entering or settling. Feels instant.
 pub const DECELERATE: Curve = cubic_bezier(0.0, 0.0, 0.0, 1.0);
-/// Fluent "Slow out, fast in": things leaving.
 pub const ACCELERATE: Curve = cubic_bezier(1.0, 0.0, 1.0, 1.0);
-/// Fluent "point to point": an object moving between two resting places.
 pub const POINT_TO_POINT: Curve = cubic_bezier(0.55, 0.55, 0.0, 1.0);
 /// Material 3 emphasized decelerate: a stronger, more expressive entrance.
 pub const EMPHASIZED: Curve = cubic_bezier(0.05, 0.7, 0.1, 1.0);
-/// Material 3 standard: calm in-out for loops and sweeps.
 pub const STANDARD: Curve = cubic_bezier(0.2, 0.0, 0.0, 1.0);
-/// Symmetric ease for ping-pong loops such as the scan sweep.
 pub const EASE_IN_OUT: Curve = cubic_bezier(0.42, 0.0, 0.58, 1.0);
 pub const LINEAR: Curve = cubic_bezier(0.0, 0.0, 1.0, 1.0);
 
 impl Curve {
-    /// Eased value for linear progress `t`. `t` is clamped to 0..=1 and
-    /// `at(0) == 0`, `at(1) == 1` exactly.
     pub fn at(&self, t: f32) -> f32 {
         if t.is_nan() || t <= 0.0 {
             return 0.0;
@@ -102,7 +56,6 @@ impl Curve {
             let u = 1.0 - s;
             3.0 * u * u * a + 6.0 * u * s * (b - a) + 3.0 * s * s * (1.0 - b)
         };
-        // Newton-Raphson first (fast, converges in 2-4 steps for UI curves).
         let mut s = x;
         for _ in 0..8 {
             let err = bez(x1, x2, s) - x;
@@ -134,20 +87,12 @@ impl Curve {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Durations
-// ---------------------------------------------------------------------------
 
-/// Hover / press feedback (WinUI "faster").
 pub const FASTER: Duration = Duration::from_millis(83);
-/// Small state changes: toggles, toast exit.
 pub const FAST: Duration = Duration::from_millis(150);
-/// Default for anything that moves a short distance.
 pub const NORMAL: Duration = Duration::from_millis(250);
-/// Completion moments: check draw-in, ring fill, count-up.
 pub const SLOW: Duration = Duration::from_millis(400);
 
-/// Wall clock for one animation. Cheap to copy; store it in page state.
 #[derive(Debug, Clone, Copy)]
 pub struct Clock {
     start: Instant,
@@ -171,26 +116,21 @@ impl Clock {
     pub fn restart(&mut self) {
         self.start = Instant::now();
     }
-    /// When it started.
     pub fn start(&self) -> Instant {
         self.start
     }
     pub fn elapsed(&self) -> Duration {
         self.start.elapsed()
     }
-    /// Elapsed at a frame timestamp (preferred inside `view()`).
     pub fn elapsed_at(&self, now: Instant) -> Duration {
         now.saturating_duration_since(self.start)
     }
-    /// Linear progress 0..=1 over `d`, now.
     pub fn progress(&self, d: Duration) -> f32 {
         ratio(self.elapsed(), d)
     }
-    /// Linear progress 0..=1 over `d` at a frame timestamp.
     pub fn progress_at(&self, d: Duration, now: Instant) -> f32 {
         ratio(self.elapsed_at(now), d)
     }
-    /// True once a one-shot animation has finished (or motion is reduced).
     pub fn done(&self, d: Duration, now: Instant) -> bool {
         reduced() || self.elapsed_at(now) >= d
     }
@@ -203,16 +143,10 @@ fn ratio(elapsed: Duration, d: Duration) -> f32 {
     (elapsed.as_secs_f32() / d.as_secs_f32()).clamp(0.0, 1.0)
 }
 
-// ---------------------------------------------------------------------------
-// Reduced motion
-// ---------------------------------------------------------------------------
 
-// 0 = follow the system, 1 = force reduced, 2 = force full motion.
 static OVERRIDE: AtomicU8 = AtomicU8::new(0);
 static SYSTEM: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
 
-/// Force reduced motion on/off (`None` follows Windows). For an in-app
-/// setting and for tests.
 pub fn set_reduced_override(v: Option<bool>) {
     OVERRIDE.store(
         match v {
@@ -224,8 +158,6 @@ pub fn set_reduced_override(v: Option<bool>) {
     );
 }
 
-/// True when the user turned off "Show animations in Windows" (or the
-/// override says so). Re-read from the system at most every 3 seconds.
 pub fn reduced() -> bool {
     match OVERRIDE.load(Ordering::Relaxed) {
         1 => return true,
@@ -246,7 +178,6 @@ pub fn reduced() -> bool {
     false
 }
 
-/// Whether pages should run the frame subscription at all.
 pub fn animating() -> bool {
     !reduced()
 }
@@ -274,7 +205,6 @@ fn system_reduced() -> bool {
     false
 }
 
-/// Progress as the caller should use it: final state when motion is reduced.
 fn effective(t: f32, reduced: bool) -> f32 {
     if reduced {
         1.0
@@ -283,11 +213,7 @@ fn effective(t: f32, reduced: bool) -> f32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Value helpers
-// ---------------------------------------------------------------------------
 
-/// Score / progress ring value animating from `from` to `to`, `t` = 0..1.
 pub fn ring_fill(from: f32, to: f32, t: f32) -> f32 {
     ring_fill_with(from, to, t, reduced())
 }
@@ -297,17 +223,14 @@ fn ring_fill_with(from: f32, to: f32, t: f32, reduced: bool) -> f32 {
     from + (to - from) * k
 }
 
-/// Number count-up with a decelerating finish, `t` = 0..1.
 pub fn count_up(from: f32, to: f32, t: f32) -> f32 {
     ring_fill(from, to, t)
 }
 
-/// Integer count-up (rounded) for labels like "15 / 18".
 pub fn count_up_int(from: i64, to: i64, t: f32) -> i64 {
     count_up(from as f32, to as f32, t).round() as i64
 }
 
-/// A value moving from `from` to `to` over [`SLOW`] (or a custom duration).
 #[derive(Debug, Clone, Copy)]
 pub struct Tween {
     pub from: f32,
@@ -320,7 +243,6 @@ impl Tween {
     pub fn new(from: f32, to: f32, dur: Duration) -> Self {
         Self::starting(Instant::now(), from, to, dur)
     }
-    /// A tween that starts at a given (frame) timestamp; deterministic.
     pub fn starting(at: Instant, from: f32, to: f32, dur: Duration) -> Self {
         Self {
             from,
@@ -329,11 +251,9 @@ impl Tween {
             dur,
         }
     }
-    /// Where the tween is heading.
     pub fn target(&self) -> f32 {
         self.to
     }
-    /// Retarget from the value currently shown, so changes never jump.
     pub fn retarget(&mut self, now: Instant, to: f32) {
         self.from = self.value(now);
         self.to = to;
@@ -347,9 +267,6 @@ impl Tween {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Canvas icons
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
@@ -366,11 +283,8 @@ enum Kind {
 struct Glyph {
     kind: Kind,
     color: Color,
-    /// One-shot progress 0..=1 (draw-ins).
     t: f32,
-    /// Seconds since start (loops).
     secs: f32,
-    /// Final / frozen state: eligible for the geometry cache.
     still: bool,
 }
 
@@ -442,7 +356,6 @@ fn element<'a, M: 'a>(size: f32, g: Glyph) -> Element<'a, M> {
         .into()
 }
 
-/// Indeterminate progress ring (WinUI ProgressRing feel).
 pub fn spinner<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
     spinner_with(size, color, elapsed, reduced())
 }
@@ -465,8 +378,6 @@ fn spinner_with<'a, M: 'a>(
     )
 }
 
-/// Three small dots pulsing in sequence, for inline "working" text. `size` is
-/// the height (match the text size); the width is 2.2 times that.
 pub fn dots<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
     canvas::Canvas::new(Glyph {
         kind: Kind::Dots,
@@ -480,17 +391,14 @@ pub fn dots<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a
     .into()
 }
 
-/// Circle strokes in, then the check draws, with a small overshoot settle.
 pub fn check_draw<'a, M: 'a>(size: f32, color: Color, t: f32) -> Element<'a, M> {
     one_shot(Kind::Check, size, color, t)
 }
 
-/// Failure: circle then a cross.
 pub fn cross_draw<'a, M: 'a>(size: f32, color: Color, t: f32) -> Element<'a, M> {
     one_shot(Kind::Cross, size, color, t)
 }
 
-/// Attention: triangle outlines, then the exclamation mark pops in.
 pub fn warn_draw<'a, M: 'a>(size: f32, color: Color, t: f32) -> Element<'a, M> {
     one_shot(Kind::Warn, size, color, t)
 }
@@ -509,7 +417,6 @@ fn one_shot<'a, M: 'a>(kind: Kind, size: f32, color: Color, t: f32) -> Element<'
     )
 }
 
-/// Shield outline with a thin scan line sweeping over it.
 pub fn shield_scan<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
     element(
         size,
@@ -523,7 +430,6 @@ pub fn shield_scan<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Ele
     )
 }
 
-/// Small status dot with a slow, subtle halo.
 pub fn pulse_dot<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Element<'a, M> {
     element(
         size,
@@ -537,9 +443,7 @@ pub fn pulse_dot<'a, M: 'a>(size: f32, color: Color, elapsed: Duration) -> Eleme
     )
 }
 
-// --- geometry --------------------------------------------------------------
 
-/// Maps the 24x24 Fluent grid onto the canvas (optionally scaled around the centre).
 #[derive(Clone, Copy)]
 struct Xf {
     cx: f32,
@@ -571,7 +475,6 @@ pub(crate) fn stroke(color: Color, w: f32) -> Stroke<'static> {
         .with_line_join(LineJoin::Round)
 }
 
-/// Polyline drawn up to `frac` (0..=1) of its total length.
 pub(crate) fn partial_line(pts: &[Point], frac: f32) -> Option<Path> {
     let total: f32 = pts.windows(2).map(|w| dist(w[0], w[1])).sum();
     let mut left = total * frac.clamp(0.0, 1.0);
@@ -615,7 +518,6 @@ pub(crate) fn arc_path(c: Point, r: f32, start: f32, sweep: f32) -> Path {
 pub(crate) const TOP: f32 = -std::f32::consts::FRAC_PI_2;
 pub(crate) const TAU: f32 = std::f32::consts::TAU;
 
-/// Remap `t` so the phase [a, b] runs 0..1 (clamped).
 pub(crate) fn phase(t: f32, a: f32, b: f32) -> f32 {
     ((t - a) / (b - a)).clamp(0.0, 1.0)
 }
@@ -631,12 +533,6 @@ fn paint(f: &mut Frame, g: &Glyph) {
     }
 }
 
-/// Arc of the ring spinner at `secs`: (start angle, sweep) in radians, 0 = top.
-///
-/// The whole arc turns at a constant speed (one turn per 1.6 s) while its
-/// length breathes between 30 and 270 degrees on the Fluent "point to point"
-/// curve (one breath per 1.4 s). The arc grows around its own middle, so the
-/// motion reads as calm pulsing rather than a chase.
 pub fn spinner_arc(secs: f32) -> (f32, f32) {
     const BREATH: f32 = 1.4;
     const TURN: f32 = 1.6;
@@ -649,7 +545,6 @@ pub fn spinner_arc(secs: f32) -> (f32, f32) {
     (TOP + rot - len / 2.0, len)
 }
 
-/// 0 -> 1 -> 0 over `p` in 0..1 (the caller eases it).
 pub(crate) fn triangle(p: f32) -> f32 {
     let p = p.rem_euclid(1.0);
     if p < 0.5 {
@@ -659,8 +554,6 @@ pub(crate) fn triangle(p: f32) -> f32 {
     }
 }
 
-/// Stroke width of the ring spinner for a canvas of `size` px: about 2 px at
-/// 24 px, never thinner than 1.75 px so 16 px stays crisp.
 pub fn spinner_stroke(size: f32) -> f32 {
     (size * 0.085).clamp(1.75, 4.0)
 }
@@ -670,10 +563,8 @@ fn paint_spinner(f: &mut Frame, g: &Glyph) {
     let w = spinner_stroke(size);
     let r = (size - w) / 2.0 - 0.25;
     let c = Point::new(f.size().width / 2.0, f.size().height / 2.0);
-    // Faint track (12 %) so the ring reads as a ring even on the short arc.
     f.stroke(&Path::circle(c, r), stroke(g.color.scale_alpha(0.12), w));
     if g.still {
-        // Reduced motion: a fixed three-quarter arc.
         f.stroke(&arc_path(c, r, TOP, TAU * 0.75), stroke(g.color, w));
         return;
     }
@@ -681,7 +572,6 @@ fn paint_spinner(f: &mut Frame, g: &Glyph) {
     f.stroke(&arc_path(c, r, start, len), stroke(g.color, w));
 }
 
-/// Intensity 0..1 of dot `i` (0..3) of the inline "working" dots at `secs`.
 pub fn dot_pulse(secs: f32, i: usize) -> f32 {
     let p = (secs / 1.2 - i as f32 * 0.16).rem_euclid(1.0);
     STANDARD.at(triangle(p))
@@ -702,7 +592,6 @@ fn paint_dots(f: &mut Frame, g: &Glyph) {
 
 fn paint_badge(f: &mut Frame, g: &Glyph) {
     let t = g.t;
-    // Overshoot settle on the whole badge: 1 -> 1.07 -> 1.
     let bump = (std::f32::consts::PI * phase(t, 0.35, 1.0)).sin();
     let xf = Xf::new(f.size(), 1.0 + 0.07 * bump);
     let w = xf.len(1.7);
@@ -779,7 +668,6 @@ fn paint_shield(f: &mut Frame, g: &Glyph) {
     if g.still {
         return;
     }
-    // Ping-pong sweep, 2.4 s per full trip, eased so it lingers at the ends.
     const PERIOD: f32 = 2.4;
     let p = (g.secs / PERIOD).fract() * 2.0;
     let leg = if p < 1.0 { p } else { 2.0 - p };
@@ -793,8 +681,6 @@ fn paint_shield(f: &mut Frame, g: &Glyph) {
             iced::Size::new(size.width, (bot - top).max(0.0)),
         )
     };
-    // Faint trailing band and the bright line, both clipped to the shield by
-    // filling the shield shape through a thin clip rectangle.
     let trail = if p < 1.0 { y - 3.2 } else { y };
     let trail_end = if p < 1.0 { y } else { y + 3.2 };
     let band = full(trail, trail_end);
@@ -814,7 +700,6 @@ fn paint_pulse(f: &mut Frame, g: &Glyph) {
     if g.still {
         return;
     }
-    // Halo expands and fades once every 2.4 s, then rests.
     const PERIOD: f32 = 2.4;
     let p = phase((g.secs / PERIOD).fract(), 0.0, 0.7);
     if p > 0.0 && p < 1.0 {
@@ -875,10 +760,8 @@ mod tests {
 
     #[test]
     fn known_midpoints() {
-        // Linear and symmetric curves hit 0.5 at 0.5.
         assert!((LINEAR.at(0.5) - 0.5).abs() < 1e-5);
         assert!((EASE_IN_OUT.at(0.5) - 0.5).abs() < 1e-5);
-        // (0,0,0,1): x = s^3, y = 3s^2 - 2s^3 -> closed form.
         let s = 0.5f64.powf(1.0 / 3.0);
         let want = (3.0 * s * s - 2.0 * s * s * s) as f32;
         assert!(
@@ -1003,7 +886,6 @@ mod tests {
         assert!(!tw.done(t0 + SLOW / 2));
         // Decelerate: more than half way at half time.
         assert!(tw.value(t0 + SLOW / 2) > 15.0);
-        // Retarget continues from where it is, never jumps.
         let mid = t0 + SLOW / 4;
         let shown = tw.value(mid);
         tw.retarget(mid, 0.0);

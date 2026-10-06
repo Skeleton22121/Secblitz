@@ -1,9 +1,4 @@
-//! Drawing code for the Tools page. OWNER: tools agent.
-//!
-//! Calm groups of rows straight on the page: a plain icon, a short title, one
-//! line of help and one compact action. Rare actions live in each row's
-//! overflow menu. Built only from the shared widgets and theme tokens;
-//! `view` does no work beyond building widgets.
+//! Drawing code for the Tools page.
 use super::{
     repair_ratio, stage_ratio, tools, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State, Tips,
     Updates,
@@ -23,14 +18,12 @@ use iced::{Alignment, Element, Font, Length};
 type El<'a> = Element<'a, Message>;
 type MenuEntry = (Icon, String, Message, bool);
 
-/// Size of the spinners and result marks inside rows.
 const MARK: f32 = 20.0;
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     page(state, ctx)
 }
 
-/// The open review sheet, drawn by the shell above the whole window.
 pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<El<'a>> {
     state.sheet.map(|sheet| sheet_panel(state, ctx, sheet))
 }
@@ -79,11 +72,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     .into()
 }
 
-// ---------------------------------------------------------------------------
-// Building blocks
-// ---------------------------------------------------------------------------
 
-/// Compact secondary button (short label).
 fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
     widgets::action(p, ButtonKind::Secondary, label, None, msg.map(tools))
 }
@@ -92,7 +81,6 @@ fn entry(icon: Icon, label: String, msg: Msg) -> MenuEntry {
     (icon, label, tools(msg), false)
 }
 
-/// Overflow button, or nothing when there is nothing to put in it.
 fn more<'a>(p: Palette, items: Vec<MenuEntry>) -> El<'a> {
     if items.is_empty() {
         space::horizontal().width(0).into()
@@ -108,7 +96,6 @@ fn trailing<'a>(items: Vec<El<'a>>) -> El<'a> {
         .into()
 }
 
-/// What a running row shows besides its title.
 struct Running<'a> {
     icon: Icon,
     title: String,
@@ -118,7 +105,6 @@ struct Running<'a> {
     notes: Vec<El<'a>>,
 }
 
-/// A row that is working: the bar sits under its title, inside the row.
 fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
     let mut below = vec![r.bar];
     below.extend(r.notes);
@@ -134,8 +120,6 @@ fn running<'a>(p: Palette, r: Running<'a>) -> El<'a> {
     )
 }
 
-/// A working row whose length is unknown: a spinner where its button was,
-/// so the row keeps its height and nothing below it moves.
 fn busy_row<'a>(state: &State, p: Palette, icon: Icon, title: String, sub: String) -> El<'a> {
     widgets::row_item(
         p,
@@ -147,8 +131,6 @@ fn busy_row<'a>(state: &State, p: Palette, icon: Icon, title: String, sub: Strin
     )
 }
 
-/// A finished job: the mark draws itself in (check, cross or warning), with
-/// the outcome as title and the rest in the row's menu.
 struct Outcome {
     slot: Slot,
     icon: Icon,
@@ -163,7 +145,6 @@ fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome) -> El<'a> {
     finished_with(state, ctx, o, None)
 }
 
-/// `finished` plus one visible next-step button (Retry, Open Windows Update).
 fn finished_with<'a>(
     state: &State,
     ctx: &Ctx,
@@ -216,8 +197,6 @@ fn finished_with<'a>(
     )
 }
 
-/// Plain-words explanation for the "More details" pane. Never raw
-/// developer text: callers pass sentences from `logic::*_why`.
 fn raw_text<'a>(ctx: &Ctx, plain: &str) -> El<'a> {
     let p = ctx.palette;
     let shown = if plain.trim().is_empty() {
@@ -241,7 +220,6 @@ fn running_for(ctx: &Ctx, secs: u64) -> String {
         .replace("{time}", &elapsed_phrase(ctx, secs))
 }
 
-/// Collapsed "More details" for people who want the raw evidence (review sheet).
 fn details<'a>(state: &State, ctx: &Ctx, which: Detail, raw: &str) -> El<'a> {
     widgets::expander(
         ctx.palette,
@@ -270,11 +248,7 @@ fn busy_hint(ctx: &Ctx) -> String {
     ctx.t("Another task is running. Please wait for it to finish.")
 }
 
-// ---------------------------------------------------------------------------
-// Virus protection
-// ---------------------------------------------------------------------------
 
-/// Scan and update, plus the result of removing found threats while there is one.
 fn virus_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let mut rows = vec![scan_row(state, ctx), defender_row(state, ctx)];
     if !matches!(state.threats, Run::Idle) {
@@ -283,7 +257,6 @@ fn virus_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     rows
 }
 
-/// Removing found threats: shown only after the person chose it from a tip.
 fn threats_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let title = ctx.t("Remove found threats");
@@ -459,9 +432,6 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Repair & updates
-// ---------------------------------------------------------------------------
 
 fn keep_using<'a>(p: Palette, ctx: &Ctx) -> El<'a> {
     widgets::small(
@@ -768,7 +738,6 @@ fn updates_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     }
 }
 
-/// Plain count of what the tips check found.
 fn tips_summary(ctx: &Ctx, report: &logic::TipsReport) -> String {
     ctx.t("{good} checks look fine, {look} need a look and {unknown} could not be checked.")
         .replace("{good}", &report.count(logic::TipState::Good).to_string())
@@ -787,8 +756,6 @@ fn open_update_button(ctx: &Ctx) -> (String, Icon, Msg) {
     )
 }
 
-/// What to offer after a failed update lookup: retrying only when it can help,
-/// otherwise a way to finish in Windows Update itself.
 fn failure_steps(
     ctx: &Ctx,
     note: &str,
@@ -822,9 +789,6 @@ fn count_installing(ctx: &Ctx, n: usize) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PC health tips
-// ---------------------------------------------------------------------------
 
 fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     let p = ctx.palette;
@@ -906,7 +870,6 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
                 .into()
         };
         if !needs.is_empty() {
-            // Open until the person folds it.
             out.push(widgets::collapsible(
                 p,
                 ctx.t("Needs a look"),
@@ -938,8 +901,6 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
 
 fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) -> El<'a> {
     let p = ctx.palette;
-    // A fix is only promised when the latest Protection check offers it. A
-    // Not offered control says why on Protection; otherwise the manual steps.
     let fix = logic::tip_fix(tip, ctx.report.as_deref(), &ctx.catalog.available);
     let (advice, guide) = logic::tip_words(tip, fix);
     let (tone, icon, words) = match tip.state {
@@ -947,12 +908,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
-    // One compact action: the fix review, the usual scan (after its own
-    // confirmation), or the Windows page that helps. Nothing starts without
-    // the person's say-so.
     let action: El<'a> = match logic::tip_action(tip, fix, ctx.broker.is_some()) {
-        // Opens the same review sheet as Protection; nothing changes until
-        // the person agrees there. Same conditions as Protection's button.
         logic::TipAction::ReviewFix(id) => widgets::action(
             p,
             ButtonKind::Secondary,
@@ -968,7 +924,6 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
             None,
             Some(Message::Navigate(Page::Fixes)),
         ),
-        // No Protection check yet: run one; the tip then says what it found.
         logic::TipAction::CheckNow => widgets::action(
             p,
             ButtonKind::Secondary,
@@ -976,25 +931,20 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
             Some(Icon::Refresh),
             (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
         ),
-        // A restart that finishes updates, after its own confirmation.
         logic::TipAction::RestartNow => {
             secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart)))
         }
-        // Found threats go after their own confirmation sheet, never while
-        // a fix or undo runs.
         logic::TipAction::RemoveThreats => secondary(
             p,
             ctx.t("Remove"),
             (!threats_busy && !ctx.busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
         ),
-        // The in-app scan stays reachable even when steps are shown below.
         logic::TipAction::Scan => secondary(
             p,
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
         logic::TipAction::Open(open) => {
-            // The button is named after the page it opens.
             let label = crate::guide::Page::from_action(open)
                 .map_or("Open", crate::guide::Page::button);
             widgets::action(
@@ -1005,7 +955,6 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
                 Some(tools(Msg::OpenAction(open))),
             )
         }
-        // A guide shows its own button under the steps.
         logic::TipAction::Steps | logic::TipAction::None => space::horizontal().width(0).into(),
     };
     let head = widgets::row_item_tinted(
@@ -1017,7 +966,6 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         action,
         None,
     );
-    // The steps need no launcher; only the buttons that open pages do.
     let head = match (guide, tip.state) {
         (Some(g), TipState::Look) => column![
             head,
@@ -1033,7 +981,6 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         _ => head,
     };
     match &tip.explain {
-        // Tips only report: the third line says what the person can do.
         Some(id) => {
             widgets::explain::with_disclosure(ctx, "tips", id, true, widgets::explain::INDENT, head)
         }
@@ -1041,9 +988,6 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Passwords
-// ---------------------------------------------------------------------------
 
 fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
@@ -1113,7 +1057,6 @@ fn password_region<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     } else {
         ctx.t("Secblitz never saves your passwords.")
     };
-    // A plain row like the rest of the page, the password under its title.
     widgets::row_item_below(
         p,
         Some(Icon::Key),
@@ -1141,8 +1084,6 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             anim::check_draw(MARK, p.tone(Tone::Good), 1.0),
             None,
         ),
-        // Show the "can't install" state upfront when the account check says so,
-        // using the same copy and mark as the post-attempt refused state.
         Run::Idle if state.bitwarden_not_here => widgets::row_item(
             p,
             Some(Icon::Lock),
@@ -1234,9 +1175,6 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Windows settings
-// ---------------------------------------------------------------------------
 
 fn settings_group<'a>(ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
@@ -1285,9 +1223,6 @@ fn settings_group<'a>(ctx: &'a Ctx) -> El<'a> {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Review sheets
-// ---------------------------------------------------------------------------
 
 fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     let p = ctx.palette;
