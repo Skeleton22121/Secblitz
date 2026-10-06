@@ -1209,8 +1209,9 @@ pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
         P::FirewallRules => Page::Firewall,
         P::WindowsHello => Page::SignIn,
         // Settings has no page for these: browser add-ons live in the
-        // browser, recovery tools have no switch, and the rest are fixes or
-        // steps on their own checks.
+        // browser, recovery tools have no switch in Settings (their check
+        // has a Protection fix instead), and the rest are fixes or steps on
+        // their own checks.
         P::BrowserExtensions
         | P::WinRe
         | P::Permissions
@@ -1310,6 +1311,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         "persistence.run_and_tasks" => "Open Task Manager, Startup apps, and switch off ones you don't know.",
+        "winre.enabled" => "Recovery tools are off. They help if Windows stops starting. Ask someone you trust to turn them back on.",
         _ => return None,
     })
 }
@@ -1338,12 +1340,13 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
 }
 
 /// The Protection control that fixes what this check reports, when there is
-/// one. A check and its fix share one id, except two older checks that have
+/// one. A check and its fix share one id, except three older checks that have
 /// their own. A fix added to the catalog is picked up here by itself.
 pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
     let id = match rule_id {
         "remote.rdp" => "remote_desktop.disabled",
         "smb.v1" => "smb1.disabled",
+        "winre.enabled" => "recovery.winre_enabled",
         other => other,
     };
     secblitz::hardening::spec(id).map(|spec| spec.id)
@@ -1362,6 +1365,7 @@ pub fn rule_fix_advice(rule_id: &str) -> &'static str {
         "accounts.stale_enabled" => "Some old accounts are still switched on. Secblitz can switch them off, and you can undo it.",
         "smb.shares_exposed" => "Some folders are shared with everyone on your network. Secblitz can limit them, and you can undo it.",
         "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Secblitz can remove it, and you can undo it.",
+        "winre.enabled" => "Recovery tools are off. Secblitz can turn them back on for you, and you can undo it.",
         _ => "Secblitz can fix this for you, and you can undo it. Look it over first.",
     }
 }
@@ -2459,7 +2463,35 @@ mod tests {
             tip_fix(&rdp, Some(&r), &["remote_desktop.disabled".to_owned()]),
             TipFix::Offered("remote_desktop.disabled")
         );
+        // Recovery tools: the older check has its own id too, and its tip
+        // offers the fix only while the latest Protection check does.
+        assert_eq!(rule_fix("winre.enabled"), Some("recovery.winre_enabled"));
+        let winre = tip_for(diag::ProbeId::WinRe, &["winre.enabled"]);
+        assert_eq!(winre.fix, Some("recovery.winre_enabled"));
+        assert_eq!(winre.advice, rule_advice("winre.enabled").unwrap());
+        assert_eq!(winre.fix_advice, rule_fix_advice("winre.enabled"));
+        assert_eq!(winre.explain.as_deref(), Some("winre.enabled"));
+        let fixes = ["recovery.winre_enabled".to_owned()];
+        let r = protection("recovery.winre_enabled", "attention", "Eligible");
+        assert_eq!(tip_fix(&winre, Some(&r), &fixes), TipFix::Offered("recovery.winre_enabled"));
+        assert_eq!(
+            tip_action(&winre, tip_fix(&winre, Some(&r), &fixes), true),
+            TipAction::ReviewFix("recovery.winre_enabled")
+        );
+        assert_eq!(tip_words(&winre, TipFix::Offered("recovery.winre_enabled")).0, winre.fix_advice);
+        let reason = "Not offered: the recovery tools are missing from this PC";
+        let r = protection("recovery.winre_enabled", "skipped", reason);
+        assert_eq!(
+            tip_fix(&winre, Some(&r), &fixes),
+            TipFix::NotOffered { control: "recovery.winre_enabled", reason }
+        );
+        assert_eq!(tip_action(&winre, tip_fix(&winre, Some(&r), &fixes), true), TipAction::SeeWhy);
+        assert_eq!(tip_fix(&winre, None, &fixes), TipFix::Unchecked);
+        let r = protection("recovery.winre_enabled", "compliant", "");
+        assert_eq!(tip_fix(&winre, Some(&r), &fixes), TipFix::Manual);
+        assert_eq!(tip_action(&winre, TipFix::Manual, true), TipAction::SeeWhy);
         // The manual text never promises a fix; only `fix_advice` may.
+        assert!(!rule_advice("winre.enabled").unwrap().contains("Secblitz can"));
         for rule in ["remote.rdp", "smb.v1", mi, "vbs.kernel_stack_protection"] {
             let text = rule_advice(rule).unwrap();
             assert!(!text.contains("Secblitz can"), "{rule}: {text}");
@@ -2666,6 +2698,7 @@ mod tests {
             "persistence.run_and_tasks",
             "remote.rdp",
             "smb.v1",
+            "winre.enabled",
         ] {
             let mut tip = look_tip(rule);
             tip.scan = rule_scan(rule);
@@ -2764,6 +2797,7 @@ mod tests {
             "net.dns_encryption",
             "net.wifi_security",
             "persistence.run_and_tasks",
+            "winre.enabled",
         ] {
             let text = rule_advice(rule).expect(rule);
             assert_no_dev_terms(text);
