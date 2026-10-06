@@ -1,7 +1,6 @@
 //! Suffix matching over sorted 64-bit name hashes: 8 bytes per domain, a lookup
 //! is a handful of binary searches.
 
-/// FNV-1a 64 over the lowercase bytes of `name`.
 pub fn hash(name: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in name.bytes() {
@@ -23,7 +22,6 @@ impl HashSet64 {
         HashSet64(v)
     }
 
-    /// From hashes that were computed elsewhere (any order, duplicates fine).
     pub fn from_hashes(mut hashes: Vec<u64>) -> Self {
         hashes.sort_unstable();
         hashes.dedup();

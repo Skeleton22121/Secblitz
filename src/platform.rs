@@ -22,22 +22,14 @@ pub fn support_action(id: &str) -> Result<()> {
     }
 }
 
-/// What "Remove found threats" did, as plain counts taken from Defender
-/// itself before and after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreatRemoval {
-    /// Active threats Defender reported before the removal.
     pub found: u32,
-    /// How many of them are no longer active afterwards.
     pub removed: u32,
-    /// Active threats still reported afterwards.
     pub left: u32,
 }
 
-/// Ask Defender itself to remove the active threats it has found (its own
-/// remediation, which moves what it removes to quarantine where Windows
-/// Security can restore it). Explicitly selected, never a reversible control.
-/// No path, name or argument is accepted: Defender decides what is removed.
+/// Defender's own remediation (removed threats go to quarantine). No path, name or argument is accepted.
 pub fn remove_threats() -> Result<ThreatRemoval> {
     #[cfg(windows)]
     {
@@ -116,11 +108,8 @@ fn support_script(id: &str) -> Result<String> {
     ))
 }
 
-/// A PowerShell expression that evaluates to `text`. Data never becomes script
-/// source: it travels as base64, which has no quote characters, so no value
-/// can end a literal. Doubling quotes is not enough, because PowerShell also
-/// treats the typographic quotes U+2018 to U+201B as single quotes, and a
-/// Wi-Fi network can be named with them.
+/// A PowerShell expression that evaluates to `text`. Data travels as base64, never as script
+/// source: doubling quotes is not enough, PowerShell also treats U+2018 to U+201B as quotes.
 #[cfg(any(windows, test))]
 fn ps_text(text: &str) -> String {
     use base64::Engine as _;
@@ -130,10 +119,6 @@ fn ps_text(text: &str) -> String {
     )
 }
 
-/// Script for one extended hardening control: the backend's helper definitions
-/// (never its dispatcher), the compiled catalog entry for exactly this id, and
-/// the hardening dispatcher. The wire value is re-validated here and passed
-/// as data with [`ps_text`], never as script text.
 #[cfg(any(windows, test))]
 fn hardening_script(action: &str, id: &str, value: Option<&Value>) -> Result<String> {
     let spec = crate::hardening::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown control id"))?;
@@ -235,10 +220,7 @@ pub fn is_elevated() -> Result<bool> {
 #[cfg(windows)]
 pub use windows::{enclosing_job, enclosing_job_contains, EnclosingJob};
 
-/// Servicing (DISM, SFC, Windows Update installs) never runs inside another
-/// program's job, which could kill it mid-repair. Its processes leave such a
-/// job when the job allows that; otherwise servicing is refused. Callers check
-/// first so the person gets a clear way out before anything starts.
+/// Servicing never runs inside another program's job (it could be killed mid-repair); callers check first.
 pub fn ensure_own_process_tree() -> Result<()> {
     #[cfg(windows)]
     {
@@ -266,8 +248,6 @@ pub fn elevate(args: &[String]) -> Result<()> {
 /// lives in the `App` namespace inside the protected state directory. The engine
 /// treats it as opaque, like `operations` and `Patching`; journal entries must
 /// never be written next to the WAL files themselves.
-/// Saved copies of removed apps, inside `app_dir()`. The state directory
-/// check inspects this folder but does not walk its (many) files.
 pub const APP_BACKUPS: &str = "AppBackups";
 /// Web protection's folder, inside the state directory. The filter service
 /// (LocalService) must read it and write in its `Data` folder, so it cannot
@@ -275,7 +255,6 @@ pub const APP_BACKUPS: &str = "AppBackups";
 /// check makes sure it is a real folder owned by administrators and then
 /// leaves it alone: no journal is ever read from or written to it.
 pub const WEB_PROTECTION: &str = "Filter";
-/// The updater's folder inside the protected state directory.
 pub const UPDATES: &str = "Updates";
 
 pub fn app_dir() -> Result<PathBuf> {
@@ -285,7 +264,6 @@ pub fn app_dir() -> Result<PathBuf> {
             m.is_dir() && !m.file_type().is_symlink(),
             "The app data folder is not a plain directory"
         ),
-        // Created inside the protected state directory, so it inherits its ACL.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&dir)?,
         Err(e) => return Err(e.into()),
     }
@@ -372,7 +350,6 @@ fn controls() -> Vec<Control> {
     out
 }
 
-/// Ids of every control the engine can assess, for catalogs keyed by id.
 pub fn control_ids() -> Vec<String> {
     controls().into_iter().map(|c| c.id).collect()
 }
@@ -514,7 +491,6 @@ mod tests {
         assert!(script.contains("Remove-MpThreat -ErrorAction Stop"));
         assert!(!script.contains("switch -CaseSensitive ($action)"));
         assert!(script.contains("function CheckScopedPolicy"));
-        // The shared gate (domain, MDM, policy, one antivirus, Normal mode) comes first.
         let gate = script.find("function CheckScopedPolicy").unwrap();
         let call = script.find("    CheckScopedPolicy 'defender.support'").unwrap();
         let remove = script.find("Remove-MpThreat -ErrorAction Stop").unwrap();
@@ -693,7 +669,6 @@ mod tests {
                 ps_text(&spec.script_json())
             )));
             assert!(observe.contains("function HWrite"));
-            // Helper definitions are present; the backend dispatcher is not.
             assert!(observe.contains("function Gate("));
             assert_eq!(
                 observe.matches("switch -CaseSensitive ($action)").count(),

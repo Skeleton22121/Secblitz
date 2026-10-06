@@ -1,10 +1,6 @@
-# Non-mutating fixtures for the extended hardening controls (hardening.ps1).
-# Only function definitions from the production files are executed; every
-# registry, Defender, firewall, account and Wi-Fi touchpoint is an in-memory
-# double. Compatible with Windows PowerShell 5.1 and PowerShell 7.
-# Optional: set SECBLITZ_PARITY to the file written by the Rust test
-# `export_rule_parity_fixture_for_powershell` (SECBLITZ_PARITY_OUT) to prove the
-# PowerShell rules equal the compiled catalog for every spec and candidate value.
+# Non-mutating fixtures for the extended hardening controls (hardening.ps1): every registry, Defender,
+# firewall, account and Wi-Fi touchpoint is an in-memory double. Runs on PowerShell 5.1 and 7.
+# Optional: SECBLITZ_PARITY points at the file the Rust test `export_rule_parity_fixture_for_powershell` writes.
 param(
     [string]$BackendPath = (Join-Path $PSScriptRoot 'backend.ps1'),
     [string]$HardeningPath = (Join-Path $PSScriptRoot 'hardening.ps1'),
@@ -18,8 +14,6 @@ foreach ($path in @($BackendPath, $HandledPath, $HardeningPath)) {
     if ($errors.Count) { throw ($errors | Out-String) }
     foreach ($node in $ast.EndBlock.Statements) {
         if ($node -is [Management.Automation.Language.FunctionDefinitionAst]) { . ([scriptblock]::Create($node.Extent.Text)) }
-        # Module-level constants of hardening.ps1 ($hName = literal), so new
-        # constants never need copying into this file by hand.
         elseif ($path -ne $BackendPath -and $node -is [Management.Automation.Language.AssignmentStatementAst] -and
                 $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
                 $node.Left.VariablePath.UserPath -cmatch '^h[A-Z]' -and
@@ -60,7 +54,6 @@ $hMaps = @('Disabled','Basic','Advanced')
 $hPua = @('Disabled','Enabled','AuditMode')
 function MakeSpec([string]$json) { $script:spec = ConvertFrom-Json -InputObject $json }
 
-# ---- rule parity with the compiled catalog (when the fixture is available)
 if ($env:SECBLITZ_PARITY -and (Test-Path -LiteralPath $env:SECBLITZ_PARITY)) {
     $entries = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($env:SECBLITZ_PARITY))
     Assert (@($entries).Count -ge 20) 'Parity fixture is incomplete'
@@ -81,7 +74,6 @@ $fwJson = '{"id":"net.public_sharing_exposure","source":"FirewallExposure","dyna
 $wifiJson = '{"id":"wifi.risky_profiles","source":"WifiProfiles","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}}'
 $asrJson = '{"id":"defender.asr.standard","source":"DefenderAsr","dynamic":false,"reboot":false,"keys":[{"name":"56a863a9-875e-4185-98a7-b882c64b5ce5","path":"","rule":"set","safe":[1,6],"absentSafe":false,"fix":1,"max":6},{"name":"9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2","path":"","rule":"set","safe":[1,6],"absentSafe":false,"fix":1,"max":6}],"gate":{"areas":[],"pattern":".","tamperExempt":true,"secedit":false,"ownPolicyKey":"","policyValues":[]}}'
 
-# ---- rule semantics
 MakeSpec $pplJson
 $def = HDef 'RunAsPPL'
 Assert (!(HIsSafe $def $null) -and !(HIsSafe $def 0) -and (HIsSafe $def 1) -and (HIsSafe $def 2)) 'PPL safety'
@@ -100,7 +92,6 @@ MakeSpec $wifiJson
 foreach ($ok in @('Cafe Guest',"John's Home",'Kaffee Straße')) { Assert (HNameOk $ok) "wifi $ok" }
 foreach ($bad in @('','a"b'," padded","tab`there",('x' * 65))) { Assert (!(HNameOk $bad)) "wifi name accepted: $bad" }
 
-# ---- input parsing
 MakeSpec $pplJson
 function Parse($json) { HParseInput (ConvertFrom-Json -InputObject $json) }
 Assert ((Parse '{"items":{"RunAsPPL":2}}')['RunAsPPL'] -eq 2) 'parse'
@@ -110,7 +101,6 @@ foreach ($bad in @('{"items":{"RunAsPPL":3}}','{"items":{"RunAsPPL":-1}}','{"ite
     Assert $caught "accepted $bad"
 }
 
-# ---- write transitions (state double behind HRead / HSet)
 function HRead { return $script:state.Clone() }
 function HGate { $script:gates++; if ($script:blocked) { throw 'management gate' } }
 function HPreflight { $script:preflights++; if ($script:preflightFails) { throw 'Not offered: fixture' } }
@@ -176,7 +166,6 @@ Assert ($script:state['Cafe'] -eq 0 -and $script:state['Home'] -eq 0 -and $scrip
 HWrite (Input '{"items":{"Cafe":1}}')
 Assert ($script:state['Cafe'] -eq 1) 'wifi undo'
 
-# ---- network and Defender extension controls: specs
 $gateTail = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
 $gateExempt = $gateTail.Replace('"tamperExempt":false', '"tamperExempt":true')
 $tlsJson = '{"id":"tls.legacy_protocols","source":"Registry","dynamic":false,"reboot":true,"keys":[{"name":"ssl3.client.enabled","path":"HKLM:\\T","valueName":"Enabled","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":4294967295},{"name":"ssl3.client.default_off","path":"HKLM:\\T","valueName":"DisabledByDefault","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $gateTail + '}'
@@ -222,7 +211,6 @@ Assert ($script:state['RulePresent'] -eq 0) 'outbound rule removed on undo'
 Reset $npJson @{ EnableNetworkProtection = 0 }; $script:ignoreWrites = $true
 Reject { HWrite (Input '{"items":{"EnableNetworkProtection":1}}') } 'tamper protection'
 
-# ---- observation: preflight only when something is unsafe; gate text is the reason
 Reset $pplJson @{ RunAsPPL = $null }
 $o = HObserve
 Assert ($o.eligible -and $o.value.items['RunAsPPL'] -eq $null -and $script:preflights -eq 1) 'observe unsafe'
@@ -237,7 +225,6 @@ $o = HObserve
 Assert (!$o.eligible -and $o.reason -ceq 'management gate' -and $o.value.items['RunAsPPL'] -eq $null) 'managed device is observed but not eligible'
 Assert ((ConvertTo-Json -InputObject $o -Depth 8 -Compress) -like '*"RunAsPPL":null*') 'absent serializes as null'
 
-# ---- readers
 ${function:HRead} = $realHRead
 function Get-MpPreference { return $script:mp }
 MakeSpec '{"id":"defender.cloud_protection","source":"DefenderPref","dynamic":false,"reboot":false,"keys":[{"name":"MAPSReporting","path":"","rule":"set","safe":[1,2],"absentSafe":false,"fix":2,"max":2},{"name":"DisableBlockAtFirstSeen","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}}'
@@ -272,7 +259,6 @@ Assert ($null -eq (HRead)['56a863a9-875e-4185-98a7-b882c64b5ce5']) 'empty asr li
 $script:mp = [pscustomobject]@{ AttackSurfaceReductionRules_Ids = @('a', 'b'); AttackSurfaceReductionRules_Actions = @([byte]1) }
 Reject { HRead } 'inconsistent'
 
-# Setters send fixed, typed arguments only.
 $script:calls = @()
 function Add-MpPreference { param($AttackSurfaceReductionRules_Ids, $AttackSurfaceReductionRules_Actions); $script:calls += ,@('add', $AttackSurfaceReductionRules_Ids, $AttackSurfaceReductionRules_Actions) }
 function Remove-MpPreference { param($AttackSurfaceReductionRules_Ids); $script:calls += ,@('remove', $AttackSurfaceReductionRules_Ids) }
@@ -286,7 +272,6 @@ MakeSpec '{"id":"defender.cloud_protection","source":"DefenderPref","dynamic":fa
 HSetDefenderPref (HDef 'MAPSReporting') 2; HSetDefenderPref (HDef 'DisableBlockAtFirstSeen') 0; HSetDefenderPref (HDef 'MAPSReporting') 0
 Assert ($script:calls[0][1] -ceq 'Advanced' -and $script:calls[1][3] -eq $false -and $script:calls[2][1] -ceq 'Disabled') 'defender setter arguments'
 
-# Firewall rule reader keeps only inbound allow rules with safe names.
 MakeSpec $fwJson
 function Get-NetFirewallRule {
     param($PolicyStore, $Name, $ErrorAction)
@@ -313,7 +298,6 @@ function Set-NetFirewallRule { param($PolicyStore, $Name, $Profile, $Enabled, $E
 HSetFirewall 'FPS-A' 11; HSetFirewall 'FPS-B' 4; HSetFirewall 'FPS-C' 15; HSetFirewall 'FPS-D' 12
 Assert (($script:calls | ForEach-Object { $_ -join '/' }) -join ',' -ceq 'FPS-A/Domain+Private/True,FPS-B/Public/False,FPS-C/Any/True,FPS-D/Public/True') 'firewall setter arguments'
 
-# ---- management and policy vetoes (registry / RSOP doubles)
 $script:fakeFs = $false; $script:fakePaths = @(); $script:fakeKey = $null
 function Test-Path { param($LiteralPath, $ErrorAction); if ($script:fakeFs) { return ($script:fakePaths -contains $LiteralPath) }; return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath) }
 function Get-Item { param($LiteralPath, $ErrorAction); if ($script:fakeFs) { return $script:fakeKey }; return (Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath) }
@@ -353,7 +337,6 @@ Reject { HRsop } 'Applied computer Group Policy'
 $script:gpos = @(@{ id = 'x'; enabled = 'yes'; accessDenied = $false; filterAllowed = $true })
 Reject { HRsop } 'authority is unknown'
 
-# Wi-Fi profile classification reads files only and flags weak/open networks.
 $root = Join-Path ([IO.Path]::GetTempPath()) ('secblitz-wlan-' + [Guid]::NewGuid().ToString('N'))
 $iface = '{' + [Guid]::NewGuid().ToString() + '}'
 $null = New-Item -ItemType Directory -Path (Join-Path $root $iface) -Force
@@ -381,7 +364,6 @@ try {
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
 
 
-# ---- network and Defender extension controls: readers, setters, preflights
 ${function:HPreflight} = $realHPreflight
 function FakeDwordKey([hashtable]$values) {
     $k = [pscustomobject]@{ Values = $values; SubKeyCount = 0 }
@@ -390,7 +372,6 @@ function FakeDwordKey([hashtable]$values) {
     $k | Add-Member ScriptMethod GetValue { param($n) return $this.Values[$n] }
     return $k
 }
-# Registry: unsigned DWORDs, and one value name under several keys.
 MakeSpec $tlsJson
 $script:fakeFs = $true; $script:fakePaths = @('HKLM:\T'); $script:fakeKey = FakeDwordKey @{ Enabled = [int]-1 }
 Assert ((HReadRegistry (HDef 'ssl3.client.enabled')) -eq 4294967295) '0xFFFFFFFF reads back unsigned'
@@ -408,7 +389,6 @@ MakeSpec $stackJson
 Assert ((HValueName (HDef 'DisableIPSourceRouting6')) -ceq 'DisableIPSourceRouting' -and (HDef 'DisableIPSourceRouting6').path -ceq 'HKLM:\T6') 'same value name under another key'
 $script:fakePaths = @(); $script:fakeFs = $false
 
-# NetBIOS adapters.
 MakeSpec $nbJson
 foreach ($ok in @('{11111111-1111-1111-1111-111111111111}', '{abcdefAB-1111-2222-3333-444444444444}')) { Assert (HNameOk $ok) "adapter $ok" }
 foreach ($bad in @('', 'Ethernet', '{1111}', '11111111-1111-1111-1111-111111111111', "{11111111-1111-1111-1111-111111111111}'; calc", '{1111111g-1111-1111-1111-111111111111}')) { Assert (!(HNameOk $bad)) "adapter name accepted: $bad" }
@@ -483,7 +463,6 @@ $script:drivePath = '\\box.example.com\data'
 HNetbiosPreflight
 $script:fakePaths = @(); $script:fakeFs = $false
 
-# Outbound SMB firewall rule.
 MakeSpec $obJson
 Assert ((HReadOutbound)['RulePresent'] -eq 0) 'rule absent reads as 0 (ObjectNotFound is not an error)'
 $script:rule = [pscustomobject]@{ Name = 'Secblitz-Block-Outbound-SMB-Internet'; Direction = 'Outbound'; Action = 'Block'; Enabled = 'True' }
@@ -516,7 +495,6 @@ function Remove-NetFirewallRule { param($PolicyStore, $Name, $ErrorAction); $scr
 HSetOutbound 1; HSetOutbound 0
 Assert (($script:calls | ForEach-Object { $_ -join '/' }) -join ',' -ceq 'new/PersistentStore/Secblitz-Block-Outbound-SMB-Internet/Secblitz: block outbound file sharing to the internet/Outbound/Block/TCP/445+139/Internet/Any/True,remove/PersistentStore/Secblitz-Block-Outbound-SMB-Internet') 'outbound rule setter arguments'
 
-# Defender preference readers and setters for the new keys.
 MakeSpec $npJson
 $script:mp = [pscustomobject]@{ EnableNetworkProtection = $null }
 Assert ((HRead)['EnableNetworkProtection'] -eq 0) 'unreported network protection counts as off'
@@ -549,7 +527,6 @@ MakeSpec $npJson
 HSetDefenderPref (HDef 'EnableNetworkProtection') 1; HSetDefenderPref (HDef 'EnableNetworkProtection') 0; HSetDefenderPref (HDef 'EnableNetworkProtection') 2
 Assert (($script:calls | ForEach-Object { "$($_[0])|$($_[1])|$($_[2])" }) -join ',' -ceq '|High|,|Default|,|HighPlus|,||20,Enabled||,Disabled||,AuditMode||') 'new Defender setter arguments'
 
-# Preflights: each condition has its own calm reason; undo is never preflighted.
 $script:fakeFs = $true; $script:fakePaths = @(); $script:fakeKey = $null
 $script:status = [pscustomobject]@{ RealTimeProtectionEnabled = $true; BehaviorMonitorEnabled = $true }
 function Get-MpComputerStatus { return $script:status }
@@ -578,7 +555,6 @@ HPreflight
 $script:mp = [pscustomobject]@{ MAPSReporting = 'Disabled' }
 Reject { HPreflight } 'cloud protection is off'
 $script:mp = [pscustomobject]@{ MAPSReporting = 'Advanced' }
-# Office rules are only offered when Office is installed.
 MakeSpec $officeJson
 Assert (!(HOfficeInstalled)) 'no Office on a clean machine'
 Reject { HPreflight } 'Office was not found'
@@ -592,9 +568,6 @@ if ($env:ProgramFiles) {
 $script:fakePaths = @(); $script:fakeFs = $false
 $script:sku = 48; Assert (HEditionHasNetworkProtection) 'Pro supports network protection'
 foreach ($homeSku in @(98, 99, 100, 101, 0, 999)) { $script:sku = $homeSku; Assert (!(HEditionHasNetworkProtection)) "sku $homeSku must not be offered" }
-# ==================================================================
-# System area: OS / credentials / update / privacy controls
-# ==================================================================
 $noGate = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
 $exclJson = '{"id":"defender.exclusions_risky","source":"DefenderExclusions","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
 $svcJson = '{"id":"services.legacy_remote","source":"LegacyServices","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[3,4],"absentSafe":false,"fix":4,"max":13}],' + $noGate + '}'
@@ -616,7 +589,6 @@ function ValueKey($map) {
 }
 function CallLog() { return (($script:calls | ForEach-Object { $_ -join ':' }) -join ',') }
 
-# ---- exclusions: only the risky list, never anything else
 foreach ($risky in @('C:\', 'c:', 'C:\Windows', 'C:\Windows\', 'C:\Windows\Temp', 'C:\Users', 'C:\Users\Bob', 'C:\Users\Bob\Downloads', 'C:\Users\*\Downloads', '%USERPROFILE%\Downloads', '%TEMP%', 'D:\*', 'C:\Users\Bob\AppData\Local\Temp', 'C:\Program Files')) {
     Assert (HExclusionRisky 'path' $risky) "risky path: $risky"
 }
@@ -632,7 +604,6 @@ MakeSpec $exclJson
 foreach ($ok in @('path:C:\Users\Bob\Downloads', 'ext:exe', 'proc:cmd')) { Assert (HNameOk $ok) "exclusion name $ok" }
 foreach ($bad in @('path:D:\Games', 'ext:log', 'file:C:\x', 'ext:', 'PATH:C:\Windows', ' path:C:\Windows', "ext:ex`te", 'path:C:\"x', '')) { Assert (!(HNameOk $bad)) "exclusion name accepted: $bad" }
 
-# ---- exclusions: reader keeps only risky entries; removed ones read as 0
 function Load($name) {}
 $script:hWanted = @{}
 $script:mp = [pscustomobject]@{ ExclusionPath = @('C:\Users\Bob\Downloads', 'D:\Games'); ExclusionExtension = @('exe', 'log'); ExclusionProcess = $null }
@@ -645,7 +616,6 @@ Assert ($r['ext:dll'] -eq 0 -and $r['ext:exe'] -eq 1) 'a removed exclusion reads
 $script:mp = [pscustomobject]@{ ExclusionPath = 'N/A: Must be an administrator to view exclusions'; ExclusionExtension = $null; ExclusionProcess = $null }
 Reject { HReadExclusions } 'not readable'
 $script:hWanted = @{}
-# Setters touch only risky entries and use the typed parameters.
 $script:exPaths = @('C:\Users\Bob\Downloads', 'D:\Games')
 function Add-MpPreference { param($ExclusionPath, $ExclusionExtension, $ExclusionProcess); if ($ExclusionPath) { $script:exPaths = @($script:exPaths) + @($ExclusionPath) } }
 function Remove-MpPreference { param($ExclusionPath, $ExclusionExtension, $ExclusionProcess); if ($ExclusionPath) { $script:exPaths = @($script:exPaths | Where-Object { $_ -ne $ExclusionPath }) } }
@@ -668,7 +638,6 @@ HWrite (Input '{"items":{"path:C:\\Users\\Bob\\Downloads":1}}')
 Assert (@($script:exPaths) -contains 'C:\Users\Bob\Downloads' -and @($script:exPaths).Count -eq 2) 'exclusion undo verified through the reader'
 Reject { HWrite (Input '{"items":{"path:D:\\Games":0}}') } 'Unknown hardening item'
 
-# ---- legacy services
 MakeSpec $svcJson
 foreach ($ok in @('RemoteRegistry', 'WinRM', 'sshd', 'TlntSvr', 'FTPSVC', 'W3SVC', 'SNMP')) { Assert (HNameOk $ok) "service $ok" }
 foreach ($bad in @('Spooler', 'winrm', 'WinRM ', "WinRM'; calc", '')) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }
@@ -700,7 +669,6 @@ Assert ((CallLog) -ceq 'type:SNMP:Manual') "service restore manual stopped: $(Ca
 Reject { HSetService 'Spooler' 4 } 'Unknown hardening item'
 Reject { HSetService 'WinRM' 1 } 'Invalid service start type'
 
-# ---- exploit protection states
 Assert ((HMitigationValue 'ON') -eq 1 -and (HMitigationValue 'off') -eq 0 -and (HMitigationValue 'NOTSET') -eq 2) 'mitigation words'
 Reject { HMitigationValue 'maybe' } 'not readable'
 function Get-ProcessMitigation { param([switch]$System); return [pscustomobject]@{ DEP = [pscustomobject]@{ Enable = 'ON' }; SEHOP = [pscustomobject]@{ Enable = 'NOTSET' }; ASLR = [pscustomobject]@{ BottomUp = 'OFF'; HighEntropy = 'ON' }; CFG = [pscustomobject]@{ Enable = 'ON' } } }
@@ -713,7 +681,6 @@ Assert ((CallLog) -ceq 'on:BottomUp,off:CFG') "mitigation setters: $(CallLog)"
 Reject { HSetMitigation 'ForceRelocateImages' 1 } 'Unknown hardening item'
 Reject { HSetMitigation 'DEP' 2 } 'Invalid exploit protection state'
 
-# ---- Windows optional features (a missing feature counts as removed)
 Assert ((HV2Value 'Enabled') -eq 1 -and (HV2Value 'EnablePending') -eq 1 -and (HV2Value 'Disabled') -eq 0 -and (HV2Value 'DisabledWithPayloadRemoved') -eq 0 -and (HV2Value 'Missing') -eq 0) 'feature state words'
 Reject { HV2Value 'Weird' } 'not readable'
 $script:features = @(1..6 | ForEach-Object { [pscustomobject]@{ FeatureName = "Filler$_"; State = 'Enabled' } }) + @([pscustomobject]@{ FeatureName = 'MicrosoftWindowsPowerShellV2Root'; State = 'Enabled' })
@@ -747,7 +714,6 @@ Assert ((CallLog) -ceq '') 'nothing to disable when already disabled'
 HSetPowerShellV2 1
 Assert ((CallLog) -ceq 'enable:MicrosoftWindowsPowerShellV2Root,enable:MicrosoftWindowsPowerShellV2') "feature undo: $(CallLog)"
 
-# ---- sign-in on wake (power WMI provider)
 $planId = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $script:power = @{ ac = 0; dc = 0; hasDc = $true }
 function Get-CimInstance {
@@ -781,7 +747,6 @@ Assert ((CallLog) -ceq 'set:1,invoke:Activate') "wake lock write: $(CallLog)"
 Reject { HSetLockOnWake 'Other' 1 } 'Unknown hardening item'
 Reject { HSetLockOnWake 'Ac' 2 } 'Invalid sign-in-on-wake value'
 
-# ---- paused updates (minutes since 1970; expired pauses are not "paused")
 MakeSpec $pauseJson
 $script:fakeFs = $true
 $script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings')
@@ -802,7 +767,6 @@ $script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = 5 }
 Reject { HReadPause } 'is not text'
 $script:fakePaths = @()
 Assert (!(HAnyUnsafe (HReadPause))) 'no settings key means no pause'
-# Writers: remove, and put a saved time back to the minute.
 $script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings')
 $script:fakeKey = ValueKey @{ PauseUpdatesExpiryTime = $future }
 $script:calls = @()
@@ -825,7 +789,6 @@ Assert (!(HVerified 'PauseUpdatesExpiryTime' 0 $minutes)) 'a pause still in forc
 $script:hWanted = @{}
 $script:fakeFs = $false
 
-# ---- SmartScreen (string setting plus the policy value)
 MakeSpec $ssJson
 $script:fakeFs = $true
 $script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer', 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System')
@@ -886,7 +849,6 @@ HAfterRegistry $spoolDef $null; Assert ($script:restarts -eq 3) 'undo restarts a
 Remove-Item -LiteralPath function:Get-Service, function:Restart-Service
 function Get-ItemProperty { Microsoft.PowerShell.Management\Get-ItemProperty @args }
 function Get-ChildItem { Microsoft.PowerShell.Management\Get-ChildItem @args }
-# ---- accounts.autologon: only the AutoAdminLogon text value is ever read or written
 $alJson = '{"id":"accounts.autologon","source":"WinlogonAutoLogon","dynamic":false,"reboot":false,"keys":[{"name":"AutoAdminLogon","path":"HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon","rule":"set","safe":[0],"absentSafe":true,"fix":0,"max":1}],' + $noGate + '}'
 MakeSpec $alJson
 function Test-Path { param($LiteralPath, $ErrorAction); if ($script:fakeFs) { return ($script:fakePaths -contains $LiteralPath) }; return $true }
@@ -923,7 +885,6 @@ Reject { HSetAutoLogon 'DefaultPassword' 0 } 'Unknown hardening item'
 Reject { HSetAutoLogon 'AutoAdminLogon' 2 } 'Invalid automatic sign-in setting'
 $script:fakeFs = $false
 
-# ---- remote_desktop.disabled: not offered where it would cut the person off
 $rdJson = '{"id":"remote_desktop.disabled","source":"Registry","dynamic":false,"reboot":false,"keys":[{"name":"fDenyTSConnections","path":"HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server","rule":"set","safe":[1],"absentSafe":true,"fix":1,"max":1}],"gate":{"areas":["RemoteDesktopServices"],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[{"path":"HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services","name":"fDenyTSConnections"}]}}'
 MakeSpec $rdJson
 Assert (HIsSafe (HDef 'fDenyTSConnections') 1) 'denying connections is protected'
@@ -947,7 +908,6 @@ foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
     Reject { HPreflight } 'Windows Home cannot accept Remote Desktop connections'
 }
 
-# ---- smb1.disabled: four parts, children first off, parent first on, files kept
 $smbNames = @('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server', 'SMB1Protocol-Deprecation')
 $smbKeys = $smbNames | ForEach-Object {
     '{"name":"' + $_ + '","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}'
@@ -974,7 +934,6 @@ function Get-CimInstance {
     $name = $Matches[1]
     return @($rows | Where-Object { $_.Name -ceq $name })
 }
-# The small "what was asked for" note lives in an in-memory double.
 $script:notes = @{}; $script:noteFails = $false
 function HSmbNoteGet([string]$name) { if ($script:notes.ContainsKey($name)) { return [int]$script:notes[$name] }; return $null }
 function HSmbNotePut([string]$name, $want) {
@@ -1029,7 +988,6 @@ function Get-SmbConnection { param($ErrorAction); throw 'not available' }
 HPreflight
 Assert $true 'an unreadable connection list does not block'
 
-# Writers: no -Remove (the cmdlet doubles reject it), only parts that are on.
 SmbFeatures 'Enabled' 'Enabled' 'Disabled'
 $script:calls = @(); $script:notes = @{}
 HSetSmb1 'SMB1Protocol-Server' 0
@@ -1063,7 +1021,6 @@ Reject { HSetSmb1 'SMB1Protocol' 0 } 'note fixture failure'
 Assert ((CallLog) -ceq 'disable:SMB1Protocol,enable:SMB1Protocol') "a part whose note failed is turned back: $(CallLog)"
 $script:noteFails = $false
 
-# Whole writes through the real HWrite (the state and writer are the real SMB ones).
 function HRead { return (HReadSmb1) }
 function HSet([string]$name, $v) { HSetSmb1 $name $v }
 function HPreflight { }
@@ -1084,7 +1041,6 @@ HWrite (Input '{"items":{"SMB1Protocol":1,"SMB1Protocol-Client":1,"SMB1Protocol-
 Assert ((CallLog) -ceq 'enable:SMB1Protocol,enable:SMB1Protocol-Client,disable:SMB1Protocol-Deprecation') "a part that came back by itself is turned off again: $(CallLog)"
 $script:parentBringsBack = $false
 
-# ---- accounts.autologon: not offered on a kiosk
 MakeSpec $alJson
 ${function:HPreflight} = $realHPreflight
 $script:kioskKey = $null
@@ -1122,7 +1078,6 @@ Reject { HPreflight } 'this PC is set up as a kiosk'
 $script:kioskKey = KioskKey @('Version') ([ordered]@{})
 Reject { HPreflight } 'this PC is set up as a kiosk'
 $script:fakeFs = $false
-# ---- handled-item controls (hardening.handled.ps1)
 $gateJson = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
 function HandledJson([string]$id, [string]$source) { return ('{"id":"' + $id + '","source":"' + $source + '","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0,2],"absentSafe":false,"fix":0,"max":2}],' + $gateJson + '}') }
 MakeSpec (HandledJson 'services.unquoted_paths' 'UnquotedServices')
@@ -1166,7 +1121,6 @@ $midBom = [byte[]](@($latin.GetBytes("127.0.0.1 localhost`n")) + @(0xEF, 0xBB, 0
 Assert (@(HHostsFlaggedLines $midBom).Count -eq 0) 'a mid-file BOM line is not read as flagged'
 Assert (@(HHostsFlaggedLines (HHostsFix $midBom)).Count -eq 0) 'fix and reader agree on a mid-file BOM line'
 
-# hosts: read, fix, undo, and a change in between (state and file are doubles)
 function HHostsBytes { if ($null -eq $script:hostsFile) { return $null }; return [byte[]]$script:hostsFile }
 function HHostsWrite([byte[]]$bytes) { $script:hostsWrites++; if ($script:hostsFail) { throw 'fixture write failure' }; $script:hostsFile = [byte[]]$bytes }
 function HFlushDns { $script:dnsFlushes++ }
@@ -1211,7 +1165,6 @@ Assert ($script:hostsRo -and [Convert]::ToBase64String($script:hostsFile) -ceq [
 $script:undoState = @{}; $script:hostsRo = $false
 $script:hostsFile = [byte[]]@(0xFF, 0xFE, 0x31, 0x00)
 Assert ((HReadHosts)['hosts'] -eq 1) 'a UTF-16 hosts file with a redirect reads 1'
-# a failed write is rolled back and leaves no saved state
 $script:undoState = @{}; $script:hostsFile = $original; $script:hostsFail = $true
 Reject { HSetHosts 'hosts' 0 } 'fixture write failure'
 $script:hostsFail = $false
@@ -1220,7 +1173,6 @@ $script:hostsFile = $latin.GetBytes("127.0.0.1 localhost`r`n")
 Reject { HSetHosts 'hosts' 0 } 'no longer needs a change'
 Reject { HSetHosts 'other' 0 } 'Invalid hosts file state'
 Reject { HSetHosts 'hosts' 2 } 'Invalid hosts file state'
-# preflight reasons
 $script:hostsFile = $null
 Reject { HHostsPreflight } 'Not offered: the hosts file could not be found'
 $script:hostsFile = [byte[]](New-Object byte[] ($hHostsMaxBytes + 1))
@@ -1234,7 +1186,6 @@ Assert (HApprovedEnabled ([byte[]]@(2,0,0,0,0,0,0,0,0,0,0,0))) 'even first byte 
 Assert (!(HApprovedEnabled ([byte[]]@(3,0,0,0,0,0,0,0,0,0,0,0)))) 'odd first byte means off'
 Assert (!(HApprovedEnabled ([byte[]]@(2,0)))) 'a short record is treated as off, never overwritten'
 Assert (HIsUserKind 'run-user' -and HIsUserKind 'folder-user' -and !(HIsUserKind 'run-machine') -and !(HIsUserKind 'folder-machine')) 'only per-user kinds depend on who is signed in'
-# ---- accounts.stale_enabled (old accounts: switched off, never deleted)
 $staleJson = '{"id":"accounts.stale_enabled","source":"StaleAccounts","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
 MakeSpec $staleJson
 $bob = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
@@ -1277,7 +1228,6 @@ $r = HReadStale
 Assert ($r[$bob] -eq 0 -and $r['S-1-5-21-1111111111-2222222222-3333333333-1099'] -eq 0 -and $r[$amy] -eq 1) 'a switched-off account reads as 0, never dropped'
 $script:hWanted = @{}
 $script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent), (U $adm $true $old))
-# Preflight: sessions must be readable, and an administrator must stay.
 HStalePreflight
 $script:inUseFails = $true
 Reject { HStalePreflight } 'Not offered: Secblitz cannot tell who is signed in'
@@ -1293,7 +1243,6 @@ Reject { HStalePreflight } 'could be confirmed'
 $script:adminsFail = $false
 $script:admins = @($me, $amy)
 HStalePreflight
-# Writers: Disable-LocalUser / Enable-LocalUser only, with the checks repeated at write time.
 $script:calls = @()
 function Disable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('disable', $SID) }
 function Enable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('enable', $SID) }
@@ -1321,7 +1270,6 @@ Assert (!(HItemGone $bob)) 'an existing account is not gone'
 Assert (!(HVerified $bob 0 1)) 'switched-off account does not verify as restored'
 Assert (HVerified 'S-1-5-21-1111111111-2222222222-3333333333-1077' 0 1) 'undo of a deleted account is complete'
 Assert (!(HVerified 'S-1-5-21-1111111111-2222222222-3333333333-1077' 1 0)) 'a deleted account never verifies a switch-off'
-# Whole write transition through HWrite with the real reader.
 ${function:HRead} = $realHRead
 function HSet([string]$name, $v) { if ($spec.source -ceq 'StaleAccounts') { HSetStale $name $v } else { HSetShare $name $v } }
 $script:preflightFails = $false; $script:blocked = $false
@@ -1339,12 +1287,10 @@ Assert ((CallLog) -ceq "enable:$bob,enable:$amy" -and $script:users[0].Enabled -
 $script:calls = @(); $script:users = @((U $bob $true $recent), (U $me $true $recent))
 Reject { HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":0}}") } 'no longer an old account'
 Assert ($script:calls.Count -eq 0) 'no write for an account that is no longer old'
-# Undo after the person deleted the account: nothing to put back, and that is fine.
 $script:calls = @(); $script:users = @((U $me $true $recent))
 HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":1}}")
 Assert ($script:calls.Count -eq 0) 'undo of a deleted account writes nothing and succeeds'
 
-# ---- smb.shares_exposed (broad Change/Full entries on shared folders)
 $shareJson = '{"id":"smb.shares_exposed","source":"ShareGrants","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
 MakeSpec $shareJson
 foreach ($ok in @('Photos|S-1-1-0|Change', 'Work files|S-1-5-32-546|Full', 'Public|S-1-5-7|Change', 'Fotos für alle|S-1-1-0|Full', "Mom's files|S-1-1-0|Change", 'Backup$|S-1-1-0|Full')) { Assert (HNameOk $ok) "share entry $ok" }
@@ -1396,7 +1342,6 @@ $script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'), (ShareAce 'BUILTIN\Adm
 $script:acl['Work files'] = @((ShareAce 'BUILTIN\Guests' 'Full'), (ShareAce 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
 HSharesPreflight
 Assert $true 'a broad Read entry that stays counts as someone who can open it'
-# Writers: Revoke / Grant only, exactly the recorded entry.
 $script:calls = @()
 $script:rows = @{}
 function Revoke-SmbShareAccess { param($Name, $AccountName, [switch]$Force, $ErrorAction); $script:calls += ,@('revoke', $Name, $AccountName); $script:acl[$Name] = @($script:acl[$Name] | Where-Object { $_.AccountName -ine $AccountName }) }
@@ -1427,7 +1372,6 @@ Assert (HItemGone 'Missing|S-1-1-0|Change') 'a removed share is gone'
 Assert (!(HItemGone 'Photos|S-1-1-0|Change')) 'an existing share is not gone'
 Assert (HVerified 'Missing|S-1-1-0|Change' 0 1) 'undo of a removed share is complete'
 Assert (!(HVerified 'Photos|S-1-1-0|Change' 0 1)) 'a missing entry on an existing share does not verify as restored'
-# Whole write transition through HWrite with the real reader.
 $script:calls = @(); $script:hWanted = @{}
 $script:shares = @((Sh 'Photos'), (Sh 'Work files'))
 $script:acl = @{
@@ -1445,7 +1389,6 @@ $script:acl['Photos'] = @((ShareAce 'Everyone' 'Change'))
 Reject { HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}') } 'Not offered'
 Assert ($script:calls.Count -eq 0) 'no entry was removed from any folder'
 
-# ---- review fixes: exact share entries, honest failures, real account state
 # One account with two rows (Read and Change) cannot be removed and put back exactly.
 $script:smbFail = $false
 $script:calls = @()
@@ -1540,7 +1483,6 @@ $script:users = @((U $bob $true $old), (U $adm $true $old))
 function Get-LocalGroupMember { param($SID, $ErrorAction); return @((Mem $bob 'User'), (Mem $adm 'User')) }
 Reject { HStalePreflight } 'no other administrator account is enabled'
 
-# ---- recovery.winre_enabled: read from ReAgent.xml, changed only by ReAgentc.exe /enable and /disable
 $recJson = '{"id":"recovery.winre_enabled","source":"RecoveryTools","dynamic":false,"reboot":false,"keys":[{"name":"Enabled","path":"","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $noGate + '}'
 MakeSpec $recJson
 if ($env:SystemRoot) {
@@ -1599,7 +1541,6 @@ try {
     Reject { HReadRecovery } ''
     [IO.File]::Delete([IO.Path]::Combine($recRoot, 'ReAgent.xml'))
     Reject { HReadRecovery } 'not readable'
-    # The real dispatcher uses this reader for the source.
     ${function:HRead} = $realHRead
     RecoveryState '0'
     $r = HRead
@@ -1631,7 +1572,6 @@ try {
     $o = HObserve
     Assert ($o.eligible -and $o.value.items['Enabled'] -eq 1) 'tools that are on need no image check'
 
-    # Writers: only the two changes, only when the state differs, exit code checked.
     $script:calls = @(); $script:reagentCode = 0; $script:reagentWorks = $true
     function HRunReagent([string]$verb) {
         $script:calls += ,@('reagentc', $verb)
@@ -1654,7 +1594,6 @@ try {
     Reject { HSetRecovery 'Enabled' 1 } 'Windows could not change the recovery tools (code 2)'
     $script:reagentCode = 0
 
-    # Whole writes through the real HWrite and dispatcher.
     ${function:HSet} = $realHSet
     RecoveryState '0'
     RecoveryImage 4096
@@ -1684,7 +1623,6 @@ try {
     Reject { HWrite (Input '{"items":{"Enabled":1}}') } 'Windows could not change the recovery tools'
     Assert ((CallLog) -ceq 'reagentc:/enable') "a failed change runs the tool once: $(CallLog)"
     $script:reagentCode = 0
-    # Only the one exact item is accepted on the wire.
     Reject { HWrite (Input '{"items":{"Enabled":1,"Other":0}}') } 'Unknown hardening item'
     Reject { HWrite (Input '{"items":{}}') } 'must contain every item'
 } finally {

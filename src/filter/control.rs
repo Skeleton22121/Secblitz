@@ -1,15 +1,12 @@
-//! Who answers for web protection: the decisions (portable, unit-tested) and the
-//! Windows glue that applies them (switch changes, reconcile, remove everything).
-//!
-//! The routing rule only exists while the filter is really answering, so a
-//! stopped or crashed filter never leaves the PC without working lookups.
+//! Who answers for web protection: portable decisions plus the Windows glue that applies them.
+//! The routing rule only exists while the filter is really answering, so a stopped
+//! or crashed filter never leaves the PC without working lookups.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use super::config::{fresh, Config, Status};
 
-/// What the service control manager says about `SecblitzFilter`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServiceState {
     NotInstalled,
@@ -94,7 +91,6 @@ pub fn change(desired: &Desired, current: Option<&[IpAddr]>) -> Change {
     }
 }
 
-/// The rule's server list as Windows stores it: addresses joined by `;`.
 pub fn servers_value(servers: &[IpAddr]) -> String {
     servers
         .iter()
@@ -116,7 +112,6 @@ pub fn parse_servers_value(value: &str) -> Vec<IpAddr> {
     parsed.unwrap_or_default()
 }
 
-/// The config with only the pause changed.
 pub fn paused_config(mut config: Config, now: u64, duration: Duration) -> Config {
     config.paused_until = Some(now.saturating_add(duration.as_secs()));
     config
@@ -161,7 +156,6 @@ mod glue {
         Ok(())
     }
 
-    /// Adds, updates or removes the routing rule so it matches the situation.
     pub fn reconcile() -> Result<()> {
         require_admin()?;
         let config = config::load_config(&config::config_path()?);
@@ -243,7 +237,6 @@ mod glue {
         ])
     }
 
-    /// `secblitz filter install`: folders first, then the registration.
     pub fn install_all() -> Result<()> {
         require_admin()?;
         scm::ensure_dirs()?;
@@ -344,7 +337,6 @@ mod tests {
             desired(&on(), run, Some(&status(true, now - 5)), &net, now),
             rule
         );
-        // Stale, not listening (port taken), or no status at all.
         for s in [
             Some(status(true, now - 500)),
             Some(status(false, now - 5)),
@@ -417,7 +409,6 @@ mod tests {
             parse_servers_value("127.0.0.1, ::1"),
             vec![ip("127.0.0.1"), ip("::1")]
         );
-        // An odd entry never equals what we want.
         assert!(parse_servers_value("127.0.0.1;nope").is_empty());
         assert!(parse_servers_value("").is_empty());
     }

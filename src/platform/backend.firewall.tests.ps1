@@ -190,8 +190,6 @@ foreach ($wrapper in @('inner','record','nested','plain')) {
     Assert (!$obs.eligible -and $obs.authority -ceq $expected) "Wrapped authority lost: $wrapper ($($obs.authority): $($obs.reason))"
 }
 ${function:Gate}=$productionGate
-# Call real WriteControl only with mocked probes and setters. Every case must
-# stop before the setter, even if a previous observation was eligible.
 foreach ($case in @('missing','duplicate','wrong-profile','not-configured','mismatch','managed','service','late-managed','late-mismatch','late-effective','bad-bool')) {
     Reset
     $obs=Observe 'firewall.public.inbound'

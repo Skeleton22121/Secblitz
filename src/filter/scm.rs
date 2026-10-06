@@ -1,12 +1,6 @@
-//! Registration and control of the `SecblitzFilter` Windows service, and the
-//! protected folders it uses.
-//!
-//! The service runs as LocalService with only `SeChangeNotifyPrivilege`, like
-//! the monitor, and is registered disabled: it starts only when a switch goes
-//! on. Everything here needs an elevated caller except `state`. Folders and
-//! the service binary are inspected (trusted owner, no reparse points, no
-//! write access for ordinary users) before they are used, and anything
-//! unexpected fails closed rather than being repaired.
+//! Registration and control of the `SecblitzFilter` service (LocalService, disabled until a
+//! switch goes on) and its protected folders. Needs an elevated caller except `state`.
+//! Folders and the binary are inspected before use; anything unexpected fails closed.
 
 use anyhow::{bail, ensure, Context, Result};
 use std::{
@@ -133,9 +127,7 @@ fn require_admin() -> Result<()> {
     Ok(())
 }
 
-// Paths ---------------------------------------------------------------------
 
-/// A plain fixed-drive path: `X:\...`, no device or network prefix.
 fn local_path(path: &Path) -> Result<&str> {
     let text = path.to_str().context("Non-Unicode Windows path")?;
     let b = text.as_bytes();
@@ -172,14 +164,12 @@ fn program_files() -> Result<PathBuf> {
     path.context("Program Files is not available")
 }
 
-/// Where the service binary must be: the installed copy.
 fn expected_binary() -> Result<PathBuf> {
     let path = program_files()?.join("Secblitz").join("secblitz.exe");
     local_path(&path)?;
     Ok(path)
 }
 
-/// The expected binary, and proof that this very process is it.
 fn installed_binary() -> Result<PathBuf> {
     let binary = expected_binary()?;
     ensure!(
@@ -197,7 +187,6 @@ fn command(binary: &Path) -> Result<String> {
     Ok(format!("\"{}\" filter run", local_path(binary)?))
 }
 
-// Inspecting files and folders --------------------------------------------------
 
 fn open(path: &Path, access: u32, creation: u32) -> Result<File> {
     let path = wide(path)?;
@@ -243,8 +232,6 @@ struct Ace {
     mask: u32,
 }
 
-/// Owner, control bits and allow/deny entries of an object, valid while the
-/// struct lives.
 struct Security {
     _sd: Local,
     owner: *mut c_void,
@@ -391,7 +378,6 @@ fn check_ancestor(file: &File) -> Result<()> {
     Ok(())
 }
 
-/// The service binary: trusted owner, one link, read/execute only for others.
 fn check_binary(file: &File) -> Result<()> {
     let i = info(file)?;
     ensure!(
@@ -498,8 +484,6 @@ fn create_dir(path: &Path, sddl: &str) -> Result<()> {
     Ok(())
 }
 
-/// Creates (or validates) `ProgramData\Secblitz\Filter` and its `Data`
-/// folder with their protected permissions.
 pub fn ensure_dirs() -> Result<()> {
     require_admin()?;
     let filter = config::dir()?;
@@ -565,7 +549,6 @@ pub fn remove_dir() -> Result<()> {
     std::fs::remove_dir_all(&filter).context("Remove the web protection folder")
 }
 
-// The service ---------------------------------------------------------------------
 
 fn manager(access: ServiceManagerAccess) -> Result<ServiceManager> {
     Ok(ServiceManager::local_computer(None::<&str>, access)?)
@@ -801,7 +784,6 @@ pub fn set_enabled(on: bool) -> Result<()> {
     }
 }
 
-/// What the service control manager says. Works without administrator rights.
 pub fn state() -> Result<ServiceState> {
     let Some(service) = open_service(ServiceAccess::QUERY_STATUS)? else {
         return Ok(ServiceState::NotInstalled);
@@ -813,7 +795,6 @@ pub fn state() -> Result<ServiceState> {
     })
 }
 
-/// Stops the service and removes its registration. Absent is fine.
 pub fn delete() -> Result<()> {
     require_admin()?;
     let Some(service) =
