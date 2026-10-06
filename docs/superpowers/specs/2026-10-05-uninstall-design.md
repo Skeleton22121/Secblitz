@@ -107,12 +107,15 @@ with no uninstall step, followed by "You can now delete secblitz.exe."
 
 ## From Windows Settings > Apps (Inno uninstaller)
 
-- Interactive uninstall shows the same two choices on a custom page before
-  anything is removed. Cancel leaves everything untouched.
+- Interactive uninstall shows the same two choices on a custom page right
+  after Inno's own "Are you sure" box (`usAppMutexCheck`) and before anything
+  is removed. Cancel leaves everything untouched.
 - **Put back:**
-  1. Run `secblitz.exe uninstall-revert --user` as the original user
-     (`ExecAsOriginalUser`), for personal settings and the per-user part of
-     suggested apps.
+  1. Run `secblitz.exe uninstall-revert --user` hidden, for personal settings
+     and the per-user part of suggested apps. Inno allows
+     `ExecAsOriginalUser` only in Setup (the uninstaller raises), so this runs
+     elevated: the same person's account when they approved the prompt
+     themselves. The in-app path runs it as the person in every case.
   2. Run `secblitz.exe uninstall-revert` elevated, for settings, removed apps
      with a saved copy, and the machine part of suggested apps.
 

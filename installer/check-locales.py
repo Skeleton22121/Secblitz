@@ -106,8 +106,9 @@ def check(source):
     assert "RegQueryDWordValue(HKLM64, 'Software\\Secblitz', 'AutoUpdatesEnabled', Enabled)" in code
     assert "ExpandConstant('{param:SECBLITZUPDATE|0}') = '1'" in code
     assert not entries('InstallDelete'), 'Installation must not delete unrelated files'
-    assert entries('UninstallDelete') == [{'Type': 'filesandordirs', 'Name': r'{app}\Status'}], \
-        'Uninstall removes only the fixed Status directory beyond its owned-file log'
+    assert entries('UninstallDelete') == [{'Type': 'filesandordirs', 'Name': r'{app}\Status'},
+                                          {'Type': 'dirifempty', 'Name': '{app}'}], \
+        'Uninstall removes only the fixed Status directory, and the program folder once empty'
     latch = code.index('PostInstallFailed := True;')
     clear = code.index('PostInstallFailed := False;')
     for action in ('Secure', 'InstallFilter', 'InstallMonitor', 'ResumeMonitor', 'ResumeFilter',
@@ -120,28 +121,39 @@ def check(source):
 
 def uninstall_contract(code):
     """Removing Secblitz: the question, the silent default and the order of the steps."""
-    initialize = re.search(r'function InitializeUninstall\(\): Boolean;.*?\nend;', code, re.DOTALL)
-    assert initialize, 'InitializeUninstall is missing'
-    body = initialize[0]
+    # Inno always asks its own "Are you sure" right after InitializeUninstall, so
+    # the question lives in usAppMutexCheck (after it) instead of before it.
+    assert 'function InitializeUninstall' not in code, "Ask after Inno's own confirmation, not before"
+    prepare = re.search(r'procedure PrepareRemoval;.*?\nend;', code, re.DOTALL)
+    assert prepare, 'PrepareRemoval is missing'
+    body = prepare[0]
     # /SECBLITZDONE and any silent uninstall keep the changes and never ask.
     assert "HasSwitch('/SECBLITZDONE')" in body
     assert body.index("HasSwitch('/SECBLITZDONE')") < body.index('UninstallSilent') < body.index('AskRemoveChoice(UninstallPutBack)')
-    assert re.search(r'else if not AskRemoveChoice\(UninstallPutBack\) then begin\s*Log\([^;]*\);\s*Result := False;\s*Exit;\s*end;', body), \
+    assert re.search(r'else if not AskRemoveChoice\(UninstallPutBack\) then begin\s*Log\([^;]*\);\s*Abort;\s*end;', body), \
         'Cancel must stop the uninstall before anything is touched'
-    # Cancel comes before the first thing that changes anything.
+    # Cancel comes before the first thing that changes anything, and a failure stops it.
     assert body.index('AskRemoveChoice(UninstallPutBack)') < body.index("Maintain('RemoveMonitor')")
+    assert re.search(r'if not Ready then begin.*?Abort;\s*end;', body, re.DOTALL)
+    # The uninstaller cannot run anything as the original person; Inno raises.
+    assert 'ExecAsOriginalUser' not in code, 'ExecAsOriginalUser only works in Setup'
     put_back = re.search(r'procedure PutEverythingBack;.*?\nend;', code, re.DOTALL)
     assert put_back, 'PutEverythingBack is missing'
-    # Personal part as the person, machine part elevated; neither the other way round.
-    assert re.search(r"ExecAsOriginalUser\(SecblitzExe, 'uninstall-revert --user'", put_back[0])
+    # Personal part first (hidden), then the machine part with its report.
+    assert re.search(r"Exec\(SecblitzExe, 'uninstall-revert --user', [^;]*SW_HIDE", put_back[0])
     assert "uninstall-revert > " in put_back[0] and "uninstall-revert --user >" not in put_back[0]
     assert put_back[0].index("'uninstall-revert --user'") < put_back[0].index('uninstall-revert > ')
     steps = re.search(r'procedure CurUninstallStepChanged\(.*?\nend;', code, re.DOTALL)
     assert steps, 'CurUninstallStepChanged is missing'
     text = steps[0]
-    assert text.index('usUninstall') < text.index('if UninstallPutBack then PutEverythingBack;') \
-        < text.index("Maintain('RemoveFilter')") < text.index('CleanUserData') < text.index('usPostUninstall') \
+    assert text.index('usAppMutexCheck') < text.index('PrepareRemoval') < text.index('usUninstall') \
+        < text.index('if UninstallPutBack then') < text.index('PutEverythingBack;') \
+        < text.index("Maintain('RemoveFilter')") < text.index('CleanUserData;') < text.index('usPostUninstall') \
         < text.index("Maintain('Purge')")
+    # Each part has its own guard, so one failure never skips the rest.
+    removal = text[text.index('usUninstall'):text.index('usPostUninstall')]
+    for part in ('PutEverythingBack;', "if not Maintain('RemoveFilter')", 'CleanUserData;'):
+        assert re.search(r'try\s*' + re.escape(part), removal), part
     assert "uninstall-cleanup --user" in code
     assert "if IsUninstaller and ((Action = 'RemoveMonitor') or (Action = 'RemoveFilter') or (Action = 'Purge')) then" in code
 
@@ -178,9 +190,13 @@ def regression_checks(source):
         ('(PageID = wpFinished) and PostInstallFailed', 'False'),
         ("HasSwitch('/SECBLITZDONE')", "HasSwitch('/SOMETHINGELSE')"),
         ("else if UninstallSilent then", "else if False then"),
-        ('Result := False;\n    Exit;\n  end;\n  CloseTray;', 'Result := True;\n    Exit;\n  end;\n  CloseTray;'),
-        ("ExecAsOriginalUser(SecblitzExe, 'uninstall-revert --user'", "Exec(SecblitzExe, 'uninstall-revert --user'"),
-        ("if UninstallPutBack then PutEverythingBack;", "PutEverythingBack;"),
+        ("touched.');\n    Abort;", "touched.');"),
+        ("    Abort;\n  end;\nend;", "  end;\nend;"),
+        ("if Exec(SecblitzExe, 'uninstall-revert --user'", "if ExecAsOriginalUser(SecblitzExe, 'uninstall-revert --user'"),
+        ("if not Exec(SecblitzExe, 'uninstall-cleanup --user'", "if not ExecAsOriginalUser(SecblitzExe, 'uninstall-cleanup --user'"),
+        ("if CurUninstallStep = usAppMutexCheck then", "if CurUninstallStep = usDone then"),
+        ("    if UninstallPutBack then\n      try", "    try\n      if UninstallPutBack then"),
+        ("    try\n      CleanUserData;", "    begin\n      CleanUserData;"),
         ("Maintain('RemoveFilter')", "Maintain('RemoveMonitor')"),
         ("Maintain('Purge')", "Maintain('Secure')"),
         ("Maintain('InstallFilter')", "Maintain('Secure')"),
@@ -191,6 +207,7 @@ def regression_checks(source):
     for section in ('InstallDelete', 'UninstallDelete'):
         mutations.append(source + f'\n[{section}]\nType: filesandordirs; Name: "{{app}}"\n')
     mutations.append(source.replace('Name: "{app}\\Status"', 'Name: "{app}"'))
+    mutations.append(source.replace('Type: dirifempty; Name: "{app}"', 'Type: filesandordirs; Name: "{app}"'))
     for mutated in mutations:
         try:
             check(mutated)
