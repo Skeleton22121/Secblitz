@@ -70,8 +70,10 @@ Special case: while a version is being developed, its changelog heading reads
 run `python3 scripts/bump-version.py 0.8.0`, which only adds the date.
 
 The workflow commits "Release X.Y.Z" on branch `release/vX.Y.Z` and opens a
-pull request. Read the changelog diff, then merge it. Use a merge or squash
-merge; the commit title must stay "Release X.Y.Z" (a trailing "(#12)" is fine).
+pull request. Read the changelog diff, then merge it. Any merge type works.
+For squash or rebase the commit title must stay "Release X.Y.Z" (a trailing
+"(#12)" is fine). A plain merge commit is recognised by its branch name
+`release/vX.Y.Z`, so do not rename the branch.
 
 ### 3. Tag
 

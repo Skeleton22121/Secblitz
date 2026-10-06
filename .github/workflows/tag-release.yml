@@ -35,11 +35,15 @@ jobs:
         run: |
           set -euo pipefail
           subject="${MESSAGE%%$'\n'*}"
-          # "Release 0.8.1", also as a squash merge title: "Release 0.8.1 (#12)".
-          if ! [[ "$subject" =~ ^Release\ ([0-9]+\.[0-9]+\.[0-9]+)(\ \(#[0-9]+\))?$ ]]; then
+          # "Release 0.8.1", also as a squash merge title: "Release 0.8.1 (#12)",
+          # or a plain merge commit: "Merge pull request #12 from OWNER/release/v0.8.1".
+          if [[ "$subject" =~ ^Release\ ([0-9]+\.[0-9]+\.[0-9]+)(\ \(#[0-9]+\))?$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          elif [[ "$subject" =~ ^Merge\ pull\ request\ \#[0-9]+\ from\ [^/]+/release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          else
             echo "Not a release commit. Nothing to do."; exit 0
           fi
-          version="${BASH_REMATCH[1]}"
           tag="v$version"
           cargo_version=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -n 1)
           if [ "$cargo_version" != "$version" ]; then
