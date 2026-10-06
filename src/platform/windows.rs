@@ -73,6 +73,7 @@ pub fn is_elevated() -> Result<bool> {
             return Err(winerr());
         }
         let token = Handle(token);
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut elevation: TOKEN_ELEVATION = zeroed();
         let mut len = 0;
         if GetTokenInformation(
@@ -196,6 +197,7 @@ pub fn enclosing_job() -> Result<EnclosingJob> {
     if in_job == 0 {
         return Ok(EnclosingJob::None);
     }
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut limits: ExtendedLimits = unsafe { zeroed() };
     if unsafe {
         QueryInformationJobObject(
@@ -251,6 +253,7 @@ fn job(processes: u32) -> Result<Handle> {
             winerr()
         );
         let h = Handle(h);
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut limits: ExtendedLimits = zeroed();
         limits.basic.flags = 0x2000 | 0x8; // KILL_ON_JOB_CLOSE | ACTIVE_PROCESS
         limits.basic.active_processes = processes;

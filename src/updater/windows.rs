@@ -80,6 +80,7 @@ fn inspect_pinned(
     system_image: bool,
 ) -> Result<()> {
     unsafe {
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut i: BY_HANDLE_FILE_INFORMATION = zeroed();
         ensure!(
             GetFileInformationByHandle(f.as_raw_handle(), &mut i) != 0,
@@ -456,16 +457,10 @@ fn known_folder(id: &windows_sys::core::GUID) -> Result<PathBuf> {
         "Native machine known folder unavailable"
     );
     let result = (|| {
-        let mut n = 0;
-        unsafe {
-            while n < 32768 && *p.add(n) != 0 {
-                n += 1;
-            }
-            ensure!(n < 32768, "Invalid known folder");
-            Ok(PathBuf::from(String::from_utf16(
-                std::slice::from_raw_parts(p, n),
-            )?))
-        }
+        // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+        let text = unsafe { crate::platform::security::wide_str(p) }
+            .context("Invalid known folder")?;
+        Ok(PathBuf::from(String::from_utf16(text)?))
     })();
     unsafe {
         CoTaskMemFree(p.cast());
@@ -685,6 +680,7 @@ fn validate_engine_lock(held: &File, base: &Path) -> Result<()> {
         .open(base.join("engine.lock"))?;
     inspect(&expected, false, true, false)?;
     let id = |file: &File| -> Result<(u32, u32, u32)> {
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
         ensure!(
             unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } != 0,
@@ -1116,6 +1112,7 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
         }
     }
     let _snapshot = Snapshot(snapshot);
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut entry: ProcessEntry = unsafe { zeroed() };
     entry.size = size_of::<ProcessEntry>() as u32;
     let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) };

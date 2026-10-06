@@ -30,7 +30,7 @@ use windows_sys::Win32::{
     UI::Shell::{FOLDERID_ProgramFiles, SHGetKnownFolderPath},
 };
 
-use crate::platform::security::{descriptor, error, sid, wide, Local};
+use crate::platform::security::{descriptor, error, sid, wide, wide_str, Local};
 
 const NAME: &str = "SecblitzMonitor";
 const ACCOUNT: &str = r"NT AUTHORITY\LocalService";
@@ -99,16 +99,11 @@ fn base() -> Result<PathBuf> {
         "Cannot resolve Program Files ({hr:#x})"
     );
     let result = (|| {
-        let mut len = 0;
-        unsafe {
-            while len < 32768 && *raw.add(len) != 0 {
-                len += 1;
-            }
-            ensure!(len < 32768, "Invalid known-folder path");
-            let p = PathBuf::from(String::from_utf16(std::slice::from_raw_parts(raw, len))?);
-            path_text(&p)?;
-            Ok(p)
-        }
+        // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+        let text = unsafe { wide_str(raw) }.context("Invalid known-folder path")?;
+        let p = PathBuf::from(String::from_utf16(text)?);
+        path_text(&p)?;
+        Ok(p)
     })();
     unsafe {
         CoTaskMemFree(raw.cast());
@@ -135,6 +130,7 @@ fn open(path: &Path, access: u32, creation: u32, sd: Option<&Local>) -> Result<F
     Ok(unsafe { File::from_raw_handle(h) })
 }
 fn info(file: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
+    // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
     let mut i = unsafe { zeroed() };
     ensure!(
         unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut i) } != 0,

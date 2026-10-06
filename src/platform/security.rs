@@ -13,6 +13,26 @@ use windows_sys::Win32::{
     },
 };
 
+/// Longest path, in UTF-16 units, read from a string Windows hands back.
+pub const MAX_WIDE_UNITS: usize = 32768;
+
+/// The text of a NUL-terminated UTF-16 string, or `None` when the pointer is null or no
+/// terminator appears within [`MAX_WIDE_UNITS`].
+///
+/// # Safety
+/// A non-null `raw` must point to readable memory that stays valid and unchanged for `'a`,
+/// up to its terminator or [`MAX_WIDE_UNITS`] units.
+pub unsafe fn wide_str<'a>(raw: *const u16) -> Option<&'a [u16]> {
+    if raw.is_null() {
+        return None;
+    }
+    let mut n = 0;
+    while n < MAX_WIDE_UNITS && *raw.add(n) != 0 {
+        n += 1;
+    }
+    (n < MAX_WIDE_UNITS).then(|| std::slice::from_raw_parts(raw, n))
+}
+
 /// A `LocalAlloc` block (security descriptor or SID) freed on drop.
 pub struct Local(pub *mut c_void);
 impl Drop for Local {

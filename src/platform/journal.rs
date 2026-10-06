@@ -40,6 +40,7 @@ fn open(path: &Path) -> Result<Handle> {
 
 fn planted(handle: &Handle) -> Result<bool> {
     unsafe {
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
         if GetFileInformationByHandle(handle.0, &mut info) == 0 {
             return Err(winerr());
@@ -89,6 +90,7 @@ fn set_aside(base: &Path, path: &Path) -> Result<()> {
 
 fn inspect(handle: &Handle, strict: bool, root: bool) -> Result<bool> {
     unsafe {
+        // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
         if GetFileInformationByHandle(handle.0, &mut info) == 0 {
             return Err(winerr());
@@ -207,14 +209,9 @@ fn program_data() -> Result<PathBuf> {
             "Cannot resolve ProgramData known folder ({hr:#x})"
         );
         let result = (|| {
-            let mut n = 0;
-            while n < 32768 && *raw.add(n) != 0 {
-                n += 1;
-            }
-            ensure!(n < 32768, "Invalid known-folder path");
-            Ok(PathBuf::from(String::from_utf16(
-                std::slice::from_raw_parts(raw, n),
-            )?))
+            // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+            let text = crate::platform::security::wide_str(raw).context("Invalid known-folder path")?;
+            Ok(PathBuf::from(String::from_utf16(text)?))
         })();
         CoTaskMemFree(raw as *const c_void);
         result
@@ -301,6 +298,7 @@ pub fn state_dir() -> Result<PathBuf> {
         // be local non-reparse directories. ProgramData and intermediate folders
         // must have a trusted SYSTEM/Admin owner.
         if matches!(c, Component::RootDir) {
+            // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
             let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
             ensure!(
                 unsafe { GetFileInformationByHandle(h.0, &mut i) } != 0,
