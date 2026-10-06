@@ -204,6 +204,45 @@ fn outcome(r: anyhow::Result<Report>) -> Outcome {
     r.map(Arc::new).map_err(|e| format!("{e:#}"))
 }
 
+/// Apply the selection as separate batches: ordinary fixes together, each
+/// core protection alone, so an undo of one never reverts another. A later
+/// batch that fails is reported per control and the earlier ones stay.
+fn apply_in_batches(
+    session: &mut dyn Session,
+    ids: &[String],
+    progress: &mut dyn FnMut(&str, &str),
+) -> anyhow::Result<Report> {
+    let batches = secblitz::vbs::split_batches(ids);
+    if batches.len() <= 1 {
+        return session.apply(ids, progress);
+    }
+    let mut merged = Report::default();
+    for (n, batch) in batches.iter().enumerate() {
+        match session.apply(batch, progress) {
+            Ok(report) => {
+                merged.results.extend(report.results);
+                merged.findings = report.findings;
+                merged.transaction = report.transaction;
+                merged.readiness = report.readiness.or(merged.readiness);
+            }
+            Err(e) if n == 0 => return Err(e),
+            Err(e) => {
+                for id in batch {
+                    merged.results.push(secblitz::engine::Outcome {
+                        id: id.clone(),
+                        title: id.clone(),
+                        status: "error".into(),
+                        detail: format!("{e:#}"),
+                        ..Default::default()
+                    });
+                }
+                break;
+            }
+        }
+    }
+    Ok(merged)
+}
+
 fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Event>) {
     let progress = |phase: Phase| {
         let reply = reply.clone();
@@ -218,7 +257,11 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
     let event = match job {
         Job::Check => Event::Checked(outcome(session.audit(&mut progress(Phase::Checking)))),
         Job::Apply(ids) => {
-            let result = outcome(session.apply(&ids, &mut progress(Phase::Applying)));
+            let result = outcome(apply_in_batches(
+                session,
+                &ids,
+                &mut progress(Phase::Applying),
+            ));
             // Always verify, even after a failed or partial apply.
             let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
             Event::Applied {
@@ -343,6 +386,32 @@ mod tests {
             Event::Progress { phase: Phase::Checking, id, status } if id == "a" && status == "compliant"
         ));
         assert!(matches!(events.last(), Some(Event::Checked(Ok(_)))));
+    }
+
+    #[test]
+    fn each_core_protection_is_applied_as_its_own_batch() {
+        let (w, log) = worker(false, false);
+        let ids = vec![
+            "a".to_owned(),
+            secblitz::vbs::MEMORY_INTEGRITY.to_owned(),
+            "b".to_owned(),
+            secblitz::vbs::STACK_PROTECTION.to_owned(),
+        ];
+        let events = collect(&w, Job::Apply(ids.clone()));
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                "apply a,b".to_owned(),
+                format!("apply {}", secblitz::vbs::MEMORY_INTEGRITY),
+                format!("apply {}", secblitz::vbs::STACK_PROTECTION),
+                "audit".to_owned(),
+            ]
+        );
+        assert!(matches!(events.last(), Some(Event::Applied { result: Ok(_), .. })));
+        // A plain selection stays one batch.
+        let (w, log) = worker(false, false);
+        collect(&w, Job::Apply(vec!["a".into(), "b".into()]));
+        assert_eq!(*log.lock().unwrap(), vec!["apply a,b", "audit"]);
     }
 
     #[test]

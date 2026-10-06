@@ -122,7 +122,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "vbs.kernel_stack_protection" => Explainer {
             what: "This is an extra shield that protects the core of Windows from a kind of attack that hijacks programs.",
             risk: "Without it, an attacker who finds a bug in a driver has an easier time taking control of Windows.",
-            change: "Turn it on in Windows Security under Core isolation, if offered. Some older drivers or games may not work with it.",
+            change: "If your PC supports it, Secblitz can turn it on after Core system protection runs. You restart once, and some older drivers may not load. You can undo it.",
         },
         "net.dns_encryption" => Explainer {
             what: "When you open a website, your PC first asks a server where it is. This checks whether that question is private.",

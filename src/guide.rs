@@ -385,8 +385,8 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
         "Secure Boot" => &SECURE_BOOT,
         "Local accounts" => &ACCOUNTS,
         "accounts.autologon" | "Automatic logon" => &AUTOLOGON,
-        "remote_desktop.disabled" | "Remote Desktop" => &REMOTE_DESKTOP,
-        "smb1.disabled" | "SMB1" => &SMB1,
+        "remote_desktop.disabled" | "Remote Desktop" | "remote.rdp" => &REMOTE_DESKTOP,
+        "smb1.disabled" | "SMB1" | "smb.v1" => &SMB1,
         "os.feature_release_support" | "Windows lifecycle" => &LIFECYCLE,
         "boot.secure_boot_certs" => &SECURE_BOOT_CERTS,
         "Windows updates" => &UPDATES,
@@ -408,15 +408,15 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
 /// lock, a restart already pending, an edition without the feature, a remote
 /// session in use or a feature still in use get no steps: following them would
 /// do nothing, or do harm.
+///
+/// Matched on the exact backend reasons: a driver the scan was unsure about
+/// (Windows Security names the blocking driver and lets the person decide),
+/// and stack protection waiting for memory integrity (its first step).
 pub fn guide_not_offered(key: &str, detail: &str) -> Option<&'static Guide> {
-    let d = detail.to_lowercase();
+    use secblitz::vbs;
     match key {
-        "vbs.memory_integrity" if d.contains("driver") => Some(&MEMORY_INTEGRITY),
-        "vbs.kernel_stack_protection"
-            if d.contains("driver") || d.contains("needs memory integrity") =>
-        {
-            Some(&KERNEL_STACK)
-        }
+        vbs::MEMORY_INTEGRITY if vbs::is_driver_reason(detail) => Some(&MEMORY_INTEGRITY),
+        vbs::STACK_PROTECTION if detail == vbs::NEEDS_MEMORY_INTEGRITY => Some(&KERNEL_STACK),
         _ => None,
     }
 }
@@ -522,22 +522,42 @@ mod tests {
 
     #[test]
     fn not_offered_gets_steps_only_for_reasons_a_person_can_act_on() {
-        let mi = "vbs.memory_integrity";
-        assert!(guide_not_offered(mi, "A driver on this PC blocks it").is_some());
+        use secblitz::vbs;
+        let mi = vbs::MEMORY_INTEGRITY;
+        // The exact driver reason, alone or with the driver names after it.
+        assert!(guide_not_offered(mi, vbs::DRIVER).is_some());
+        let named = format!("{}: old.sys, older.sys", vbs::DRIVER);
+        assert!(guide_not_offered(mi, &named).is_some());
+        // Every other reason, including "we could not check your drivers",
+        // gets no steps: there is nothing safe for the person to do.
         for no in [
-            "Your hardware or firmware does not support it",
-            "locked in your PC's firmware",
-            "it is already running",
-            "restart your PC to finish",
-            "this edition of Windows does not include it",
+            vbs::NOT_SUPPORTED,
+            vbs::LOCKED,
+            vbs::DRIVERS_UNREADABLE,
+            vbs::ALREADY_ON,
+            vbs::NEEDS_RESTART,
+            vbs::UNREADABLE,
+            vbs::SET_BY_HAND,
+            vbs::OLD_WINDOWS,
+            "Not offered: a driver on this PC may not work with itself",
+            "Not offered: this edition of Windows does not include it",
         ] {
             assert!(guide_not_offered(mi, no).is_none(), "{no}");
         }
-        let ks = "vbs.kernel_stack_protection";
-        assert!(guide_not_offered(ks, "needs memory integrity first").is_some());
-        assert!(guide_not_offered(ks, "your processor does not support it").is_none());
+        let ks = vbs::STACK_PROTECTION;
+        assert!(guide_not_offered(ks, vbs::NEEDS_MEMORY_INTEGRITY).is_some());
+        for no in [
+            vbs::NO_SHADOW_STACKS,
+            vbs::NEEDS_RESTART,
+            vbs::DRIVER,
+            vbs::OLD_WINDOWS,
+            vbs::LOCKED,
+            vbs::SET_BY_HAND,
+        ] {
+            assert!(guide_not_offered(ks, no).is_none(), "{no}");
+        }
         for key in ["remote_desktop.disabled", "smb1.disabled", "accounts.autologon"] {
-            assert!(guide_not_offered(key, "in use, driver").is_none(), "{key}");
+            assert!(guide_not_offered(key, vbs::DRIVER).is_none(), "{key}");
         }
     }
 

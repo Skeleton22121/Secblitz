@@ -178,6 +178,14 @@ enum Bucket {
     GoodToKnow,
 }
 
+/// Add the names of drivers, when there are any, to a "More details" line.
+fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) -> String {
+    match names {
+        Some(names) => format!("{tech} · {}", ctx.t(template).replace("{names}", &names)),
+        None => tech,
+    }
+}
+
 /// Plain-words "More details" text: what the status means and what to do.
 /// The raw backend detail is never shown.
 fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
@@ -225,7 +233,14 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         if fixable.contains(&r.id) {
             continue;
         }
-        let class = score::classify(r);
+        let class = score::classify_in(report, r);
+        // Set but not running: the finding below says so, not a "protected" row.
+        if class == Class::Excluded
+            && secblitz::vbs::is_vbs(&r.id)
+            && score::classify(r) == Class::Protected
+        {
+            continue;
+        }
         let a = advice::for_outcome(r);
         if class == Class::Protected {
             let impact = advice::control_impact(&r.id);
@@ -254,7 +269,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         // the steps; showing them on this row too would repeat them.
         let finding_listed = report.findings.iter().any(|f| {
             advice::control_for_finding(&f.title) == Some(r.id.as_str())
-                && !score::superseded(report, f)
+                && !score::finding_has_fix(report, f)
         });
         rows.others.push(other(
             ctx,
@@ -264,12 +279,17 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&r.status, &a, lang),
+            with_names(
+                ctx,
+                tech_line(&r.status, &a, lang),
+                "Drivers we were unsure about: {names}",
+                secblitz::vbs::reason_names(&r.detail),
+            ),
             if finding_listed { None } else { Some(r.detail.as_str()) },
         ));
     }
     for f in &report.findings {
-        if score::superseded(report, f) {
+        if score::finding_has_fix(report, f) {
             continue;
         }
         let a = advice::for_finding(&f.title, &f.status, &f.detail);
@@ -291,7 +311,12 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&f.status, &a, lang),
+            with_names(
+                ctx,
+                tech_line(&f.status, &a, lang),
+                "Windows blocked: {names}",
+                secblitz::vbs::blocked_names(&f.detail),
+            ),
             None,
         ));
     }
@@ -690,6 +715,24 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             ctx.t("Check again"),
             Some(Icon::Refresh),
             (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
+        ));
+    } else if o.step == NextStep::ReviewUndo {
+        // Undoing this change is the next undo: straight to the review sheet.
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Undo…"),
+            Some(Icon::Undo),
+            (!ctx.busy).then_some(Message::ReviewUndo),
+        ));
+    } else if o.step == NextStep::OpenHistory {
+        // Other changes came later: undo newest first, from History.
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Open History"),
+            Some(Icon::History),
+            Some(Message::Navigate(crate::gui::Page::History)),
         ));
     } else if let (Some(page), None) = (o.page, o.guide) {
         // No steps to show: just the button named after the page.
