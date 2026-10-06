@@ -33,6 +33,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         &[
             (Tab::Apps, ctx.t("Apps to remove")),
             (Tab::Removed, removed_label),
+            (Tab::Ads, ctx.t("Ads and tips")),
         ],
         state.tab,
         |t| wrap(Msg::SetTab(t)),
@@ -40,6 +41,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let body: Element<'a, Message> = match state.tab {
         Tab::Apps => apps_tab(state, ctx),
         Tab::Removed => removed_tab(state, ctx),
+        Tab::Ads => ads::view(&state.ads, ctx),
     };
     let mut page = column![header, column![tabs, body].spacing(theme::S4)]
         .spacing(theme::S6)
@@ -285,7 +287,7 @@ fn group_card<'a>(
             p,
             Some(app_glyph(p, state, index, theme::ICON_ROW)),
             ctx.t(app.name),
-            None,
+            debloat::note(app.family).map(|note| ctx.t(note)),
             box_,
             Vec::new(),
             Some(wrap(Msg::Toggle(index))),

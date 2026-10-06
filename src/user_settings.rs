@@ -14,16 +14,26 @@ pub enum Setting {
     TailoredExperiences,
     OfficeMacros,
     SuggestedApps,
+    LockScreenTips,
+    StartSettingsTips,
+    ExplorerAds,
+    SearchWebResults,
+    GameBarPopups,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 6] = [
+    pub const ALL: [Setting; 11] = [
         Setting::StoreAppsWebCheck,
         Setting::ShowExtensions,
         Setting::NearbySharing,
         Setting::TailoredExperiences,
         Setting::OfficeMacros,
         Setting::SuggestedApps,
+        Setting::LockScreenTips,
+        Setting::StartSettingsTips,
+        Setting::ExplorerAds,
+        Setting::SearchWebResults,
+        Setting::GameBarPopups,
     ];
 
     pub const PERSONAL: [Setting; 5] = [
@@ -34,6 +44,15 @@ impl Setting {
         Setting::OfficeMacros,
     ];
 
+    /// The switches on the Ads and tips tab of Clean up apps.
+    pub const ADS_AND_TIPS: [Setting; 5] = [
+        Setting::LockScreenTips,
+        Setting::StartSettingsTips,
+        Setting::ExplorerAds,
+        Setting::SearchWebResults,
+        Setting::GameBarPopups,
+    ];
+
     pub fn id(self) -> &'static str {
         match self {
             Setting::StoreAppsWebCheck => "smartscreen.store_apps",
@@ -42,6 +61,11 @@ impl Setting {
             Setting::TailoredExperiences => "privacy.tailored_experiences",
             Setting::OfficeMacros => "office.internet_macros",
             Setting::SuggestedApps => "debloat.suggested_apps",
+            Setting::LockScreenTips => "debloat.lockscreen_tips",
+            Setting::StartSettingsTips => "debloat.start_settings_tips",
+            Setting::ExplorerAds => "debloat.explorer_ads",
+            Setting::SearchWebResults => "debloat.search_web",
+            Setting::GameBarPopups => "debloat.gamebar_popups",
         }
     }
 
@@ -135,6 +159,19 @@ const SUGGESTION_VALUES: [&str; 7] = [
     "SubscribedContent-353694Enabled",
     "SubscribedContent-353696Enabled",
 ];
+const EXPLORER_ADVANCED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+const GAME_CONFIG_STORE: &str = r"System\GameConfigStore";
+const LOCK_SCREEN_VALUES: [&str; 2] = [
+    "SubscribedContent-338387Enabled",
+    "RotatingLockScreenOverlayEnabled",
+];
+const START_SETTINGS_CDM_VALUES: [&str; 5] = [
+    "SystemPaneSuggestionsEnabled",
+    "SubscribedContent-338393Enabled",
+    "SubscribedContent-353698Enabled",
+    "SubscribedContent-310093Enabled",
+    "SoftLandingEnabled",
+];
 const PV_VALUES: [&str; 3] = [
     "DisableInternetFilesInPV",
     "DisableAttachmentsInPV",
@@ -201,6 +238,73 @@ fn targets(setting: Setting) -> Vec<Target> {
             .iter()
             .map(|name| target(CONTENT_DELIVERY, name, 0, false))
             .collect(),
+        Setting::LockScreenTips => LOCK_SCREEN_VALUES
+            .iter()
+            .map(|name| target(CONTENT_DELIVERY, name, 0, false))
+            .collect(),
+        Setting::StartSettingsTips => {
+            let mut out: Vec<Target> = START_SETTINGS_CDM_VALUES
+                .iter()
+                .map(|name| target(CONTENT_DELIVERY, name, 0, false))
+                .collect();
+            for name in ["Start_IrisRecommendations", "Start_AccountNotifications"] {
+                out.push(target(EXPLORER_ADVANCED, name, 0, false));
+            }
+            out.push(target(
+                r"Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications",
+                "EnableAccountNotifications",
+                0,
+                false,
+            ));
+            out.push(target(
+                r"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement",
+                "ScoobeSystemSettingEnabled",
+                0,
+                false,
+            ));
+            out.push(target(
+                r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.Suggested",
+                "Enabled",
+                0,
+                false,
+            ));
+            out
+        }
+        Setting::ExplorerAds => vec![target(
+            EXPLORER_ADVANCED,
+            "ShowSyncProviderNotifications",
+            0,
+            false,
+        )],
+        Setting::SearchWebResults => vec![
+            target(
+                r"Software\Policies\Microsoft\Windows\Explorer",
+                "DisableSearchBoxSuggestions",
+                1,
+                false,
+            ),
+            target(
+                r"Software\Microsoft\Windows\CurrentVersion\SearchSettings",
+                "IsDynamicSearchBoxEnabled",
+                0,
+                false,
+            ),
+        ],
+        Setting::GameBarPopups => vec![
+            target(
+                r"Software\Microsoft\GameBar",
+                "UseNexusForGameBarEnabled",
+                0,
+                false,
+            ),
+            target(GAME_CONFIG_STORE, "GameDVR_Enabled", 0, false),
+            target(
+                r"Software\Microsoft\Windows\CurrentVersion\GameDVR",
+                "AppCaptureEnabled",
+                0,
+                false,
+            ),
+        ],
     }
 }
 
@@ -442,7 +546,9 @@ fn restore_unless_changed(reg: &mut dyn Registry, setting: Setting, priors: &[Pr
 }
 
 pub fn apply(reg: &mut dyn Registry, journal: &Path, setting: Setting) -> Outcome {
-    if setting == Setting::OfficeMacros && managed_by_organisation(reg) {
+    if matches!(setting, Setting::OfficeMacros | Setting::SearchWebResults)
+        && managed_by_organisation(reg)
+    {
         return Outcome::Blocked;
     }
     match status(reg, setting) {
@@ -855,7 +961,7 @@ mod tests {
             assert_eq!(s.to_byte() as usize, i);
             assert_eq!(Setting::from_byte(i as u8), Some(*s));
         }
-        assert_eq!(Setting::from_byte(6), None);
+        assert_eq!(Setting::from_byte(11), None);
         assert_eq!(Setting::from_byte(255), None);
         for op in [Op::Query, Op::Apply, Op::Undo] {
             assert_eq!(Op::from_byte(op.to_byte()), Some(op));
@@ -870,7 +976,12 @@ mod tests {
                 "net.nearby_sharing",
                 "privacy.tailored_experiences",
                 "office.internet_macros",
-                "debloat.suggested_apps"
+                "debloat.suggested_apps",
+                "debloat.lockscreen_tips",
+                "debloat.start_settings_tips",
+                "debloat.explorer_ads",
+                "debloat.search_web",
+                "debloat.gamebar_popups"
             ]
         );
     }
@@ -879,7 +990,11 @@ mod tests {
     fn allowlist_only_names_current_user_paths_we_know() {
         for s in Setting::ALL {
             for t in targets(s) {
-                assert!(t.key.starts_with(r"Software\"), "{}", t.key);
+                assert!(
+                    t.key.starts_with(r"Software\") || t.key == GAME_CONFIG_STORE,
+                    "{}",
+                    t.key
+                );
                 assert!(!t.key.contains(".."));
                 assert!(t.safe <= 1);
             }
@@ -1342,5 +1457,244 @@ mod tests {
     fn handle_needs_a_data_folder() {
         let mut reg = Fake::default();
         assert!(handle(&mut reg, None, Setting::ShowExtensions, Op::Query).is_err());
+    }
+
+    fn on_screen(setting: Setting, i: usize) -> Option<u32> {
+        let safe = targets(setting)[i].safe;
+        if i.is_multiple_of(2) {
+            None
+        } else {
+            Some(1 - safe)
+        }
+    }
+
+    fn seeded(setting: Setting) -> Fake {
+        let mut reg = Fake::default();
+        for i in 0..targets(setting).len() {
+            reg.put(setting, i, on_screen(setting, i));
+        }
+        reg
+    }
+
+    #[test]
+    fn ads_and_tips_switches_are_appended_after_the_older_settings() {
+        assert_eq!(Setting::ALL[6..], Setting::ADS_AND_TIPS);
+        for (offset, setting) in Setting::ADS_AND_TIPS.iter().enumerate() {
+            assert_eq!(usize::from(setting.to_byte()), 6 + offset);
+            assert!(!Setting::PERSONAL.contains(setting));
+        }
+        assert_eq!(Setting::from_byte(10), Some(Setting::GameBarPopups));
+    }
+
+    #[test]
+    fn no_two_settings_share_a_value() {
+        let mut seen = std::collections::HashSet::new();
+        for setting in Setting::ALL {
+            for t in targets(setting) {
+                let fresh = seen.insert(k(&t.key, t.name));
+                assert!(fresh, "{} appears twice: {}", t.name, setting.id());
+            }
+        }
+    }
+
+    #[test]
+    fn suggestions_in_start_and_settings_do_not_repeat_the_suggested_apps_values() {
+        for t in targets(Setting::StartSettingsTips) {
+            assert!(
+                !SUGGESTION_VALUES.contains(&t.name) || t.key != CONTENT_DELIVERY,
+                "{}",
+                t.name
+            );
+        }
+        assert_eq!(targets(Setting::LockScreenTips).len(), 2);
+        assert_eq!(targets(Setting::StartSettingsTips).len(), 10);
+        assert_eq!(targets(Setting::ExplorerAds).len(), 1);
+        assert_eq!(targets(Setting::SearchWebResults).len(), 2);
+        assert_eq!(targets(Setting::GameBarPopups).len(), 3);
+    }
+
+    #[test]
+    fn game_bar_popups_only_touch_the_current_users_game_bar_values() {
+        let found: Vec<_> = targets(Setting::GameBarPopups)
+            .into_iter()
+            .map(|t| (t.key, t.name, t.safe))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (r"Software\Microsoft\GameBar".to_owned(), "UseNexusForGameBarEnabled", 0),
+                (r"System\GameConfigStore".to_owned(), "GameDVR_Enabled", 0),
+                (
+                    r"Software\Microsoft\Windows\CurrentVersion\GameDVR".to_owned(),
+                    "AppCaptureEnabled",
+                    0
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn web_results_in_search_turn_the_policy_on_and_the_highlights_off() {
+        let all = targets(Setting::SearchWebResults);
+        assert_eq!((all[0].name, all[0].safe), ("DisableSearchBoxSuggestions", 1));
+        assert_eq!((all[1].name, all[1].safe), ("IsDynamicSearchBoxEnabled", 0));
+    }
+
+    #[test]
+    fn every_ads_and_tips_switch_starts_off_and_apply_changes_only_its_own_values() {
+        for setting in Setting::ADS_AND_TIPS {
+            let (_d, path) = journal();
+            let mut reg = seeded(setting);
+            assert_eq!(report(&reg, &path, setting), Report::Unsafe, "{setting:?}");
+            assert_eq!(apply(&mut reg, &path, setting), Outcome::Done, "{setting:?}");
+            for (i, t) in targets(setting).iter().enumerate() {
+                assert_eq!(reg.read(setting, i), Value::Dword(t.safe), "{setting:?} {i}");
+            }
+            assert_eq!(report(&reg, &path, setting), Report::SafeByUs, "{setting:?}");
+            assert_eq!(undoable(&path), [setting]);
+        }
+    }
+
+    #[test]
+    fn every_ads_and_tips_undo_puts_back_the_exact_earlier_values() {
+        for setting in Setting::ADS_AND_TIPS {
+            let (_d, path) = journal();
+            let mut reg = seeded(setting);
+            apply(&mut reg, &path, setting);
+            assert_eq!(undo(&mut reg, &path, setting), Outcome::Done, "{setting:?}");
+            for i in 0..targets(setting).len() {
+                let expected = on_screen(setting, i).map_or(Value::Absent, Value::Dword);
+                assert_eq!(reg.read(setting, i), expected, "{setting:?} {i}");
+            }
+            assert!(undoable(&path).is_empty());
+            assert_eq!(undo(&mut reg, &path, setting), Outcome::Blocked);
+            assert_eq!(report(&reg, &path, setting), Report::Unsafe);
+        }
+    }
+
+    #[test]
+    fn the_journal_names_each_value_by_position_with_its_earlier_value() {
+        let (_d, path) = journal();
+        let mut reg = seeded(Setting::StartSettingsTips);
+        apply(&mut reg, &path, Setting::StartSettingsTips);
+        let stored = load_journal(&path);
+        let priors = &stored.settings["debloat.start_settings_tips"];
+        assert_eq!(priors.len(), 10);
+        for (i, p) in priors.iter().enumerate() {
+            assert_eq!(p.i, i);
+            assert_eq!(p.prior, on_screen(Setting::StartSettingsTips, i));
+        }
+    }
+
+    #[test]
+    fn a_value_changed_by_hand_after_apply_is_left_alone_and_reported() {
+        for setting in Setting::ADS_AND_TIPS {
+            let (_d, path) = journal();
+            let mut reg = seeded(setting);
+            apply(&mut reg, &path, setting);
+            let last = targets(setting).len() - 1;
+            reg.put(setting, last, Some(7));
+            assert_eq!(
+                undo(&mut reg, &path, setting),
+                Outcome::ChangedSince,
+                "{setting:?}"
+            );
+            assert_eq!(reg.read(setting, last), Value::Dword(7));
+            for i in 0..last {
+                let expected = on_screen(setting, i).map_or(Value::Absent, Value::Dword);
+                assert_eq!(reg.read(setting, i), expected, "{setting:?} {i}");
+            }
+            assert!(undoable(&path).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_switch_that_is_already_off_changes_and_records_nothing() {
+        for setting in Setting::ADS_AND_TIPS {
+            let (_d, path) = journal();
+            let mut reg = Fake::default();
+            for (i, t) in targets(setting).iter().enumerate() {
+                reg.put(setting, i, Some(t.safe));
+            }
+            assert_eq!(report(&reg, &path, setting), Report::Safe);
+            assert_eq!(apply(&mut reg, &path, setting), Outcome::Done);
+            assert!(!path.exists());
+            assert_eq!(undo(&mut reg, &path, setting), Outcome::Blocked);
+        }
+    }
+
+    #[test]
+    fn one_switch_never_touches_another() {
+        let (_d, path) = journal();
+        let mut reg = seeded(Setting::LockScreenTips);
+        for other in Setting::ADS_AND_TIPS {
+            if other != Setting::LockScreenTips {
+                for i in 0..targets(other).len() {
+                    reg.put(other, i, on_screen(other, i));
+                }
+            }
+        }
+        let before = reg.cu.clone();
+        apply(&mut reg, &path, Setting::LockScreenTips);
+        for (key, value) in &before {
+            let ours = targets(Setting::LockScreenTips)
+                .iter()
+                .any(|t| &k(&t.key, t.name) == key);
+            if !ours {
+                assert_eq!(reg.cu.get(key), Some(value));
+            }
+        }
+        undo(&mut reg, &path, Setting::LockScreenTips);
+        assert_eq!(reg.cu, before);
+    }
+
+    #[test]
+    fn a_value_that_does_not_stick_rolls_an_ads_switch_back() {
+        let (_d, path) = journal();
+        let mut reg = seeded(Setting::ExplorerAds);
+        reg.silent_drop = true;
+        assert_eq!(apply(&mut reg, &path, Setting::ExplorerAds), Outcome::Failed);
+        assert!(undoable(&path).is_empty());
+        assert_eq!(reg.read(Setting::ExplorerAds, 0), Value::Absent);
+    }
+
+    #[test]
+    fn web_results_are_not_changed_on_a_pc_managed_by_an_organisation() {
+        let (_d, path) = journal();
+        let mut reg = seeded(Setting::SearchWebResults);
+        reg.strings.insert(
+            k(
+                r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
+                "Domain",
+            ),
+            "corp.example".into(),
+        );
+        assert_eq!(
+            apply(&mut reg, &path, Setting::SearchWebResults),
+            Outcome::Blocked
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn undo_all_puts_back_the_ads_and_tips_switches_too() {
+        let (_d, path) = journal();
+        let mut reg = Fake::default();
+        for setting in Setting::ADS_AND_TIPS {
+            for i in 0..targets(setting).len() {
+                reg.put(setting, i, on_screen(setting, i));
+            }
+            apply(&mut reg, &path, setting);
+        }
+        assert_eq!(undoable(&path), Setting::ADS_AND_TIPS);
+        let results = undo_all(&mut reg, &path);
+        assert!(results.iter().all(|(_, o)| *o == Outcome::Done));
+        assert_eq!(results.len(), 5);
+        for setting in Setting::ADS_AND_TIPS {
+            for i in 0..targets(setting).len() {
+                let expected = on_screen(setting, i).map_or(Value::Absent, Value::Dword);
+                assert_eq!(reg.read(setting, i), expected);
+            }
+        }
     }
 }

@@ -18,6 +18,7 @@ pub enum Tab {
     #[default]
     Apps,
     Removed,
+    Ads,
 }
 
 #[derive(Debug, Default)]
@@ -108,6 +109,7 @@ pub struct State {
     /// The result, kept back for a moment so the finished progress can settle.
     held: Option<(Instant, Box<Finished>)>,
     menu_fillers: Vec<u16>,
+    ads: ads::State,
 }
 
 impl Default for State {
@@ -143,6 +145,7 @@ impl Default for State {
             run_at: Instant::now(),
             held: None,
             menu_fillers: Vec::new(),
+            ads: ads::State::default(),
         }
     }
 }
@@ -189,6 +192,7 @@ pub enum Msg {
     Deleted(Result<(), String>),
     Copies(BTreeSet<u16>, u64),
     Icons(BTreeMap<u16, Handle>),
+    Ads(ads::Msg),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -290,7 +294,11 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         return Task::none();
     }
     start_scan(state);
-    Task::batch([scan_task(state), suggested_task(ctx)])
+    Task::batch([
+        scan_task(state),
+        suggested_task(ctx),
+        ads::load(&mut state.ads, ctx),
+    ])
 }
 
 fn start_scan(state: &mut State) {
@@ -382,6 +390,11 @@ fn shown_members(state: &State, ctx: &Ctx, members: &[u16]) -> Vec<u16> {
         .copied()
         .filter(|index| query.is_empty() || query.matches(&app_text(ctx, state, *index)))
         .collect()
+}
+
+#[cfg(test)]
+pub fn ads_shown_as(state: &State, setting: secblitz::user_settings::Setting) -> &'static str {
+    ads::shown_as(&state.ads, setting)
 }
 
 #[cfg(test)]
@@ -522,6 +535,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.saved_bytes = bytes;
             Task::none()
         }
+        Msg::Ads(msg) => ads::update(&mut state.ads, msg, ctx),
     }
 }
 
@@ -1090,6 +1104,7 @@ fn count_text(ctx: &Ctx, n: usize, one: &str, many: &str) -> String {
     ctx.t(key).replace("{n}", &n.to_string())
 }
 
+pub(crate) mod ads;
 mod view;
 pub use view::{footer, modal, view};
 
@@ -1109,5 +1124,9 @@ pub fn preload(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if !matches!(state.scan, Scan::Ready) {
         start_scan(state);
     }
-    Task::batch([scan_task(state), suggested_task(ctx)])
+    Task::batch([
+        scan_task(state),
+        suggested_task(ctx),
+        ads::load(&mut state.ads, ctx),
+    ])
 }
