@@ -494,7 +494,9 @@ impl App {
         use worker::Event as E;
         match &event {
             E::Opened(Ok(catalog)) => self.ctx.catalog = catalog.clone(),
-            E::Opened(Err(e)) => self.ctx.engine_error = Some(e.clone()),
+            E::Opened(Err(e)) => {
+                self.ctx.engine_error = Some(self.ctx.t(crate::launcher::friendly_problem(e)));
+            }
             E::Progress { phase, id, status } => {
                 if matches!(phase, worker::Phase::Checking | worker::Phase::Verifying) {
                     let p = self.ctx.checking.get_or_insert_with(Default::default);
@@ -573,7 +575,7 @@ impl App {
                 );
             }
             Err(e) => {
-                self.ctx.check_error = Some(e.clone());
+                self.ctx.check_error = Some(self.ctx.t(crate::launcher::friendly_problem(e)));
                 let entry = if operation && n > 0 {
                     self.ctx
                         .report

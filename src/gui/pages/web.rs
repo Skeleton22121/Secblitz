@@ -361,11 +361,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             let reread = poll(state);
             match result {
                 Ok(()) => reread,
-                Err(_) => Task::batch([
-                    Task::done(Message::Toast(
-                        ctx.t("We couldn't change web protection. Please try again."),
-                        Tone::Warn,
-                    )),
+                Err(raw) => Task::batch([
+                    Task::done(Message::Toast(ctx.t(failure_text(&raw)), Tone::Warn)),
                     reread,
                 ]),
             }
@@ -384,6 +381,54 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 // ---------------------------------------------------------------------------
 // Text
 // ---------------------------------------------------------------------------
+
+/// Plain words and a next step for a change that did not work. The raw reason
+/// is never shown; unknown reasons get the general message.
+fn failure_text(raw: &str) -> &'static str {
+    let r = raw.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
+    if has(&["administrator", "access is denied", "os error 5", "elevat"]) {
+        "Windows wouldn't let Secblitz change web protection. Sign in with an account that can make changes to this PC, then open Secblitz again."
+    } else if has(&["unavailable", "only supported on windows", "requires windows"]) {
+        "Web protection isn't available on this PC."
+    } else if has(&["marked for deletion", "already exists", "1072", "1073"]) {
+        "Windows is still tidying up the old web protection. Restart your PC, then try again."
+    } else if has(&["untrusted", "unexpected", "writable", "owner"]) {
+        "Secblitz couldn't safely set up web protection on this PC. Install the latest Secblitz and try again."
+    } else {
+        "We couldn't change web protection. Please try again. If it keeps happening, restart your PC."
+    }
+}
+
+/// A short reason and fix under the status line, when the filter reported a
+/// problem or is not running. `None` when there is nothing to add.
+fn problem_hint(snapshot: &Snapshot, line: Line) -> Option<&'static str> {
+    if !matches!(
+        line,
+        Line::NotWorking | Line::GettingReady | Line::On
+    ) {
+        return None;
+    }
+    let status = snapshot.status.as_ref().filter(|s| config::fresh(s, snapshot.now));
+    match status.and_then(|s| s.last_error) {
+        Some(ErrorCode::PortInUse) => Some(
+            "Another program on your PC is using what web protection needs. Close other ad blockers or VPN apps, then press Try again.",
+        ),
+        Some(ErrorCode::NoUpstream) => Some(
+            "Web protection can't find your internet connection. Connect to the internet, then press Try again.",
+        ),
+        Some(ErrorCode::DownloadFailed) => Some(
+            "The block lists couldn't be downloaded. Connect to the internet. Secblitz will try again by itself.",
+        ),
+        Some(ErrorCode::ListInvalid) => Some(
+            "The block lists couldn't be used. Secblitz will try to download them again. If this stays, check for a Secblitz update.",
+        ),
+        None if line == Line::NotWorking => Some(
+            "Press Try again. If that doesn't help, restart your PC.",
+        ),
+        None => None,
+    }
+}
 
 /// Time of day for "Paused until": 12-hour with AM/PM in English, 24-hour
 /// elsewhere. `secs` counts from local midnight.
@@ -590,6 +635,7 @@ fn status_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<E
         button,
         None,
     );
+    let hint = problem_hint(snapshot, line).map(|h| under(vec![widgets::small(p, ctx.t(h))]));
     let mut rows: Vec<El<'a>> = vec![if working {
         column![head, under(vec![progress::indeterminate(p, Tone::Brand)])]
             .width(Length::Fill)
@@ -597,6 +643,9 @@ fn status_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<E
     } else {
         head
     }];
+    if let Some(hint) = hint {
+        rows.push(hint);
+    }
     if let Some(counts) = blocked_today(snapshot) {
         rows.push(widgets::row_item(
             p,
@@ -863,5 +912,41 @@ mod tests {
         for s in Switch::ALL {
             assert!(explain::for_check(s.id()).is_some());
         }
+    }
+
+    #[test]
+    fn known_failures_get_a_fix_and_unknown_ones_never_echo_raw_text() {
+        let admin = failure_text("Changing web protection needs administrator rights");
+        assert!(admin.contains("Sign in with an account"));
+        assert!(failure_text("The service is marked for deletion (1072)").contains("Restart your PC"));
+        let raw = "os error 87: weird HRESULT 0x80070057 in scm.rs";
+        let general = failure_text(raw);
+        assert!(general.starts_with("We couldn't change web protection."));
+        assert!(!general.contains("0x8") && !general.contains("scm"));
+        for text in [admin, general] {
+            assert!(!text.contains('\u{2014}'));
+        }
+    }
+
+    #[test]
+    fn problems_explain_themselves_with_a_next_step() {
+        let on = config(true);
+        let port = Status {
+            listening: false,
+            last_error: Some(ErrorCode::PortInUse),
+            ..healthy()
+        };
+        let s = snapshot(on.clone(), Some(port), true);
+        let line = status_line(&s.config, s.status.as_ref(), s.service, s.now);
+        assert!(problem_hint(&s, line).unwrap().contains("Try again"));
+        // Service stopped with no report: generic restart advice.
+        let down = Snapshot {
+            service: ServiceState::Stopped,
+            ..snapshot(on.clone(), None, true)
+        };
+        assert!(problem_hint(&down, Line::NotWorking).unwrap().contains("restart your PC"));
+        // Healthy: nothing to add.
+        let ok = snapshot(on, Some(healthy()), true);
+        assert!(problem_hint(&ok, Line::On).is_none());
     }
 }

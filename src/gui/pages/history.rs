@@ -368,7 +368,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let (undo_body, undo_enabled) = match &state.engine {
         None => (ctx.t("Checking what can be undone…"), false),
         Some(Err(_)) => (
-            ctx.t("We couldn't read your list of fixes. Try again in a moment."),
+            ctx.t("We couldn't read your list of fixes. Close Secblitz and open it again."),
             false,
         ),
         Some(Ok(_)) if can_undo(state) => (
