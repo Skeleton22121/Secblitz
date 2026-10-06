@@ -9,7 +9,7 @@ use crate::gui::widgets::hairline::{web_globe, Plate};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
 use crate::i18n::Lang;
-use iced::widget::{column, container, row, space};
+use iced::widget::{column, container, row};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task};
 use secblitz::filter::config::{self, Config, ErrorCode, State as ListState, Status};
 use secblitz::filter::control::ServiceState;
@@ -512,17 +512,6 @@ fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
     }
 }
 
-fn line_look(line: Line) -> (Icon, Tone) {
-    match line {
-        Line::On => (Icon::CheckCircle, Tone::Good),
-        Line::Off => (Icon::Shield, Tone::Neutral),
-        Line::Paused(_) => (Icon::Info, Tone::Neutral),
-        Line::GettingReady => (Icon::Refresh, Tone::Neutral),
-        Line::NotWorking => (Icon::AlertTriangle, Tone::Warn),
-    }
-}
-
-
 fn wrap(msg: Msg) -> Message {
     Message::Web(msg)
 }
@@ -589,22 +578,6 @@ fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Sna
         )]));
     }
     column(rows).width(Length::Fill).into()
-}
-
-fn status_rows<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
-    let p = ctx.palette;
-    let line = current_line(snapshot);
-    let (icon, tone) = line_look(line);
-    let head = widgets::row_item_tinted(
-        p,
-        Some(icon),
-        Some(tone),
-        line_text(ctx, line),
-        None,
-        space::horizontal().width(0),
-        None,
-    );
-    vec![head]
 }
 
 fn status_button<'a>(
@@ -709,15 +682,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         None,
         switches,
     ));
-    if snapshot.installed {
-        page = page.push(widgets::group(
-            p,
-            ctx.t("Status"),
-            None,
-            None,
-            status_rows(ctx, snapshot),
-        ));
-    }
     page.push(widgets::small(
         p,
         ctx.t(
