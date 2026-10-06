@@ -1,4 +1,5 @@
-//! Clean up apps: remove preinstalled Windows apps the user doesn't want.
+//! Windows built-in apps only, not apps the person installed or Secblitz itself:
+//! remove preinstalled Windows apps the user doesn't want, and restore them.
 //! Only catalog packages not on the protected list reach Windows, and names are
 //! validated before any PowerShell starts.
 pub mod backup;

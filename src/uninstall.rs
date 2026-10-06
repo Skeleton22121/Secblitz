@@ -1,4 +1,5 @@
-//! Remove Secblitz: the put-back logic behind the hidden uninstaller commands.
+//! Removing Secblitz itself, never other apps: the put-back logic behind the hidden
+//! uninstaller commands, which can first undo the changes Secblitz made.
 #![allow(dead_code)] // the GUI part of Remove Secblitz uses the rest
 use crate::i18n::Lang;
 use crate::user_settings::{Outcome as UserOutcome, Setting};
