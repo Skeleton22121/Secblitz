@@ -277,6 +277,19 @@ pub(crate) fn remove_with(
     run: &dyn Fn(&str) -> PackageOutcome,
     emit: &dyn Fn(Progress),
 ) -> Result<Batch> {
+    remove_with_checkpoint(indices, installed, backup, run, emit, &|_| {})
+}
+
+/// Same, and `checkpoint` sees the batch after every app, so the record of
+/// what is already removed is never lost if the run is cut short.
+pub(crate) fn remove_with_checkpoint(
+    indices: &[u16],
+    installed: &[Installed],
+    backup: &dyn Fn(&Installed) -> std::result::Result<(), Kept>,
+    run: &dyn Fn(&str) -> PackageOutcome,
+    emit: &dyn Fn(Progress),
+    checkpoint: &dyn Fn(&Batch),
+) -> Result<Batch> {
     let indices = validate_indices(indices)?;
     let mut batch = Batch {
         t: now(),
@@ -334,6 +347,7 @@ pub(crate) fn remove_with(
             ItemResult::Removed
         };
         batch.removed.append(&mut removed);
+        checkpoint(&batch);
         emit(Progress::Finished(index, result));
     }
     Ok(batch)
@@ -377,9 +391,18 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     let backup = |_: &Installed| -> std::result::Result<(), Kept> {
         Err(Kept::NoCopy("Only available on Windows".into()))
     };
-    let batch = remove_with(&indices, &installed, &backup, &run, emit)?;
-    if !batch.removed.is_empty() || !batch.skipped.is_empty() || !batch.failed.is_empty() {
-        let _ = journal::append(&batch);
+    let recordable =
+        |b: &Batch| !b.removed.is_empty() || !b.skipped.is_empty() || !b.failed.is_empty();
+    // The record is saved after every app (replacing this run's own line), so
+    // an app that is already gone is always on the list, even if the run stops.
+    let checkpoint = |b: &Batch| {
+        if recordable(b) {
+            let _ = journal::upsert(b);
+        }
+    };
+    let batch = remove_with_checkpoint(&indices, &installed, &backup, &run, emit, &checkpoint)?;
+    if recordable(&batch) {
+        let _ = journal::upsert(&batch);
     }
     Ok(batch)
 }
