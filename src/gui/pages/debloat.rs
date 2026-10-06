@@ -1,7 +1,7 @@
 //! Clean up apps: removes the built-in Windows apps from a catalog, never apps the user installed.
 use crate::gui::icons::Icon;
 use crate::gui::theme::{Palette, Tone};
-use crate::gui::widgets::{self, anim};
+use crate::gui::widgets::{self, anim, handoff};
 use crate::gui::{blocking, blocking_stream, Ctx, Helper, Message};
 use iced::widget::image::Handle;
 use iced::{Element, Subscription, Task};
@@ -101,6 +101,8 @@ pub struct State {
     spin: anim::Clock,
     now: Instant,
     run_at: Instant,
+    /// The result, kept back for a moment so the finished progress can settle.
+    held: Option<(Instant, Box<Finished>)>,
     menu_fillers: Vec<u16>,
 }
 
@@ -134,6 +136,7 @@ impl Default for State {
             spin: anim::Clock::new(),
             now: Instant::now(),
             run_at: Instant::now(),
+            held: None,
             menu_fillers: Vec::new(),
         }
     }
@@ -305,10 +308,13 @@ fn is_animating(state: &State) -> bool {
         return true;
     }
     match &state.sheet {
-        Sheet::Working(items) => items.iter().any(|(_, step)| match step {
-            Step::Done(_, at) => !anim::Clock::at(*at).done(anim::SLOW, state.now),
-            _ => false,
-        }),
+        Sheet::Working(items) => {
+            state.held.is_some()
+                || items.iter().any(|(_, step)| match step {
+                    Step::Done(_, at) => !anim::Clock::at(*at).done(anim::SLOW, state.now),
+                    _ => false,
+                })
+        }
         Sheet::Done(done) => done.asked_to_block && done.user_ok.is_none(),
         _ => false,
     }
@@ -390,6 +396,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::Frame(now) => {
             state.now = now;
+            let held = state.held.as_ref().map(|(at, _)| *at);
+            if held.is_some_and(|at| now.saturating_duration_since(at) >= handoff::sheet_hold()) {
+                show_held(state);
+            }
             Task::none()
         }
         Msg::ToggleBlock => {
@@ -413,6 +423,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Run(run) => on_run(state, ctx, run),
         Msg::UserBlocked(ok) => {
             if let Sheet::Done(done) = &mut state.sheet {
+                done.user_ok = Some(ok);
+            } else if let Some((_, done)) = &mut state.held {
                 done.user_ok = Some(ok);
             }
             Task::none()
@@ -929,11 +941,24 @@ fn on_run(state: &mut State, ctx: &mut Ctx, run: Run) -> Task<Message> {
                 }
                 Err(e) => done.error = Some(e),
             }
-            state.now = done.at;
-            state.sheet = Sheet::Done(Box::new(done));
+            if handoff::sheet_hold().is_zero() {
+                state.now = done.at;
+                state.sheet = Sheet::Done(Box::new(done));
+            } else {
+                state.now = Instant::now();
+                state.held = Some((state.now, Box::new(done)));
+            }
             tasks.push(scan_task(state));
             Task::batch(tasks)
         }
+    }
+}
+
+fn show_held(state: &mut State) {
+    if let Some((_, mut done)) = state.held.take() {
+        done.at = Instant::now();
+        state.now = done.at;
+        state.sheet = Sheet::Done(done);
     }
 }
 
