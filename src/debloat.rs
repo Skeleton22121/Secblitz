@@ -23,7 +23,7 @@ mod tests;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub use catalog::{is_protected, matches as pattern_matches};
+pub use catalog::{is_protected, matches as pattern_matches, note};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

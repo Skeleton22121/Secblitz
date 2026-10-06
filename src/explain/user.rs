@@ -28,6 +28,31 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "A document from an unexpected email could run a hidden program the moment you click Enable Content.",
             change: "Macros in files from email or the web stay off. Work files that need macros may need to be unblocked first.",
         },
+        "debloat.lockscreen_tips" => Explainer {
+            what: "The lock screen can show tips, fun facts and offers on top of its picture.",
+            risk: "You keep seeing tips and offers each time you lock or wake your PC.",
+            change: "The lock screen shows only its picture. Your picture and the way you sign in do not change.",
+        },
+        "debloat.start_settings_tips" => Explainer {
+            what: "Windows can suggest apps, tips and offers inside Start and the Settings app.",
+            risk: "You keep seeing suggestions and account reminders in Start and Settings.",
+            change: "Start and Settings stop showing suggestions and reminders. Your apps and settings stay as they are.",
+        },
+        "debloat.explorer_ads" => Explainer {
+            what: "File Explorer can show messages about OneDrive and other online storage at the top of your folders.",
+            risk: "You may keep seeing offers to sign up or buy more storage in File Explorer.",
+            change: "Those messages stop. OneDrive and your files are not touched.",
+        },
+        "debloat.search_web" => Explainer {
+            what: "When you search in Start, Windows can also show results and ads from the web.",
+            risk: "What you type in Start search can be sent to the web, and web results show next to your own files.",
+            change: "Start search shows only your PC, with no web results or daily pictures. Searching in your browser is not affected.",
+        },
+        "debloat.gamebar_popups" => Explainer {
+            what: "Windows opens Game Bar from the Xbox button on a controller and can ask you to get an app when Game Bar is missing.",
+            risk: "After you remove Game Bar, you may see a message asking you to get a new app.",
+            change: "The controller button stops opening Game Bar and game clip recording stops. The Game Bar app is not removed.",
+        },
         "software.outdated_winget" => Explainer {
             what: "Popular programs like your browser, Java and PDF reader get safety fixes from time to time.",
             risk: "An out-of-date browser or PDF reader can be taken over by a harmful web page or file.",
@@ -41,13 +66,18 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
 mod tests {
     use super::*;
 
-    const IDS: [&str; 6] = [
+    const IDS: [&str; 11] = [
         "smartscreen.store_apps",
         "files.show_extensions",
         "net.nearby_sharing",
         "privacy.tailored_experiences",
         "office.internet_macros",
         "software.outdated_winget",
+        "debloat.lockscreen_tips",
+        "debloat.start_settings_tips",
+        "debloat.explorer_ads",
+        "debloat.search_web",
+        "debloat.gamebar_popups",
     ];
 
     #[test]
@@ -69,6 +99,13 @@ mod tests {
     fn user_ids_resolve_through_the_catalog() {
         for id in IDS {
             assert!(crate::explain::for_check(id).is_some(), "{id}");
+        }
+    }
+
+    #[test]
+    fn every_ads_and_tips_switch_is_explained() {
+        for setting in crate::user_settings::Setting::ADS_AND_TIPS {
+            assert!(get(setting.id()).is_some(), "{}", setting.id());
         }
     }
 

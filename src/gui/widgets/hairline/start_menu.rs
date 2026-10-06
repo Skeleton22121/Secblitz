@@ -345,7 +345,7 @@ pub fn glyph_for(family: &str) -> Glyph {
         (&["spotify", "zunemusic", "soundrecorder"], Glyph::Music),
         (&["windowscamera", "photos", "adobeexpress"], Glyph::Camera),
         (&["bingnews", "twitter", "webexperience"], Glyph::News),
-        (&["skypeapp", "messaging", "outlook"], Glyph::Mail),
+        (&["skypeapp", "messaging", "outlook", "communicationsapps"], Glyph::Mail),
         (&["people", "feedbackhub", "facebook", "teams"], Glyph::Person),
         (
             &["bingsearch", "gethelp", "549981c3f5f10", "copilot", "maps"],

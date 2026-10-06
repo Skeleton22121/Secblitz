@@ -655,6 +655,25 @@ mod tests {
     }
 
     #[test]
+    fn ads_and_tips_requests_have_fixed_wire_bytes() {
+        let expected = [
+            (Setting::LockScreenTips, 6),
+            (Setting::StartSettingsTips, 7),
+            (Setting::ExplorerAds, 8),
+            (Setting::SearchWebResults, 9),
+            (Setting::GameBarPopups, 10),
+        ];
+        for (setting, byte) in expected {
+            for (op, op_byte) in [(Op::Query, 0), (Op::Apply, 1), (Op::Undo, 2)] {
+                let request = Request::UserSetting(setting, op);
+                assert_eq!(request.encode(), [13, byte, op_byte]);
+                assert_eq!(Request::decode_with([13, byte, op_byte], 100), Some(request));
+            }
+        }
+        assert_eq!(expected.map(|(s, _)| s), Setting::ADS_AND_TIPS);
+    }
+
+    #[test]
     fn only_page_requests_bring_a_window_forward() {
         for request in all() {
             let page = format!("{request:?}").starts_with("Open");
@@ -681,6 +700,11 @@ mod tests {
         assert!(!Request::UserSetting(Setting::SuggestedApps, Op::Apply).is_read_only());
         assert!(!Request::UserSetting(Setting::SuggestedApps, Op::Undo).is_read_only());
         assert!(!Request::BlockSuggestedApps.is_read_only());
+        for setting in Setting::ADS_AND_TIPS {
+            assert!(Request::UserSetting(setting, Op::Query).is_read_only());
+            assert!(!Request::UserSetting(setting, Op::Apply).is_read_only());
+            assert!(!Request::UserSetting(setting, Op::Undo).is_read_only());
+        }
         assert!(!Request::AppUpdate(0).is_read_only());
         assert!(Request::AppUpdatesScan.is_read_only());
         assert!(Request::AppInstallerStatus.is_read_only());
@@ -705,7 +729,16 @@ mod tests {
             Request::decode_with([13, 5, 2], 100),
             Some(Request::UserSetting(Setting::SuggestedApps, Op::Undo))
         );
-        assert_eq!(Request::decode_with([13, 6, 0], 100), None);
+        assert_eq!(
+            Request::decode_with([13, 6, 0], 100),
+            Some(Request::UserSetting(Setting::LockScreenTips, Op::Query))
+        );
+        assert_eq!(
+            Request::decode_with([13, 10, 1], 100),
+            Some(Request::UserSetting(Setting::GameBarPopups, Op::Apply))
+        );
+        assert_eq!(Request::decode_with([13, 11, 0], 100), None);
+        assert_eq!(Request::decode_with([13, 11, 2], 100), None);
         assert_eq!(Request::decode_with([13, 255, 255], 100), None);
         assert!(Request::decode_with([13, 0, 0], 0).is_some());
         assert_eq!(Request::decode_with([14, 1, 0], 100), None);
