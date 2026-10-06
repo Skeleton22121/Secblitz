@@ -158,9 +158,18 @@ mod run_key {
         s.encode_utf16().chain(Some(0)).collect()
     }
 
-    fn open(access: u32) -> Result<HKEY, u32> {
+    struct Key(HKEY);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            // SAFETY: the key was opened by `open` and is closed once.
+            unsafe { RegCloseKey(self.0) };
+        }
+    }
+
+    fn open(access: u32) -> Result<Key, u32> {
         let mut key: HKEY = null_mut();
         let path = wide(RUN);
+        // SAFETY: `path` is NUL-terminated and `key` is a valid out pointer.
         let status = unsafe {
             RegOpenKeyExW(
                 HKEY_LOCAL_MACHINE,
@@ -171,7 +180,7 @@ mod run_key {
             )
         };
         if status == 0 {
-            Ok(key)
+            Ok(Key(key))
         } else {
             Err(status)
         }
@@ -181,9 +190,10 @@ mod run_key {
         let key = open(KEY_QUERY_VALUE).ok()?;
         let name = wide(TRAY_VALUE);
         let mut size = 0u32;
+        // SAFETY: a null data pointer only asks for the value size.
         let status = unsafe {
             RegQueryValueExW(
-                key,
+                key.0,
                 name.as_ptr(),
                 null_mut(),
                 null_mut(),
@@ -191,12 +201,13 @@ mod run_key {
                 &mut size,
             )
         };
-        let out = if status == 0 && size > 0 && size <= 4096 {
+        if status == 0 && size > 0 && size <= 4096 {
             let mut buf = vec![0u16; (size as usize).div_ceil(2)];
             let mut size = (buf.len() * 2) as u32;
+            // SAFETY: `buf` holds `size` bytes, as passed in.
             let status = unsafe {
                 RegQueryValueExW(
-                    key,
+                    key.0,
                     name.as_ptr(),
                     null_mut(),
                     null_mut(),
@@ -210,9 +221,7 @@ mod run_key {
             })
         } else {
             None
-        };
-        unsafe { RegCloseKey(key) };
-        out
+        }
     }
 
     pub fn set(command: &str) -> anyhow::Result<()> {
@@ -220,9 +229,10 @@ mod run_key {
             .map_err(|s| anyhow::anyhow!("Cannot open the startup list ({s})"))?;
         let name = wide(TRAY_VALUE);
         let data = wide(command);
+        // SAFETY: `name` and `data` are NUL-terminated and the byte length matches `data`.
         let status = unsafe {
             RegSetValueExW(
-                key,
+                key.0,
                 name.as_ptr(),
                 0,
                 REG_SZ,
@@ -230,7 +240,6 @@ mod run_key {
                 (data.len() * 2) as u32,
             )
         };
-        unsafe { RegCloseKey(key) };
         anyhow::ensure!(status == 0, "Cannot save the startup entry ({status})");
         Ok(())
     }
@@ -239,8 +248,8 @@ mod run_key {
         let key = open(KEY_SET_VALUE)
             .map_err(|s| anyhow::anyhow!("Cannot open the startup list ({s})"))?;
         let name = wide(TRAY_VALUE);
-        let status = unsafe { RegDeleteValueW(key, name.as_ptr()) };
-        unsafe { RegCloseKey(key) };
+        // SAFETY: `name` is NUL-terminated and the key is open for writing.
+        let status = unsafe { RegDeleteValueW(key.0, name.as_ptr()) };
         anyhow::ensure!(
             status == 0 || status == ERROR_FILE_NOT_FOUND,
             "Cannot remove the startup entry ({status})"
