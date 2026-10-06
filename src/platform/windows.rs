@@ -272,7 +272,7 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
         "Secblitz supports Windows x64 only"
     );
     super::validate_request(action, id, value)?;
-    if let Some(id) = id.filter(|id| crate::hardening::is_hardening(id)) {
+    if let Some(id) = id.filter(|id| crate::hardening::is_hardening_check_id(id)) {
         // Changing a Windows feature goes through DISM, which is slow and
         // works through its own DismHost.exe helper. Only that fixed, compiled
         // write may start helpers; every other script runs with no descendants.
@@ -520,7 +520,7 @@ fn observe_one(id: &str) -> Result<Observation> {
 /// doubt means "not offered", never a guess.
 fn vbs_gate(id: &str, obs: &mut Observation) {
     use crate::vbs::{decide, Decision};
-    let Some(spec) = crate::hardening::spec(id).filter(|_| crate::vbs::is_vbs(id)) else {
+    let Some(spec) = crate::hardening::spec(id).filter(|_| crate::vbs::is_vbs_check_id(id)) else {
         return;
     };
     if !obs.eligible || !spec.any_unsafe(&obs.value) {

@@ -1,0 +1,972 @@
+use super::specs::*;
+use super::*;
+
+fn items(spec: &Spec, vals: &[Option<u32>]) -> Value {
+    let mut m = Map::new();
+    for (k, v) in spec.keys.iter().zip(vals) {
+        m.insert(k.name.into(), v.map_or(Value::Null, Value::from));
+    }
+    json!({ "items": m })
+}
+
+fn candidate_values(k: &Key) -> Vec<u32> {
+    if k.allowed.is_empty() {
+        // Wide ranges (timestamps, minutes) are sampled at the low end.
+        (0..=k.max.min(300)).collect()
+    } else {
+        k.allowed.to_vec()
+    }
+}
+
+#[test]
+fn catalog_is_well_formed() {
+    assert!(all().len() >= 20);
+    let mut ids = std::collections::HashSet::new();
+    for s in all() {
+        assert!(ids.insert(s.id), "duplicate id {}", s.id);
+        assert!(!s.keys.is_empty());
+        for k in s.keys {
+            if let Rule::Set {
+                safe,
+                absent_safe,
+                fix,
+            } = k.rule
+            {
+                match fix {
+                    Some(f) => {
+                        assert!(safe.contains(&f), "{} fix {f} is not safe", s.id);
+                        assert!(f <= k.max);
+                    }
+                    None => assert!(absent_safe, "{} removal needs absent_safe", s.id),
+                }
+                assert!(safe.iter().all(|n| *n <= k.max));
+                assert!(k.allowed.is_empty() || safe.iter().all(|n| k.allowed.contains(n)));
+            }
+            if s.source == Source::Registry {
+                assert!(k.path.starts_with("HKLM:\\"), "{}", s.id);
+                assert!(!k.path.contains('\''));
+            }
+        }
+        assert_eq!(s.dynamic(), s.keys[0].name == "*");
+        assert!(!s.script_json().contains("\\u0027"));
+        assert!(!s.script_json().contains('\''));
+        if !s.dynamic() {
+            s.validate(&s.catalog_target()).unwrap();
+            assert!(!s.any_unsafe(&s.catalog_target()), "{}", s.id);
+        }
+    }
+    assert!(all().iter().filter(|s| !s.ask).count() >= 6);
+    assert!(all().iter().filter(|s| s.ask).count() >= 10);
+}
+
+#[test]
+fn fixed_controls_repair_only_unsafe_keys_and_converge() {
+    for s in all().iter().filter(|s| !s.dynamic()) {
+        for (i, k) in s.keys.iter().enumerate() {
+            let Rule::Set {
+                safe,
+                absent_safe,
+                fix,
+                ..
+            } = k.rule
+            else {
+                continue;
+            };
+            let safe_vals: Vec<Option<u32>> = s
+                .keys
+                .iter()
+                .map(|k| match k.rule {
+                    Rule::Set { safe, .. } => Some(safe[0]),
+                    Rule::Exposure => Some(0),
+                })
+                .collect();
+            let mut unsafe_candidates: Vec<Option<u32>> = candidate_values(k)
+                .into_iter()
+                .filter(|n| !safe.contains(n))
+                .map(Some)
+                .collect();
+            if !absent_safe {
+                unsafe_candidates.push(None);
+            }
+            for bad in unsafe_candidates {
+                let mut vals = safe_vals.clone();
+                vals[i] = bad;
+                let before = items(s, &vals);
+                s.validate(&before).unwrap();
+                assert!(s.any_unsafe(&before), "{} {bad:?}", s.id);
+                let target = s.derive_target(&before).unwrap();
+                s.validate(&target).unwrap();
+                assert!(!s.any_unsafe(&target), "{} target unsafe", s.id);
+                assert_ne!(before, target);
+                for (j, v) in vals.iter().enumerate() {
+                    if j != i {
+                        assert_eq!(
+                            target["items"][s.keys[j].name],
+                            v.map_or(Value::Null, Value::from)
+                        );
+                    }
+                }
+                assert_eq!(
+                    target["items"][k.name],
+                    fix.map_or(Value::Null, Value::from)
+                );
+            }
+        }
+        let all_safe: Vec<Option<u32>> = s
+            .keys
+            .iter()
+            .map(|k| match k.rule {
+                Rule::Set { safe, .. } => Some(safe[0]),
+                Rule::Exposure => Some(0),
+            })
+            .collect();
+        let st = items(s, &all_safe);
+        assert!(!s.any_unsafe(&st));
+        assert_eq!(s.derive_target(&st).unwrap(), st);
+    }
+}
+
+#[test]
+fn safe_absent_defaults_count_as_protected() {
+    let pnp = spec("printer.point_and_print").unwrap();
+    let absent = items(pnp, &[None, None, None]);
+    assert!(!pnp.any_unsafe(&absent));
+    let bad = items(pnp, &[Some(0), Some(1), Some(2)]);
+    assert!(pnp.any_unsafe(&bad));
+    assert_eq!(
+        pnp.derive_target(&bad).unwrap(),
+        items(pnp, &[None, None, None])
+    );
+    let part = items(pnp, &[Some(1), Some(1), Some(1)]);
+    assert_eq!(
+        pnp.derive_target(&part).unwrap(),
+        items(pnp, &[Some(1), None, Some(1)])
+    );
+    for id in [
+        "net.llmnr",
+        "lsa.run_as_ppl",
+        "wsh.disabled",
+        "defender.asr.standard",
+    ] {
+        let s = spec(id).unwrap();
+        let vals = vec![None; s.keys.len()];
+        assert!(s.any_unsafe(&items(s, &vals)), "{id}");
+    }
+    let ppl = spec("lsa.run_as_ppl").unwrap();
+    assert!(!ppl.any_unsafe(&items(ppl, &[Some(1)])));
+    let asr = spec("defender.asr.standard").unwrap();
+    assert!(!asr.any_unsafe(&items(asr, &[Some(1), Some(6), Some(1)])));
+    assert!(asr.any_unsafe(&items(asr, &[Some(1), Some(2), Some(1)])));
+}
+
+#[test]
+fn validation_rejects_malformed_states() {
+    let ppl = spec("lsa.run_as_ppl").unwrap();
+    for bad in [
+        json!(null),
+        json!({}),
+        json!({"items": {}}),
+        json!({"items": {"RunAsPPL": 3}}),
+        json!({"items": {"RunAsPPL": -1}}),
+        json!({"items": {"RunAsPPL": 1.5}}),
+        json!({"items": {"RunAsPPL": "1"}}),
+        json!({"items": {"RunAsPPL": true}}),
+        json!({"items": {"Other": 1}}),
+        json!({"items": {"RunAsPPL": 1, "Other": 1}}),
+        json!({"items": {"RunAsPPL": 1}, "path": "x"}),
+        json!({"present": true, "value": 1}),
+    ] {
+        assert!(ppl.validate(&bad).is_err(), "accepted {bad}");
+    }
+    for ok in [
+        json!({"items": {"RunAsPPL": null}}),
+        json!({"items": {"RunAsPPL": 0}}),
+    ] {
+        ppl.validate(&ok).unwrap();
+    }
+    let asr = spec("defender.asr.standard").unwrap();
+    let g = "56a863a9-875e-4185-98a7-b882c64b5ce5";
+    let bad_action = json!({"items": {g: 3,
+        "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2": 1,
+        "e6db77e5-3df2-4cf1-b95a-636979351e5b": 1}});
+    assert!(asr.validate(&bad_action).is_err());
+    let lock = spec("accounts.lockout_policy").unwrap();
+    assert!(lock
+        .validate(&json!({"items": {"LockoutThreshold": 1000}}))
+        .is_err());
+    lock.validate(&json!({"items": {"LockoutThreshold": 0}}))
+        .unwrap();
+}
+
+#[test]
+fn dynamic_controls_validate_names_and_narrow_views() {
+    let fw = spec("net.public_sharing_exposure").unwrap();
+    fw.validate(&json!({"items": {}})).unwrap();
+    fw.validate(&json!({"items": {"FPS-SMB-In-TCP": 15, "NETDIS-LLMNR-In-UDP": 6}}))
+        .unwrap();
+    for bad in [
+        json!({"items": {"RemoteDesktop-UserMode-In-TCP": 15}}),
+        json!({"items": {"FPS-x'; calc": 15}}),
+        json!({"items": {"FPS-ok": 16}}),
+        json!({"items": {"FPS-ok": null}}),
+        json!({"items": {"fps-ok": 1}}),
+    ] {
+        assert!(fw.validate(&bad).is_err(), "accepted {bad}");
+    }
+    let before = json!({"items": {"FPS-A": 15, "FPS-B": 12, "FPS-C": 3, "FPS-D": 7}});
+    assert!(fw.any_unsafe(&before));
+    assert_eq!(
+        fw.derive_target(&before).unwrap(),
+        json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
+    );
+    let now = json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7, "FPS-NEW": 15}});
+    assert_eq!(
+        fw.view(&now, &before),
+        json!({"items": {"FPS-A": 11, "FPS-B": 4, "FPS-C": 3, "FPS-D": 7}})
+    );
+    assert_eq!(fw.catalog_target(), json!("derived-items-v1"));
+
+    let wifi = spec("wifi.risky_profiles").unwrap();
+    wifi.validate(&json!({"items": {"Cafe Guest": 1, "John's WiFi": 0}}))
+        .unwrap();
+    for bad in [
+        json!({"items": {"": 1}}),
+        json!({"items": {"a\"b": 1}}),
+        json!({"items": {"a\nb": 1}}),
+        json!({"items": {"x": 2}}),
+        json!({"items": {" padded": 1}}),
+    ] {
+        assert!(wifi.validate(&bad).is_err(), "accepted {bad}");
+    }
+    assert_eq!(
+        wifi.derive_target(&json!({"items": {"Open": 1, "Done": 0}}))
+            .unwrap(),
+        json!({"items": {"Open": 0, "Done": 0}})
+    );
+    let ppl = spec("lsa.run_as_ppl").unwrap();
+    let v = json!({"items": {"RunAsPPL": 2}});
+    assert_eq!(ppl.view(&v, &json!({"items": {}})), v);
+}
+
+#[test]
+fn network_and_defender_extensions_follow_the_research_specs() {
+    for id in [
+        "defender.asr.office",
+        "defender.asr.ransomware_usb",
+        "defender.network_protection",
+        "defender.cloud_block_level",
+        "net.stack_hardening",
+        "net.netbios",
+        "net.mdns",
+        "net.wpad",
+        "firewall.outbound_smb_internet",
+        "tls.legacy_protocols",
+    ] {
+        assert!(spec(id).unwrap().ask, "{id} must be an ASK item");
+    }
+    for id in ["defender.asr.office", "defender.asr.ransomware_usb"] {
+        assert_eq!(spec(id).unwrap().source, Source::DefenderAsr);
+        assert!(spec(id).unwrap().gate.tamper_exempt);
+    }
+    // Office rules must be Block; Warn is not enough for them.
+    let office = spec("defender.asr.office").unwrap();
+    let mut vals = vec![Some(1); 4];
+    assert!(!office.any_unsafe(&items(office, &vals)));
+    vals[2] = Some(6);
+    assert!(office.any_unsafe(&items(office, &vals)));
+    let usb = spec("defender.asr.ransomware_usb").unwrap();
+    let before = items(usb, &[Some(0), None]);
+    assert_eq!(
+        usb.derive_target(&before).unwrap(),
+        items(usb, &[Some(6), Some(6)])
+    );
+    assert!(!usb.any_unsafe(&items(usb, &[Some(1), Some(6)])));
+    // Network protection: Enabled only; audit mode is not protection.
+    let np = spec("defender.network_protection").unwrap();
+    assert!(np.any_unsafe(&items(np, &[Some(2)])));
+    assert_eq!(
+        np.derive_target(&items(np, &[Some(0)])).unwrap(),
+        items(np, &[Some(1)])
+    );
+    let cbl = spec("defender.cloud_block_level").unwrap();
+    assert_eq!(
+        cbl.derive_target(&items(cbl, &[Some(0), Some(0)])).unwrap(),
+        items(cbl, &[Some(2), Some(20)])
+    );
+    assert!(!cbl.any_unsafe(&items(cbl, &[Some(6), Some(35)])));
+    assert!(!cbl.any_unsafe(&items(cbl, &[Some(4), Some(20)])));
+    assert!(cbl.any_unsafe(&items(cbl, &[Some(2), Some(10)])));
+    for k in cbl.keys {
+        if let Rule::Set { fix, .. } = k.rule {
+            assert_ne!(fix, Some(6));
+        }
+    }
+    let stack = spec("net.stack_hardening").unwrap();
+    let ver: Vec<Value> = serde_json::from_str::<Value>(&stack.script_json()).unwrap()["keys"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let by_name = |n: &str| ver.iter().find(|k| k["name"] == n).unwrap().clone();
+    assert_eq!(
+        by_name("DisableIPSourceRouting")["valueName"],
+        "DisableIPSourceRouting"
+    );
+    assert_eq!(
+        by_name("DisableIPSourceRouting6")["valueName"],
+        "DisableIPSourceRouting"
+    );
+    assert!(by_name("DisableIPSourceRouting6")["path"]
+        .as_str()
+        .unwrap()
+        .contains("Tcpip6"));
+    assert_eq!(by_name("EnableICMPRedirect")["fix"], 0);
+    assert_eq!(by_name("NoNameReleaseOnDemand")["fix"], 1);
+    assert!(stack.reboot);
+    // TLS: the six protocol sides, Enabled 0 and DisabledByDefault 1; 0xFFFFFFFF is a legal original.
+    let tls = spec("tls.legacy_protocols").unwrap();
+    assert_eq!(tls.keys.len(), 12);
+    let names: std::collections::HashSet<_> = tls.keys.iter().map(|k| k.name).collect();
+    assert_eq!(names.len(), 12);
+    for proto in ["SSL 3.0", "TLS 1.0", "TLS 1.1"] {
+        for side in ["Client", "Server"] {
+            let path_end = format!("{proto}\\{side}");
+            assert_eq!(
+                tls.keys
+                    .iter()
+                    .filter(|k| k.path.ends_with(&path_end))
+                    .count(),
+                2,
+                "{path_end}"
+            );
+        }
+    }
+    let mut m = Map::new();
+    for k in tls.keys {
+        m.insert(
+            k.name.into(),
+            if k.value == "Enabled" {
+                json!(u32::MAX)
+            } else {
+                Value::Null
+            },
+        );
+    }
+    let before = json!({ "items": m });
+    tls.validate(&before).unwrap();
+    let target = tls.derive_target(&before).unwrap();
+    for k in tls.keys {
+        let want = if k.value == "Enabled" { 0 } else { 1 };
+        assert_eq!(target["items"][k.name], want);
+    }
+    assert!(tls
+        .validate(&json!({"items": {"ssl3.client.enabled": 2}}))
+        .is_err());
+    let nb = spec("net.netbios").unwrap();
+    assert!(nb.dynamic());
+    let a = "{11111111-1111-1111-1111-111111111111}";
+    let b = "{abcdefAB-2222-2222-2222-222222222222}";
+    nb.validate(&json!({"items": {a: 0, b: 1}})).unwrap();
+    for bad in [
+        json!({"items": {"Ethernet": 1}}),
+        json!({"items": {"{1111}": 1}}),
+        json!({"items": {"{1111111g-1111-1111-1111-111111111111}": 1}}),
+        json!({"items": {"{11111111-1111-1111-1111-111111111111}'; x": 1}}),
+        json!({"items": {a: 3}}),
+    ] {
+        assert!(nb.validate(&bad).is_err(), "accepted {bad}");
+    }
+    assert_eq!(
+        nb.derive_target(&json!({"items": {a: 0, b: 2}})).unwrap(),
+        json!({"items": {a: 2, b: 2}})
+    );
+    let fw = spec("firewall.outbound_smb_internet").unwrap();
+    assert!(fw.any_unsafe(&json!({"items": {"RulePresent": 0}})));
+    assert!(!fw.any_unsafe(&json!({"items": {"RulePresent": 1}})));
+    assert!(spec("net.mdns").unwrap().keys[0].name == "EnableMDNS");
+    assert!(spec("net.wpad").unwrap().keys[0].name == "DisableWpad");
+}
+
+#[test]
+fn core_protections_write_only_the_documented_values_and_never_a_lock() {
+    for (id, scenario) in [
+        ("vbs.memory_integrity", "HypervisorEnforcedCodeIntegrity"),
+        ("vbs.kernel_stack_protection", "KernelShadowStacks"),
+    ] {
+        let s = spec(id).unwrap();
+        assert!(s.reboot && s.ask && !s.dynamic(), "{id}");
+        let names: Vec<&str> = s.keys.iter().map(|k| k.name).collect();
+        assert_eq!(names, ["Enabled", "WasEnabledBy"], "{id}");
+        for k in s.keys {
+            assert!(k.path.ends_with(&format!("Scenarios\\{scenario}")), "{id}");
+            assert!(!k.name.contains("Lock") && !k.value.contains("Lock"));
+        }
+        let absent = items(s, &[None, None]);
+        assert!(s.any_unsafe(&absent));
+        assert_eq!(
+            s.derive_target(&absent).unwrap(),
+            items(s, &[Some(1), Some(2)])
+        );
+        let off = items(s, &[Some(0), Some(2)]);
+        assert_eq!(
+            s.derive_target(&off).unwrap(),
+            items(s, &[Some(1), Some(2)])
+        );
+        let marker = items(s, &[Some(0), Some(1)]);
+        assert_eq!(
+            s.derive_target(&marker).unwrap(),
+            items(s, &[Some(1), Some(2)])
+        );
+        let on = items(s, &[Some(1), Some(2)]);
+        assert!(!s.any_unsafe(&on));
+        assert_eq!(s.derive_target(&on).unwrap(), on);
+        assert!(s
+            .validate(&json!({"items": {"Enabled": 2, "WasEnabledBy": 2}}))
+            .is_err());
+        assert!(s.validate(&json!({"items": {"Enabled": 1}})).is_err());
+        let gate = serde_json::from_str::<Value>(&s.script_json()).unwrap()["gate"].clone();
+        assert!(gate["ownPolicyKey"]
+            .as_str()
+            .unwrap()
+            .ends_with("Windows\\DeviceGuard"));
+        assert!(gate["areas"].as_array().unwrap().len() >= 2);
+    }
+}
+
+/// With SECBLITZ_PARITY_OUT set, writes every spec with the Rust verdict (safe / fix) per candidate value; the PowerShell fixture replays it so both implementations provably agree.
+#[test]
+fn export_rule_parity_fixture_for_powershell() {
+    let Ok(path) = std::env::var("SECBLITZ_PARITY_OUT") else {
+        return;
+    };
+    let mut out = Vec::new();
+    for s in all() {
+        let mut cases = Vec::new();
+        for k in s.keys {
+            let mut values: Vec<Option<u32>> = vec![None];
+            values.extend((0..=k.max.min(16)).map(Some));
+            values.push(Some(k.max));
+            values.extend(k.allowed.iter().map(|n| Some(*n)));
+            values.extend(match k.rule {
+                Rule::Set { safe, .. } => safe.iter().map(|n| Some(*n)).collect::<Vec<_>>(),
+                Rule::Exposure => vec![],
+            });
+            values.sort_unstable();
+            values.dedup();
+            for v in values {
+                cases.push(json!({
+                    "key": k.name, "value": v,
+                    "safe": is_safe(k.rule, v), "fix": fix_of(k.rule, v),
+                }));
+            }
+        }
+        out.push(json!({
+            "id": s.id,
+            "spec": serde_json::from_str::<Value>(&s.script_json()).unwrap(),
+            "cases": cases,
+        }));
+    }
+    std::fs::write(path, serde_json::to_string(&out).unwrap()).unwrap();
+}
+
+#[test]
+fn system_dynamic_controls_accept_only_their_own_names() {
+    let svc = spec("services.legacy_remote").unwrap();
+    svc.validate(&json!({"items": {"RemoteRegistry": 10, "sshd": 4, "WinRM": 13}}))
+        .unwrap();
+    for bad in [
+        json!({"items": {"Spooler": 4}}),
+        json!({"items": {"winrm": 4}}),
+        json!({"items": {"WinRM": 1}}),
+        json!({"items": {"WinRM": 14}}),
+        json!({"items": {"WinRM'; calc": 4}}),
+    ] {
+        assert!(svc.validate(&bad).is_err(), "accepted {bad}");
+    }
+    let before = json!({"items": {"WinRM": 10, "sshd": 3, "SNMP": 12, "FTPSVC": 5}});
+    assert_eq!(
+        svc.derive_target(&before).unwrap(),
+        json!({"items": {"WinRM": 4, "sshd": 3, "SNMP": 4, "FTPSVC": 4}})
+    );
+
+    let ex = spec("defender.exclusions_risky").unwrap();
+    ex.validate(&json!({"items": {
+        "path:C:\\Users\\Bob\\Downloads": 1, "ext:exe": 0, "proc:powershell.exe": 1,
+        "path:D:\\Gäme's": 1,
+    }}))
+    .unwrap();
+    for bad in [
+        json!({"items": {"": 1}}),
+        json!({"items": {"path:": 1}}),
+        json!({"items": {"file:C:\\x": 1}}),
+        json!({"items": {"PATH:C:\\x": 1}}),
+        json!({"items": {"path:C:\\\"x": 1}}),
+        json!({"items": {"ext:exe\n": 1}}),
+        json!({"items": {" path:C:\\x": 1}}),
+        json!({"items": {"ext:exe": 2}}),
+    ] {
+        assert!(ex.validate(&bad).is_err(), "accepted {bad}");
+    }
+    let template = json!({"items": {"ext:exe": 1, "path:C:\\": 1}});
+    let now = json!({"items": {"ext:dll": 1}});
+    assert_eq!(
+        ex.view(&now, &template),
+        json!({"items": {"ext:dll": 1, "ext:exe": 0, "path:C:\\": 0}})
+    );
+    let fw = spec("net.public_sharing_exposure").unwrap();
+    assert_eq!(
+        fw.view(&json!({"items": {}}), &json!({"items": {"FPS-A": 15}})),
+        json!({"items": {}})
+    );
+}
+
+#[test]
+fn handled_item_controls_accept_only_their_own_names_and_values() {
+    let svc = spec("services.unquoted_paths").unwrap();
+    svc.validate(&json!({"items": {"Acme Updater": 1, "MSSQL$SQLEXPRESS": 0, "a.b-c_d": 2, "Intel(R) Update {1}+x": 1}}))
+        .unwrap();
+    for bad in [
+        json!({"items": {"": 1}}),
+        json!({"items": {" Acme": 1}}),
+        json!({"items": {"Acme\\Run": 1}}),
+        json!({"items": {"Acme\"x": 1}}),
+        json!({"items": {"Acme/Run": 1}}),
+        json!({"items": {"Acme*": 1}}),
+        json!({"items": {"Acme[1]": 1}}),
+        json!({"items": {"Acme\n": 1}}),
+        json!({"items": {"Acme": 3}}),
+        json!({"items": {"x".repeat(257): 1}}),
+    ] {
+        assert!(svc.validate(&bad).is_err(), "accepted {bad}");
+    }
+    let fw = spec("firewall.user_dir_inbound_allow").unwrap();
+    fw.validate(
+        &json!({"items": {"{8C1D4B7E-0000-4000-8000-000000000000}": 1, "uTorrent (TCP-In)": 0}}),
+    )
+    .unwrap();
+    for bad in [
+        json!({"items": {"*": 1}}),
+        json!({"items": {"Any*": 1}}),
+        json!({"items": {"a?b": 1}}),
+        json!({"items": {"[x]": 1}}),
+        json!({"items": {"a\"b": 1}}),
+        json!({"items": {"a\nb": 1}}),
+        json!({"items": {"x".repeat(201): 1}}),
+    ] {
+        assert!(fw.validate(&bad).is_err(), "accepted {bad}");
+    }
+    let hosts = spec("net.hosts_file").unwrap();
+    hosts.validate(&json!({"items": {"hosts": 1}})).unwrap();
+    assert!(hosts.validate(&json!({"items": {"hosts2": 1}})).is_err());
+    assert!(hosts.validate(&json!({"items": {"hosts": 3}})).is_err());
+    let startup = spec("persistence.run_and_tasks").unwrap();
+    startup
+        .validate(&json!({"items": {
+            "run-machine:Updater": 1, "run-machine32:Old": 0, "run-user:My App": 1,
+            "folder-user:Helper.lnk": 2, "folder-machine:x.bat": 1, "task:\\Vendor\\Sync": 1,
+            "task:\\Top": 0,
+        }}))
+        .unwrap();
+    for bad in [
+        json!({"items": {"run-user:": 1}}),
+        json!({"items": {"run:Updater": 1}}),
+        json!({"items": {"task:Vendor\\Sync": 1}}),
+        json!({"items": {"task:\\Vendor\\": 1}}),
+        json!({"items": {"run-user:a*": 1}}),
+        json!({"items": {"run-user:a\"b": 1}}),
+        json!({"items": {" run-user:a": 1}}),
+        json!({"items": {"run-user:a": 4}}),
+    ] {
+        assert!(startup.validate(&bad).is_err(), "accepted {bad}");
+    }
+    for id in [
+        "services.unquoted_paths",
+        "firewall.user_dir_inbound_allow",
+        "net.hosts_file",
+        "persistence.run_and_tasks",
+    ] {
+        let s = spec(id).unwrap();
+        assert!(s.ask && s.dynamic() && !s.reboot, "{id}");
+        let key = match id {
+            "net.hosts_file" => "hosts",
+            "persistence.run_and_tasks" => "run-user:A",
+            _ => "A",
+        };
+        let before = json!({"items": {key: 1}});
+        assert!(s.any_unsafe(&before));
+        assert_eq!(
+            s.derive_target(&before).unwrap(),
+            json!({"items": {key: 0}})
+        );
+        for safe in [0, 2] {
+            let state = json!({"items": {key: safe}});
+            assert!(!s.any_unsafe(&state), "{id} {safe}");
+            assert_eq!(s.derive_target(&state).unwrap(), state);
+        }
+        let template = json!({"items": {key: 1}});
+        assert_eq!(
+            s.view(&json!({"items": {key: 2, "other": 1}}), &template),
+            json!({"items": {key: 2}})
+        );
+    }
+}
+
+#[test]
+fn hosts_rules_match_the_security_check_probe() {
+    // The fix and the Tools check must flag exactly the same lines: both
+    // scripts carry the same two patterns (\z in the fix is $ in the probe).
+    let probe = include_str!("../diagnostics/probes.ps1");
+    let handled = include_str!("../platform/hardening.handled.ps1");
+    for var in ["$hHostsBroad", "$hHostsUpdate"] {
+        let line = handled
+            .lines()
+            .find(|l| l.starts_with(&format!("{var} = '")))
+            .unwrap_or_else(|| panic!("{var}"));
+        let pattern = line.split('\'').nth(1).unwrap().replace("\\z", "$");
+        assert!(probe.contains(&pattern), "{var} drifted from the probe");
+    }
+    let risky = handled
+        .lines()
+        .find(|l| l.starts_with("$hUserDirPattern = '"))
+        .unwrap();
+    let pattern = risky.split('\'').nth(1).unwrap();
+    let rules = include_str!("../diagnostics/probes.ps1");
+    assert!(
+        rules.contains(pattern),
+        "the firewall pattern drifted from the probe"
+    );
+}
+
+#[test]
+fn old_accounts_are_named_by_user_sid_and_never_built_in_ones() {
+    let st = spec("accounts.stale_enabled").unwrap();
+    assert!(st.ask && st.dynamic() && !st.reboot);
+    let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+    st.validate(&json!({"items": {a: 1, "S-1-5-21-1-2-3-1000": 0}}))
+        .unwrap();
+    for bad in [
+        // Built-in Administrator, Guest, DefaultAccount, WDAGUtilityAccount.
+        "S-1-5-21-1111111111-2222222222-3333333333-500",
+        "S-1-5-21-1111111111-2222222222-3333333333-501",
+        "S-1-5-21-1111111111-2222222222-3333333333-503",
+        "S-1-5-21-1111111111-2222222222-3333333333-504",
+        "S-1-5-21-1111111111-2222222222-3333333333-999",
+        "S-1-5-21-1111111111-2222222222-3333333333-01001",
+        "S-1-5-21-1111111111-2222222222-3333333333",
+        "S-1-5-21-1111111111-2222222222-3333333333-1001-5",
+        "S-1-5-32-544",
+        "S-1-1-0",
+        "Bob",
+        "s-1-5-21-1-2-3-1001",
+        "S-1-5-21-1-2-3-1001'; x",
+        "S-1-5-21-1-2-3-99999999999",
+    ] {
+        assert!(
+            st.validate(&json!({"items": {bad: 1}})).is_err(),
+            "accepted {bad}"
+        );
+    }
+    assert!(st.validate(&json!({"items": {a: 2}})).is_err());
+    assert!(st.any_unsafe(&json!({"items": {a: 1}})));
+    assert!(!st.any_unsafe(&json!({"items": {a: 0}})));
+    assert_eq!(
+        st.derive_target(&json!({"items": {a: 1}})).unwrap(),
+        json!({"items": {a: 0}})
+    );
+    assert_eq!(st.catalog_target(), json!("derived-items-v1"));
+}
+
+#[test]
+fn broad_share_entries_name_one_share_one_broad_sid_and_one_right() {
+    let sh = spec("smb.shares_exposed").unwrap();
+    assert!(sh.ask && sh.dynamic() && !sh.reboot);
+    for ok in [
+        "Photos|S-1-1-0|Change",
+        "Work files|S-1-5-32-546|Full",
+        "Public|S-1-5-7|Change",
+        "Fotos für alle|S-1-1-0|Full",
+        "Mom's files|S-1-1-0|Change",
+        "Backup$|S-1-1-0|Full",
+    ] {
+        sh.validate(&json!({"items": {ok: 1}})).unwrap();
+    }
+    for bad in [
+        "C$|S-1-1-0|Full",
+        "ADMIN$|S-1-1-0|Full",
+        "IPC$|S-1-1-0|Change",
+        "print$|S-1-1-0|Full",
+        "c$|S-1-1-0|Full",
+        "Print$|S-1-1-0|Full",
+        "Photos|S-1-5-11|Change",
+        "Photos|S-1-1-0|Read",
+        "Photos|S-1-1-0|change",
+        "Photos|Everyone|Change",
+        "Photos|S-1-1-0",
+        "Photos|S-1-1-0|Change|x",
+        "|S-1-1-0|Change",
+        " Photos|S-1-1-0|Change",
+        "Pho\"tos|S-1-1-0|Change",
+        "Pho\ntos|S-1-1-0|Change",
+        "Pho\\tos|S-1-1-0|Change",
+        "Pho:tos|S-1-1-0|Change",
+    ] {
+        assert!(
+            sh.validate(&json!({"items": {bad: 1}})).is_err(),
+            "accepted {bad}"
+        );
+    }
+    assert!(sh
+        .validate(&json!({"items": {"Photos|S-1-1-0|Full": 2}}))
+        .is_err());
+    let long = format!("{}|S-1-1-0|Full", "x".repeat(81));
+    assert!(sh.validate(&json!({"items": {long: 1}})).is_err());
+}
+
+#[test]
+fn recorded_items_are_compared_exactly_and_new_items_never_block_undo() {
+    for id in ["accounts.stale_enabled", "smb.shares_exposed"] {
+        let s = spec(id).unwrap();
+        assert!(s.exact_recorded(), "{id}");
+        let (a, b, new) = if id == "smb.shares_exposed" {
+            (
+                "Photos|S-1-1-0|Change",
+                "Work|S-1-1-0|Full",
+                "New|S-1-1-0|Full",
+            )
+        } else {
+            (
+                "S-1-5-21-1-2-3-1001",
+                "S-1-5-21-1-2-3-1002",
+                "S-1-5-21-1-2-3-1003",
+            )
+        };
+        let recorded = json!({"items": {a: 1, b: 1}});
+        let observed = json!({"items": {a: 0, new: 1}});
+        assert_eq!(s.view(&observed, &recorded), json!({"items": {a: 0, b: 0}}));
+        assert_eq!(s.view(&json!({"items": {a: 1, b: 1}}), &recorded), recorded);
+    }
+    assert!(!spec("net.public_sharing_exposure")
+        .unwrap()
+        .exact_recorded());
+    assert!(!spec("defender.exclusions_risky").unwrap().exact_recorded());
+}
+
+#[test]
+fn browser_warning_policy_only_removes_values_that_switch_the_warning_off() {
+    let b = spec("smartscreen.browser_policy").unwrap();
+    assert!(b.ask && !b.dynamic() && !b.reboot);
+    assert_eq!(b.source, Source::Registry);
+    let names: Vec<_> = b.keys.iter().map(|k| k.name).collect();
+    assert_eq!(
+        names,
+        [
+            "SmartScreenEnabled",
+            "SafeBrowsingProtectionLevel",
+            "SafeBrowsingEnabled"
+        ]
+    );
+    for k in b.keys {
+        let Rule::Set {
+            fix, absent_safe, ..
+        } = k.rule
+        else {
+            unreachable!()
+        };
+        assert_eq!(fix, None, "{}", k.name);
+        assert!(absent_safe, "{}", k.name);
+        assert!(
+            k.path.starts_with("HKLM:\\SOFTWARE\\Policies\\"),
+            "{}",
+            k.name
+        );
+    }
+    assert!(!b.any_unsafe(&items(b, &[None, None, None])));
+    assert!(!b.any_unsafe(&items(b, &[Some(1), Some(2), Some(1)])));
+    assert!(b.any_unsafe(&items(b, &[Some(0), None, None])));
+    assert!(b.any_unsafe(&items(b, &[None, Some(0), None])));
+    assert!(b.any_unsafe(&items(b, &[None, None, Some(0)])));
+    assert_eq!(
+        b.derive_target(&items(b, &[Some(0), Some(2), Some(0)]))
+            .unwrap(),
+        items(b, &[None, Some(2), None])
+    );
+    assert!(b.validate(&items(b, &[Some(3), None, None])).is_err());
+    assert!(b.gate.areas.contains(&"Edge"));
+    assert!(b
+        .gate
+        .policy_values
+        .contains(&(CHROME_POLICY, "CloudManagementEnrollmentToken")));
+    assert!(b
+        .gate
+        .policy_values
+        .contains(&(EDGE_POLICY, "EdgeManagementEnrollmentToken")));
+}
+
+#[test]
+fn system_controls_follow_the_research_exclusions() {
+    // Never ForceRelocateImages, never telemetry 0, never RunAsPPL 1-style locks.
+    let mit = spec("system.exploit_mitigations").unwrap();
+    let names: Vec<_> = mit.keys.iter().map(|k| k.name).collect();
+    assert_eq!(names, ["DEP", "SEHOP", "BottomUp", "HighEntropy", "CFG"]);
+    let diag = spec("privacy.diagnostic_data_level").unwrap();
+    let Rule::Set { fix, .. } = diag.keys[0].rule else {
+        unreachable!()
+    };
+    assert_eq!(fix, Some(1));
+    assert!(spec("ntlm.extras")
+        .unwrap()
+        .keys
+        .iter()
+        .all(|k| k.name != "UseMachineId"));
+    for id in [
+        "ntlm.extras",
+        "driver.vulnerable_blocklist",
+        "ps.v2_engine",
+        "printer.spooler_remote",
+        "services.legacy_remote",
+        "session.lock_on_wake",
+        "update.store_autoupdate_policy",
+        "update.paused",
+        "smartscreen.apps",
+        "privacy.recall",
+        "privacy.diagnostic_data_level",
+        "privacy.delivery_optimization",
+        "privacy.clipboard_sync",
+        "defender.exclusions_risky",
+    ] {
+        assert!(is_ask_check_id(id), "{id} must be a choice");
+    }
+    assert!(!is_ask_check_id("system.exploit_mitigations"));
+    assert!(spec("update.paused")
+        .unwrap()
+        .keys
+        .iter()
+        .all(|k| k.max <= i32::MAX as u32));
+}
+
+#[test]
+fn access_controls_are_choices_that_change_exactly_one_thing() {
+    for id in [
+        "accounts.autologon",
+        "remote_desktop.disabled",
+        "smb1.disabled",
+    ] {
+        assert!(is_ask_check_id(id), "{id} must be a choice");
+    }
+    let a = spec("accounts.autologon").unwrap();
+    assert_eq!(a.source, Source::WinlogonAutoLogon);
+    assert!(!a.reboot && !a.dynamic());
+    assert_eq!(a.keys.len(), 1);
+    assert_eq!(a.keys[0].name, "AutoAdminLogon");
+    assert!(a.keys[0].path.ends_with(r"\Winlogon"));
+    let on = items(a, &[Some(1)]);
+    assert!(a.any_unsafe(&on));
+    assert_eq!(a.derive_target(&on).unwrap(), items(a, &[Some(0)]));
+    assert!(!a.any_unsafe(&items(a, &[None])));
+    assert!(!a.any_unsafe(&items(a, &[Some(0)])));
+    assert!(a.validate(&items(a, &[Some(2)])).is_err());
+    let json = a.script_json();
+    for never in ["DefaultPassword", "DefaultUserName", "AutoLogonCount"] {
+        assert!(!json.contains(never), "{never} must never be touched");
+    }
+    let r = spec("remote_desktop.disabled").unwrap();
+    assert_eq!(r.source, Source::Registry);
+    assert!(!r.reboot && r.keys.len() == 1);
+    assert_eq!(r.keys[0].name, "fDenyTSConnections");
+    assert!(r
+        .gate
+        .policy_values
+        .iter()
+        .any(|(p, n)| { p.ends_with(r"\Terminal Services") && *n == "fDenyTSConnections" }));
+    assert!(r.any_unsafe(&items(r, &[Some(0)])));
+    assert!(!r.any_unsafe(&items(r, &[Some(1)])));
+    assert_eq!(
+        r.derive_target(&items(r, &[Some(0)])).unwrap(),
+        items(r, &[Some(1)])
+    );
+    let s = spec("smb1.disabled").unwrap();
+    assert_eq!(s.source, Source::SmbFeature);
+    assert!(s.reboot && !s.dynamic());
+    let names: Vec<_> = s.keys.iter().map(|k| k.name).collect();
+    assert_eq!(
+        names,
+        [
+            "SMB1Protocol",
+            "SMB1Protocol-Client",
+            "SMB1Protocol-Server",
+            "SMB1Protocol-Deprecation"
+        ]
+    );
+    let before = items(s, &[Some(1), Some(1), Some(0), Some(1)]);
+    assert_eq!(
+        s.derive_target(&before).unwrap(),
+        items(s, &[Some(0), Some(0), Some(0), Some(0)])
+    );
+    assert!(!s.any_unsafe(&items(s, &[Some(0), Some(0), Some(0), Some(0)])));
+    assert!(s.validate(&json!({"items": {"SMB1Protocol": 1}})).is_err());
+}
+
+#[test]
+fn recovery_tools_are_a_plain_fix_that_only_turns_them_back_on() {
+    let r = spec("recovery.winre_enabled").unwrap();
+    assert_eq!(r.source, Source::RecoveryTools);
+    assert!(!r.ask && !r.reboot && !r.dynamic());
+    assert_eq!(r.keys.len(), 1);
+    assert_eq!((r.keys[0].name, r.keys[0].path), ("Enabled", ""));
+    let off = items(r, &[Some(0)]);
+    assert!(r.any_unsafe(&off));
+    assert_eq!(r.derive_target(&off).unwrap(), items(r, &[Some(1)]));
+    assert!(!r.any_unsafe(&items(r, &[Some(1)])));
+    assert!(r.any_unsafe(&items(r, &[None])));
+    assert!(r.validate(&items(r, &[Some(2)])).is_err());
+    assert!(r
+        .validate(&json!({"items": {"Enabled": 1, "Other": 0}}))
+        .is_err());
+    assert!(r.validate(&json!({"items": {}})).is_err());
+    let json = r.script_json();
+    assert!(json.contains("\"source\":\"RecoveryTools\""), "{json}");
+    for never in ["bcdedit", "BitLocker", "manage-bde", "diskpart"] {
+        assert!(!json.contains(never), "{never}");
+    }
+    // The backend starts exactly one program, ReAgentc.exe, for exactly
+    // two changes, hidden and with every output captured. Nothing else in
+    // the hardening scripts starts a program or edits start-up settings.
+    let script = include_str!("../platform/hardening.ps1");
+    let start = script.find("function HRunReagent(").unwrap();
+    let body = &script[start..start + script[start..].find("\n}\n").unwrap()];
+    for must in [
+        "@('/enable', '/disable') -cnotcontains $verb",
+        "$start.UseShellExecute = $false",
+        "$start.CreateNoWindow = $true",
+        "$start.RedirectStandardInput = $true",
+        "$start.RedirectStandardOutput = $true",
+        "$start.RedirectStandardError = $true",
+    ] {
+        assert!(body.contains(must), "{must}");
+    }
+    assert!(script.contains("'System32\\ReAgentc.exe'"));
+    assert_eq!(script.matches("[Diagnostics.Process]::Start(").count(), 1);
+    for script in [script, include_str!("../platform/hardening.handled.ps1")] {
+        for never in [
+            "bcdedit",
+            "manage-bde",
+            "diskpart",
+            "Start-Process",
+            "/boottore",
+            "/setreimage",
+        ] {
+            assert!(
+                !script.to_lowercase().contains(&never.to_lowercase()),
+                "{never}"
+            );
+        }
+    }
+}
+
+#[test]
+fn script_json_round_trips_and_is_single_quote_free() {
+    for s in all() {
+        let v: Value = serde_json::from_str(&s.script_json()).unwrap();
+        assert_eq!(v["id"], s.id);
+        assert_eq!(v["keys"].as_array().unwrap().len(), s.keys.len());
+    }
+}
