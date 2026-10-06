@@ -1,0 +1,261 @@
+name: Publish website
+
+# Deploys the website for a release the owner has just published by hand:
+# the new download links, the checksum, and the signed update feed
+# (releases/stable.json) that every installed copy of Secblitz trusts.
+#
+# Two jobs, so the checks run first and the owner approves a verified result:
+#
+#   verify   no secrets. Checks the tag, downloads the release files, checks
+#            their hashes, their build attestations and the owner's offline
+#            signature on the update feed, then builds the exact site to deploy.
+#   deploy   runs in the GitHub Environment "website" (the owner configures
+#            required reviewers there, and restricts it to tags v*). It is the
+#            only place the Cloudflare secrets exist. It deploys the verified
+#            site and then fetches the live site to compare it byte for byte.
+#
+# Runs on the tag itself, for the "published" event. To retry: Actions,
+# Publish website, Run workflow, choose the TAG under "Use workflow from" and
+# type the same tag below. The feed is never created here: the signing key is
+# offline and this workflow only checks the owner's signature with the public
+# key pinned in the repository.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release tag, for example v0.8.0. Must be the same tag as chosen under 'Use workflow from'."
+        required: true
+        type: string
+
+permissions: {}
+
+# Never two deploys at once. A second one waits.
+concurrency:
+  group: publish-website
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the release and build the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read       # read the repository and the release files
+      attestations: read   # gh attestation verify
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      sha: ${{ steps.tag.outputs.sha }}
+      site-digest: ${{ steps.site.outputs.digest }}
+    steps:
+      # The run is on the tag, so this checks out exactly the tagged commit.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the Python packages the checks need (hash-pinned)
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --disable-pip-version-check --require-hashes --only-binary=:all: -r scripts/requirements-release.txt
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Check the tag, main, Cargo.toml, the changelog and the website version
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          TAG="$REF_NAME"
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::Run this on a tag. Choose the tag under 'Use workflow from'."; exit 1
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_TAG" != "$TAG" ]; then
+            echo "::error::The tag you typed does not match the tag chosen under 'Use workflow from'."; exit 1
+          fi
+          if [ "$EVENT_NAME" = "release" ] && [ "$RELEASE_TAG" != "$TAG" ]; then
+            echo "::error::The published release is not for the tag this run started on."; exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH."; exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          head=$(git rev-parse HEAD)
+          if [ "$(git rev-parse "refs/tags/$TAG^{commit}")" != "$head" ]; then
+            echo "::error::The checkout is not the tagged commit."; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$head" origin/main; then
+            echo "::error::Tag $TAG is not on the main branch."; exit 1
+          fi
+          cargo_version=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -n 1)
+          if [ "$cargo_version" != "$version" ]; then
+            echo "::error::Tag $TAG does not match Cargo.toml version $cargo_version."; exit 1
+          fi
+          # A dated changelog section with entries must exist for this version.
+          python3 scripts/release-notes.py "$version" > /dev/null
+          # Every version string and download link on the website and README equals the tag.
+          python3 scripts/bump-version.py "$version" --check-site
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
+      - name: Download the release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Only a real, published, final release. Never a draft or a pre-release.
+          gh release view "$TAG" --json isDraft,isPrerelease,tagName > release.json
+          if ! jq -e '(.isDraft | not) and (.isPrerelease | not)' release.json > /dev/null; then
+            echo "::error::The release is a draft or a pre-release. Publish it as a normal release first."; exit 1
+          fi
+          # The release must carry exactly the four expected files: the setup, the
+          # portable exe, SHA256SUMS and the owner's signed update feed.
+          gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort > assets.list
+          printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" SHA256SUMS stable.json | LC_ALL=C sort > assets.expected
+          if ! diff assets.expected assets.list; then
+            echo "::error::The release files are not exactly the expected four (see the diff above). Attach the signed stable.json and nothing else."; exit 1
+          fi
+          mkdir assets
+          gh release download "$TAG" --dir assets
+          ls -l assets
+      - name: Check SHA256SUMS against the files
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          # Exactly the two files, nothing else listed, and every hash must match.
+          expected=$(printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" | LC_ALL=C sort)
+          listed=$(awk '{print $2}' SHA256SUMS | LC_ALL=C sort)
+          if [ "$expected" != "$listed" ] || [ "$(wc -l < SHA256SUMS)" -ne 2 ]; then
+            echo "::error::SHA256SUMS must list exactly the setup and the portable exe."; exit 1
+          fi
+          sha256sum --check --strict SHA256SUMS
+      - name: Verify the build attestations (this repository, release.yml, this tag and commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          for file in "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe"; do
+            gh attestation verify "$file" \
+              --repo "$REPO" \
+              --signer-workflow "$REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG" \
+              --source-digest "$SHA" \
+              --deny-self-hosted-runners
+          done
+      - name: Verify the owner-signed update feed (pinned public key, version, setup hash)
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Checks: signature against assets/update-public-key.hex, schema and
+          # target, version equals the tag, filename, size and SHA-256 equal the
+          # released setup, and the feed is neither future-dated nor expired.
+          python3 scripts/prepare-pages.py --verify-feed assets/stable.json --installer-directory assets --expected-version "$VERSION"
+      - name: Fetch the older downloads and check their pinned hashes
+        run: python3 scripts/historical-downloads.py fetch --dest historical
+      - name: Build the site to deploy
+        id: site
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/assemble-site.py --version "$VERSION" --assets assets --historical historical --output dist/pages
+          # A fingerprint of the whole tree. The deploy job must see the same one.
+          (cd dist/pages && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > site.sha256
+          cat site.sha256
+          echo "digest=$(sha256sum site.sha256 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Keep the verified site for the deploy job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: site
+          path: dist/pages
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Cloudflare Pages and check the live site
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The owner approves here. The Cloudflare secrets exist only in this environment.
+    environment: website
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Get the verified site
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: site
+          path: dist/pages
+      - name: Check the site is exactly what was verified
+        env:
+          EXPECTED: ${{ needs.verify.outputs.site-digest }}
+        run: |
+          set -euo pipefail
+          (cd dist/pages && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > site.sha256
+          actual=$(sha256sum site.sha256 | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED" ]; then
+            echo "::error::The site changed between the verify job and the deploy job. Not deploying."; exit 1
+          fi
+          echo "Site fingerprint $actual matches."
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.12.0"
+          package-manager-cache: false
+      - name: Install the pinned deploy tool (wrangler, from package-lock.json)
+        run: npm ci --prefix deploy --ignore-scripts --no-audit --no-fund
+      - name: Deploy to Cloudflare Pages
+        env:
+          # The only step that sees the token. Scope it to this one project (docs/RELEASING.md).
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+          # The Pages production branch. Set the variable only if it is not "main".
+          PAGES_BRANCH: ${{ vars.CLOUDFLARE_PAGES_BRANCH || 'main' }}
+          COMMIT_SHA: ${{ needs.verify.outputs.sha }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::The website environment needs the secret CLOUDFLARE_API_TOKEN and the variable CLOUDFLARE_ACCOUNT_ID (docs/RELEASING.md)."; exit 1
+          fi
+          # Project name and output folder come from wrangler.jsonc.
+          project=$(sed -n 's/^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' wrangler.jsonc | head -n 1)
+          deploy/node_modules/.bin/wrangler pages deploy dist/pages \
+            --project-name "$project" \
+            --branch "$PAGES_BRANCH" \
+            --commit-hash "$COMMIT_SHA" \
+            --commit-message "Secblitz $TAG" \
+            --commit-dirty=false \
+            --skip-caching
+      - name: Compare the live site with what was deployed
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          # Optional: more hostnames that must serve the same files, separated by spaces
+          # (for example the legacy feed host). The app's own update origin is always checked.
+          EXTRA_ORIGINS: ${{ vars.SITE_EXTRA_ORIGINS }}
+        run: |
+          set -euo pipefail
+          args=(--origin "$(tr -d '[:space:]' < assets/update-origin.txt)")
+          for origin in $EXTRA_ORIGINS; do args+=(--origin "$origin"); done
+          python3 scripts/verify-live-site.py --site dist/pages --version "$VERSION" "${args[@]}"

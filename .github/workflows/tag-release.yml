@@ -1,16 +1,22 @@
 name: Tag release
 
 # When a "Release X.Y.Z" commit (from the bump pull request) lands on main and
-# the tag does not exist yet, create the tag v<X.Y.Z> and start release.yml.
-# A tag created with the built-in token does not start other workflows by
-# itself, so this workflow starts release.yml explicitly.
+# the tag does not exist yet, create the tag vX.Y.Z and start release.yml on it.
+#
+# Why the explicit start: a tag created with the built-in token does not start
+# any other workflow (GitHub blocks that on purpose, so a token cannot trigger
+# runs by itself). So after creating the tag this job asks for a release run
+# with a workflow_dispatch on the tag ref. Running on the tag (not on main)
+# means the release workflow, the built source and the commit in the build
+# attestations are exactly the tagged commit.
+#
+# The tag is created through the API, so no credential is left in the checkout.
 on:
   push:
     branches:
       - main
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: tag-release
@@ -18,19 +24,21 @@ concurrency:
 
 jobs:
   tag:
-    name: Tag the release commit
+    name: Tag the release commit and start the build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
-      actions: write
+      contents: write   # create the tag
+      actions: write    # start release.yml (workflow_dispatch)
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          persist-credentials: true
+          persist-credentials: false
       - name: Create the tag and start the release build
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
           MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
@@ -50,11 +58,14 @@ jobs:
             echo "::error::Commit says $version but Cargo.toml says $cargo_version."; exit 1
           fi
           python3 scripts/release-notes.py "$version" > /dev/null
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+          python3 scripts/bump-version.py "$version" --check-site
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
             echo "Tag $tag already exists. Nothing to do."; exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "Secblitz $version" "$GITHUB_SHA"
-          git push origin "refs/tags/$tag"
-          gh workflow run release.yml --ref main -f "tag=$tag"
+          # An annotated tag object, then the ref that points to it.
+          object=$(gh api "repos/$GH_REPO/git/tags" \
+            -f tag="$tag" -f message="Secblitz $version" -f object="$COMMIT_SHA" -f type=commit --jq .sha)
+          gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$object" > /dev/null
+          echo "Created $tag on $COMMIT_SHA."
+          gh workflow run release.yml --ref "$tag" -f "tag=$tag"
+          echo "Started the release build for $tag."
