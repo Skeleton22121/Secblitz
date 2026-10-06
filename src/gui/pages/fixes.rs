@@ -384,7 +384,7 @@ fn other_line(
     if bucket == Bucket::Managed {
         (None, "This PC's owner controls this setting, so we leave it as it is.")
     } else if has_guide && bucket == Bucket::Look && !a.impact.is_empty() {
-        (Some("Leaves you open to:"), a.impact)
+        (Some("Turning it on protects you from:"), a.impact)
     } else {
         (None, a.next)
     }
@@ -1322,9 +1322,9 @@ mod tests {
         assert_eq!(more.why, None);
         assert_eq!(more.tech.as_deref(), Some("Not protected"));
         assert_eq!(more.items.unwrap().1, vec!["Firewall: on".to_string()]);
-        let more = details(&["Leaves you open to: x"], Some("Do y.".into()), None, "Not protected · Do y.").unwrap();
+        let more = details(&["Turning it on protects you from: x"], Some("Do y.".into()), None, "Not protected · Do y.").unwrap();
         assert_eq!((more.why.as_deref(), more.tech.as_deref()), (Some("Do y."), Some("Not protected")));
-        let more = details(&["Leaves you open to: x"], Some("We can fix this. Junk is blocked.".into()), None, "Can fix").unwrap();
+        let more = details(&["Turning it on protects you from: x"], Some("We can fix this. Junk is blocked.".into()), None, "Can fix").unwrap();
         assert_eq!(more.tech, None);
         let more = details(&["Turn it on"], None, None, "On · Managed by your organization").unwrap();
         assert_eq!(more.tech.as_deref(), Some("On · Managed by your organization"));
@@ -1381,7 +1381,7 @@ mod tests {
         let a = advice::for_finding("SMB1", "attention", "");
         assert_eq!(
             other_line(Bucket::Look, true, &a),
-            (Some("Leaves you open to:"), a.impact)
+            (Some("Turning it on protects you from:"), a.impact)
         );
     }
 

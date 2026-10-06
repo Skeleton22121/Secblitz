@@ -66,7 +66,6 @@ pub(super) const ROWS: &[[&str; 5]] = &[
     ["Remote access", "Acceso remoto", "Accès à distance", "Fernzugriff", "Acesso remoto"],
     ["Older file sharing", "Uso compartido de archivos antiguo", "Ancien partage de fichiers", "Ältere Dateifreigabe", "Compartilhamento antigo de arquivos"],
     ["Unsafe app and website warnings", "Avisos de aplicaciones y sitios peligrosos", "Alertes sur les applications et sites dangereux", "Warnungen vor unsicheren Apps und Websites", "Avisos de aplicativos e sites perigosos"],
-    ["Account sign-in safety", "Seguridad del acceso a las cuentas", "Sécurité de connexion aux comptes", "Sichere Kontoanmeldung", "Segurança do acesso às contas"],
     ["Core system protection", "Protección del núcleo del sistema", "Protection du cœur du système", "Schutz des Systemkerns", "Proteção do núcleo do sistema"],
     ["Who manages this PC", "Quién administra este PC", "Qui gère ce PC", "Wer diesen PC verwaltet", "Quem gerencia este PC"],
     ["Automatic sign-in", "Inicio de sesión automático", "Connexion automatique", "Automatische Anmeldung", "Entrada automática"],

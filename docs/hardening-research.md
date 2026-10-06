@@ -94,7 +94,6 @@ There are **19 advisory findings**: original 13 plus Automatic logon in `backend
 | Remote Desktop | `fDenyTSConnections` | No listener, NLA, account, firewall, or Internet exposure verification | Need-based RDP/VPN/gateway review [S10] |
 | SMB1 | Optional feature state | Not SMB dialect/signing/share/guest audit | NAS compatibility, signing/encryption/guest review [S11] |
 | SmartScreen | Static guidance | No effective-state probe at all | Browser/OS-specific evidence and approved settings [S12] |
-| Local accounts | Count of enabled accounts with `PasswordRequired=false` | Cannot establish password presence, quality, reuse, or Hello security | User-guided password manager, MFA, passkeys [S13–S15] |
 | Memory integrity | DeviceGuard configured/running service value 2 | No driver compatibility or performance test | HVCI pilot, OEM updates and recovery [S16] |
 | Management and mutation eligibility | Device-wide checks plus UAC-scoped authority, using UAC ID | Not an all-family eligibility result or authoritative management inventory; every control repeats its own gate | Administrator handoff and further capability validation [S17] |
 | Automatic logon / AutoSignIn | AutoAdminLogon flag and DefaultPassword **value-name presence** | No password/identity data or LSA-secret reads; absence does not prove no autologon secret | Owner-guided kiosk/sign-in review; no automatic disablement |

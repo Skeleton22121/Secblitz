@@ -63,7 +63,7 @@ impl Advice {
             return "";
         }
         match self.group {
-            Group::Recommended => "Leaves you open to:",
+            Group::Recommended => "Turning it on protects you from:",
             Group::Protected => "Protects you from:",
             _ => "Why it matters:",
         }
@@ -287,7 +287,6 @@ pub fn for_finding(title: &str, status: &str, detail: &str) -> Advice {
         "Remote Desktop" => ("Remote access", "Remote access lets someone sign in to this PC from elsewhere. Turn it off in Settings if you don't use it.", OpenRemoteDesktop),
         "SMB1" => ("Older file sharing", "An old way of sharing files is still on. Turn it off in Windows Features unless an old device needs it.", ReviewWindowsFeatures),
         "SmartScreen" => ("Unsafe app and website warnings", "Open Windows Security and make sure warnings about risky apps and websites are on.", OpenWindowsSecurity),
-        "Local accounts" => ("Account sign-in safety", "Check who can sign in to this PC. Give each account its own strong password.", OpenAccounts),
         "Memory integrity" => ("Core system protection", "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.", OpenWindowsSecurity),
         "Memory integrity not running" if undo_ready(detail) => ("Core system protection", "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it.", ReviewUndo),
         "Memory integrity not running" => ("Core system protection", "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, open History and undo your fixes, newest first.", OpenHistory),
@@ -360,7 +359,6 @@ mod tests {
             "Remote Desktop",
             "SMB1",
             "SmartScreen",
-            "Local accounts",
             "Memory integrity",
             "Automatic logon",
         ] {
@@ -592,7 +590,7 @@ mod tests {
         let a = for_control(id, "attention", "Eligible");
         assert_eq!((a.status, a.step, a.ask, a.group), ("Can fix", NextStep::Repair, false, Group::Recommended));
         assert!(a.next.contains("recovery tools") && a.next.len() < 130, "{}", a.next);
-        assert_eq!(a.impact_prefix(), "Leaves you open to:");
+        assert_eq!(a.impact_prefix(), "Turning it on protects you from:");
         assert!(!a.impact.is_empty() && !a.impact.ends_with('.'));
         let ok = for_control(id, "compliant", "");
         assert_eq!((ok.status, ok.group), ("Good to go", Group::Protected));
@@ -638,7 +636,7 @@ mod tests {
 
         let a = for_control("uac.enabled", "attention", "");
         assert_eq!(a.group, Group::Recommended);
-        assert_eq!(a.impact_prefix(), "Leaves you open to:");
+        assert_eq!(a.impact_prefix(), "Turning it on protects you from:");
 
         let a = for_control("uac.enabled", "unknown", "");
         assert_eq!(a.group, Group::Choice);
@@ -733,7 +731,7 @@ mod tests {
 
     #[test]
     fn informational_findings_do_not_count_as_problems_or_protection() {
-        for title in ["Windows updates", "Journal recovery", "Local accounts"] {
+        for title in ["Windows updates", "Journal recovery"] {
             assert_eq!(for_finding(title, "info", "").group, Group::Information);
             assert_eq!(for_finding(title, "pending", "").group, Group::Choice);
         }
@@ -746,7 +744,6 @@ mod tests {
             "Defender",
             "Service permissions: BITS",
             "Windows updates",
-            "Local accounts",
         ] {
             for status in ["attention", "review", "info", "unknown"] {
                 let a = for_finding(title, status, "Everything is fine; eligible");

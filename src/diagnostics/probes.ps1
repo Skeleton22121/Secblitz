@@ -127,9 +127,7 @@ try {
             $server = $null; $client = $null
             try { Load 'SmbShare'; $server = Get-SmbServerConfiguration } catch {}
             try { Load 'SmbShare'; $client = Get-SmbClientConfiguration } catch {}
-            $rdpListener = Fact { Load 'NetTCPIP'; $key=Get-Item -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'; if ($key.GetValueKind('PortNumber') -ne [Microsoft.Win32.RegistryValueKind]::DWord) { throw 'Unknown RDP port' }; $port=$key.GetValue('PortNumber'); if ($port -lt 1 -or $port -gt 65535) { throw 'Unknown RDP port' }; $listeners=@(Get-NetTCPConnection -State Listen); @($listeners | Where-Object { $_.LocalPort -eq $port }).Count -gt 0 }
-            $smbListener = Fact { Load 'NetTCPIP'; $listeners=@(Get-NetTCPConnection -State Listen); @($listeners | Where-Object { $_.LocalPort -eq 445 }).Count -gt 0 }
-            @{rdp_denied=(RegBool 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections');rdp_nla_required=(RegBool 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' 'UserAuthentication');rdp_listener=$rdpListener;smb_listener=$smbListener;smb1_enabled=(Prop $server 'EnableSMB1Protocol');smb2_enabled=(Prop $server 'EnableSMB2Protocol');smb_server_signing_required=(Prop $server 'RequireSecuritySignature');smb_client_signing_required=(Prop $client 'RequireSecuritySignature');smb_guest_logons_enabled=(Prop $client 'EnableInsecureGuestLogons')}
+            @{rdp_denied=(RegBool 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections');rdp_nla_required=(RegBool 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' 'UserAuthentication');smb1_enabled=(Prop $server 'EnableSMB1Protocol');smb2_enabled=(Prop $server 'EnableSMB2Protocol');smb_server_signing_required=(Prop $server 'RequireSecuritySignature');smb_client_signing_required=(Prop $client 'RequireSecuritySignature');smb_guest_logons_enabled=(Prop $client 'EnableInsecureGuestLogons')}
         }
         'Software' {
             $items = @(); $truncated = $false
