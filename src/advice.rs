@@ -529,6 +529,12 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: this edition of Windows does not include it" => {
             "This version of Windows doesn't include this protection."
         }
+        "Not offered: Windows Home cannot accept Remote Desktop connections" => {
+            "Windows Home can't accept Remote Desktop connections, so there is nothing to turn off."
+        }
+        "Not offered: this PC is set up as a kiosk" => {
+            "This PC is set up as a kiosk that signs in by itself, so we leave this alone."
+        }
         "Not offered: Defender behavior monitoring is off" => {
             "Turn on suspicious app detection first, then check again."
         }
@@ -1009,6 +1015,8 @@ mod tests {
             "Not offered: your account has no password",
             "Not offered: you are connected to this PC from another device right now",
             "Not offered: something is using the old file sharing right now",
+            "Not offered: Windows Home cannot accept Remote Desktop connections",
+            "Not offered: this PC is set up as a kiosk",
             "Not offered: Secblitz cannot tell who is signed in",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);

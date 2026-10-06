@@ -165,8 +165,19 @@ pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
     let Some(id) = advice::control_for_finding(&f.title) else {
         return false;
     };
+    // A saved sign-in password can be reported while automatic sign-in itself
+    // is off. The control then reads "protected", but this warning is a
+    // different thing and must stay visible.
+    if f.title == "Automatic logon" && f.detail.contains("AutoAdminLogon enabled=False") {
+        return false;
+    }
     report.results.iter().any(|r| {
-        r.id == id && matches!(classify(r), Class::Fixable | Class::Review | Class::Protected)
+        r.id == id
+            && (matches!(classify(r), Class::Fixable | Class::Review | Class::Protected)
+                // These two reasons already say, on the control's own row, why
+                // the manual tip would only contradict it.
+                || r.detail == "Not offered: you are connected to this PC from another device right now"
+                || r.detail == "Not offered: this PC is set up as a kiosk")
     })
 }
 
@@ -422,6 +433,26 @@ mod tests {
         let mut r = rep(vec![eligible("accounts.autologon")]);
         r.findings.push(tip("Secure Boot"));
         assert_eq!(to_check_count(&r), 2);
+        // A saved password with automatic sign-in off is a separate warning.
+        let mut r = rep(vec![out("accounts.autologon", "compliant")]);
+        r.findings.push(secblitz::model::Finding {
+            title: "Automatic logon".into(),
+            status: "attention".into(),
+            detail: "AutoAdminLogon enabled=False; Winlogon DefaultPassword value present=True.".into(),
+        });
+        assert!(!finding_has_fix(&r, &r.findings[0]));
+        assert_eq!(to_check_count(&r), 1);
+        // While connected remotely or on a kiosk, the control's own reason replaces the tip.
+        for reason in [
+            "Not offered: you are connected to this PC from another device right now",
+            "Not offered: this PC is set up as a kiosk",
+        ] {
+            let id = if reason.contains("kiosk") { "accounts.autologon" } else { "remote_desktop.disabled" };
+            let title = if reason.contains("kiosk") { "Automatic logon" } else { "Remote Desktop" };
+            let mut r = rep(vec![Outcome { detail: reason.into(), ..out(id, "skipped") }]);
+            r.findings.push(tip(title));
+            assert!(finding_has_fix(&r, &r.findings[0]), "{reason}");
+        }
     }
 
     #[test]

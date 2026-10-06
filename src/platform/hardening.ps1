@@ -474,9 +474,16 @@ function HPreflight() {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
             if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
         }
+        'accounts.autologon' {
+            $kiosk = 'HKLM:\SOFTWARE\Microsoft\Windows\AssignedAccessConfiguration'
+            if (Test-Path -LiteralPath $kiosk) {
+                $item = Get-Item -LiteralPath $kiosk -ErrorAction Stop
+                if (@($item.GetValueNames()).Count -gt 0 -or @($item.GetSubKeyNames()).Count -gt 0) { throw 'Not offered: this PC is set up as a kiosk' }
+            }
+        }
         'remote_desktop.disabled' {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
-            if ($edition -cmatch '^Core') { throw 'Not offered: this edition of Windows does not include it' }
+            if ($edition -cmatch '^Core') { throw 'Not offered: Windows Home cannot accept Remote Desktop connections' }
             if (HRemoteSessionActive) { throw 'Not offered: you are connected to this PC from another device right now' }
         }
         'smb1.disabled' {
@@ -833,42 +840,68 @@ function HRemoteSessionActive() {
 # ---- smb1.disabled
 # Windows reports an optional feature as unchanged until the restart that
 # finishes the change. After a successful change that needs a restart, a small
-# note (one text value per feature, tied to this start of Windows) says what
-# was asked for, so the check reads the intended state until Windows restarts.
-$hSmbNoteKey = 'HKLM:\SOFTWARE\Secblitz\PendingFeatures'
-function HSmbBoot() {
-    Load 'CimCmdlets'
-    return ((Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 30).LastBootUpTime.ToUniversalTime().ToString('yyyyMMddHHmm'))
+# note (one value per feature) says what was asked for, so the check reads the
+# intended state until Windows restarts. The note lives in a volatile registry
+# key that Windows deletes at every restart, so it can never outlive the
+# pending change and needs no clock comparison.
+$hSmbNotePath = 'SOFTWARE\Secblitz\PendingFeatures'
+function HSmbNoteGet([string]$name) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($hSmbNotePath)
+    if ($null -eq $key) { return $null }
+    try {
+        if ($key.GetValueNames() -cnotcontains $name) { return $null }
+        $text = [string]$key.GetValue($name)
+        if ($text -ceq '0') { return 0 }
+        if ($text -ceq '1') { return 1 }
+        return $null
+    } finally { $key.Dispose() }
 }
-function HSmbNote([string]$name) {
-    if (!(Test-Path -LiteralPath $hSmbNoteKey)) { return $null }
-    $key = Get-Item -LiteralPath $hSmbNoteKey
-    if ($key.GetValueNames() -notcontains $name) { return $null }
-    $parts = ([string]$key.GetValue($name)).Split('|')
-    if ($parts.Count -ne 2 -or ($parts[0] -cne '0' -and $parts[0] -cne '1')) { return $null }
-    if ($parts[1] -cne (HSmbBoot)) { return $null }
-    return [int]$parts[0]
-}
-function HSmbSetNote([string]$name, $want) {
+function HSmbNotePut([string]$name, $want) {
     if ($null -eq $want) {
-        if ((Test-Path -LiteralPath $hSmbNoteKey) -and (Get-Item -LiteralPath $hSmbNoteKey).GetValueNames() -contains $name) { Remove-ItemProperty -LiteralPath $hSmbNoteKey -Name $name -ErrorAction Stop }
+        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($hSmbNotePath, $true)
+        if ($null -eq $key) { return }
+        try { if ($key.GetValueNames() -ccontains $name) { $key.DeleteValue($name) } } finally { $key.Dispose() }
         return
     }
-    if (!(Test-Path -LiteralPath $hSmbNoteKey)) { $null = New-Item -Path $hSmbNoteKey -Force -ErrorAction Stop }
-    New-ItemProperty -LiteralPath $hSmbNoteKey -Name $name -PropertyType String -Value ("$([int]$want)|" + (HSmbBoot)) -Force -ErrorAction Stop | Out-Null
+    $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($hSmbNotePath, [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, [Microsoft.Win32.RegistryOptions]::Volatile)
+    try { $key.SetValue($name, [string][int]$want, [Microsoft.Win32.RegistryValueKind]::String) } finally { $key.Dispose() }
 }
 function HSmbState([string]$name) {
-    $note = HSmbNote $name
+    $note = HSmbNoteGet $name
     if ($null -ne $note) { return $note }
     return (HV2Value (HFeatureState $name))
+}
+function HSmbInstallValues() {
+    # One query for all the old file-sharing parts (each query can take a while).
+    Load 'CimCmdlets'
+    $rows = @(Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name LIKE 'SMB1Protocol%'" -OperationTimeoutSec 30)
+    if ($rows.Count -eq 0) {
+        # Only believe "not present" when the full list is healthy.
+        if (@(Get-CimInstance -ClassName Win32_OptionalFeature -OperationTimeoutSec 60).Count -lt 5) { throw 'The Windows feature list is not readable' }
+    }
+    $out = @{}
+    foreach ($row in $rows) {
+        $n = [string]$row.Name
+        if ($out.ContainsKey($n)) { throw 'The Windows feature list is ambiguous' }
+        switch ([int]$row.InstallState) { 1 { $out[$n] = 1 } 2 { $out[$n] = 0 } 3 { $out[$n] = 0 } default { throw 'The Windows feature state is not readable' } }
+    }
+    return $out
 }
 function HReadSmb1() {
     $script:hSmb1Unreadable = $false
     $out = @{}
+    $found = $null
+    try { $found = HSmbInstallValues } catch { $script:hSmb1Unreadable = $true }
     foreach ($def in @($spec.keys)) {
         # A part that cannot be read counts as "on" here so nothing looks safe;
         # the preflight then says the old file sharing could not be checked.
-        try { $out[$def.name] = HSmbState $def.name } catch { $script:hSmb1Unreadable = $true; $out[$def.name] = 1 }
+        if ($script:hSmb1Unreadable) { $out[$def.name] = 1; continue }
+        try {
+            $note = HSmbNoteGet $def.name
+            if ($null -ne $note) { $out[$def.name] = $note }
+            elseif ($found.ContainsKey($def.name)) { $out[$def.name] = $found[$def.name] }
+            else { $out[$def.name] = 0 }
+        } catch { $script:hSmb1Unreadable = $true; $out[$def.name] = 1 }
     }
     return $out
 }
@@ -884,16 +917,27 @@ function HSmb1InUse() {
     return $false
 }
 function HSetSmb1([string]$name, $v) {
-    if (@('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server') -cnotcontains $name) { throw 'Unknown hardening item' }
+    if (@('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server', 'SMB1Protocol-Deprecation') -cnotcontains $name) { throw 'Unknown hardening item' }
     if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid feature state' }
     # DISM needs DismHost.exe: the engine runs only this write with a job that allows it.
     Load 'Dism'
     $state = HSmbState $name
     if ($state -eq [int]$v) { return }
     # Never -Remove: the files stay, so undo can turn the same part back on offline.
+    # -LimitAccess: never reach out to Windows Update for files that are already here.
     if ([int]$v -eq 0) { $r = Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop }
-    else { $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop }
-    if ($null -ne $r -and $r.RestartNeeded -eq $true) { HSmbSetNote $name $v } else { HSmbSetNote $name $null }
+    else { $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -LimitAccess -ErrorAction Stop }
+    try {
+        if ($null -ne $r -and $r.RestartNeeded -eq $true) { HSmbNotePut $name $v } else { HSmbNotePut $name $null }
+    } catch {
+        $failure = $_
+        # The note could not be kept, so the change is not tracked: put the part back.
+        try {
+            if ([int]$v -eq 0) { $null = Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -LimitAccess -ErrorAction Stop }
+            else { $null = Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop }
+        } catch { }
+        throw $failure
+    }
 }
 
 # ---- services.legacy_remote (value = start type 2/3/4, 5 = automatic delayed, +8 when running)
@@ -1186,6 +1230,13 @@ function HWrite($inputValue) {
     $done = @()
     try {
         foreach ($s in $steps) { HSet $s.name $s.to; $done += $s }
+        if ($spec.source -ceq 'SmbFeature' -and !$repairing) {
+            # Turning a part back on must not bring back parts that were off. If one now reads on, turn it off again.
+            $after = HRead
+            foreach ($name in @($wanted.Keys | Sort-Object -Descending)) {
+                if ($wanted[$name] -eq 0 -and $after.ContainsKey($name) -and $after[$name] -eq 1) { HSet $name 0; $done += @{ name = $name; from = 1; to = 0 } }
+            }
+        }
         $verified = $false
         for ($attempt = 0; $attempt -lt 10; $attempt++) {
             $now = HRead

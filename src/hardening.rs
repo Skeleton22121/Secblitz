@@ -1060,6 +1060,7 @@ static SPECS: &[Spec] = &[
             set("SMB1Protocol", "", &[0], false, Some(0), 1),
             set("SMB1Protocol-Client", "", &[0], false, Some(0), 1),
             set("SMB1Protocol-Server", "", &[0], false, Some(0), 1),
+            set("SMB1Protocol-Deprecation", "", &[0], false, Some(0), 1),
         ],
         gate: NO_GATE,
     },
@@ -1918,21 +1919,26 @@ mod tests {
             r.derive_target(&items(r, &[Some(0)])).unwrap(),
             items(r, &[Some(1)])
         );
-        // Old file sharing: three parts, each repaired only if it is on, restart needed.
+        // Old file sharing: four parts, each repaired only if it is on, restart needed.
         let s = spec("smb1.disabled").unwrap();
         assert_eq!(s.source, Source::SmbFeature);
         assert!(s.reboot && !s.dynamic());
         let names: Vec<_> = s.keys.iter().map(|k| k.name).collect();
         assert_eq!(
             names,
-            ["SMB1Protocol", "SMB1Protocol-Client", "SMB1Protocol-Server"]
+            [
+                "SMB1Protocol",
+                "SMB1Protocol-Client",
+                "SMB1Protocol-Server",
+                "SMB1Protocol-Deprecation"
+            ]
         );
-        let before = items(s, &[Some(1), Some(1), Some(0)]);
+        let before = items(s, &[Some(1), Some(1), Some(0), Some(1)]);
         assert_eq!(
             s.derive_target(&before).unwrap(),
-            items(s, &[Some(0), Some(0), Some(0)])
+            items(s, &[Some(0), Some(0), Some(0), Some(0)])
         );
-        assert!(!s.any_unsafe(&items(s, &[Some(0), Some(0), Some(0)])));
+        assert!(!s.any_unsafe(&items(s, &[Some(0), Some(0), Some(0), Some(0)])));
         assert!(s.validate(&json!({"items": {"SMB1Protocol": 1}})).is_err());
     }
 
