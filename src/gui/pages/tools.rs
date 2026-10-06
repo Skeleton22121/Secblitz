@@ -162,6 +162,7 @@ pub enum Repair {
         kind: RepairKind,
         result: RepairResult,
         note: Option<&'static str>,
+        #[allow(dead_code)] // raw evidence, never shown on screen
         technical: String,
     },
 }
@@ -174,6 +175,7 @@ pub enum Updates {
     UpToDate,
     Found(Found),
     Failed {
+        #[allow(dead_code)] // raw evidence, never shown on screen
         technical: String,
         note: &'static str,
     },
@@ -186,6 +188,7 @@ pub enum Updates {
     Done {
         result: InstallResult,
         note: Option<&'static str>,
+        #[allow(dead_code)] // raw evidence, never shown on screen
         technical: String,
     },
 }
