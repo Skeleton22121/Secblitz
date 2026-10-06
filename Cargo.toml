@@ -39,6 +39,14 @@ embed-resource = "3"
 [dev-dependencies]
 tempfile = "3"
 
+# Test and check builds: line numbers for our own code only, no debug info for
+# dependencies. Keeps each build folder a fraction of the size.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = true
 codegen-units = 1
