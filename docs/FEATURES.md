@@ -123,14 +123,13 @@ These require separate choices and are outside the reversible control journal:
 | Defender quick scan | Requests a scan, possibly remediation under existing policy | Threat-free system or broad prevention efficacy |
 | Install/start monitor | Installs if absent and starts fixed LocalService monitor | Report freshness merely from SCM Running, or automatic healing |
 | Open Windows Settings | Requests one fixed update/security/encryption/sign-in page | Update installed, disk encrypted or account changed |
-| Generate password | 24 OS-random characters, interactive display only | Saved vault entry or changed account password |
 | Bitwarden installation | Exact approved user-scope package through verified WinGet source | Account/vault creation, imports, extension/autofill/MFA setup |
 
 Defender/tamper protection is not disabled for supported scan/update actions. Timeouts/errors can leave work in flight; review Windows Security before retrying. Earlier quick-scan timestamp and offline-update tests retain their historical scope; the live 0.5.0 upgrade did not rerun them.
 
 Bitwarden must run in the original non-elevated desktop account. The elevated guide can return fixed request codes **23 Bitwarden, 24 Windows Update, 25 Windows Security, 26 encryption, 27 sign-in** to its waiting original parent. The parent checks its context and asks again; only explicit Return re-elevates. No arbitrary URI/command travels in those codes. Settings dispatch independently rejects an elevated token. The **full standard-user, over-the-shoulder UAC and original-user broker path remains untested end to end**.
 
-Password output is never copied to clipboard or included in journals/reports, but scrollback, screen sharing and recording can retain it. No existing password, hash, vault, token, recovery key or LSASS content is inspected.
+No existing password, hash, vault, token, recovery key or LSASS content is inspected.
 
 ## Exact implemented scope
 
