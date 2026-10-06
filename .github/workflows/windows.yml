@@ -1,4 +1,8 @@
-name: Windows release build
+name: Installer and dependency checks
+
+# Audits Cargo.lock against RustSec and runs the installer harnesses (setup
+# exit codes, upgrade with a running monitor, uninstall preservation) on a
+# full unsigned build. Releases themselves come from release.yml.
 
 on:
   push:
