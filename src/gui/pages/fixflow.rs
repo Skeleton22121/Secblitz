@@ -61,9 +61,12 @@ impl Follow {
         }
     }
 
-    /// Whether the list being at `y` is where this put it. The offset reported can trail by a frame, so the last two positions count.
+    /// Whether the list being at `y` could be this glide's doing. Offsets are
+    /// reported a few frames late, so anywhere on its path counts.
     fn put_it_at(&self, y: f32) -> bool {
-        let (lo, hi) = (self.shown.min(self.before), self.shown.max(self.before));
+        let ends = [self.glide.from, self.glide.to, self.before];
+        let lo = ends.iter().fold(self.shown, |a, b| a.min(*b));
+        let hi = ends.iter().fold(self.shown, |a, b| a.max(*b));
         (lo - 2.0..=hi + 2.0).contains(&y)
     }
 }
@@ -1367,12 +1370,13 @@ mod tests {
     fn the_list_only_counts_moves_it_made_itself() {
         let now = Instant::now();
         let mut f = Follow::at(now, 0.0, 100.0);
-        assert!(f.put_it_at(0.0) && f.put_it_at(1.5));
-        assert!(!f.put_it_at(40.0), "the person scrolled somewhere the glide never was");
+        assert!(f.put_it_at(0.0) && f.put_it_at(1.5) && f.put_it_at(40.0) && f.put_it_at(101.5));
+        assert!(!f.put_it_at(140.0), "the person scrolled somewhere the glide never goes");
         f.before = f.shown;
         f.shown = 30.0;
-        assert!(f.put_it_at(30.0) && f.put_it_at(0.0), "the offset may trail by a frame");
-        assert!(!f.put_it_at(60.0));
+        f.glide.retarget(now, 60.0);
+        assert!(f.put_it_at(0.0), "the offset may trail behind a new target");
+        assert!(!f.put_it_at(90.0));
         let rest = Follow::at(now, 80.0, 80.0);
         assert!(rest.put_it_at(80.0) && !rest.put_it_at(60.0));
     }
