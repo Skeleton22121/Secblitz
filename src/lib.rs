@@ -15,3 +15,4 @@ pub mod status;
 pub mod text;
 pub mod tools;
 pub mod updater;
+pub mod vbs;
