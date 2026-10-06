@@ -51,8 +51,6 @@ try {
     $os = MaintenanceGate
     if ($maintenanceAction -ceq 'scan') {
         if ($maintenanceKind -cne 'defender') { throw 'Invalid scan kind' }
-        # Module loading and policy queries can be slow. The numeric, engine-
-        # supplied deadline binds actual scan submission, not PowerShell startup.
         $now = [uint64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
         if ($now -lt $maintenanceNotBefore -or $now -ge $maintenanceExpiresAt) { throw 'Scan approval/readiness expired' }
         $null = Start-MpScan -ScanType QuickScan -ErrorAction Stop

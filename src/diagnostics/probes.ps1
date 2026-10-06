@@ -14,7 +14,6 @@ try {
                 $update = $result.Updates.Item($i)
                 $quality = $false
                 for ($j=0; $j -lt [Math]::Min($update.Categories.Count,64); $j++) {
-                    # Security Updates, Update Rollups, Critical Updates.
                     if ($update.Categories.Item($j).CategoryID -in @('0fa1201d-4330-4fa8-8ae9-b877473b6441','28bc880e-0592-4cbf-8f95-c79b17911d5f','e6cf1350-c01b-414d-a61f-263d14d133b4')) { $quality = $true }
                 }
                 $kb = @()
@@ -509,7 +508,6 @@ try {
                     foreach ($m in $members) { if ([string]$m.ObjectClass -cne 'User') { throw 'Nested group membership is not followed' } }
                     return $false
                 })
-                # Unverified setting location. Desktops and local-only accounts do not apply.
                 find_my_device=(Fact {
                     if (@(Cim 'Win32_Battery').Count -eq 0) { return 'NotApplicable' }
                     $microsoftAccount = @(Get-LocalUser | Where-Object { $_.SID -eq $me -and [string]$_.PrincipalSource -ceq 'MicrosoftAccount' }).Count -gt 0
@@ -537,7 +535,6 @@ try {
                     }
                 }
                 if ($configured.Count -gt 64) { throw 'Server cap' }
-                # Addresses that have a registered encrypted-lookup server, and whether Windows upgrades them.
                 $registered = @{}
                 foreach ($row in @(Get-DnsClientDohServerAddress | Select-Object -First 256)) {
                     $ip = $null
@@ -570,7 +567,6 @@ try {
             Load 'Microsoft.PowerShell.Security'
             Load 'CimCmdlets'
             Load 'ScheduledTasks'
-            # Read-only. Entries are examined in memory; only counts leave this script.
             $appData = [Environment]::GetFolderPath('ApplicationData')
             $localData = [Environment]::GetFolderPath('LocalApplicationData')
             $userProfile = [Environment]::GetFolderPath('UserProfile')
@@ -624,7 +620,6 @@ try {
                     } finally { $approved.Dispose() }
                 } catch { return $false }
             }
-            # Run and RunOnce keys (values are read raw; nothing is expanded or executed).
             $HKLM = [Microsoft.Win32.Registry]::LocalMachine; $HKCU = [Microsoft.Win32.Registry]::CurrentUser
             foreach ($hive in @(@($HKLM,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run','Run'),@($HKLM,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',''),@($HKLM,'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run','Run32'),@($HKCU,'SOFTWARE\Microsoft\Windows\CurrentVersion\Run','Run'),@($HKCU,'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',''))) {
                 try {
@@ -641,7 +636,6 @@ try {
                     } finally { $key.Dispose() }
                 } catch { $complete = $false }
             }
-            # Startup folders (shortcuts are resolved in memory).
             foreach ($folder in @(@([Environment]::GetFolderPath('Startup'), $HKCU), @([Environment]::GetFolderPath('CommonStartup'), $HKLM))) {
                 $dir = $folder[0]
                 try {
@@ -659,7 +653,6 @@ try {
                     }
                 } catch { $complete = $false }
             }
-            # Scheduled tasks that do not belong to Microsoft.
             try {
                 $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\Microsoft\*' -and [string]$_.State -cne 'Disabled' } | Select-Object -First 2049)
                 if ($tasks.Count -gt 2048) { throw 'Task cap' }

@@ -8,7 +8,6 @@ foreach ($name in @('common.ps1','probes.ps1','browsers.ps1')) {
     if ($errors.Count -ne 0) { throw ($errors | Out-String) }
     $count++
     if ($name -eq 'common.ps1') {
-        # Define pure helpers only, skipping bootstrap, module loads and probes.
         foreach ($function in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) {
             if ($function.Name -in @('Unknown','Known','Fact','Prop','Code','Items','Text','UnixTime')) {
                 . ([scriptblock]::Create($function.Extent.Text))

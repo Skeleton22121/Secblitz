@@ -121,7 +121,6 @@ fn inventory<T>(id: &str, value: &Reading<Inventory<T>>, detail: &str) -> Assess
 }
 
 const DAY: u64 = 86_400;
-/// A quality update is expected at least monthly (Patch Tuesday plus slack).
 const UPDATE_MAX_AGE_DAYS: u64 = 35;
 const BACKUP_MAX_AGE_DAYS: u64 = 45;
 
@@ -147,7 +146,6 @@ pub(super) fn update_freshness(
             "Windows Update history could not be read, so recent updates are unknown.".into(),
         );
     };
-    // Operation 1 = install, result 2 = succeeded.
     let age = newest_age_days(
         entries
             .iter()
@@ -364,7 +362,6 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
             }
             out.push(a("permissions.effective_access", Unknown, "Effective permissions depend on tokens, deny/conditional ACEs, ownership and other objects; no complete effective-access claim is made."));
         }
-        // Detect-only checks live in checks.rs to keep this file's merge surface small.
         Evidence::OsSupport(v) => out.extend(super::checks::os_support(v)),
         Evidence::SecureBootCerts(v) => out.extend(super::checks::secure_boot_certs(v)),
         Evidence::DefenderProtection(v) => out.extend(super::checks::defender_protection(v)),

@@ -85,8 +85,6 @@ fn defaults_come_only_from_recommended_and_sponsored() {
 fn store_ids_look_like_store_ids() {
     for app in catalog() {
         if let Some(id) = app.store_id {
-            // Packaged apps have 12-character ids (9N...), Store-listed
-            // desktop apps 14 (XP...).
             assert!(
                 id.len() == 12 || (id.len() == 14 && id.starts_with("XP")),
                 "{}",
@@ -188,7 +186,6 @@ fn removal_never_runs_for_protected_or_foreign_packages() {
             package: "Microsoft.BingNews".into(),
             version: "1".into(),
         },
-        // A forged inventory entry pointing a catalog index at a protected package.
         Installed {
             index: news,
             package: "Microsoft.WindowsStore".into(),
@@ -349,7 +346,6 @@ fn journal_round_trip_and_restore_marking() {
     assert!(journal::load_from(&path)
         .iter()
         .all(|b| b.removed[0].restored));
-    // Malformed lines are skipped.
     std::fs::write(&path, "not json\n").unwrap();
     assert!(journal::load_from(&path).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
@@ -384,7 +380,6 @@ fn a_run_cut_short_still_leaves_every_removed_app_on_the_list() {
         &|_| PackageOutcome::Removed,
         &|_| {},
         &|b| {
-            // What a crash right here would leave behind.
             journal::upsert_to(&path, b).unwrap();
             seen.borrow_mut().push(journal::load_from(&path));
             Ok(())
@@ -490,8 +485,6 @@ fn still_removed_lists_each_app_once_and_skips_restored_ones() {
             vec![item(3, false), item(5, false), item(u16::MAX, false)],
         ),
     ];
-    // Removed again after a restore counts once, at its newest time; restored
-    // apps and indices outside the catalog are left out.
     assert_eq!(
         journal::still_removed(&journal, catalog().len()),
         vec![(3, 20), (5, 20)]

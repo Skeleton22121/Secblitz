@@ -6,7 +6,6 @@ Set-StrictMode -Version 2
 $moduleRoot = [IO.Path]::Combine($env:SystemRoot, 'System32\WindowsPowerShell\v1.0\Modules')
 $env:PSModulePath = $moduleRoot
 $PSModuleAutoLoadingPreference = 'None'
-# Module names below are compiled constants; no module or command comes from data.
 function Load([string]$name) {
     # The inbox LocalAccounts module uses a versioned directory on Windows.
     # Keep this exact path aligned with the native launcher's pinned manifest.
@@ -29,7 +28,6 @@ function Prop($object, [string]$name) {
 }
 function Code($object, [string]$name) {
     if ($null -eq $object -or $null -eq $object.PSObject.Properties[$name] -or $null -eq $object.$name) { return (Unknown) }
-    # Explicit numeric conversion is limited to documented native enum properties.
     $value = $object.$name
     # Storage CDXML adapts HealthStatus to the string "Healthy". The actual
     # typed CIM value is UInt16 0; use it rather than parsing display strings.
@@ -73,7 +71,6 @@ function ChildIndicator([string]$relative) {
     try { return ($key.SubKeyCount -gt 0) } finally { $key.Dispose() }
 }
 function MdmRegistered {
-    # In-memory P/Invoke stub, no Add-Type/csc, no UPN/tenant collection.
     $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('Secblitz.DiagnosticsMdm'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
     $module = $assembly.DefineDynamicModule('Secblitz.DiagnosticsMdm')
     $type = $module.DefineType('Secblitz.DiagnosticsMdm', [Reflection.TypeAttributes]'Public, Abstract, Sealed')
@@ -85,7 +82,6 @@ function MdmRegistered {
     if ($hr -ne 0 -or $registered -notin @(0,1)) { throw 'MDM state unavailable' }
     return ($registered -eq 1)
 }
-# Optional-value readers for the checks below: an absent value is null, never an error.
 function HklmValue([string]$relative, [string]$name) {
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($relative, $false)
     if ($null -eq $key) { return $null }

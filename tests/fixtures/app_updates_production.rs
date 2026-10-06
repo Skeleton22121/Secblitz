@@ -1,5 +1,4 @@
-//! Standalone non-test compilation probe. No lib.rs/CLI integration is required.
-//! Build with scripts/test-app-updates-production.py; cfg(test) is NOT enabled.
+//! Standalone non-test compilation probe, built by scripts/test-app-updates-production.py.
 #[allow(dead_code)]
 #[path = "../../src/app_updates.rs"]
 mod app_updates;

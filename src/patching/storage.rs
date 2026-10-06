@@ -221,8 +221,6 @@ pub(super) fn pin_executable(path: &Path) -> Result<Vec<File>> {
             prefix != path && Some(prefix.as_path()) != path.parent(),
         )?);
     }
-    // .NET honors an executable's adjacent configuration before our script can
-    // disable profile/module lookup. A writable config is executable influence.
     if path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("exe"))

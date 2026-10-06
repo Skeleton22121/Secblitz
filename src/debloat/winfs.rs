@@ -1,6 +1,5 @@
-//! Privileged file work for saved copies. Every path is opened without
-//! following links, and every handle is checked to still be inside the
-//! folder it should be in (a planted junction is refused, never followed).
+//! Privileged file work for saved copies. Paths are opened without following
+//! links and each handle is checked to still be inside its folder.
 use super::backup::{hex, valid_relative, FileEntry, MAX_BYTES, MAX_FILES};
 use super::vault::{Item, Sink, Source};
 use anyhow::{ensure, Context, Result};
@@ -99,7 +98,6 @@ pub fn free_bytes(path: &Path) -> Result<u64> {
     Ok(free)
 }
 
-/// Open without following a link, with backup semantics.
 fn open_raw(
     path: &Path,
     access: u32,
@@ -137,7 +135,6 @@ fn open_io(
     Ok(unsafe { File::from_raw_handle(h) })
 }
 
-/// Mark an open handle (opened with DELETE access) for deletion on close.
 fn mark_delete(f: &File) -> Result<()> {
     let d = FILE_DISPOSITION_INFO { DeleteFile: 1 };
     ensure!(
@@ -172,7 +169,6 @@ fn is_dir(i: &BY_HANDLE_FILE_INFORMATION) -> bool {
     i.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
 }
 
-/// Resolved path of an open handle (`\\?\C:\...`), lowercased for compare.
 fn final_path(f: &File) -> Result<String> {
     let mut buf = vec![0u16; 32768];
     let n = unsafe {
@@ -198,8 +194,6 @@ fn rel_path(root: &Path, rel: &str) -> Result<PathBuf> {
         .fold(root.to_path_buf(), |p, part| p.join(part)))
 }
 
-/// Children of an open directory (names only), via FindFirstFileExW on the path
-/// after the directory handle proved the path is the real, link-free folder.
 fn children(dir: &Path) -> Result<Vec<(String, bool, u64, bool)>> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir)? {
@@ -218,7 +212,6 @@ fn children(dir: &Path) -> Result<Vec<(String, bool, u64, bool)>> {
     Ok(out)
 }
 
-/// Copy a WindowsApps package folder into the store, hashing as it goes.
 pub fn copy_out(src: &Path, dst: &Path) -> Result<Vec<FileEntry>> {
     let root = open_raw(
         src,
@@ -318,9 +311,6 @@ fn descriptor(sddl: &str) -> Result<Local> {
     Ok(Local(p))
 }
 
-/// Copy a saved package back to `dst` (inside WindowsApps), creating every
-/// folder and file new with the given security and checking each byte
-/// against the saved list while copying. `dst` must not exist.
 pub fn copy_in(
     src: &Path,
     files: &[FileEntry],
@@ -329,7 +319,6 @@ pub fn copy_in(
     file_sddl: &str,
 ) -> Result<()> {
     ensure!(!dst.exists(), "The app's folder is already there");
-    // Only a folder this call created is ever cleaned up.
     let mut created = false;
     let result = (|| -> Result<()> {
         let dsd = descriptor(dir_sddl)?;
@@ -402,7 +391,6 @@ pub fn copy_in(
     result
 }
 
-/// Delete a folder tree with backup semantics; links are deleted, never followed.
 pub fn remove_tree(path: &Path) -> Result<()> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(m) => m,
@@ -422,8 +410,6 @@ pub fn remove_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Delete one file, folder or link with backup intent (so the restore
-/// privilege applies) without following a link.
 fn delete_entry(path: &Path) -> Result<()> {
     let f = open_raw(
         path,
@@ -469,7 +455,6 @@ pub fn security_sddl(path: &Path) -> Result<String> {
         .to_owned())
 }
 
-/// The account this process runs as, as a SID string.
 pub fn current_sid() -> Result<String> {
     unsafe {
         let mut token: HANDLE = null_mut();
@@ -510,7 +495,6 @@ pub fn current_sid() -> Result<String> {
     }
 }
 
-/// `ProfileImagePath` for a user account (expanded), from the registry.
 pub fn profile_dir(sid: &str) -> Result<PathBuf> {
     ensure!(super::backup::valid_sid(sid), "Unexpected account");
     let key = format!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\{sid}");
@@ -534,18 +518,12 @@ pub fn profile_dir(sid: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// One account's app data folder, read with backup semantics. Links inside
-/// are skipped (not followed, not saved); every file is proven to resolve
-/// inside the folder before it is read.
 pub struct TreeSource {
     root: PathBuf,
     root_final: String,
     _pins: Vec<File>,
 }
 
-/// Open each component from the profile down to the app's folder, refusing
-/// links, holding the handles without delete sharing so none of them can be
-/// swapped for a link while we work.
 fn pin_chain(profile: &Path, family: &str) -> Result<(PathBuf, Vec<File>)> {
     let mut pins = Vec::new();
     let mut path = profile.to_path_buf();

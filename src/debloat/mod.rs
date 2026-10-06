@@ -1,14 +1,6 @@
 //! Clean up apps: remove preinstalled Windows apps the user doesn't want.
-//!
-//! Public contract used by the GUI page and the broker:
-//! - `catalog()` — compiled, ordered list of known apps (index = stable id).
-//! - `inventory()` — which catalog apps are installed on this PC (blocking).
-//! - `remove(indices, emit)` — remove for all users + deprovision (blocking).
-//! - `journal` — what was removed, for the Removed apps list and History.
-//!
-//! Safety: only packages that match a catalog entry and are not on the
-//! protected list are ever passed to Windows, and names are validated before
-//! any PowerShell is started.
+//! Only catalog packages not on the protected list reach Windows, and names are
+//! validated before any PowerShell starts.
 pub mod backup;
 pub mod catalog;
 pub mod friendly;
@@ -35,15 +27,10 @@ pub use catalog::{is_protected, matches as pattern_matches};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Group {
-    /// Pre-selected: clearly unnecessary Microsoft apps.
     Recommended,
-    /// Pre-selected: sponsored third-party apps and games.
     Sponsored,
-    /// Not pre-selected: Copilot, Widgets, Teams, Outlook (new)…
     Promotions,
-    /// Not pre-selected: small utilities some people use.
     Utilities,
-    /// Not pre-selected, with a warning: Xbox / Game Bar.
     Gaming,
 }
 
@@ -63,16 +50,12 @@ impl Group {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct App {
-    /// Package name, or a publisher prefix ending in `*` (e.g. "king.com.*").
     pub family: &'static str,
-    /// Friendly English name (translation source key).
     pub name: &'static str,
     pub group: Group,
-    /// Microsoft Store product id for automatic restore, if verified.
     pub store_id: Option<&'static str>,
 }
 
-/// One installed catalog package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Installed {
     pub index: u16,
@@ -80,29 +63,22 @@ pub struct Installed {
     pub version: String,
 }
 
-/// Why an app was left installed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kept {
-    /// Not enough free space to save a copy first.
     NoSpace,
-    /// The copy couldn't be made (technical reason for the details only).
     NoCopy(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemResult {
     Removed,
-    /// A copy could not be saved first, so the app was left installed.
     Kept(Kept),
-    /// Windows protects this app; nothing changed.
     Protected,
     Failed(String),
 }
 
-/// Live progress of `remove`, per catalog app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Progress {
-    /// Saving a copy of the app before removing it.
     Saving(u16),
     Started(u16),
     Finished(u16, ItemResult),
@@ -113,7 +89,6 @@ pub struct Removed {
     pub index: u16,
     pub package: String,
     pub version: String,
-    /// Set after a successful restore.
     #[serde(default)]
     pub restored: bool,
 }
@@ -121,26 +96,20 @@ pub struct Removed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Failure {
     pub index: u16,
-    /// Technical reason, for the Technical details expander only.
     pub reason: String,
 }
 
-/// Outcome of one removal run; also one line of `debloat.jsonl`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Batch {
-    /// Unix seconds.
     pub t: u64,
     pub removed: Vec<Removed>,
-    /// Catalog indices Windows protects.
     pub skipped: Vec<u16>,
     pub failed: Vec<Failure>,
-    /// Catalog indices left installed because no copy could be saved.
     #[serde(default)]
     pub kept: Vec<u16>,
 }
 
 impl Batch {
-    /// Number of distinct catalog apps removed.
     pub fn removed_apps(&self) -> usize {
         let mut seen: Vec<u16> = self.removed.iter().map(|r| r.index).collect();
         seen.sort_unstable();
@@ -160,8 +129,6 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
-// ---- inventory -----------------------------------------------------------
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -175,8 +142,6 @@ struct RawPackage {
     framework: bool,
 }
 
-/// Turn the inventory script's JSON into catalog packages. Anything outside
-/// the catalog, protected, malformed, non-removable or a framework is dropped.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn parse_inventory(json: &str) -> Result<Vec<Installed>> {
     let raw: Vec<RawPackage> = if json.trim_start().starts_with('{') {
@@ -200,7 +165,6 @@ pub(crate) fn parse_inventory(json: &str) -> Result<Vec<Installed>> {
     Ok(found)
 }
 
-/// Which catalog apps are present on this PC. Blocking (a few seconds).
 pub fn inventory() -> Result<Vec<Installed>> {
     #[cfg(windows)]
     {
@@ -213,9 +177,6 @@ pub fn inventory() -> Result<Vec<Installed>> {
     }
 }
 
-// ---- removal -------------------------------------------------------------
-
-/// What the removal script reports for one package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum PackageOutcome {
@@ -250,7 +211,6 @@ pub(crate) fn parse_outcome(json: &str) -> PackageOutcome {
     }
 }
 
-/// Validate a request against the catalog and the protected list.
 pub(crate) fn validate_indices(indices: &[u16]) -> Result<Vec<u16>> {
     let mut clean = Vec::new();
     for &index in indices {
@@ -299,7 +259,6 @@ pub(crate) fn remove_with_checkpoint(
     let mut stopped = false;
     for index in indices {
         if stopped {
-            // The way back could not be saved, so nothing more is removed.
             batch.failed.push(Failure {
                 index,
                 reason: "The list of removed apps could not be saved".into(),
@@ -313,7 +272,6 @@ pub(crate) fn remove_with_checkpoint(
         let packages: Vec<&Installed> = installed
             .iter()
             .filter(|p| p.index == index)
-            // Never trust the caller's list: re-derive ownership.
             .filter(|p| catalog::owner(&p.package) == Some(index))
             .collect();
         if packages.is_empty() {
@@ -367,8 +325,6 @@ pub(crate) fn remove_with_checkpoint(
     Ok(batch)
 }
 
-/// Remove catalog apps `indices` for all users and from the Windows image.
-/// Blocking; reports per-app progress. Appends the batch to the journal.
 pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     let indices = validate_indices(indices)?;
     let installed = inventory()?;
@@ -436,18 +392,14 @@ pub fn set_consumer_features_policy() -> Result<()> {
     }
 }
 
-/// Bookkeeping after an app is installed again: mark it restored in the
-/// removed-apps list and drop its saved copy (which has done its job).
 pub fn finish_restore(index: u16) {
     let _ = journal::mark_restored(index);
     offline::forget(index);
 }
 
-/// What `restore_all` did, as catalog indices.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RestoreAll {
     pub restored: Vec<u16>,
-    /// Back only through the Microsoft Store.
     pub needs_store: Vec<u16>,
     pub failed: Vec<u16>,
 }
@@ -459,7 +411,6 @@ pub(crate) enum Bucket {
     Failed,
 }
 
-/// Where one restore attempt ends up. `None` means there was no saved copy.
 pub(crate) fn classify(outcome: Option<Result<offline::Restored>>, has_store_id: bool) -> Bucket {
     use offline::Restored::*;
     match outcome {
@@ -469,8 +420,6 @@ pub(crate) fn classify(outcome: Option<Result<offline::Restored>>, has_store_id:
     }
 }
 
-/// Put back every app that is still removed, from saved copies. Newest first.
-/// Blocking. `emit(index, ok)` after each app.
 pub fn restore_all(emit: &dyn Fn(u16, bool)) -> RestoreAll {
     let mut result = RestoreAll::default();
     for (index, _) in journal::still_removed(&journal::load(), catalog().len()) {

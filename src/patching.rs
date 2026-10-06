@@ -1,23 +1,5 @@
 //! Exact, single-use Windows quality-update plans. See `capabilities()` before
 //! offering actions. All native work is opt-in, supervised, and never reboots.
-//!
-//! Integration: discover -> plan(selected identities) -> display the COMPLETE
-//! plan (including bundled identities and EULAs) -> approve(exact digest, consent)
-//! -> start(exact digest). Keep the host alive until Task::wait returns Some.
-//! A wait deadline does not kill servicing or release engine.lock. After process
-//! loss, verify() is read-only; an interrupted plan can never be replayed.
-//!
-//! Coordinator must recognize `Patching` alongside `operations`/`Updates` in the
-//! engine namespace validator and call ensure_idle() under its shared engine.lock
-//! before other maintenance/self-update mutations. No engine files are owned here.
-//!
-//! Limits: plans last at most 24 hours; approvals at most 1 hour. There are at
-//! most 32 roots/128 total nodes per plan, 32 retained records and 8 MiB of
-//! protected state. No retention/force-clear API is provided: unresolved records
-//! continue to block patching until exact independent verification succeeds.
-//! WUA calls have 5-minute read/1-hour mutation observation budgets. A timeout
-//! stops subsequent phases, but supervision may outlive the budget until Windows
-//! confirms process exit. Keep the host alive; wait() itself is always bounded.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use anyhow::{bail, ensure, Context, Result};
@@ -78,7 +60,6 @@ pub fn capabilities() -> Capabilities {
 #[serde(deny_unknown_fields)]
 pub struct Binding {
     pub machine: String,
-    /// Domain-separated hash of the validated same-user interactive token SID.
     pub original_user: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -94,16 +75,13 @@ pub struct Update {
     pub title: String,
     pub description: String,
     pub kb_articles: Vec<String>,
-    /// Includes category ancestors, identified by invariant GUIDs.
     pub categories: Vec<Uuid>,
     pub max_download_bytes: u64,
-    /// WUA UTC LastDeploymentChangeTime, encoded as a .NET tick-count string.
     pub last_changed: String,
     pub severity: String,
     pub handler: String,
     pub reboot_behavior: u32,
     pub eula: String,
-    /// Every recursively bundled identity and its metadata is reviewed/digested.
     pub bundled: Vec<Update>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,7 +108,6 @@ pub struct Plan {
     pub expires_at: u64,
     pub source: String,
     pub updates: Vec<Update>,
-    /// SHA-256 of this typed, ordered plan with digest set to the empty string.
     pub digest: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,7 +130,6 @@ pub struct Approval {
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Planned,
-    /// Durable intent precedes EULA acceptance, download and installation.
     Consumed,
     Downloading,
     Downloaded,
@@ -161,7 +137,6 @@ pub enum Status {
     Verifying,
     Succeeded,
     RebootRequired,
-    /// Includes partial, interrupted, expired-after-consumption and timeout.
     NeedsReview,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,10 +152,7 @@ pub struct ProcessIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Verification {
-    /// Independent local WUA IsInstalled=1 root searches and per-member
-    /// IsInstalled evidence from the newly returned bundle tree, exact ID/revision.
     pub installed: Vec<UpdateIdentity>,
-    /// WUA SystemInfo plus CBS, Windows Update and Session Manager markers.
     pub reboot_pending: bool,
     pub checked_at: u64,
 }
@@ -236,8 +208,6 @@ fn hash<T: Serialize>(v: &T) -> Result<String> {
 pub fn discover() -> Result<Task<Catalog>> {
     spawn(|e| e.discover())
 }
-/// Performs a new online applicability search (same prior source/network consent
-/// requirement as discover); selects only exact requested IDs.
 pub fn plan(request: PlanRequest) -> Result<Task<Plan>> {
     spawn(move |e| e.plan(request))
 }
@@ -255,8 +225,6 @@ pub fn list() -> Result<Vec<Record>> {
 pub fn get(id: Uuid) -> Result<Record> {
     native(|e| Ok(e.record(id)?.clone()))
 }
-/// Both approval and execution require the reviewed digest. No plan JSON is ever
-/// accepted by this privileged API; it loads the protected UUID-addressed record.
 pub fn start(id: Uuid, displayed_digest: &str) -> Result<Task<Record>> {
     let digest = displayed_digest.to_owned();
     spawn(move |e| e.run(id, &digest))
@@ -265,8 +233,6 @@ pub fn start(id: Uuid, displayed_digest: &str) -> Result<Task<Record>> {
 pub fn verify(id: Uuid) -> Result<Task<Record>> {
     spawn(move |e| e.verify(id))
 }
-/// Coordinator interlock. Call with YOUR held root engine.lock and retain it
-/// across the whole other mutation. Unresolved patching remains a hard veto.
 pub fn ensure_idle(shared_engine_lock: &std::fs::File) -> Result<()> {
     #[cfg(windows)]
     {

@@ -1,10 +1,6 @@
-//! The compiled app catalog and the protected list.
-//!
-//! The package lists are inspired by Raphire/Win11Debloat and
-//! ChrisTitusTech/winutil (both MIT licensed); names were re-checked by hand.
-//! Order is part of the contract: the index is the stable id stored in the
-//! journal and sent over the broker. Only ever append when adding apps in a
-//! later release.
+//! The compiled app catalog and protected list. Package lists are inspired by
+//! Raphire/Win11Debloat and ChrisTitusTech/winutil (MIT). The index is the stable
+//! id stored in the journal and sent over the broker, so only ever append.
 use super::{App, Group};
 
 const fn app(
@@ -21,9 +17,7 @@ const fn app(
     }
 }
 
-/// `family` is the exact package name, or a known publisher prefix ending in `*`.
 pub static CATALOG: &[App] = &[
-    // Recommended
     app(
         "Microsoft.BingNews",
         "News",
@@ -82,7 +76,6 @@ pub static CATALOG: &[App] = &[
         "Microsoft.WindowsMaps",
         "Maps",
         Group::Recommended,
-        // Retired: Microsoft removed Maps from the Store in July 2025.
         None,
     ),
     app(
@@ -126,7 +119,6 @@ pub static CATALOG: &[App] = &[
         Group::Recommended,
         None,
     ),
-    // Sponsored
     app(
         "king.com.*",
         "Candy Crush and other King games",
@@ -158,7 +150,6 @@ pub static CATALOG: &[App] = &[
         Group::Sponsored,
         None,
     ),
-    // Promotions
     app(
         "Microsoft.Copilot",
         "Copilot",
@@ -226,7 +217,6 @@ pub static CATALOG: &[App] = &[
         Group::Promotions,
         None,
     ),
-    // Utilities
     app(
         "Microsoft.WindowsAlarms",
         "Clock and alarms",
@@ -269,7 +259,6 @@ pub static CATALOG: &[App] = &[
         Group::Utilities,
         Some("9P7BP5VNWKX5"),
     ),
-    // Gaming
     app(
         "Microsoft.GamingApp",
         "Xbox app",
@@ -308,7 +297,6 @@ pub static CATALOG: &[App] = &[
     ),
 ];
 
-/// Case-insensitive match of a package name against a catalog pattern.
 pub fn matches(pattern: &str, package: &str) -> bool {
     match pattern.strip_suffix('*') {
         Some(prefix) => starts_with_ci(package, prefix),
@@ -316,7 +304,6 @@ pub fn matches(pattern: &str, package: &str) -> bool {
     }
 }
 
-/// Exact names (case-insensitive) that must never be removed.
 const PROTECTED_EXACT: &[&str] = &[
     "Microsoft.WindowsStore",
     "Microsoft.DesktopAppInstaller",
@@ -349,7 +336,6 @@ const PROTECTED_EXACT: &[&str] = &[
     "Microsoft.MPEG2VideoExtension",
 ];
 
-/// Prefixes (case-insensitive) that must never be removed.
 const PROTECTED_PREFIX: &[&str] = &[
     "Microsoft.VCLibs",
     "Microsoft.UI.Xaml",
@@ -376,17 +362,14 @@ fn ends_with_ci(s: &str, suffix: &str) -> bool {
         && s.as_bytes()[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix.as_bytes())
 }
 
-/// True when this package must never be touched, whatever was requested.
 pub fn is_protected(name: &str) -> bool {
     PROTECTED_EXACT.iter().any(|p| p.eq_ignore_ascii_case(name))
         || PROTECTED_PREFIX.iter().any(|p| starts_with_ci(name, p))
-        // Codec packages: HEIF, VP9, WebMedia, Webp, AV1, HEVC, RawImage…
         || ends_with_ci(name, "Extension")
         || ends_with_ci(name, "Extensions")
         || ends_with_ci(name, ".Framework")
 }
 
-/// Package names are plain ASCII identifiers; refuse anything else early.
 pub fn is_valid_package_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
@@ -395,8 +378,6 @@ pub fn is_valid_package_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
 }
 
-/// Which catalog entry (if any) owns this installed package. Protected and
-/// malformed names never match.
 pub fn owner(package: &str) -> Option<u16> {
     if !is_valid_package_name(package) || is_protected(package) {
         return None;

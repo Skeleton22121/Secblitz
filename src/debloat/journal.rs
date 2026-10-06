@@ -6,15 +6,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const FILE: &str = "debloat.jsonl";
-/// Old batches beyond this are dropped so the file stays small.
 pub const MAX_BATCHES: usize = 200;
 
 fn default_path() -> Result<PathBuf> {
     Ok(crate::platform::app_dir()?.join(FILE))
 }
 
-/// All batches, oldest first. Missing file, unreadable state directory and
-/// malformed lines all yield fewer (or no) batches rather than an error.
 pub fn load() -> Vec<Batch> {
     default_path().map(|p| load_from(&p)).unwrap_or_default()
 }
@@ -23,20 +20,14 @@ pub fn append(batch: &Batch) -> Result<()> {
     append_to(&default_path()?, batch)
 }
 
-/// Save a run's batch: replaces this run's earlier checkpoint (same start
-/// time, newest line) or appends a new line.
 pub fn upsert(batch: &Batch) -> Result<()> {
     upsert_to(&default_path()?, batch)
 }
 
-/// Mark every removed copy of catalog app `index` as restored.
 pub fn mark_restored(index: u16) -> Result<()> {
     mark_restored_in(&default_path()?, index)
 }
 
-/// Apps that are removed right now: (catalog index, time of the newest
-/// removal), newest batch first. An app removed again after a restore counts
-/// once; restored apps and indices outside the catalog are left out.
 pub fn still_removed(batches: &[Batch], catalog_len: usize) -> Vec<(u16, u64)> {
     let mut out: Vec<(u16, u64)> = Vec::new();
     for batch in batches.iter().rev() {
@@ -71,8 +62,6 @@ pub fn append_to(path: &Path, batch: &Batch) -> Result<()> {
 pub fn upsert_to(path: &Path, batch: &Batch) -> Result<()> {
     let mut batches = load_from(path);
     match batches.last_mut() {
-        // Same run: same start second, and the older line is an earlier
-        // checkpoint of this batch (a prefix), not a different run.
         Some(last)
             if last.t == batch.t
                 && last.removed.iter().all(|r| !r.restored)
