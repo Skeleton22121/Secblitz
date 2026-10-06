@@ -156,6 +156,9 @@ pub fn control_impact(id: &str) -> &'static str {
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
+        "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
+        "smb.shares_exposed" => "Strangers on your network opening or changing your shared files",
+        "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
         _ => "",
     }
 }
@@ -245,6 +248,9 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.delivery_optimization" => "Update sharing",
         "privacy.clipboard_sync" => "Clipboard sync",
         "defender.exclusions_risky" => "Antivirus skip list",
+        "accounts.stale_enabled" => "Old accounts still switched on",
+        "smb.shares_exposed" => "Folders shared with everyone",
+        "smartscreen.browser_policy" => "Browser warnings about dangerous sites",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -349,7 +355,10 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.recall"
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
-        | "privacy.clipboard_sync" => (
+        | "privacy.clipboard_sync"
+        | "accounts.stale_enabled"
+        | "smb.shares_exposed"
+        | "smartscreen.browser_policy" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -460,6 +469,15 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "defender.exclusions_risky" => {
             "Skipped places are scanned again, so some games or work tools may scan slower."
         }
+        "accounts.stale_enabled" => {
+            "Old accounts are switched off, not deleted. Undo switches them back on."
+        }
+        "smb.shares_exposed" => {
+            "Other devices on your network may need a password to open these folders."
+        }
+        "smartscreen.browser_policy" => {
+            "Edge and Chrome will warn you about dangerous websites again."
+        }
         _ => "",
     }
 }
@@ -525,6 +543,9 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: Secblitz cannot tell who is signed in" => {
             "We could not tell which account is signed in, so we leave this alone."
+        }
+        "Not offered: a shared folder would be left with no one who can open it" => {
+            "A shared folder would be left that nobody can open, so we leave this alone."
         }
         _ => return None,
     })
@@ -972,6 +993,7 @@ mod tests {
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
+            "Not offered: a shared folder would be left with no one who can open it",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");

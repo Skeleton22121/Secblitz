@@ -82,6 +82,11 @@ pub enum Source {
     SmartScreen,
     /// Dynamic: risky Microsoft Defender exclusions (1 present, 0 removed).
     DefenderExclusions,
+    /// Dynamic: old local accounts that are still switched on (1 on, 0 off).
+    StaleAccounts,
+    /// Dynamic: one broad grant (Everyone, Anonymous or Guests) on a shared
+    /// folder's permission list (1 present, 0 removed).
+    ShareGrants,
 }
 
 /// Management and capability evidence the backend must find clean.
@@ -249,6 +254,9 @@ const CLOUD_TIMEOUT_SAFE: &[u32] = &[
     20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
     44, 45, 46, 47, 48, 49, 50,
 ];
+
+const EDGE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
+const CHROME_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
 
 const TCPIP: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
 const TCPIP6: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters";
@@ -1012,6 +1020,47 @@ static SPECS: &[Spec] = &[
         keys: &[set("*", "", &[0], false, Some(0), 1)],
         gate: NO_GATE,
     },
+    Spec {
+        id: "accounts.stale_enabled",
+        title: "Old accounts that are still switched on",
+        description: "Switch off (never delete) local accounts that are switched on but have not signed in for 180 days. Never your own account, an account signed in now, the last administrator or a built-in account. Every account is recorded and undo switches it back on.",
+        source: Source::StaleAccounts,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "smb.shares_exposed",
+        title: "Shared folders open to everyone",
+        description: "Remove only the Everyone, Anonymous or Guests entry that gives Change or Full access from a shared folder's permission list. Every removed entry is recorded exactly and undo adds it back. Built-in shares (C$, ADMIN$, IPC$, print$) and all other entries are never touched.",
+        source: Source::ShareGrants,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "smartscreen.browser_policy",
+        title: "Browser warnings about dangerous sites",
+        description: "Remove a locally set policy value that switches off the Edge or Chrome warning about dangerous websites. Managed devices and Group Policy values are left alone. The removed value is recorded and undo puts it back exactly.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            set("SmartScreenEnabled", EDGE_POLICY, &[1], true, None, 1),
+            Key {
+                allowed: &[0, 1, 2],
+                ..set("SafeBrowsingProtectionLevel", CHROME_POLICY, &[1, 2], true, None, 2)
+            },
+            set("SafeBrowsingEnabled", CHROME_POLICY, &[1], true, None, 1),
+        ],
+        gate: Gate {
+            areas: &["Browser", "Edge", "ADMX_MicrosoftEdge"],
+            pattern: "SmartScreen|SafeBrowsing",
+            ..NO_GATE
+        },
+    },
 ];
 
 pub fn all() -> &'static [Spec] {
@@ -1087,8 +1136,55 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                 && !name.chars().any(|c| c.is_control() || c == '"')
                 && name.trim() == name
         }
+        Source::StaleAccounts => stale_account_name_ok(name),
+        Source::ShareGrants => share_grant_name_ok(name),
         _ => false,
     }
+}
+
+/// A local account SID with a user-created RID (1000 and up): never the
+/// built-in Administrator, Guest, DefaultAccount or WDAGUtilityAccount.
+fn stale_account_name_ok(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("S-1-5-21-") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('-').collect();
+    parts.len() == 4
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 10 && p.bytes().all(|b| b.is_ascii_digit()))
+        && !parts[3].starts_with('0')
+        && parts[3]
+            .parse::<u64>()
+            .is_ok_and(|rid| (1000..=u64::from(u32::MAX)).contains(&rid))
+}
+
+/// Who counts as "everyone" on a share: Everyone, Anonymous logon, Guests.
+pub const BROAD_SIDS: &[&str] = &["S-1-1-0", "S-1-5-7", "S-1-5-32-546"];
+/// The share rights broad enough to matter (the same ones the check flags).
+pub const BROAD_RIGHTS: &[&str] = &["Change", "Full"];
+
+/// `<share name>|<SID>|<right>`: one entry of a share's permission list.
+/// Windows share names cannot hold `|`, quotes or control characters, and
+/// built-in shares (anything ending in `$`) are never named.
+fn share_grant_name_ok(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('|').collect();
+    let [share, sid, right] = parts[..] else {
+        return false;
+    };
+    !share.is_empty()
+        && share.chars().count() <= 80
+        && !share.ends_with('$')
+        && share.trim() == share
+        && !share.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '"' | '/' | '\\' | '[' | ']' | ':' | '<' | '>' | '+' | '=' | ';' | ',' | '?' | '*' | '\''
+                )
+        })
+        && BROAD_SIDS.contains(&sid)
+        && BROAD_RIGHTS.contains(&right)
 }
 
 /// The only services the legacy-remote-access control may stop and disable.
@@ -1111,6 +1207,8 @@ impl Spec {
                 | Source::NetbiosAdapters
                 | Source::LegacyServices
                 | Source::DefenderExclusions
+                | Source::StaleAccounts
+                | Source::ShareGrants
         )
     }
 
@@ -1212,6 +1310,13 @@ impl Spec {
         Ok(json!({ "items": items }))
     }
 
+    /// Controls whose recorded items are compared exactly as journaled (never
+    /// narrowed by what is observed now): the observation is narrowed to them
+    /// instead, with vanished items read as "0" (see [`Spec::view`]).
+    pub fn exact_recorded(&self) -> bool {
+        matches!(self.source, Source::StaleAccounts | Source::ShareGrants)
+    }
+
     /// Restrict an observation to the keys of a journaled template. Fixed
     /// controls observe exactly their keys, so only dynamic ones are narrowed:
     /// a Wi-Fi network or firewall rule that appeared after the fix must not
@@ -1226,6 +1331,17 @@ impl Spec {
         ) else {
             return observed.clone();
         };
+        if self.exact_recorded() {
+            // Exactly the recorded items: an account that was switched off or a
+            // share entry that was removed is simply no longer listed, which
+            // is "0". Items that appeared since belong to somebody else's
+            // change and are never looked at, so they cannot block an undo.
+            let items: Map<String, Value> = t
+                .keys()
+                .map(|k| (k.clone(), o.get(k).cloned().unwrap_or_else(|| json!(0))))
+                .collect();
+            return json!({ "items": items });
+        }
         if self.source == Source::DefenderExclusions {
             // A removed exclusion is simply no longer listed: that is "0".
             // Nothing is filtered out (the engine passes either side as the
@@ -1784,6 +1900,156 @@ mod tests {
             fw.view(&json!({"items": {}}), &json!({"items": {"FPS-A": 15}})),
             json!({"items": {}})
         );
+    }
+
+    #[test]
+    fn old_accounts_are_named_by_user_sid_and_never_built_in_ones() {
+        let st = spec("accounts.stale_enabled").unwrap();
+        assert!(st.ask && st.dynamic() && !st.reboot);
+        let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+        st.validate(&json!({"items": {a: 1, "S-1-5-21-1-2-3-1000": 0}}))
+            .unwrap();
+        for bad in [
+            // Built-in Administrator, Guest, DefaultAccount, WDAGUtilityAccount.
+            "S-1-5-21-1111111111-2222222222-3333333333-500",
+            "S-1-5-21-1111111111-2222222222-3333333333-501",
+            "S-1-5-21-1111111111-2222222222-3333333333-503",
+            "S-1-5-21-1111111111-2222222222-3333333333-504",
+            "S-1-5-21-1111111111-2222222222-3333333333-999",
+            "S-1-5-21-1111111111-2222222222-3333333333-01001",
+            "S-1-5-21-1111111111-2222222222-3333333333",
+            "S-1-5-21-1111111111-2222222222-3333333333-1001-5",
+            "S-1-5-32-544",
+            "S-1-1-0",
+            "Bob",
+            "s-1-5-21-1-2-3-1001",
+            "S-1-5-21-1-2-3-1001'; x",
+            "S-1-5-21-1-2-3-99999999999",
+        ] {
+            assert!(
+                st.validate(&json!({"items": {bad: 1}})).is_err(),
+                "accepted {bad}"
+            );
+        }
+        assert!(st.validate(&json!({"items": {a: 2}})).is_err());
+        // Switching off is the only repair; off stays off.
+        assert!(st.any_unsafe(&json!({"items": {a: 1}})));
+        assert!(!st.any_unsafe(&json!({"items": {a: 0}})));
+        assert_eq!(
+            st.derive_target(&json!({"items": {a: 1}})).unwrap(),
+            json!({"items": {a: 0}})
+        );
+        assert_eq!(st.catalog_target(), json!("derived-items-v1"));
+    }
+
+    #[test]
+    fn broad_share_entries_name_one_share_one_broad_sid_and_one_right() {
+        let sh = spec("smb.shares_exposed").unwrap();
+        assert!(sh.ask && sh.dynamic() && !sh.reboot);
+        for ok in [
+            "Photos|S-1-1-0|Change",
+            "Work files|S-1-5-32-546|Full",
+            "Public|S-1-5-7|Change",
+            "Fotos für alle|S-1-1-0|Full",
+        ] {
+            sh.validate(&json!({"items": {ok: 1}})).unwrap();
+        }
+        for bad in [
+            // Built-in and hidden shares are never named.
+            "C$|S-1-1-0|Full",
+            "ADMIN$|S-1-1-0|Full",
+            "IPC$|S-1-1-0|Change",
+            "print$|S-1-1-0|Full",
+            // Only the broad SIDs and the two rights the check flags.
+            "Photos|S-1-5-11|Change",
+            "Photos|S-1-1-0|Read",
+            "Photos|S-1-1-0|change",
+            "Photos|Everyone|Change",
+            "Photos|S-1-1-0",
+            "Photos|S-1-1-0|Change|x",
+            "|S-1-1-0|Change",
+            " Photos|S-1-1-0|Change",
+            "Pho\"tos|S-1-1-0|Change",
+            "Pho'tos|S-1-1-0|Change",
+            "Pho\ntos|S-1-1-0|Change",
+            "Pho\\tos|S-1-1-0|Change",
+            "Pho:tos|S-1-1-0|Change",
+        ] {
+            assert!(
+                sh.validate(&json!({"items": {bad: 1}})).is_err(),
+                "accepted {bad}"
+            );
+        }
+        assert!(sh.validate(&json!({"items": {"Photos|S-1-1-0|Full": 2}})).is_err());
+        let long = format!("{}|S-1-1-0|Full", "x".repeat(81));
+        assert!(sh.validate(&json!({"items": {long: 1}})).is_err());
+    }
+
+    #[test]
+    fn recorded_items_are_compared_exactly_and_new_items_never_block_undo() {
+        for id in ["accounts.stale_enabled", "smb.shares_exposed"] {
+            let s = spec(id).unwrap();
+            assert!(s.exact_recorded(), "{id}");
+            let (a, b, new) = if id == "smb.shares_exposed" {
+                ("Photos|S-1-1-0|Change", "Work|S-1-1-0|Full", "New|S-1-1-0|Full")
+            } else {
+                (
+                    "S-1-5-21-1-2-3-1001",
+                    "S-1-5-21-1-2-3-1002",
+                    "S-1-5-21-1-2-3-1003",
+                )
+            };
+            let recorded = json!({"items": {a: 1, b: 1}});
+            // Gone from the listing reads as "0"; an item that appeared since is ignored.
+            let observed = json!({"items": {a: 0, new: 1}});
+            assert_eq!(
+                s.view(&observed, &recorded),
+                json!({"items": {a: 0, b: 0}})
+            );
+            // Still listed as on: that is the recorded original.
+            assert_eq!(
+                s.view(&json!({"items": {a: 1, b: 1}}), &recorded),
+                recorded
+            );
+        }
+        // The older dynamic controls keep their own narrowing.
+        assert!(!spec("net.public_sharing_exposure").unwrap().exact_recorded());
+        assert!(!spec("defender.exclusions_risky").unwrap().exact_recorded());
+    }
+
+    #[test]
+    fn browser_warning_policy_only_removes_values_that_switch_the_warning_off() {
+        let b = spec("smartscreen.browser_policy").unwrap();
+        assert!(b.ask && !b.dynamic() && !b.reboot);
+        assert_eq!(b.source, Source::Registry);
+        let names: Vec<_> = b.keys.iter().map(|k| k.name).collect();
+        assert_eq!(
+            names,
+            ["SmartScreenEnabled", "SafeBrowsingProtectionLevel", "SafeBrowsingEnabled"]
+        );
+        // Every key is only ever removed, never written to a new value.
+        for k in b.keys {
+            let Rule::Set { fix, absent_safe, .. } = k.rule else {
+                unreachable!()
+            };
+            assert_eq!(fix, None, "{}", k.name);
+            assert!(absent_safe, "{}", k.name);
+            assert!(k.path.starts_with("HKLM:\\SOFTWARE\\Policies\\"), "{}", k.name);
+        }
+        // Absent and "on" values are protected; only an explicit 0 is repaired.
+        assert!(!b.any_unsafe(&items(b, &[None, None, None])));
+        assert!(!b.any_unsafe(&items(b, &[Some(1), Some(2), Some(1)])));
+        assert!(b.any_unsafe(&items(b, &[Some(0), None, None])));
+        assert!(b.any_unsafe(&items(b, &[None, Some(0), None])));
+        assert!(b.any_unsafe(&items(b, &[None, None, Some(0)])));
+        // Chrome's "standard" and "enhanced" levels stay; only 0 goes.
+        assert_eq!(
+            b.derive_target(&items(b, &[Some(0), Some(2), Some(0)])).unwrap(),
+            items(b, &[None, Some(2), None])
+        );
+        assert!(b.validate(&items(b, &[Some(3), None, None])).is_err());
+        // Groups of other policy values are left alone: the gate lists browser areas only.
+        assert!(b.gate.areas.contains(&"Edge"));
     }
 
     #[test]
