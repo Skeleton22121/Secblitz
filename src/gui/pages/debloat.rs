@@ -358,41 +358,9 @@ fn toast(text: String, tone: Tone) -> Task<Message> {
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
-        Msg::Scanned(generation, _) if generation != state.scan_gen => Task::none(),
-        Msg::Scanned(_, Ok(found)) => {
-            state.installed = found;
-            let icons = icons_task(state.installed.clone());
-            let present: BTreeSet<u16> = installed_indices(state).into_iter().collect();
-            if state.initialised {
-                state.selected.retain(|i| present.contains(i));
-            } else {
-                state.selected = present
-                    .iter()
-                    .copied()
-                    .filter(|i| app_of(*i).group.selected_by_default())
-                    .collect();
-                state.initialised = true;
-            }
-            state.groups = Group::ALL
-                .iter()
-                .filter_map(|g| {
-                    let members: Vec<u16> = present
-                        .iter()
-                        .copied()
-                        .filter(|i| app_of(*i).group == *g)
-                        .collect();
-                    (!members.is_empty()).then_some((*g, members))
-                })
-                .collect();
-            state.scan = Scan::Ready;
-            icons
-        }
+        Msg::Scanned(generation, result) => on_scanned(state, generation, result),
         Msg::Icons(found) => {
             state.icons.extend(found);
-            Task::none()
-        }
-        Msg::Scanned(_, Err(e)) => {
-            state.scan = Scan::Failed(e);
             Task::none()
         }
         Msg::JournalLoaded(j) => {
@@ -415,17 +383,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::ToggleGroup(group) => {
-            let members: Vec<u16> = installed_indices(state)
-                .into_iter()
-                .filter(|i| app_of(*i).group == group)
-                .collect();
-            if members.iter().all(|i| state.selected.contains(i)) {
-                for i in members {
-                    state.selected.remove(&i);
-                }
-            } else {
-                state.selected.extend(members);
-            }
+            toggle_group(state, group);
             Task::none()
         }
         Msg::ToggleOpen(g) => {
@@ -469,31 +427,18 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::CloseResult => {
-            if matches!(state.sheet, Sheet::Done(_)) {
-                state.sheet = Sheet::None;
-                state.details = false;
-            }
+            close_result(state);
             Task::none()
         }
-        Msg::Restore(index) => {
+        Msg::Restore(index) => restore(state, ctx, index),
+        Msg::RestoreStore(index) => {
             if state.restoring.is_some() || ctx.busy {
                 return Task::none();
             }
-            if state.copies.contains(&index) {
-                state.restoring = Some(index);
-                state.restoring_copy = true;
-                state.offline = None;
-                state.now = Instant::now();
-                state.spin = anim::Clock::at(state.now);
-                return Task::perform(
-                    blocking(move || {
-                        debloat::offline::restore_index(index).map_err(|e| format!("{e:#}"))
-                    }),
-                    move |r| wrap(Msg::RestoredOffline(index, r)),
-                );
-            }
             store_restore(state, ctx, index)
         }
+        Msg::Restored(index, result) => on_restored(state, ctx, index, result),
+        Msg::RestoredOffline(index, result) => on_restored_offline(state, ctx, index, result),
         Msg::SuggestedMachine(on) => {
             state.suggested_machine = on;
             Task::none()
@@ -502,120 +447,208 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.suggested_user = matches!(reply, Ok(crate::broker::Reply::SafeByUs));
             Task::none()
         }
-        Msg::AllowSuggested => {
-            if state.allowing.is_some() || !suggested_blocked(state) {
-                return Task::none();
-            }
-            let user = state.suggested_user;
-            state.allowing = Some((1 + u8::from(user), true));
-            let mut tasks = vec![Task::perform(blocking(allow_machine), |ok| {
-                wrap(Msg::SuggestedAllowed(ok))
-            })];
-            if user {
-                tasks.push(ctx.broker_task(
-                    crate::broker::Request::UserSetting(
-                        crate::user_settings::Setting::SuggestedApps,
-                        crate::user_settings::Op::Undo,
-                    ),
-                    |r| wrap(Msg::SuggestedAllowed(matches!(r, Ok(crate::broker::Reply::Done)))),
-                ));
-            }
-            Task::batch(tasks)
-        }
-        Msg::SuggestedAllowed(ok) => {
-            let Some((left, all_ok)) = state.allowing else {
-                return Task::none();
-            };
-            let (left, all_ok) = (left - 1, all_ok && ok);
-            if left > 0 {
-                state.allowing = Some((left, all_ok));
-                return Task::none();
-            }
-            state.allowing = None;
-            let text = if all_ok {
-                ctx.t(ALLOWED_AGAIN)
-            } else {
-                ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")
-            };
-            Task::batch([
-                toast(text, if all_ok { Tone::Good } else { Tone::Warn }),
-                suggested_task(ctx),
-            ])
-        }
-        Msg::RestoreStore(index) => {
-            if state.restoring.is_some() || ctx.busy {
-                return Task::none();
-            }
-            store_restore(state, ctx, index)
-        }
-        Msg::RestoredOffline(index, result) => on_restored_offline(state, ctx, index, result),
+        Msg::AllowSuggested => allow_suggested(state, ctx),
+        Msg::SuggestedAllowed(ok) => on_suggested_allowed(state, ctx, ok),
         Msg::AskDelete(index) => {
-            if matches!(state.sheet, Sheet::None)
-                && !ctx.busy
-                && state.restoring.is_none()
-                && state.copies.contains(&index)
-            {
-                state.sheet = Sheet::Delete(index);
-            }
+            ask_delete(state, ctx, index);
             Task::none()
         }
-        Msg::Delete(index) => {
-            if !matches!(state.sheet, Sheet::Delete(i) if i == index) {
-                return Task::none();
-            }
-            state.sheet = Sheet::None;
-            if ctx.busy || state.restoring.is_some() {
-                return Task::none();
-            }
-            Task::perform(
-                blocking(move || {
-                    debloat::offline::delete_index(index).map_err(|e| format!("{e:#}"))
-                }),
-                move |r| wrap(Msg::Deleted(r)),
-            )
-        }
-        Msg::Deleted(result) => match result {
-            Ok(()) => Task::batch([
-                copies_task(),
-                toast(ctx.t("Saved copy deleted."), Tone::Neutral),
-            ]),
-            Err(_) => Task::batch([
-                copies_task(),
-                toast(
-                    ctx.t("We couldn't delete the saved copy. Please try again. If it keeps failing, restart your PC."),
-                    Tone::Bad,
-                ),
-            ]),
-        },
+        Msg::Delete(index) => delete(state, ctx, index),
+        Msg::Deleted(result) => on_deleted(ctx, result),
         Msg::Copies(copies, bytes) => {
             state.copies = copies;
             state.saved_bytes = bytes;
             Task::none()
         }
-        Msg::Restored(index, result) => {
-            state.restoring = None;
-            state.restoring_copy = false;
-            let name = ctx.t(app_of(index).name);
-            match result {
-                Ok(crate::broker::Reply::Done) => {
-                    let text = format!("{name} {}", ctx.t("is back on your PC."));
-                    restored_ok(state, ctx, index, text, Tone::Good)
-                }
-                Ok(crate::broker::Reply::Offline) => {
-                    state.offline = Some(index);
-                    Task::none()
-                }
-                Ok(crate::broker::Reply::OpenedStore) => toast(
-                    format!(
-                        "{} {name}.",
-                        ctx.t("We opened the Microsoft Store so you can install")
-                    ),
-                    Tone::Neutral,
-                ),
-                _ => couldnt_bring_back(ctx, &name),
-            }
-        }
     }
+}
+
+fn on_scanned(
+    state: &mut State,
+    generation: u32,
+    result: Result<Vec<Installed>, String>,
+) -> Task<Message> {
+    if generation != state.scan_gen {
+        return Task::none();
+    }
+    let found = match result {
+        Ok(found) => found,
+        Err(e) => {
+            state.scan = Scan::Failed(e);
+            return Task::none();
+        }
+    };
+    state.installed = found;
+    let icons = icons_task(state.installed.clone());
+    let present: BTreeSet<u16> = installed_indices(state).into_iter().collect();
+    if state.initialised {
+        state.selected.retain(|i| present.contains(i));
+    } else {
+        state.selected = present
+            .iter()
+            .copied()
+            .filter(|i| app_of(*i).group.selected_by_default())
+            .collect();
+        state.initialised = true;
+    }
+    state.groups = Group::ALL
+        .iter()
+        .filter_map(|g| {
+            let members: Vec<u16> = present
+                .iter()
+                .copied()
+                .filter(|i| app_of(*i).group == *g)
+                .collect();
+            (!members.is_empty()).then_some((*g, members))
+        })
+        .collect();
+    state.scan = Scan::Ready;
+    icons
+}
+
+fn toggle_group(state: &mut State, group: Group) {
+    let members: Vec<u16> = installed_indices(state)
+        .into_iter()
+        .filter(|i| app_of(*i).group == group)
+        .collect();
+    if members.iter().all(|i| state.selected.contains(i)) {
+        for i in members {
+            state.selected.remove(&i);
+        }
+    } else {
+        state.selected.extend(members);
+    }
+}
+
+fn close_result(state: &mut State) {
+    if matches!(state.sheet, Sheet::Done(_)) {
+        state.sheet = Sheet::None;
+        state.details = false;
+    }
+}
+
+fn restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
+    if state.restoring.is_some() || ctx.busy {
+        return Task::none();
+    }
+    if state.copies.contains(&index) {
+        state.restoring = Some(index);
+        state.restoring_copy = true;
+        state.offline = None;
+        state.now = Instant::now();
+        state.spin = anim::Clock::at(state.now);
+        return Task::perform(
+            blocking(move || debloat::offline::restore_index(index).map_err(|e| format!("{e:#}"))),
+            move |r| wrap(Msg::RestoredOffline(index, r)),
+        );
+    }
+    store_restore(state, ctx, index)
+}
+
+fn on_restored(
+    state: &mut State,
+    ctx: &mut Ctx,
+    index: u16,
+    result: Result<crate::broker::Reply, String>,
+) -> Task<Message> {
+    state.restoring = None;
+    state.restoring_copy = false;
+    let name = ctx.t(app_of(index).name);
+    match result {
+        Ok(crate::broker::Reply::Done) => {
+            let text = format!("{name} {}", ctx.t("is back on your PC."));
+            restored_ok(state, ctx, index, text, Tone::Good)
+        }
+        Ok(crate::broker::Reply::Offline) => {
+            state.offline = Some(index);
+            Task::none()
+        }
+        Ok(crate::broker::Reply::OpenedStore) => toast(
+            format!(
+                "{} {name}.",
+                ctx.t("We opened the Microsoft Store so you can install")
+            ),
+            Tone::Neutral,
+        ),
+        _ => couldnt_bring_back(ctx, &name),
+    }
+}
+
+fn allow_suggested(state: &mut State, ctx: &Ctx) -> Task<Message> {
+    if state.allowing.is_some() || !suggested_blocked(state) {
+        return Task::none();
+    }
+    let user = state.suggested_user;
+    state.allowing = Some((1 + u8::from(user), true));
+    let mut tasks = vec![Task::perform(blocking(allow_machine), |ok| {
+        wrap(Msg::SuggestedAllowed(ok))
+    })];
+    if user {
+        tasks.push(ctx.broker_task(
+            crate::broker::Request::UserSetting(
+                crate::user_settings::Setting::SuggestedApps,
+                crate::user_settings::Op::Undo,
+            ),
+            |r| wrap(Msg::SuggestedAllowed(matches!(r, Ok(crate::broker::Reply::Done)))),
+        ));
+    }
+    Task::batch(tasks)
+}
+
+fn on_suggested_allowed(state: &mut State, ctx: &Ctx, ok: bool) -> Task<Message> {
+    let Some((left, all_ok)) = state.allowing else {
+        return Task::none();
+    };
+    let (left, all_ok) = (left - 1, all_ok && ok);
+    if left > 0 {
+        state.allowing = Some((left, all_ok));
+        return Task::none();
+    }
+    state.allowing = None;
+    let text = if all_ok {
+        ctx.t(ALLOWED_AGAIN)
+    } else {
+        ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")
+    };
+    Task::batch([
+        toast(text, if all_ok { Tone::Good } else { Tone::Warn }),
+        suggested_task(ctx),
+    ])
+}
+
+fn ask_delete(state: &mut State, ctx: &Ctx, index: u16) {
+    if matches!(state.sheet, Sheet::None)
+        && !ctx.busy
+        && state.restoring.is_none()
+        && state.copies.contains(&index)
+    {
+        state.sheet = Sheet::Delete(index);
+    }
+}
+
+fn delete(state: &mut State, ctx: &Ctx, index: u16) -> Task<Message> {
+    if !matches!(state.sheet, Sheet::Delete(i) if i == index) {
+        return Task::none();
+    }
+    state.sheet = Sheet::None;
+    if ctx.busy || state.restoring.is_some() {
+        return Task::none();
+    }
+    Task::perform(
+        blocking(move || debloat::offline::delete_index(index).map_err(|e| format!("{e:#}"))),
+        move |r| wrap(Msg::Deleted(r)),
+    )
+}
+
+fn on_deleted(ctx: &Ctx, result: Result<(), String>) -> Task<Message> {
+    let (text, tone) = match result {
+        Ok(()) => (ctx.t("Saved copy deleted."), Tone::Neutral),
+        Err(_) => (
+            ctx.t("We couldn't delete the saved copy. Please try again. If it keeps failing, restart your PC."),
+            Tone::Bad,
+        ),
+    };
+    Task::batch([copies_task(), toast(text, tone)])
 }
 
 fn couldnt_bring_back(ctx: &Ctx, name: &str) -> Task<Message> {
