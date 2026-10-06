@@ -90,7 +90,7 @@ callbacks with an unsupported unselected control, disjoint successive batches,
 reopen and reverse undo, original WAL retention, mixed-batch exact ACL drift,
 pending/reverting blockers, final-gate races, and audit progress. Existing legacy
 apply, journal corruption, exact ACL readback, and rollback tests remain in force.
-Checks run locally with `/tmp/opencode/secblitz-cross-env.sh`; no guest operations
+Checks run locally with `target/build-tools/cross-env.sh`; no guest operations
 are required.
 
 ### Translation handoff to main/UI owner

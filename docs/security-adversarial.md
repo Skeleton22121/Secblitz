@@ -6,7 +6,7 @@ The exact new image, UpToDate, protected release floor, valid current/busy statu
 JSON, native 18-result/19-finding audit, real-guide DeferredBusy and normal Esc
 exit were verified. The floor remained byte-identical across the busy check;
 all controls and original WAL hashes were restored unchanged. Full evidence and
-scope are in [windows-v043-results.md](windows-v043-results.md).
+scope are in windows-v043-results.md.
 
 This supplements [the native adversarial review](security-review-native.md).
 It records targeted acceptance of the new release-floor and atomic persistence
@@ -38,7 +38,7 @@ still deliberately ignored. Release bytes are unchanged, so the prior nine
 SYSTEM cases and full installer acceptance remain applicable. Exact tested
 0.4.3 artifacts were promoted, with 0.4.2 preserved in the archive.
 
-See [0.4.3 Windows results](windows-v043-results.md) for hashes, restored-state
+See 0.4.3 Windows results for hashes, restored-state
 proof and evidence paths. The later genuine 0.4.2 to 0.4.3 live test passed.
 Live floor checks were read-only; rollback and interruption fault injection
 were not repeated against the published feed.

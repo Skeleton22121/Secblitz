@@ -277,8 +277,8 @@ Run from the project root. No authentication is required:
 
 ```sh
 python3 scripts/test-web-security.py --http
-/tmp/opencode/venv/bin/python scripts/test-web-security.py --browser
-/tmp/opencode/venv/bin/python scripts/test-web-security.py --frame
+python3 scripts/test-web-security.py --browser
+python3 scripts/test-web-security.py --frame
 python3 scripts/prepare-pages.py --require-feed --expected-version 0.4.2
 ```
 
@@ -311,14 +311,14 @@ with GET for key/config-like probes.
 
 Local raw bounded evidence, outside the webroot:
 
-- `/tmp/opencode/secblitz-security-http.json`: successful fixed HTTP run.
-- `/tmp/opencode/secblitz-security-extra.json`: live/local public-source matches,
+- `secblitz-security-http.json`: successful fixed HTTP run.
+- `secblitz-security-extra.json`: live/local public-source matches,
   HTTP endpoint redirects, TLS 1.2 and conditional-request observations.
-- `/tmp/opencode/secblitz-security-browser.json`: successful initial/clipboard
+- `secblitz-security-browser.json`: successful initial/clipboard
   observations and explicitly failed playback from the final full browser run.
-- `/tmp/opencode/secblitz-security-frame.json`: start record of the isolated
+- `secblitz-security-frame.json`: start record of the isolated
   framing retry; browser launch failure is recorded in the command transcript.
-- `/tmp/opencode/secblitz-security-extra.py`: supplemental fixed public checks.
+- `secblitz-security-extra.py`: supplemental fixed public checks.
 
 Local release-gate output:
 

@@ -6,7 +6,7 @@ The published 0.4.3 release completed the genuine 0.4.2 to 0.4.3 SYSTEM update,
 current checking, protected release-floor persistence, valid status JSON,
 18-control/19-finding audit and real-guide busy-session deferral. Cleanup
 preserved all original controls and WAL hashes. See
-[the 0.4.3 live results](windows-v043-results.md) and
+the 0.4.3 live results and
 [the persistence regression supplement](security-adversarial.md).
 
 This additional live evidence does not expand the standard-token/task-RPC,
@@ -36,7 +36,7 @@ successfully through this runner. Coverage limits are explicit below.
 ## Scope, inputs and isolation
 
 - Target: **Secblitz 0.4.2**, Windows 11 UI clone
-  `Secblitz-W11-UI-Test` / `4b70288b-b64d-4796-a725-006da3162d0f` only.
+  a disposable Windows 11 VM only.
 - Pre-review snapshot: `secblitz-pre-security-review`, UUID
   `5f08351c-0de0-45ff-bf36-32afec26eb22`.
 - All scripts, fixtures and runtime evidence are under
@@ -241,7 +241,7 @@ signature/hash/size before constructing the invalid-trust envelopes.
 
 ## 5. Busy-session protection and live origin chain
 
-The completed [0.4.2 live deployment gate](windows-v042-results.md) is reused
+The completed 0.4.2 live deployment gate is reused
 rather than repeated: actual published 0.4.1 → 0.4.2 update through SYSTEM,
 `beacons.lol` compatibility then `secblitz.lol` current checking, protected new
 state with legacy files retained, real guide scan/menu, `DeferredBusy` while
