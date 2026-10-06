@@ -195,7 +195,7 @@ pub(super) fn assert_no_dev_terms(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tools::{install_why, repair_why, InstallResult, RepairResult};
+    use crate::app::maintenance::{install_why, repair_why, InstallResult, RepairResult};
 
     #[test]
     fn update_check_reasons_get_their_own_next_step() {

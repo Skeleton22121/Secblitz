@@ -160,7 +160,7 @@ mod tests {
     fn every_system_engine_control_has_an_explanation() {
         for id in IDS {
             assert!(
-                secblitz::hardening::is_hardening_check_id(id),
+                crate::hardening::is_hardening_check_id(id),
                 "{id} is not an engine control"
             );
         }

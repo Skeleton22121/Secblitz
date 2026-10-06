@@ -1,6 +1,6 @@
 //! Row disclosure that explains a check in plain words.
 use super::{body, icon_button, section_label, ButtonKind};
-use crate::explain::{self, Explainer};
+use secblitz::explain::{self, Explainer};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
 use crate::gui::{Ctx, Message};

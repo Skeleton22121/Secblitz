@@ -56,7 +56,7 @@ mod tests {
     }
 
     fn script_finding_titles() -> Vec<String> {
-        include_str!("../platform/backend.ps1")
+        include_str!("platform/backend.ps1")
             .lines()
             .filter_map(|line| {
                 let rest = line.trim_start().strip_prefix("Finding '")?;
@@ -67,13 +67,13 @@ mod tests {
 
     fn engine_ids() -> Vec<String> {
         let mut ids = vec!["readiness".to_owned()];
-        ids.extend(secblitz::platform::control_ids());
+        ids.extend(crate::platform::control_ids());
         ids
     }
 
     fn rule_ids() -> Vec<String> {
-        let mut ids = dotted_literals(include_str!("../diagnostics/rules.rs"));
-        for id in dotted_literals(include_str!("../diagnostics/checks.rs")) {
+        let mut ids = dotted_literals(include_str!("diagnostics/rules.rs"));
+        for id in dotted_literals(include_str!("diagnostics/checks.rs")) {
             if !ids.contains(&id) {
                 ids.push(id);
             }
@@ -97,7 +97,7 @@ mod tests {
 
     fn every_id() -> Vec<String> {
         let mut ids: Vec<String> = engine_ids();
-        ids.extend(secblitz::hardening::all().iter().map(|s| s.id.to_owned()));
+        ids.extend(crate::hardening::all().iter().map(|s| s.id.to_owned()));
         ids.extend(script_finding_titles());
         ids.extend(RUST_FINDINGS.iter().map(|s| (*s).to_owned()));
         ids.extend(rule_ids());

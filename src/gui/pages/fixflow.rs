@@ -147,7 +147,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 }
 
 fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
-    let impact = crate::advice::control_impact(id);
+    let impact = secblitz::advice::control_impact(id);
     let items = ctx
         .report
         .as_deref()
@@ -155,8 +155,8 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         .and_then(|o| super::fixes::items_line(ctx, o));
     let impact_line = (!impact.is_empty())
         .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
-    let consequence = crate::advice::is_choice_check_id(id)
-        .then(|| crate::advice::choice_consequence(id))
+    let consequence = secblitz::advice::is_choice_check_id(id)
+        .then(|| secblitz::advice::choice_consequence(id))
         .filter(|c| !c.is_empty())
         .map(|c| ctx.t(c));
     let lines: Vec<String> = [impact_line, consequence, items].into_iter().flatten().collect();
@@ -523,7 +523,7 @@ fn technical_lines(
         Ok(report) => {
             for r in &report.results {
                 if attempted.is_empty() || attempted.contains(&r.id) {
-                    let a = crate::advice::for_outcome(r);
+                    let a = secblitz::advice::for_outcome(r);
                     let (status, next) = if r.status == CheckStatus::Error {
                         ("Not done", flow::NOT_DONE)
                     } else if r.status == CheckStatus::Skipped && r.detail.contains("readiness blocks") {

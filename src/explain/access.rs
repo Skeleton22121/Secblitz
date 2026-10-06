@@ -37,7 +37,7 @@ mod tests {
     #[test]
     fn every_access_control_has_a_short_calm_explanation() {
         for id in IDS {
-            assert!(secblitz::hardening::is_hardening_check_id(id), "{id}");
+            assert!(crate::hardening::is_hardening_check_id(id), "{id}");
             let x = get(id).unwrap_or_else(|| panic!("no explanation for {id}"));
             for (label, line) in [("what", x.what), ("risk", x.risk), ("change", x.change)] {
                 crate::explain::tests::assert_short_sentence(id, label, line);

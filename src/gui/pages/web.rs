@@ -1,7 +1,7 @@
 //! "Web protection": three switches that block ads, trackers and dangerous
 //! websites, a plain status line, a one-hour pause and today's counts.
 use crate::app::{history, settings as app_settings};
-use crate::explain;
+use secblitz::explain;
 use crate::gui::icons::Icon;
 use crate::gui::pages::home;
 use crate::gui::theme::{self, Palette, Tone};

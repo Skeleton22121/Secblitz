@@ -1,16 +1,13 @@
+//! The Secblitz program: the GUI, the command line, the launcher and the admin helper (`broker`). Logic that depends on neither the GUI nor the command line lives in the library crate (`lib.rs`).
 #![cfg_attr(windows, windows_subsystem = "windows")]
-pub(crate) mod advice;
 mod app;
 mod broker;
 mod guide;
-pub(crate) mod explain;
 mod gui;
 mod i18n;
 mod launcher;
 mod tray;
 mod uninstall;
-mod user_apps;
-mod user_settings;
 
 use anyhow::{bail, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
