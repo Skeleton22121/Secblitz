@@ -1,6 +1,0 @@
-node_modules/
-.remotion/
-out/
-public/capture/*
-!public/capture/.gitkeep
-footage070/
