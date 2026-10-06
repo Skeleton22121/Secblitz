@@ -365,8 +365,11 @@ fn run_script_in<T: DeserializeOwned>(
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
+            // The script itself comes from stdin and is not a file, so policy only
+            // touches the inbox module files it imports. Those are local, so the
+            // RemoteSigned policy always allows them; nothing needs Bypass.
             "-ExecutionPolicy",
-            "Bypass",
+            "RemoteSigned",
             "-Command",
             bootstrap,
         ])
