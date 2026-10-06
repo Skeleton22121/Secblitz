@@ -14,6 +14,16 @@ AppId={{30C8385C-D114-44DD-868B-45C469D690BC}
 AppName=Secblitz
 AppVersion={#AppVersion}
 AppPublisher=Secblitz
+AppPublisherURL=https://secblitz.lol
+AppSupportURL=https://secblitz.lol
+AppUpdatesURL=https://secblitz.lol
+AppCopyright=Copyright 2026 Secblitz contributors. MIT License.
+; Plain file details for Setup itself (Properties, security prompts).
+VersionInfoVersion={#AppVersion}
+VersionInfoCompany=Secblitz
+VersionInfoDescription=Secblitz Setup
+VersionInfoProductName=Secblitz
+VersionInfoCopyright=Copyright 2026 Secblitz contributors. MIT License.
 DefaultDirName={autopf64}\Secblitz
 DisableDirPage=yes
 UsePreviousAppDir=no
