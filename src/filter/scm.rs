@@ -7,10 +7,7 @@ use std::{
     ffi::{c_void, OsStr},
     fs::File,
     mem::{size_of, zeroed},
-    os::windows::{
-        ffi::OsStrExt,
-        io::{AsRawHandle, FromRawHandle},
-    },
+    os::windows::io::{AsRawHandle, FromRawHandle},
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     time::{Duration, Instant},
@@ -32,6 +29,7 @@ use windows_sys::Win32::{
 };
 
 use super::control::ServiceState;
+use crate::platform::security::{descriptor, error, sid, wide, Local};
 use super::{config, SERVICE_NAME};
 
 const ACCOUNT: &str = r"NT AUTHORITY\LocalService";
@@ -75,57 +73,7 @@ extern "system" {
     fn ChangeServiceConfig2W(service: *mut c_void, level: u32, info: *const c_void) -> i32;
 }
 
-struct Local(*mut c_void);
-impl Drop for Local {
-    fn drop(&mut self) {
-        unsafe {
-            LocalFree(self.0);
-        }
-    }
-}
-
-fn error() -> anyhow::Error {
-    std::io::Error::last_os_error().into()
-}
-
-fn wide(s: impl AsRef<OsStr>) -> Result<Vec<u16>> {
-    let mut v: Vec<u16> = s.as_ref().encode_wide().collect();
-    ensure!(!v.contains(&0), "Embedded NUL");
-    v.push(0);
-    Ok(v)
-}
-
-fn descriptor(s: &str) -> Result<Local> {
-    let s = wide(s)?;
-    let mut p = null_mut();
-    ensure!(
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(s.as_ptr(), 1, &mut p, null_mut())
-        } != 0,
-        "Security descriptor: {}",
-        error()
-    );
-    Ok(Local(p))
-}
-
-fn sid(s: &str) -> Result<Local> {
-    let s = wide(s)?;
-    let mut p = null_mut();
-    ensure!(
-        unsafe { ConvertStringSidToSidW(s.as_ptr(), &mut p) } != 0,
-        "SID: {}",
-        error()
-    );
-    Ok(Local(p))
-}
-
-fn require_admin() -> Result<()> {
-    ensure!(
-        crate::platform::is_elevated()?,
-        "Web protection setup needs administrator rights"
-    );
-    Ok(())
-}
+const NEEDS_ADMIN: &str = "Web protection setup needs administrator rights";
 
 
 fn local_path(path: &Path) -> Result<&str> {
@@ -485,7 +433,7 @@ fn create_dir(path: &Path, sddl: &str) -> Result<()> {
 }
 
 pub fn ensure_dirs() -> Result<()> {
-    require_admin()?;
+    crate::platform::require_admin(NEEDS_ADMIN)?;
     let filter = config::dir()?;
     let root = filter.parent().context("Missing Secblitz folder")?;
     let program_data = root.parent().context("Missing ProgramData folder")?;
@@ -525,7 +473,7 @@ fn refuse_links(dir: &Path) -> Result<()> {
 /// Deletes `ProgramData\Secblitz\Filter` after checking the folders on the
 /// way and its owner; a folder with a link inside is not touched.
 pub fn remove_dir() -> Result<()> {
-    require_admin()?;
+    crate::platform::require_admin(NEEDS_ADMIN)?;
     let filter = config::dir()?;
     match std::fs::symlink_metadata(&filter) {
         Ok(_) => (),
@@ -625,7 +573,7 @@ fn wait_for(service: &Service, goal: Scm) -> Result<bool> {
 /// expected command and account is fine; anything else is left alone and
 /// refused.
 pub fn install() -> Result<()> {
-    require_admin()?;
+    crate::platform::require_admin(NEEDS_ADMIN)?;
     ensure!(
         cfg!(target_arch = "x86_64"),
         "Web protection requires Windows x64"
@@ -745,7 +693,7 @@ fn configure(service: &Service, binary: &Path) -> Result<()> {
 /// Starts (and sets to start with Windows) or stops (and disables) the
 /// filter. Turning on waits up to ten seconds for it to be running.
 pub fn set_enabled(on: bool) -> Result<()> {
-    require_admin()?;
+    crate::platform::require_admin(NEEDS_ADMIN)?;
     let service = open_service(
         ServiceAccess::QUERY_CONFIG
             | ServiceAccess::QUERY_STATUS
@@ -796,7 +744,7 @@ pub fn state() -> Result<ServiceState> {
 }
 
 pub fn delete() -> Result<()> {
-    require_admin()?;
+    crate::platform::require_admin(NEEDS_ADMIN)?;
     let Some(service) =
         open_service(ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE)?
     else {
