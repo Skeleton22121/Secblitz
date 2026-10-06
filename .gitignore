@@ -1,12 +1,22 @@
+# build output
 /target/
+/dist/
 *.exe
 *.pdb
-/dist/
-# local tooling and generated output
+__pycache__/
+
+# local tooling, agent and scanner state
 /.claude/
+/CLAUDE.md
+/CLAUDE.local.md
+/.desloppify/
 /.wrangler/
 /.website-backup/
-video/node_modules/
-video/out/
-__pycache__/
 /deploy/node_modules/
+/website/downloads/
+
+# local-only working material (video production, agent plans, capture tools)
+/video/
+/docs/superpowers/
+/scripts/capture-v060*
+/scripts/test-video.py

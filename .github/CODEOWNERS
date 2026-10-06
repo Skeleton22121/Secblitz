@@ -1,15 +1,14 @@
 # Who must review changes to the files that decide what ships and what updates
-# trust. Replace @OWNER with the real GitHub user name (or a team) before turning
-# on "Require review from Code Owners" in the main branch ruleset. Until then
-# this file does nothing, and a wrong name is silently ignored by GitHub.
+# trust. Takes effect once "Require review from Code Owners" is on in the main
+# branch ruleset.
 
-/.github/ @OWNER
-/scripts/ @OWNER
-/installer/ @OWNER
-/website/ @OWNER
-/wrangler.jsonc @OWNER
-/deploy/ @OWNER
-/src/updater/ @OWNER
+/.github/ @Skeleton22121
+/scripts/ @Skeleton22121
+/installer/ @Skeleton22121
+/website/ @Skeleton22121
+/wrangler.jsonc @Skeleton22121
+/deploy/ @Skeleton22121
+/src/updater/ @Skeleton22121
 # The key every installed copy trusts, and the origin it downloads from.
-/assets/update-public-key.hex @OWNER
-/assets/update-origin.txt @OWNER
+/assets/update-public-key.hex @Skeleton22121
+/assets/update-origin.txt @Skeleton22121

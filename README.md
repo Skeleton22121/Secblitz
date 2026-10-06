@@ -92,7 +92,9 @@ On Windows, `scripts/build-release.ps1` runs the same tests, lint and build with
 - **Every check explains itself.** A new check needs its what it is / if it's off / if you turn it on text in [`src/explain/`](src/explain/).
 - **Every string in six languages.** Add translations to [`src/i18n.rs`](src/i18n.rs), or drop them in [`i18n-pending/`](i18n-pending/) if you only speak some of them.
 - **Reversible or read-only.** A change Secblitz makes must record what it replaced and be undoable, or be clearly labeled as one-way before the user says yes.
-- **Tests with the change.** Run the tests, clippy and `rustfmt` before you open a pull request, and say in the description what you tested on a real Windows PC.
+- **Tests with the change.** Run the tests and clippy before you open a pull request, and say in the description what you tested on a real Windows PC.
+
+Maintainers and coding agents: the full working rules are in [AGENTS.md](AGENTS.md).
 
 ## License
 

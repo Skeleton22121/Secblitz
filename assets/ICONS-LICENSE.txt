@@ -26,3 +26,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Website GitHub mark
+
+The GitHub mark on the website (scripts/build-site-assets.py, SITE_ICONS) is
+from Primer Octicons (https://github.com/primer/octicons), MIT License,
+Copyright (c) GitHub Inc. It is used only to link to the project's GitHub page.
