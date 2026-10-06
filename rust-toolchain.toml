@@ -1,0 +1,7 @@
+# One compiler for every build, local and CI. Change it deliberately, in its
+# own commit, because the release binary changes with the compiler.
+[toolchain]
+channel = "1.93.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu"]

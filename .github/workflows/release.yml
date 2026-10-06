@@ -1,0 +1,329 @@
+name: Release
+
+# Builds Secblitz from source for a version tag and prepares a DRAFT GitHub
+# Release. Nothing is published to users by this workflow: the owner reviews
+# the draft, signs the update manifest offline and publishes by hand
+# (docs/RELEASING.md).
+#
+# The update-feed signing key is never used here. It stays offline.
+#
+# Signing (SignPath) is off until the repository variable SIGNPATH_ENABLED is
+# "true". Order: build exe -> sign exe -> pack setup from the signed exe ->
+# sign setup -> attest -> draft release.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, for example v0.8.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Check tag, version and release notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      version: ${{ steps.check.outputs.version }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the Python package the release tests need
+        run: python3 -m pip install --disable-pip-version-check "cryptography==46.0.5"
+      - name: Check the tag against Cargo.toml and the changelog
+        id: check
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH."; exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          cargo_version=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -n 1)
+          if [ "$cargo_version" != "$version" ]; then
+            echo "::error::Tag $TAG does not match Cargo.toml version $cargo_version."; exit 1
+          fi
+          # The release must come from code that is on main.
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag $TAG is not on the main branch."; exit 1
+          fi
+          # Fails when the changelog has no dated section with entries.
+          python3 scripts/release-notes.py "$version" > release-notes.md
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Release tool tests
+        run: |
+          python3 scripts/release-tests.py
+          python3 scripts/bump-version-tests.py
+      - name: Keep the release notes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  build-exe:
+    name: Build the exe from source (tests first)
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Initialize x64 MSVC tools
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version --verbose
+      - name: Cache cargo downloads
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Only downloaded crates are cached, never compiled output, so the
+          # release binary is always built fresh from source.
+          cache-targets: "false"
+      - name: Test, lint and build the exe
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -Stage Exe
+      - name: Upload the unsigned exe
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exe-unsigned
+          path: dist/secblitz-*-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-exe:
+    name: Sign the exe (SignPath)
+    needs: [verify, build-exe]
+    # Off until the owner sets the repository variable SIGNPATH_ENABLED to true.
+    if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Submit the exe to SignPath
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_EXE_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.build-exe.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-exe
+      - name: Upload the signed exe
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exe-signed
+          path: signed-exe/secblitz-*-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  build-setup:
+    name: Pack the setup from the (signed) exe
+    needs: [verify, build-exe, sign-exe]
+    # Runs when the exe was built and signing either succeeded or is switched off.
+    if: ${{ !cancelled() && needs.build-exe.result == 'success' && (needs.sign-exe.result == 'success' || needs.sign-exe.result == 'skipped') }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Get the unsigned exe
+        if: ${{ vars.SIGNPATH_ENABLED != 'true' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: exe-unsigned
+          path: dist
+      - name: Get the signed exe
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: exe-signed
+          path: dist
+      - name: Check the exe signature
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        shell: pwsh
+        run: |
+          $exe = @(Get-ChildItem dist/secblitz-*-windows-x64.exe)
+          if ($exe.Count -ne 1) { throw 'Expected exactly one exe.' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe[0].FullName
+          $signature | Format-List Status, StatusMessage, SignerCertificate
+          if ($signature.Status -ne 'Valid') { throw "The signed exe is not validly signed: $($signature.Status)" }
+      - name: Build the setup (Inno Setup)
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -Stage Setup -DownloadInno
+      - name: Upload the unsigned setup
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: setup-unsigned
+          path: dist/secblitz-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-setup:
+    name: Sign the setup (SignPath)
+    needs: [verify, build-setup]
+    if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Submit the setup to SignPath
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_SETUP_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.build-setup.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-setup
+      - name: Upload the signed setup
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: setup-signed
+          path: signed-setup/secblitz-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  attest:
+    name: Checksums and build provenance
+    needs: [verify, build-exe, build-setup, sign-exe, sign-setup]
+    if: ${{ !cancelled() && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only this job may mint attestations. It cannot write to the repository.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Get the exe (signed when signing is on)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ vars.SIGNPATH_ENABLED == 'true' && 'exe-signed' || 'exe-unsigned' }}
+          path: release
+      - name: Get the setup (signed when signing is on)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ vars.SIGNPATH_ENABLED == 'true' && 'setup-signed' || 'setup-unsigned' }}
+          path: release
+      - name: Write SHA256SUMS
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          ls -l
+          test -f "secblitz-$VERSION-windows-x64.exe"
+          test -f "secblitz-$VERSION-windows-x64-setup.exe"
+          test "$(ls | wc -l)" -eq 2
+          sha256sum "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-x64-setup.exe" > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/secblitz-*-windows-x64.exe
+            release/secblitz-*-windows-x64-setup.exe
+      - name: Keep the release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-files
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    name: Create the draft GitHub Release
+    needs: [verify, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that can write to the repository.
+    permissions:
+      contents: write
+    steps:
+      - name: Get the release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-files
+          path: release
+      - name: Get the release notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-notes
+          path: notes
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Always a draft. The owner signs the update manifest offline, checks
+          # the files and publishes by hand.
+          gh release create "$TAG" \
+            --draft --verify-tag \
+            --title "Secblitz $VERSION" \
+            --notes-file notes/release-notes.md \
+            release/secblitz-"$VERSION"-windows-x64-setup.exe \
+            release/secblitz-"$VERSION"-windows-x64.exe \
+            release/SHA256SUMS
