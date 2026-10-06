@@ -71,24 +71,51 @@ function Start-MpScan {
     $script:calls.Add('scan')
     if ($script:scenario -eq 'command-error') { throw 'Mock command failure' }
 }
+function Get-MpThreat {
+    param($ErrorAction)
+    if ($script:scenario -eq 'threats-unreadable') { throw 'Threat query failed' }
+    return @($script:threats)
+}
+function Remove-MpThreat {
+    param($ErrorAction)
+    $script:calls.Add('remove')
+    if ($script:scenario -eq 'command-error') { throw 'Mock command failure' }
+    # Defender's own remediation: active threats go to quarantine and stop being active.
+    if ($script:scenario -ne 'stubborn') { $script:threats = @($script:threats | ForEach-Object { @{IsActive=$false; Id=$_.Id} }) }
+}
+function Start-Sleep { param($Seconds) $script:sleeps++ }
 function Emit($value) {
     if ($value.ok -ne $true) { throw 'Invalid acknowledgement' }
     $script:ack = $true
+    $script:reply = $value
 }
 $env:SystemRoot = 'C:\Windows'
 $count = 0
-foreach ($supportId in @('defender_update', 'defender_quickscan', 'defender_update ', 'Defender_update', "defender_update'; exit")) {
-    foreach ($script:scenario in @('allowed', 'domain', 'domain-unknown', 'mdm', 'mdm-unreadable', 'local-policy', 'policy', 'rsop-unreadable', 'provider-missing', 'provider-other', 'provider-unreadable', 'service-inactive', 'status-unknown', 'passive', 'command-error', 'cloud', 'omadm', 'registry-unreadable', 'os-unreadable', 'server', 'old-os', 'provider-duplicate', 'provider-malformed', 'status-unreadable')) {
+foreach ($supportId in @('defender_update', 'defender_quickscan', 'defender_remove_threats', 'defender_update ', 'Defender_update', "defender_update'; exit")) {
+    foreach ($script:scenario in @('allowed', 'domain', 'domain-unknown', 'mdm', 'mdm-unreadable', 'local-policy', 'policy', 'rsop-unreadable', 'provider-missing', 'provider-other', 'provider-unreadable', 'service-inactive', 'status-unknown', 'passive', 'command-error', 'cloud', 'omadm', 'registry-unreadable', 'os-unreadable', 'server', 'old-os', 'provider-duplicate', 'provider-malformed', 'status-unreadable', 'threats-unreadable', 'stubborn')) {
         $script:calls = [Collections.Generic.List[string]]::new()
+        $script:threats = @(@{IsActive=$true; Id=1}, @{IsActive=$true; Id=2}, @{IsActive=$false; Id=3})
+        $script:sleeps = 0
+        $script:reply = $null
         $script:ack = $false
         $failed = $false
         try { & $operation } catch { $failed = $true }
-        $known = $supportId -cin @('defender_update', 'defender_quickscan')
-        $allowed = $known -and $script:scenario -eq 'allowed'
+        $known = $supportId -cin @('defender_update', 'defender_quickscan', 'defender_remove_threats')
+        # 'stubborn' (Defender leaves the threats active) only matters to the threat removal; 'threats-unreadable' only blocks it.
+        $isThreat = $supportId -ceq 'defender_remove_threats'
+        $allowed = $known -and $script:scenario -in @('allowed', 'stubborn')
+        if ($script:scenario -eq 'threats-unreadable') { $allowed = $known -and !$isThreat }
         if ($script:ack -ne $allowed -or $failed -eq $allowed) { throw "Wrong outcome: $supportId / $script:scenario" }
-        $expectedCalls = if ($known -and $script:scenario -in @('allowed','command-error')) { 1 } else { 0 }
+        $expectedCalls = if ($known -and $script:scenario -in @('allowed','command-error','stubborn')) { 1 } else { 0 }
+        if ($script:scenario -eq 'threats-unreadable') { $expectedCalls = $(if ($known -and !$isThreat) { 1 } else { 0 }) }
         if ($script:calls.Count -ne $expectedCalls) { throw "Unexpected mutation: $supportId / $script:scenario" }
-        if ($expectedCalls -eq 1 -and $script:calls[0] -cne $(if ($supportId -ceq 'defender_update') { 'update' } else { 'scan' })) { throw 'Wrong action executed' }
+        if ($expectedCalls -eq 1 -and $script:calls[0] -cne $(if ($supportId -ceq 'defender_update') { 'update' } elseif ($isThreat) { 'remove' } else { 'scan' })) { throw 'Wrong action executed' }
+        if ($isThreat -and $script:scenario -eq 'allowed') {
+            if ($script:reply.found -ne 2 -or $script:reply.removed -ne 2 -or $script:reply.left -ne 0) { throw 'Wrong threat counts after removal' }
+        }
+        if ($isThreat -and $script:scenario -eq 'stubborn') {
+            if ($script:reply.found -ne 2 -or $script:reply.removed -ne 0 -or $script:reply.left -ne 2 -or $script:sleeps -lt 10) { throw 'A threat Defender could not remove must be reported, not claimed' }
+        }
         $count++
     }
 }

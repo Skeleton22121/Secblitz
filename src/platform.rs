@@ -22,6 +22,68 @@ pub fn support_action(id: &str) -> Result<()> {
     }
 }
 
+/// What "Remove found threats" did, as plain counts taken from Defender
+/// itself before and after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreatRemoval {
+    /// Active threats Defender reported before the removal.
+    pub found: u32,
+    /// How many of them are no longer active afterwards.
+    pub removed: u32,
+    /// Active threats still reported afterwards.
+    pub left: u32,
+}
+
+/// Ask Defender itself to remove the active threats it has found (its own
+/// remediation, which moves what it removes to quarantine where Windows
+/// Security can restore it). Explicitly selected, never a reversible control.
+/// No path, name or argument is accepted: Defender decides what is removed.
+pub fn remove_threats() -> Result<ThreatRemoval> {
+    #[cfg(windows)]
+    {
+        windows::remove_threats()
+    }
+    #[cfg(not(windows))]
+    {
+        bail!("Defender support actions require Windows")
+    }
+}
+
+/// Exactly `{"ok":true,"found":n,"removed":n,"left":n}` with consistent counts.
+#[cfg(any(windows, test))]
+fn parse_threat_reply(reply: &Value) -> Result<ThreatRemoval> {
+    let object = reply
+        .as_object()
+        .filter(|o| o.len() == 4 && o.get("ok") == Some(&json!(true)))
+        .ok_or_else(|| anyhow::anyhow!("Windows Security did not say what it removed"))?;
+    let count = |key: &str| -> Result<u32> {
+        object
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n <= 100_000)
+            .ok_or_else(|| anyhow::anyhow!("Windows Security did not say what it removed"))
+    };
+    let (found, removed, left) = (count("found")?, count("removed")?, count("left")?);
+    if removed > found {
+        bail!("Windows Security did not say what it removed");
+    }
+    Ok(ThreatRemoval {
+        found,
+        removed,
+        left,
+    })
+}
+
+#[cfg(any(windows, test))]
+fn threats_script() -> Result<String> {
+    Ok(format!(
+        "$inputJson=$null\n{}\n$supportId='defender_remove_threats'\n{}",
+        backend_definitions()?,
+        include_str!("actions/defender.ps1")
+    ))
+}
+
 fn validate_support_id(id: &str) -> Result<()> {
     if !matches!(id, "defender_update" | "defender_quickscan") {
         bail!("Unknown support action id");
@@ -84,9 +146,10 @@ fn hardening_script(action: &str, id: &str, value: Option<&Value>) -> Result<Str
         _ => bail!("Invalid platform action arguments"),
     };
     Ok(format!(
-        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson={}\n{}\n{}",
+        "$action='{action}'\n$id='{id}'\n$inputJson={input}\n$hardeningSpecJson={}\n{}\n{}\n{}",
         ps_text(&spec.script_json()),
         backend_definitions()?,
+        include_str!("platform/hardening.handled.ps1"),
         include_str!("platform/hardening.ps1")
     ))
 }
@@ -441,6 +504,50 @@ mod tests {
             assert!(support_script(id).is_err());
             assert!(support_action(id).is_err());
         }
+    }
+    #[test]
+    fn threat_removal_is_its_own_fixed_script_and_an_exact_reply() {
+        let script = threats_script().unwrap();
+        assert!(script.contains("$supportId='defender_remove_threats'"));
+        assert!(script.contains("Remove-MpThreat -ErrorAction Stop"));
+        assert!(!script.contains("switch -CaseSensitive ($action)"));
+        assert!(script.contains("function CheckScopedPolicy"));
+        // The shared gate (domain, MDM, policy, one antivirus, Normal mode) comes first.
+        let gate = script.find("function CheckScopedPolicy").unwrap();
+        let call = script.find("    CheckScopedPolicy 'defender.support'").unwrap();
+        let remove = script.find("Remove-MpThreat -ErrorAction Stop").unwrap();
+        assert!(gate < call && call < remove);
+        // It is not one of the plain support actions and is never a control id.
+        assert!(support_script("defender_remove_threats").is_err());
+        assert!(support_action("defender_remove_threats").is_err());
+        assert!(validate_request("write", Some("defender_remove_threats"), Some(&json!(false))).is_err());
+
+        let ok = json!({"ok": true, "found": 3, "removed": 2, "left": 1});
+        assert_eq!(
+            parse_threat_reply(&ok).unwrap(),
+            ThreatRemoval {
+                found: 3,
+                removed: 2,
+                left: 1
+            }
+        );
+        parse_threat_reply(&json!({"ok": true, "found": 0, "removed": 0, "left": 0})).unwrap();
+        for bad in [
+            json!({"ok": true}),
+            json!({"ok": false, "found": 1, "removed": 1, "left": 0}),
+            json!({"ok": true, "found": 1, "removed": 2, "left": 0}),
+            json!({"ok": true, "found": -1, "removed": 0, "left": 0}),
+            json!({"ok": true, "found": 1.5, "removed": 0, "left": 0}),
+            json!({"ok": true, "found": "1", "removed": 0, "left": 0}),
+            json!({"ok": true, "found": 1, "removed": 1, "left": 0, "extra": 1}),
+            json!({"ok": true, "found": 100001, "removed": 0, "left": 0}),
+            json!([true]),
+            json!(null),
+        ] {
+            assert!(parse_threat_reply(&bad).is_err(), "accepted {bad}");
+        }
+        #[cfg(not(windows))]
+        assert!(remove_threats().is_err());
     }
     #[test]
     fn permission_gate_is_an_exact_isolated_action() {

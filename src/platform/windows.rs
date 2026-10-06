@@ -24,6 +24,8 @@ use windows_sys::Win32::{
 
 #[path = "journal.rs"]
 mod journal;
+#[path = "vbs_native.rs"]
+mod vbs_native;
 pub use journal::state_dir;
 
 struct Handle(HANDLE);
@@ -335,6 +337,22 @@ pub fn support_action(id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn remove_threats() -> Result<super::ThreatRemoval> {
+    let script = super::threats_script()?;
+    ensure!(
+        cfg!(target_arch = "x86_64"),
+        "Secblitz supports Windows x64 only"
+    );
+    ensure!(
+        is_elevated()?,
+        "Defender support actions require Administrator elevation"
+    );
+    let reply: Value = run_script(script, Duration::from_secs(10 * 60)).context(
+        "Windows Security could not finish removing them. Nothing else was changed",
+    )?;
+    super::parse_threat_reply(&reply)
+}
+
 /// PowerShell plus the DISM helper processes a feature change may start.
 const DISM_PROCESSES: u32 = 4;
 
@@ -496,10 +514,45 @@ pub fn backend() -> Result<Box<dyn Backend>> {
     Ok(Box::new(WindowsBackend))
 }
 fn observe_one(id: &str) -> Result<Observation> {
-    let obs: Observation = run("observe", Some(id), None)?;
+    let mut obs: Observation = run("observe", Some(id), None)?;
     validate_value(id, &obs.value)?;
     crate::model::validate_observation(id, &obs)?;
+    vbs_gate(id, &mut obs);
     Ok(obs)
+}
+
+/// Memory integrity and kernel stack protection are only offered when it is
+/// safe on this PC: supported hardware, nothing locked, and every driver
+/// passing the static scan. The extra checks run only for a fix that would be
+/// offered, so a safe state and an undo are never held back by them. Any
+/// doubt means "not offered", never a guess.
+fn vbs_gate(id: &str, obs: &mut Observation) {
+    use crate::vbs::{decide, Decision};
+    let Some(spec) = crate::hardening::spec(id).filter(|_| crate::vbs::is_vbs(id)) else {
+        return;
+    };
+    if !obs.eligible || !spec.any_unsafe(&obs.value) {
+        return;
+    }
+    let verdict = (|| -> Result<Decision> {
+        let facts = vbs_native::facts()?;
+        let windows = windows_dir()?.to_string_lossy().into_owned();
+        let cpu = crate::vbs::cpu_has_shadow_stacks();
+        Ok(decide(id, &facts, cpu, &mut || {
+            vbs_native::scan_drivers(&windows)
+        }))
+    })();
+    match verdict {
+        Ok(Decision::Offer) => {}
+        Ok(Decision::NotOffered(reason)) => {
+            obs.eligible = false;
+            obs.reason = reason;
+        }
+        Err(_) => {
+            obs.eligible = false;
+            obs.reason = crate::vbs::UNREADABLE.into();
+        }
+    }
 }
 impl Backend for WindowsBackend {
     fn machine_id(&mut self) -> Result<String> {
@@ -549,7 +602,11 @@ impl Backend for WindowsBackend {
         Ok(())
     }
     fn findings(&mut self) -> Result<Vec<Finding>> {
-        run("findings", None, None)
+        let mut found: Vec<Finding> = run("findings", None, None)?;
+        // After a restart: say so plainly when a protection we turned on is
+        // not running, and name the drivers Windows blocked.
+        found.extend(vbs_native::verification_findings());
+        Ok(found)
     }
     fn readiness(&mut self) -> crate::model::Readiness {
         crate::readiness::collect()

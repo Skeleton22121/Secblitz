@@ -24,6 +24,8 @@ pub enum NextStep {
     ReviewWindowsFeatures,
     ReviewWithAdministrator,
     ReviewUndo,
+    /// Open the History page (undo your fixes there, newest first).
+    OpenHistory,
     Restart,
     CheckAgain,
 }
@@ -171,6 +173,23 @@ pub fn control_impact(id: &str) -> &'static str {
         "accounts.autologon" => "Anyone who turns on your PC getting straight into your account",
         "remote_desktop.disabled" => "Strangers trying to sign in to your PC from far away",
         "smb1.disabled" => "Old file-sharing flaws that let malware spread between PCs",
+        "vbs.memory_integrity" => "Harmful drivers taking over the core of Windows",
+        "vbs.kernel_stack_protection" => {
+            "Attackers hijacking the core of Windows through a driver bug"
+        }
+        "services.unquoted_paths" => {
+            "A planted program being started with full power instead of the real one"
+        }
+        "firewall.user_dir_inbound_allow" => {
+            "A harmful download letting strangers connect straight to your PC"
+        }
+        "net.hosts_file" => "Trusted websites quietly sending you to fake ones",
+        "persistence.run_and_tasks" => {
+            "A harmful program starting again every time you turn on your PC"
+        }
+        "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
+        "smb.shares_exposed" => "Strangers on your network opening or changing your shared files",
+        "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
         _ => "",
     }
 }
@@ -187,7 +206,12 @@ pub fn finding_impact(title: &str) -> &'static str {
         "SMB1" => "Old file-sharing flaws that let malware spread between PCs",
         "SmartScreen" => "Scam websites and unrecognized apps you open by mistake",
         "Local accounts" => "Weak or shared sign-ins that are easier to guess or steal",
-        "Memory integrity" => "Harmful drivers taking over the core of Windows",
+        "Memory integrity" | "Memory integrity not running" | "A device may not be working" => {
+            "Harmful drivers taking over the core of Windows"
+        }
+        "Kernel stack protection not running" => {
+            "Attackers hijacking the core of Windows through a driver bug"
+        }
         "Automatic logon" => "Anyone who turns on your PC getting straight into your account",
         _ => "",
     }
@@ -263,6 +287,15 @@ pub fn control_label(id: &str) -> &'static str {
         "accounts.autologon" => "Automatic sign-in",
         "remote_desktop.disabled" => "Remote access",
         "smb1.disabled" => "Older file sharing",
+        "vbs.memory_integrity" => "Core system protection",
+        "vbs.kernel_stack_protection" => "Extra core protection",
+        "services.unquoted_paths" => "Risky background program setup",
+        "firewall.user_dir_inbound_allow" => "Firewall allowances for downloads",
+        "net.hosts_file" => "Redirected trusted websites",
+        "persistence.run_and_tasks" => "Risky start-up programs",
+        "accounts.stale_enabled" => "Old accounts still switched on",
+        "smb.shares_exposed" => "Folders shared with everyone",
+        "smartscreen.browser_policy" => "Browser warnings about dangerous sites",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -325,6 +358,10 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
             "Open Windows Security and check the app and file protection settings.",
             OpenWindowsSecurity,
         ),
+        "vbs.memory_integrity" | "vbs.kernel_stack_protection" => (
+            "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.",
+            OpenWindowsSecurity,
+        ),
         "ps.v2_engine" => (
             "Open Windows Features and untick the old scripting tool.",
             ReviewWindowsFeatures,
@@ -370,7 +407,14 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.recall"
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
-        | "privacy.clipboard_sync" => (
+        | "privacy.clipboard_sync"
+        | "services.unquoted_paths"
+        | "firewall.user_dir_inbound_allow"
+        | "net.hosts_file"
+        | "persistence.run_and_tasks"
+        | "accounts.stale_enabled"
+        | "smb.shares_exposed"
+        | "smartscreen.browser_policy" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -490,6 +534,33 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "smb1.disabled" => {
             "Very old network drives or printers that only use the old sharing may stop working. Needs a restart."
         }
+        "vbs.memory_integrity" => {
+            "Some very old devices may stop working. Needs a restart. You can undo this in History."
+        }
+        "vbs.kernel_stack_protection" => {
+            "Some older drivers may not load. Needs a restart. You can undo this in History."
+        }
+        "services.unquoted_paths" => {
+            "Only the way the program's location is written changes. The program keeps running as before."
+        }
+        "firewall.user_dir_inbound_allow" => {
+            "Programs in your Downloads or Desktop folders lose their firewall allowance and may ask again."
+        }
+        "net.hosts_file" => {
+            "Redirected websites go to their real address again. Your other entries stay as they are."
+        }
+        "persistence.run_and_tasks" => {
+            "Risky programs stop starting with Windows. Nothing is deleted, and you can undo this."
+        }
+        "accounts.stale_enabled" => {
+            "Old accounts are switched off, not deleted. Undo switches them back on."
+        }
+        "smb.shares_exposed" => {
+            "Only the people listed on these folders can open them from other devices. Others may lose access."
+        }
+        "smartscreen.browser_policy" => {
+            "Edge and Chrome will warn you about dangerous websites again."
+        }
         _ => "",
     }
 }
@@ -497,7 +568,38 @@ pub fn choice_consequence(id: &str) -> &'static str {
 /// Exact backend reasons for "this protection is not offered on this PC right
 /// now". They are calm facts, not faults, so they never lower the score.
 fn not_offered(reason: &str) -> Option<&'static str> {
+    use secblitz::vbs as v;
+    // The driver reason also names the drivers after a colon; the names are
+    // shown in "More details", never matched here.
+    if v::is_driver_reason(reason) {
+        return Some(
+            "A driver on this PC may not work with it, so we leave this alone. To look yourself, open Windows Security, then Device security, then Core isolation details.",
+        );
+    }
     Some(match reason {
+        r if r == v::NOT_SUPPORTED => {
+            "This PC doesn't support it, or virtualization is off in its start-up settings, so we leave this alone."
+        }
+        r if r == v::LOCKED => {
+            "It is locked in your PC's start-up settings, so we leave this alone."
+        }
+        r if r == v::DRIVERS_UNREADABLE => "We couldn't check your drivers, so we leave this alone.",
+        r if r == v::NEEDS_MEMORY_INTEGRITY => {
+            "Turn on Core system protection first, then check again."
+        }
+        r if r == v::NEEDS_RESTART => {
+            "Restart your PC to finish turning on Core system protection, then check again."
+        }
+        r if r == v::SET_BY_HAND => {
+            "Virtualization security was set up by hand on this PC, so we leave it alone."
+        }
+        r if r == v::OLD_WINDOWS => {
+            "This version of Windows doesn't have it, so there is nothing to turn on."
+        }
+        r if r == v::NO_SHADOW_STACKS => {
+            "This PC's processor doesn't support it, so there is nothing to turn on."
+        }
+        r if r == v::UNREADABLE => "We couldn't check this PC's support for it, so we leave it alone.",
         "Not offered: Secure Boot is off" => {
             "This protection needs Secure Boot, which is off on this PC. We leave it alone."
         }
@@ -573,6 +675,27 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: a locked sign-in would stay locked until an administrator unlocks it" => {
             "A locked account here would stay locked until an administrator unlocks it, so we leave this alone."
+        }
+        "Not offered: the hosts file could not be found" => {
+            "The hosts file is missing, so there is nothing for us to change."
+        }
+        "Not offered: the hosts file is too large to change safely" => {
+            "The hosts file is too big to change safely, so we leave it alone."
+        }
+        "Not offered: the hosts file uses a format we cannot keep exactly" => {
+            "The hosts file is saved in a format we can't keep exactly, so we leave it alone."
+        }
+        "Not offered: too many items to switch off safely at once" => {
+            "There are too many to switch off safely at once, so we leave this alone."
+        }
+        "Not offered: a shared folder would be left with no one who can open it" => {
+            "A shared folder would be left that nobody can open, so we leave this alone."
+        }
+        "Not offered: a shared folder would be left that only administrators can open" => {
+            "A shared folder would be left that only administrators can open, so we leave this alone."
+        }
+        "Not offered: a shared folder has permissions that could not be put back exactly" => {
+            "A shared folder has permissions we could not put back exactly, so we leave this alone."
         }
         _ => return None,
     })
@@ -727,6 +850,13 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.next = "This PC's owner controls this setting, so we leave it as it is.";
             a.step = NextStep::ReviewWithAdministrator;
         }
+        "skipped" if detail == secblitz::vbs::ALREADY_ON => {
+            // Running already (on by itself or by the person): protected.
+            a.status = "Good to go";
+            a.next = "This protection is already running on this PC. Nothing to change.";
+            a.step = NextStep::None;
+            a.group = Group::Protected;
+        }
         "skipped" if not_offered(detail).is_some() => {
             a.status = "Not offered";
             a.next = not_offered(detail).unwrap_or_default();
@@ -841,7 +971,12 @@ pub fn for_outcome(outcome: &secblitz::engine::Outcome) -> Advice {
     a
 }
 
-pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
+/// The engine marks a core protection note when undoing it is the next undo.
+fn undo_ready(detail: &str) -> bool {
+    detail.starts_with(secblitz::vbs::UNDO_READY)
+}
+
+pub fn for_finding(title: &str, status: &str, detail: &str) -> Advice {
     use NextStep::*;
     let (label, next, step) = match title {
         "Security providers" => ("Your security apps", "Open Windows Security to make sure your antivirus is on and working.", OpenWindowsSecurity),
@@ -856,6 +991,12 @@ pub fn for_finding(title: &str, status: &str, _detail: &str) -> Advice {
         "SmartScreen" => ("Unsafe app and website warnings", "Open Windows Security and make sure warnings about risky apps and websites are on.", OpenWindowsSecurity),
         "Local accounts" => ("Account sign-in safety", "Check who can sign in to this PC. Give each account its own strong password.", OpenAccounts),
         "Memory integrity" => ("Core system protection", "Open Windows Security and look at the extra protection for the core of Windows. Some older devices don't work with it.", OpenWindowsSecurity),
+        "Memory integrity not running" if undo_ready(detail) => ("Core system protection", "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it.", ReviewUndo),
+        "Memory integrity not running" => ("Core system protection", "Core system protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, open History and undo your fixes, newest first.", OpenHistory),
+        "Kernel stack protection not running" if undo_ready(detail) => ("Extra core protection", "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, undo it.", ReviewUndo),
+        "Kernel stack protection not running" => ("Extra core protection", "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down). If it still isn't running, open History and undo your fixes, newest first.", OpenHistory),
+        "A device may not be working" if undo_ready(detail) => ("Core system protection", "Windows is blocking a driver, so a device may not work. If a device stopped working, undo this fix.", ReviewUndo),
+        "A device may not be working" => ("Core system protection", "Windows is blocking a driver, so a device may not work. If a device stopped working, open History and undo your fixes, newest first.", OpenHistory),
         "Management and mutation eligibility" => ("Who manages this PC", "If you're not sure who manages this PC, look at work or school accounts in Settings.", ReviewWithAdministrator),
         "Automatic logon" => ("Automatic sign-in", "Your PC signs in by itself. Turn that off if other people can get to it.", OpenAccounts),
         "Service permissions: BITS" => ("Update download permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
@@ -1026,6 +1167,24 @@ mod tests {
             "Not offered: this PC is set up as a kiosk",
             "Not offered: Secblitz cannot tell who is signed in",
             "Not offered: a locked sign-in would stay locked until an administrator unlocks it",
+            secblitz::vbs::NOT_SUPPORTED,
+            secblitz::vbs::LOCKED,
+            secblitz::vbs::DRIVER,
+            "Not offered: a driver on this PC may not work with it: old.sys, older.sys",
+            secblitz::vbs::DRIVERS_UNREADABLE,
+            secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
+            secblitz::vbs::NEEDS_RESTART,
+            secblitz::vbs::NO_SHADOW_STACKS,
+            secblitz::vbs::UNREADABLE,
+            secblitz::vbs::SET_BY_HAND,
+            secblitz::vbs::OLD_WINDOWS,
+            "Not offered: the hosts file could not be found",
+            "Not offered: the hosts file is too large to change safely",
+            "Not offered: the hosts file uses a format we cannot keep exactly",
+            "Not offered: too many items to switch off safely at once",
+            "Not offered: a shared folder would be left with no one who can open it",
+            "Not offered: a shared folder would be left that only administrators can open",
+            "Not offered: a shared folder has permissions that could not be put back exactly",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -1055,6 +1214,117 @@ mod tests {
         assert_eq!(control_for_finding("Secure Boot"), None);
         assert!(choice_consequence("accounts.autologon").contains("password or PIN"));
         assert!(choice_consequence("smb1.disabled").contains("restart"));
+    }
+
+    #[test]
+    fn core_protection_rows_read_well_when_offered_blocked_or_waiting_for_a_restart() {
+        for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
+            // Offered as a choice with its consequence, never pre-selected.
+            let a = for_control(id, "attention", "Eligible");
+            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
+            assert!(a.next.contains("restart") && a.next.contains("undo"), "{id}");
+            // Applied: restart needed, in plain words.
+            let applied = for_control(id, "applied", "Preference applied; restart required");
+            assert_eq!(applied.status, "Restart needed");
+            assert_eq!(applied.step, NextStep::Restart);
+            // Every reason it may be blocked is a calm "Not offered" line that
+            // never offers a fix and never counts against the score.
+            for reason in [
+                secblitz::vbs::NOT_SUPPORTED,
+                secblitz::vbs::LOCKED,
+                "Not offered: a driver on this PC may not work with it: a.sys",
+                secblitz::vbs::NEEDS_MEMORY_INTEGRITY,
+                secblitz::vbs::NO_SHADOW_STACKS,
+                secblitz::vbs::SET_BY_HAND,
+                secblitz::vbs::OLD_WINDOWS,
+            ] {
+                let n = for_control(id, "skipped", reason);
+                assert_eq!(n.status, "Not offered", "{reason}");
+                assert_eq!(n.group, Group::Information);
+                assert_eq!(n.step, NextStep::None);
+                assert!(n.next.ends_with('.') && n.next.len() < 170, "{reason}");
+                assert!(!n.next.contains("Memory integrity"), "{reason}");
+            }
+            // Already running is good news, not a gap and not a "not offered".
+            let on = for_control(id, "skipped", secblitz::vbs::ALREADY_ON);
+            assert_eq!((on.status, on.group), ("Good to go", Group::Protected));
+            // A managed PC stays assessment only.
+            let m = for_control(id, "skipped", "Relevant policy is configured: assessment only");
+            assert_eq!(m.status, "Managed elsewhere");
+        }
+        // The driver line points to Windows Security and names no one here.
+        let driver = for_control(
+            "vbs.memory_integrity",
+            "skipped",
+            "Not offered: a driver on this PC may not work with it: a.sys",
+        );
+        assert!(driver.next.contains("Device security, then Core isolation details"));
+        assert!(!driver.next.contains("a.sys"));
+    }
+
+    #[test]
+    fn a_core_protection_that_is_on_but_not_running_offers_a_restart_then_undo() {
+        let ready = format!("{}. boot: 1.", secblitz::vbs::UNDO_READY);
+        for title in [
+            "Memory integrity not running",
+            "Kernel stack protection not running",
+            "A device may not be working",
+        ] {
+            // Undo goes straight to the review sheet only when it undoes this change.
+            let a = for_finding(title, "attention", &ready);
+            assert_eq!(a.step, NextStep::ReviewUndo, "{title}");
+            assert_eq!(a.group, Group::Choice);
+            assert!(a.next.contains("undo"), "{title}");
+            assert!(!a.impact.is_empty(), "{title}");
+            assert!(a.next.len() < 170);
+            // Otherwise the person is sent to History, never to a blind undo.
+            let h = for_finding(title, "attention", "boot: 1.");
+            assert_eq!(h.step, NextStep::OpenHistory, "{title}");
+            assert!(h.next.contains("History") && h.next.len() < 190, "{title}");
+        }
+        // The old tip is replaced by the fix row, but only that one.
+        assert_eq!(
+            control_for_finding("Memory integrity"),
+            Some("vbs.memory_integrity")
+        );
+        assert_eq!(control_for_finding("Memory integrity not running"), None);
+        assert_eq!(control_for_finding("Kernel stack protection not running"), None);
+        assert_eq!(control_for_finding("A device may not be working"), None);
+        assert_eq!(control_for_finding("Secure Boot"), None);
+    }
+
+    #[test]
+    fn every_reason_the_handled_item_scripts_give_has_a_calm_plain_sentence() {
+        let script = include_str!("platform/hardening.handled.ps1");
+        let mut found = 0;
+        for piece in script.split('\'') {
+            if piece.starts_with("Not offered: ") {
+                found += 1;
+                let line = not_offered(piece).unwrap_or_else(|| panic!("no sentence for {piece}"));
+                assert!(line.ends_with('.') && line.len() < 100, "{piece}");
+            }
+        }
+        assert!(found >= 4, "{found}");
+    }
+
+    #[test]
+    fn handled_item_controls_are_choices_with_a_plain_consequence() {
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            assert!(is_choice(id), "{id}");
+            let a = for_control(id, "attention", "Eligible");
+            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
+            assert!(!a.impact.is_empty() && a.next == choice_consequence(id));
+            // Never offered when somebody else manages the setting.
+            let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
+            assert_eq!(managed.status, "Managed elsewhere", "{id}");
+            // A change made after our fix is a conflict, never a silent overwrite.
+            assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
+        }
     }
 
     #[test]

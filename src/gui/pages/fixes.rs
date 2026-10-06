@@ -138,6 +138,8 @@ struct Att {
     restart: bool,
     /// A choice the person makes: shown unticked with its consequence.
     choice: bool,
+    /// The exact items a fix would change, one plain line each.
+    items: Vec<String>,
 }
 
 /// A row of the "worth a look / can't check / managed" groups.
@@ -178,11 +180,43 @@ enum Bucket {
     GoodToKnow,
 }
 
+/// Add the names of drivers, when there are any, to a "More details" line.
+fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) -> String {
+    match names {
+        Some(names) => format!("{tech} · {}", ctx.t(template).replace("{names}", &names)),
+        None => tech,
+    }
+}
+
 /// Plain-words "More details" text: what the status means and what to do.
 /// The raw backend detail is never shown.
 fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
     let (st, next) = crate::app::flow::plain_detail(status, a);
     format!("{} · {}", lang.t(st), lang.t(next))
+}
+
+/// "Accounts: bob, amy" or "Folders: Photos": the names a fix would change, so
+/// the person knows before approving. None for controls without a list.
+pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
+    let (key, names) = item_names(r)?;
+    Some(ctx.t(key).replace("{names}", &names.join(", ")))
+}
+
+/// The line template and the names for `items_line`. One folder can be shared
+/// with several groups, so each name is listed once.
+fn item_names(r: &secblitz::engine::Outcome) -> Option<(&'static str, Vec<&str>)> {
+    let (key, kind) = match r.id.as_str() {
+        "accounts.stale_enabled" => ("Accounts: {names}", "account"),
+        "smb.shares_exposed" => ("Folders: {names}", "share"),
+        _ => return None,
+    };
+    let mut names: Vec<&str> = Vec::new();
+    for item in r.items.iter().filter(|i| i.kind == kind) {
+        if !names.contains(&item.name.as_str()) {
+            names.push(&item.name);
+        }
+    }
+    (!names.is_empty()).then_some((key, names))
 }
 
 fn build(ctx: &Ctx, report: &Report) -> Rows {
@@ -199,7 +233,10 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         let choice = advice::is_choice(id);
         // A choice always shows its one-line consequence, never a generic impact.
         let line = if choice || impact.is_empty() {
-            ctx.t(a.next)
+            match items_line(ctx, r) {
+                Some(items) => format!("{}\n{}", ctx.t(a.next), items),
+                None => ctx.t(a.next),
+            }
         } else {
             format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(impact))
         };
@@ -218,6 +255,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             tech: tech_line(&r.status, &a, lang),
             restart,
             choice,
+            items: item_lines(ctx, &r.items),
         });
     }
 
@@ -225,7 +263,14 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         if fixable.contains(&r.id) {
             continue;
         }
-        let class = score::classify(r);
+        let class = score::classify_in(report, r);
+        // Set but not running: the finding below says so, not a "protected" row.
+        if class == Class::Excluded
+            && secblitz::vbs::is_vbs(&r.id)
+            && score::classify(r) == Class::Protected
+        {
+            continue;
+        }
         let a = advice::for_outcome(r);
         if class == Class::Protected {
             let impact = advice::control_impact(&r.id);
@@ -254,7 +299,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         // the steps; showing them on this row too would repeat them.
         let finding_listed = report.findings.iter().any(|f| {
             advice::control_for_finding(&f.title) == Some(r.id.as_str())
-                && !score::superseded(report, f)
+                && !score::finding_has_fix(report, f)
         });
         rows.others.push(other(
             ctx,
@@ -264,15 +309,21 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&r.status, &a, lang),
+            with_names(
+                ctx,
+                tech_line(&r.status, &a, lang),
+                "Drivers we were unsure about: {names}",
+                secblitz::vbs::reason_names(&r.detail),
+            ),
             if finding_listed { None } else { Some(r.detail.as_str()) },
         ));
     }
     for f in &report.findings {
-        if score::superseded(report, f) {
+        if score::finding_has_fix(report, f) {
             continue;
         }
-        let a = advice::for_finding(&f.title, &f.status, &f.detail);
+        // Same words as Home (a core protection waiting for a restart says so).
+        let a = score::finding_advice(report, f);
         if a.group == Group::Protected {
             continue;
         }
@@ -283,7 +334,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             Class::Unknown => (Bucket::Unavailable, Tone::Neutral),
             Class::Protected | Class::Fixable | Class::Review => (Bucket::Look, Tone::Warn),
         };
-        rows.others.push(other(
+        let mut row = other(
             ctx,
             rows.others.len(),
             (f.title.as_str(), true),
@@ -291,9 +342,22 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             bucket,
             tone,
-            tech_line(&f.status, &a, lang),
+            with_names(
+                ctx,
+                tech_line(&f.status, &a, lang),
+                "Windows blocked: {names}",
+                secblitz::vbs::blocked_names(&f.detail),
+            ),
             None,
-        ));
+        );
+        if a.step == NextStep::Restart {
+            // A restart is the one thing to do: no steps or page compete with it.
+            row.guide = None;
+            row.page = None;
+            row.line = ctx.t(a.next);
+            row.status = ctx.t(a.status);
+        }
+        rows.others.push(row);
     }
     rows
 }
@@ -340,13 +404,9 @@ fn other(
         explain: explain.0.to_owned(),
         report_only: explain.1,
         name,
-        line: if managed {
-            ctx.t("This PC's owner controls this setting, so we leave it as it is.")
-        } else if guide.is_some() && !a.impact.is_empty() {
-            // The steps below say what to do; this line says why it matters.
-            format!("{} {}", ctx.t("Leaves you open to:"), ctx.t(a.impact))
-        } else {
-            ctx.t(a.next)
+        line: match other_line(bucket, guide.is_some(), a) {
+            (Some(prefix), text) => format!("{} {}", ctx.t(prefix), ctx.t(text)),
+            (None, text) => ctx.t(text),
         },
         status: if managed {
             ctx.t("For your information")
@@ -362,6 +422,24 @@ fn other(
         tech,
         guide,
         page,
+    }
+}
+
+/// The words under an "other" row's name: (prefix, text), as catalog keys.
+/// A to-do with steps says why it matters (the steps say what to do). Any
+/// other row, a Not offered one with steps included, says its own next words,
+/// so the reason is never hidden.
+fn other_line(
+    bucket: Bucket,
+    has_guide: bool,
+    a: &advice::Advice,
+) -> (Option<&'static str>, &'static str) {
+    if bucket == Bucket::Managed {
+        (None, "This PC's owner controls this setting, so we leave it as it is.")
+    } else if has_guide && bucket == Bucket::Look && !a.impact.is_empty() {
+        (Some("Leaves you open to:"), a.impact)
+    } else {
+        (None, a.next)
     }
 }
 
@@ -383,6 +461,42 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
 }
 
 // ------------------------------------------------------------------ update
+
+/// "Firewall rule: name" lines for the items a fix would change. The names come
+/// from this PC; only the kind is translated.
+fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
+    items
+        .iter()
+        // Accounts and folders are already named on the row (`items_line`).
+        .filter(|item| !matches!(item.kind.as_str(), "account" | "share"))
+        .map(|item| match item.kind.as_str() {
+            // Items a fix leaves alone say why and what to do instead.
+            "skip_missing" => format!(
+                "{}: {}. {}",
+                ctx.t("Left alone"),
+                item.name,
+                ctx.t("Its program file could not be found.")
+            ),
+            "skip_shadow" => format!(
+                "{}: {}. {}",
+                ctx.t("Left alone"),
+                item.name,
+                ctx.t("A file that could be started instead was found. Run a virus scan from the Tools page.")
+            ),
+            "more" => format!("{}: {}", ctx.t("More items not listed"), item.name),
+            kind => {
+                let kind = match kind {
+                    "service" => "Background program",
+                    "rule" => "Firewall rule",
+                    "startup" => "Start-up entry",
+                    "task" => "Scheduled task",
+                    _ => "Hosts file line",
+                };
+                format!("{}: {}", ctx.t(kind), item.name)
+            }
+        })
+        .collect()
+}
 
 fn candidates(ctx: &Ctx) -> Vec<String> {
     ctx.report
@@ -548,12 +662,20 @@ fn expanded<'a>(
     p: Palette,
     indent: f32,
     why: Option<String>,
+    items: Option<(String, &[String])>,
     label: String,
     tech: String,
 ) -> Element<'a, Message> {
     let mut c = column![].spacing(theme::S2);
     if let Some(w) = why {
         c = c.push(widgets::body(p, w));
+    }
+    // The exact things a fix would change, so nothing is a surprise.
+    if let Some((heading, lines)) = items.filter(|(_, lines)| !lines.is_empty()) {
+        c = c.push(widgets::section_label(p, heading));
+        for line in lines {
+            c = c.push(widgets::small(p, line.clone()));
+        }
     }
     c = c
         .push(widgets::section_label(p, label))
@@ -667,6 +789,7 @@ fn attention_row<'a>(
             p,
             INDENT,
             Some(a.why.clone()),
+            Some((ctx.t("What will change"), a.items.as_slice())),
             ctx.t("More details"),
             a.tech.clone(),
         ));
@@ -695,6 +818,24 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             ctx.t("Check again"),
             Some(Icon::Refresh),
             (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
+        ));
+    } else if o.step == NextStep::ReviewUndo {
+        // Undoing this change is the next undo: straight to the review sheet.
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Undo…"),
+            Some(Icon::Undo),
+            (!ctx.busy).then_some(Message::ReviewUndo),
+        ));
+    } else if o.step == NextStep::OpenHistory {
+        // Other changes came later: undo newest first, from History.
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Open History"),
+            Some(Icon::History),
+            Some(Message::Navigate(crate::gui::Page::History)),
         ));
     } else if let (Some(page), None) = (o.page, o.guide) {
         // No steps to show: just the button named after the page.
@@ -733,6 +874,7 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
         rows = rows.push(expanded(
             p,
             INDENT_PLAIN,
+            None,
             None,
             ctx.t("More details"),
             o.tech.clone(),
@@ -1188,6 +1330,62 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accounts_and_folders_are_named_once_and_only_on_their_rows() {
+        use secblitz::model::ItemLabel;
+        let label = |kind: &str, name: &str| ItemLabel {
+            kind: kind.into(),
+            name: name.into(),
+        };
+        let outcome = |id: &str, items: Vec<ItemLabel>| secblitz::engine::Outcome {
+            id: id.into(),
+            status: "attention".into(),
+            items,
+            ..secblitz::engine::Outcome::default()
+        };
+        let r = outcome(
+            "accounts.stale_enabled",
+            vec![label("account", "bob"), label("account", "amy"), label("more", "3")],
+        );
+        assert_eq!(item_names(&r), Some(("Accounts: {names}", vec!["bob", "amy"])));
+        let r = outcome(
+            "smb.shares_exposed",
+            vec![label("share", "Photos"), label("share", "Photos"), label("share", "Work")],
+        );
+        assert_eq!(item_names(&r), Some(("Folders: {names}", vec!["Photos", "Work"])));
+        assert_eq!(item_names(&outcome("smb.shares_exposed", vec![])), None);
+        let r = outcome("services.unquoted_paths", vec![label("service", "Updater")]);
+        assert_eq!(item_names(&r), None);
+    }
+
+    #[test]
+    fn a_not_offered_row_with_steps_keeps_its_reason() {
+        use secblitz::vbs::{DRIVER, MEMORY_INTEGRITY, NEEDS_MEMORY_INTEGRITY, STACK_PROTECTION};
+        for (id, detail) in [
+            (MEMORY_INTEGRITY, DRIVER.to_owned()),
+            (MEMORY_INTEGRITY, format!("{DRIVER}: x.sys")),
+            (STACK_PROTECTION, NEEDS_MEMORY_INTEGRITY.to_owned()),
+        ] {
+            let r = secblitz::engine::Outcome {
+                id: id.into(),
+                status: "skipped".into(),
+                detail: detail.clone(),
+                ..secblitz::engine::Outcome::default()
+            };
+            let a = advice::for_outcome(&r);
+            assert_eq!(a.status, "Not offered", "{detail}");
+            assert!(!a.impact.is_empty(), "{detail}");
+            assert!(guide::guide_not_offered(id, &detail).is_some(), "{detail}");
+            assert_eq!(other_line(Bucket::GoodToKnow, true, &a), (None, a.next), "{detail}");
+        }
+        // A to-do with steps still says why it matters.
+        let a = advice::for_finding("SMB1", "attention", "");
+        assert_eq!(
+            other_line(Bucket::Look, true, &a),
+            (Some("Leaves you open to:"), a.impact)
+        );
+    }
 
     #[test]
     fn flip_toggles_membership() {

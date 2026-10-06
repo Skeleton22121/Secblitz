@@ -1194,7 +1194,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::SecureBoot => "Turn on Secure Boot (startup protection) in your PC's start-up settings.",
         P::Tpm => "Your security chip is off or not ready. Check your PC's start-up settings.",
         P::BitLocker => "Turn on disk encryption so your files stay private if the PC is lost.",
-        P::Vbs => "Turn on Memory integrity (core system protection) in Windows Security.",
+        P::Vbs => "Core system protection (Memory integrity) is off. Protection shows whether this PC can turn it on safely.",
         P::WinRe => "Recovery tools are off. They help if Windows ever stops starting.",
         P::Accounts => "Use a normal account every day, and switch off the guest account.",
         P::RemoteAccess => "Switch off remote access if you don't use it.",
@@ -1232,29 +1232,30 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "os.feature_release_support" => "Your version of Windows is running out of safety updates. Install the newest version in Windows Update.",
         "boot.secure_boot_certs" => "Your PC's startup security needs a renewal. Install all Windows updates, then check your PC maker's website.",
         "defender.tamper_protection" => "Turn on Tamper Protection so malware can't switch off your virus protection.",
-        "defender.threats" => "Windows found something harmful. Open Windows Security and follow the steps.",
+        "defender.threats" => "Windows found something harmful. Secblitz can remove it, and Windows Security usually keeps a copy you can restore.",
         "defender.exclusions_risky" => "Your virus protection skips some risky places. Look at the list in Windows Security.",
         "defender.scan_age" => "Your PC hasn't been scanned for a while. Run a quick scan in Windows Security.",
         "smartscreen.apps" => "Turn on warnings for unknown downloads in Windows Security.",
         "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Ask whoever set up this PC.",
         "update.paused" => "Updates are paused. Resume them in Windows Update.",
-        "update.reboot_overdue" => "Restart your PC to finish installing updates.",
+        "update.reboot_overdue" => "Restart your PC to finish installing updates. Save your work first.",
         "ps.v2_engine" => "An old Windows tool that attackers like to use is still installed. Remove it in Windows Features.",
         "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
         "persistence.wmi_subscriptions" => "Something is set to run quietly in the background. Ask someone you trust to look at it.",
-        "services.unquoted_paths" => "A background program has a risky setup. Ask someone you trust to look at it.",
-        "remote.rdp" => "Remote access is on. If you don't use it, Secblitz can turn it off for you on the Protection page.",
-        "smb.v1" => "An old way of sharing files is still on. Secblitz can turn it off for you on the Protection page, unless an old device needs it.",
+        "services.unquoted_paths" => "A background program has a risky setup. Run a virus scan from this page, then ask someone you trust to look at it.",
+        "remote.rdp" => "Remote access lets someone sign in to this PC from elsewhere. Turn it off in Settings if you don't use it.",
+        "smb.v1" => "An old way of sharing files is still on. Turn it off in Windows Features unless an old device needs it.",
         "accounts.stale_enabled" => "Some old accounts are still switched on. Remove the ones nobody uses.",
         "smb.shares_exposed" => "Some folders are shared with everyone on your network. Stop sharing what you don't need.",
         "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.",
         "accounts.daily_admin" => "You use an administrator account every day. Make a normal account for daily use.",
         "accounts.hello_configured" => "No PIN or Windows Hello is set up. Add one in Sign-in options.",
         "accounts.find_my_device" => "Find my device is off. Turn it on in Settings so you can find a lost laptop.",
-        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Look in Core isolation in Windows Security.",
+        "vbs.memory_integrity" => "Core system protection (Memory integrity) is off. Protection shows whether this PC can turn it on safely.",
+        "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Protection shows whether this PC can turn it on safely.",
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
-        "persistence.run_and_tasks" => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
+        "persistence.run_and_tasks" => "Open Task Manager, Startup apps, and switch off ones you don't know.",
         _ => return None,
     })
 }
@@ -1269,36 +1270,229 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     match rule_id {
         "os.feature_release_support"
         | "boot.secure_boot_certs"
-        | "update.paused"
-        | "update.reboot_overdue" => Some(Action::OpenWindowsUpdate),
+        | "update.paused" => Some(Action::OpenWindowsUpdate),
         "defender.tamper_protection" => Some(Action::OpenTamperProtection),
         "defender.threats" | "defender.scan_age" => Some(Action::OpenProtectionHistory),
-        "defender.exclusions_risky" | "vbs.kernel_stack_protection" => {
-            Some(Action::OpenWindowsSecurity)
-        }
+        "defender.exclusions_risky" => Some(Action::OpenWindowsSecurity),
         id if id.starts_with("smartscreen.") => Some(Action::OpenAppBrowserControl),
         "ps.v2_engine" => Some(Action::OpenOptionalFeatures),
         "accounts.stale_enabled" => Some(Action::OpenAccounts),
         "accounts.hello_configured" => Some(Action::OpenSignInSettings),
+        "firewall.user_dir_inbound_allow" => Some(Action::OpenFirewall),
         _ => None,
     }
 }
 
-/// The tip line for a check that Secblitz can fix itself: the fix lives on the
-/// Protection page, under "Needs your attention", and is never started here.
-pub const TIP_FIX: &str =
-    "Secblitz can help with this. Go to Protection to fix it or see the steps.";
+/// The Protection control that fixes what this check reports, when there is
+/// one. A check and its fix share one id, except two older checks that have
+/// their own. A fix added to the catalog is picked up here by itself.
+pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
+    let id = match rule_id {
+        "remote.rdp" => "remote_desktop.disabled",
+        "smb.v1" => "smb1.disabled",
+        other => other,
+    };
+    secblitz::hardening::spec(id).map(|spec| spec.id)
+}
 
-/// True when the check is also a fix on the Protection page. A check and its
-/// fix share one id, so the tip offers the fix instead of manual advice.
-pub fn rule_fix(rule_id: &str) -> bool {
-    secblitz::hardening::is_hardening(rule_id)
+/// What a tip about a fixable check says while the latest Protection check
+/// offers that fix. Only ever shown then: `rule_advice` stays the manual text.
+pub fn rule_fix_advice(rule_id: &str) -> &'static str {
+    match rule_id {
+        "remote.rdp" => "Remote access is on. If you don't use it, Secblitz can turn it off for you.",
+        "smb.v1" => "An old way of sharing files is still on. Secblitz can turn it off for you, unless an old device needs it.",
+        "services.unquoted_paths" => "A background program has a risky setup. We can fix this for you.",
+        "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. We can fix this for you.",
+        "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. We can fix this for you.",
+        "persistence.run_and_tasks" => "A risky program starts by itself with Windows. We can switch it off for you.",
+        "accounts.stale_enabled" => "Some old accounts are still switched on. Secblitz can switch them off, and you can undo it.",
+        "smb.shares_exposed" => "Some folders are shared with everyone on your network. Secblitz can limit them, and you can undo it.",
+        "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Secblitz can remove it, and you can undo it.",
+        _ => "Secblitz can fix this for you, and you can undo it. Look it over first.",
+    }
+}
+
+/// How a tip about a check that is also a Protection control reads right now.
+/// A fix is only promised when the latest Protection check really offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipFix<'r> {
+    /// The latest check offers the fix: "Review fix" opens its review.
+    Offered(&'static str),
+    /// The control row says Not offered, with this reason: "See why" goes to
+    /// it, and steps show only for a reason the person can act on.
+    NotOffered {
+        control: &'static str,
+        reason: &'r str,
+    },
+    /// The control is set but waits for a restart to start working: this
+    /// line says so, and nothing else competes with it.
+    Restart(&'static str),
+    /// No Protection check has looked at this control yet: "Check now", so
+    /// the tip can then say whether a fix is offered.
+    Unchecked,
+    /// This PC has no such fix at all: the manual steps only.
+    NoFix,
+    /// Managed elsewhere, could not be checked, already set or not a fix:
+    /// the manual steps (guide and page button) or the manual advice.
+    Manual,
+}
+
+/// Decide [`TipFix`] for a tip from the latest Protection report.
+pub fn tip_fix<'r>(
+    tip: &Tip,
+    report: Option<&'r secblitz::engine::Report>,
+    available: &[String],
+) -> TipFix<'r> {
+    let Some(control) = tip.fix else {
+        return TipFix::Manual;
+    };
+    let Some(report) = report else {
+        return TipFix::Unchecked;
+    };
+    let Some(row) = report.results.iter().find(|r| r.id == control) else {
+        // A check older than this fix looks again; a fix this PC doesn't
+        // have stays manual.
+        return if available.iter().any(|id| id == control) {
+            TipFix::Unchecked
+        } else {
+            TipFix::NoFix
+        };
+    };
+    if crate::app::flow::candidates(report, available)
+        .iter()
+        .any(|id| id == control)
+    {
+        return TipFix::Offered(control);
+    }
+    let a = crate::advice::for_outcome(row);
+    if a.status == "Not offered" {
+        TipFix::NotOffered {
+            control,
+            reason: &row.detail,
+        }
+    } else if a.step == crate::advice::NextStep::Restart {
+        TipFix::Restart(a.next)
+    } else if secblitz::vbs::is_vbs(control) && row.status == "compliant" {
+        // Set, while this check says it is not running: only a restart helps.
+        TipFix::Restart(core_restart_advice(control))
+    } else {
+        TipFix::Manual
+    }
+}
+
+/// The line for a core protection that is on but not running yet.
+pub fn core_restart_advice(control: &str) -> &'static str {
+    if control == secblitz::vbs::STACK_PROTECTION {
+        "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down)."
+    } else {
+        crate::app::score::RESTART_TO_START
+    }
+}
+
+/// The words and the steps a tip shows for this [`TipFix`]: the fix line only
+/// while the fix is offered, the steps for a Not offered reason only when the
+/// person can act on it, nothing extra while a restart is the one thing to do,
+/// and otherwise the manual line and steps.
+pub fn tip_words(tip: &Tip, fix: TipFix<'_>) -> (&'static str, Option<&'static crate::guide::Guide>) {
+    // Steps for another check on the same tip (not the manual way to do this
+    // fix) stay whatever the fix says.
+    let other = tip
+        .guide
+        .filter(|g| tip.fix.and_then(crate::guide::guide) != Some(*g));
+    match fix {
+        TipFix::Offered(_) => (tip.fix_advice, other),
+        TipFix::NotOffered { control, reason } => (
+            tip.advice,
+            crate::guide::guide_not_offered(control, reason).or(other),
+        ),
+        TipFix::Restart(line) => (line, None),
+        TipFix::Unchecked | TipFix::NoFix | TipFix::Manual => (tip.advice, tip.guide),
+    }
+}
+
+/// The one compact button a tip that needs a look shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipAction {
+    /// Open the same review sheet as Protection for this fix.
+    ReviewFix(&'static str),
+    /// Go to the Protection row that says why (Not offered, managed, ...).
+    SeeWhy,
+    /// Run a Protection check so the tip can say whether a fix is offered.
+    CheckNow,
+    /// "Restart now", after its own confirmation.
+    RestartNow,
+    /// Remove found threats, after their own confirmation.
+    RemoveThreats,
+    /// The usual quick scan, after its own confirmation.
+    Scan,
+    /// The steps below carry their own button.
+    Steps,
+    /// The Windows page that helps, named after the page.
+    Open(secblitz::actions::Action),
+    /// The words say it all (a restart to finish turning something on).
+    None,
+}
+
+/// Pick a tip's button. `can_open` is false when Windows pages can't be
+/// opened from here (no helper), so the page button is left out.
+pub fn tip_action(tip: &Tip, fix: TipFix<'_>, can_open: bool) -> TipAction {
+    let (_, guide) = tip_words(tip, fix);
+    match (fix, tip.open) {
+        _ if tip.state != TipState::Look => TipAction::None,
+        (TipFix::Offered(id), _) => TipAction::ReviewFix(id),
+        (TipFix::NotOffered { .. }, _) => TipAction::SeeWhy,
+        (TipFix::Restart(_), _) => TipAction::None,
+        _ if tip.restart => TipAction::RestartNow,
+        _ if tip.remove_threats => TipAction::RemoveThreats,
+        _ if tip.scan => TipAction::Scan,
+        _ if guide.is_some() => TipAction::Steps,
+        (_, Some(open)) if can_open => TipAction::Open(open),
+        (TipFix::Unchecked, _) => TipAction::CheckNow,
+        // A fix that is not offered for another reason (managed elsewhere,
+        // couldn't check, ...): its Protection row says why.
+        (TipFix::Manual, _) if tip.fix.is_some() => TipAction::SeeWhy,
+        _ => TipAction::None,
+    }
+}
+
+/// The one check whose tip offers "Restart now" (after its own confirmation).
+pub fn rule_restart(rule_id: &str) -> bool {
+    rule_id == "update.reboot_overdue"
 }
 
 /// Checks where the Tools page can offer its existing "scan for viruses" job
 /// right in the tip. Nothing new is started: the person confirms the usual sheet.
 pub fn rule_scan(rule_id: &str) -> bool {
-    matches!(rule_id, "defender.scan_age" | "defender.threats")
+    rule_id == "defender.scan_age"
+}
+
+/// Checks where the Tools page can ask Windows Security to remove the threats
+/// it found, after the person confirms a sheet that says what happens.
+pub fn rule_remove_threats(rule_id: &str) -> bool {
+    rule_id == "defender.threats"
+}
+
+/// How a threat removal ended, in the person's terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatsResult {
+    /// Windows Security reported nothing active.
+    Nothing,
+    /// Everything it reported is gone.
+    Removed,
+    /// Some are gone and some are still active.
+    Partly,
+    /// None could be removed.
+    Stuck,
+}
+
+/// Judge the removal only by the counts Windows Security itself reported.
+pub fn threats_result(r: &secblitz::actions::ThreatRemoval) -> ThreatsResult {
+    match (r.found, r.removed, r.left) {
+        (0, _, 0) => ThreatsResult::Nothing,
+        (_, removed, 0) if removed > 0 => ThreatsResult::Removed,
+        (_, removed, _) if removed > 0 => ThreatsResult::Partly,
+        _ => ThreatsResult::Stuck,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1312,16 +1506,24 @@ pub enum TipState {
 pub struct Tip {
     pub title: &'static str,
     pub state: TipState,
+    /// The manual line: what the person can do by hand. Never a promise of a
+    /// fix (see `fix_advice`).
     pub advice: &'static str,
-    /// Windows page that helps with a `Look` tip, shown as a button.
+    /// Windows page that helps with a `Look` tip by hand, shown as a button.
     pub open: Option<secblitz::actions::Action>,
     /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
-    /// Numbered plain steps and the page they start from, for things only the
-    /// person can do in Windows.
+    /// Numbered plain steps and the page they start from, for doing it by hand.
     pub guide: Option<&'static crate::guide::Guide>,
-    /// Secblitz can fix it: the tip points to the Protection page.
-    pub fix: bool,
+    /// A `Look` tip whose check is also a Protection control: its id. What the
+    /// row says then depends on the latest Protection check ([`tip_fix`]).
+    pub fix: Option<&'static str>,
+    /// The line shown instead of `advice` while that fix is offered.
+    pub fix_advice: &'static str,
+    /// A `Look` tip that a restart finishes: "Restart now" asks first.
+    pub restart: bool,
+    /// A `Look` tip whose found threats the Tools page can remove (after a sheet).
+    pub remove_threats: bool,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1329,7 +1531,6 @@ pub struct Tip {
 
 #[derive(Debug, Clone)]
 pub struct TipsReport {
-    #[allow(dead_code)] // kept for the technical view
     pub profile: TipProfile,
     pub tips: Vec<Tip>,
     #[allow(dead_code)] // raw evidence, never shown on screen
@@ -1377,43 +1578,57 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         for a in &probe.assessments {
             technical.push_str(&format!("  {:?}: {}\n", a.status, a.detail));
         }
-        // The first check that needs a look decides the exact next step.
-        let first_rule = probe
+        // A check Secblitz can fix leads; otherwise the first check that needs
+        // a look decides the exact next step.
+        let attention: Vec<&str> = probe
             .assessments
             .iter()
             .filter(|a| a.status == diag::Status::Attention)
-            .find(|a| rule_advice(&a.rule.id).is_some())
-            .map(|a| a.rule.id.as_str());
-        let fix = first_rule.is_some_and(rule_fix);
-        let guide = first_rule.filter(|_| !fix).and_then(crate::guide::guide);
-        let first = first_rule.and_then(|id| {
-            rule_advice(id).map(|text| (if fix { TIP_FIX } else { text }, rule_open(id)))
-        });
+            .map(|a| a.rule.id.as_str())
+            .filter(|id| rule_advice(id).is_some())
+            .collect();
+        let lead = attention
+            .iter()
+            .copied()
+            .find(|id| rule_fix(id).is_some())
+            .or_else(|| attention.iter().copied().find(|id| rule_restart(id)))
+            .or_else(|| attention.first().copied());
+        let remove_threats = probe
+            .assessments
+            .iter()
+            .any(|a| a.status == diag::Status::Attention && rule_remove_threats(&a.rule.id));
         let scan = probe
             .assessments
             .iter()
             .any(|a| a.status == diag::Status::Attention && rule_scan(&a.rule.id));
         let look = state == TipState::Look;
-        let explain = probe
-            .assessments
-            .iter()
-            .filter(|a| a.status == diag::Status::Attention)
-            .chain(probe.assessments.iter())
-            .map(|a| a.rule.id.as_str())
+        let explain = lead
+            .into_iter()
+            .chain(
+                probe
+                    .assessments
+                    .iter()
+                    .filter(|a| a.status == diag::Status::Attention)
+                    .chain(probe.assessments.iter())
+                    .map(|a| a.rule.id.as_str()),
+            )
             .find(|rule| crate::explain::for_check(rule).is_some())
             .map(str::to_owned);
+        let lead = lead.filter(|_| look);
+        // A restart is offered right here, so no page or steps compete with it.
+        let restart = lead.is_some_and(rule_restart);
         tips.push(Tip {
             explain,
             title: tip_title(id),
             state,
-            advice: match (look, first) {
+            advice: match (look, lead.and_then(rule_advice)) {
                 (false, _) => "",
-                (true, Some((text, _))) => text,
+                (true, Some(text)) => text,
                 (true, None) => tip_advice(id),
             },
-            open: match (look, first.and_then(|(_, open)| open), id) {
+            open: match (look, lead.and_then(rule_open), id) {
                 (false, _, _) => None,
-                (true, _, _) if fix => None,
+                (true, _, _) if restart => None,
                 (true, Some(open), _) => Some(open),
                 (true, None, diag::ProbeId::UpdateCache | diag::ProbeId::UpdateHistory) => {
                     Some(secblitz::actions::Action::OpenWindowsUpdate)
@@ -1421,8 +1636,16 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, None, _) => None,
             },
             scan: look && scan,
-            guide: if look { guide } else { None },
-            fix: look && fix,
+            // The lead's own steps, else the first check that needs a look
+            // and has steps (a fix that is not offered must not hide them).
+            guide: lead.filter(|_| !restart).and_then(|lead| {
+                crate::guide::guide(lead)
+                    .or_else(|| attention.iter().copied().find_map(crate::guide::guide))
+            }),
+            fix: lead.and_then(rule_fix),
+            fix_advice: lead.map_or("", rule_fix_advice),
+            restart,
+            remove_threats: look && remove_threats,
         });
     }
     let rank = |s: TipState| match s {
@@ -1928,6 +2151,268 @@ mod tests {
         }
     }
 
+    /// A report whose one probe needs a look for exactly these checks.
+    fn report_with(probe_id: diag::ProbeId, rules: &[&str]) -> diag::Report {
+        let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == probe_id)
+            .expect("probe is part of the profile");
+        probe.status = diag::Status::Attention;
+        probe.assessments = rules
+            .iter()
+            .map(|id| diag::Assessment {
+                status: diag::Status::Attention,
+                detail: String::new(),
+                rule: diag::RuleReference {
+                    id: (*id).into(),
+                    revision: 1,
+                    mapping_version: String::new(),
+                    documentation: vec![],
+                },
+            })
+            .collect();
+        report
+    }
+
+    fn tip_in(report: &diag::Report, probe_id: diag::ProbeId) -> Tip {
+        summarize_tips(TipProfile::Extra, report)
+            .tips
+            .into_iter()
+            .find(|t| t.title == tip_title(probe_id))
+            .expect("tip for the probe")
+    }
+
+    #[test]
+    fn checks_with_a_protection_fix_point_to_it_instead_of_manual_steps() {
+        // A check and its fix share one id; checks without a fix have none.
+        for id in [
+            "accounts.stale_enabled",
+            "smb.shares_exposed",
+            "smartscreen.browser_policy",
+            "smartscreen.apps",
+            "update.paused",
+            "ps.v2_engine",
+        ] {
+            assert_eq!(rule_fix(id), Some(id), "{id}");
+            assert_no_dev_terms(rule_fix_advice(id));
+            assert!(rule_fix_advice(id).len() <= 130, "{id}: one short line");
+        }
+        for id in [
+            "defender.threats",
+            "defender.scan_age",
+            "persistence.wmi_subscriptions",
+            "unknown.rule",
+        ] {
+            assert_eq!(rule_fix(id), None, "{id}");
+        }
+        for (probe, rule) in [
+            (diag::ProbeId::AccountHygiene, "accounts.stale_enabled"),
+            (diag::ProbeId::Sharing, "smb.shares_exposed"),
+        ] {
+            let tip = tip_in(&report_with(probe, &[rule]), probe);
+            assert_eq!(tip.state, TipState::Look, "{rule}");
+            assert_eq!(tip.fix, Some(rule), "{rule}");
+            assert_eq!(tip.fix_advice, rule_fix_advice(rule), "{rule}");
+            // When the latest check does not offer the fix, the manual way remains.
+            assert_eq!(tip.advice, rule_advice(rule).unwrap(), "{rule}");
+            assert_eq!(tip.open, rule_open(rule), "{rule}");
+            assert!(!tip.scan && !tip.remove_threats, "{rule}");
+        }
+        // A tip with nothing to look at never offers a fix.
+        let mut report = report_with(diag::ProbeId::AccountHygiene, &["accounts.stale_enabled"]);
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::AccountHygiene)
+            .unwrap();
+        probe.status = diag::Status::Healthy;
+        for a in &mut probe.assessments {
+            a.status = diag::Status::Healthy;
+        }
+        let tip = tip_in(&report, diag::ProbeId::AccountHygiene);
+        assert_eq!((tip.fix, tip.remove_threats, tip.open), (None, false, None));
+        // A check without a fix keeps its manual step.
+        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
+        assert_eq!(tip.fix, None);
+        assert_eq!(tip.advice, rule_advice("persistence.wmi_subscriptions").unwrap());
+    }
+
+    #[test]
+    fn found_threats_offer_removal_and_a_scan_stays_for_the_scan_check() {
+        assert!(rule_remove_threats("defender.threats"));
+        assert!(!rule_remove_threats("defender.scan_age"));
+        assert!(rule_scan("defender.scan_age") && !rule_scan("defender.threats"));
+        let tip = tip_in(
+            &report_with(diag::ProbeId::DefenderProtection, &["defender.threats"]),
+            diag::ProbeId::DefenderProtection,
+        );
+        assert!(tip.remove_threats && !tip.scan && tip.fix.is_none());
+        assert_eq!(tip.advice, rule_advice("defender.threats").unwrap());
+        let tip = tip_in(
+            &report_with(diag::ProbeId::DefenderProtection, &["defender.scan_age"]),
+            diag::ProbeId::DefenderProtection,
+        );
+        assert!(tip.scan && !tip.remove_threats);
+    }
+
+    #[test]
+    fn threat_removal_is_judged_only_by_what_defender_reports() {
+        use secblitz::actions::ThreatRemoval as R;
+        let judge = |found, removed, left| threats_result(&R { found, removed, left });
+        assert_eq!(judge(0, 0, 0), ThreatsResult::Nothing);
+        assert_eq!(judge(2, 2, 0), ThreatsResult::Removed);
+        assert_eq!(judge(3, 1, 2), ThreatsResult::Partly);
+        assert_eq!(judge(2, 0, 2), ThreatsResult::Stuck);
+        // Never a success without a removed item or with something left over.
+        assert_eq!(judge(1, 0, 0), ThreatsResult::Stuck);
+        assert_eq!(judge(0, 0, 1), ThreatsResult::Stuck);
+    }
+
+    #[test]
+    fn a_tip_for_something_secblitz_can_fix_goes_to_the_fix() {
+        let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::Vbs)
+            .unwrap();
+        probe.status = diag::Status::Attention;
+        probe.assessments = vec![diag::Assessment {
+            status: diag::Status::Attention,
+            detail: String::new(),
+            rule: diag::RuleReference {
+                id: "vbs.memory_integrity".into(),
+                revision: 1,
+                mapping_version: String::new(),
+                documentation: vec![],
+            },
+        }];
+        let tips = summarize_tips(TipProfile::Extra, &report);
+        let tip = tips
+            .tips
+            .iter()
+            .find(|t| t.title == tip_title(diag::ProbeId::Vbs))
+            .expect("the core protection tip is in the extra profile");
+        assert_eq!(tip.state, TipState::Look);
+        assert_eq!(tip.fix, Some("vbs.memory_integrity"));
+        // The manual way stays on the tip for when the fix is not offered.
+        assert_eq!(tip.advice, rule_advice("vbs.memory_integrity").unwrap());
+        assert_eq!(tip.guide, crate::guide::guide("vbs.memory_integrity"));
+        assert!(!tip.fix_advice.is_empty());
+        // Everything else keeps its Windows page and no fix button.
+        assert!(tips.tips.iter().filter(|t| t.fix.is_some()).count() == 1);
+    }
+
+    fn look_tip(rule: &str) -> Tip {
+        Tip {
+            title: "Test",
+            state: TipState::Look,
+            advice: rule_advice(rule).unwrap_or(""),
+            open: rule_open(rule),
+            scan: false,
+            guide: crate::guide::guide(rule),
+            fix: rule_fix(rule),
+            fix_advice: rule_fix_advice(rule),
+            restart: false,
+            remove_threats: false,
+            explain: None,
+        }
+    }
+
+    fn protection(id: &str, status: &str, detail: &str) -> secblitz::engine::Report {
+        secblitz::engine::Report {
+            transaction: None,
+            results: vec![secblitz::engine::Outcome {
+                id: id.into(),
+                status: status.into(),
+                detail: detail.into(),
+                ..secblitz::engine::Outcome::default()
+            }],
+            findings: vec![],
+            readiness: None,
+        }
+    }
+
+    /// One rule for every tip about a fixable check: a fix only when the
+    /// latest Protection check offers it, "See why" for a Not offered row,
+    /// otherwise the manual steps.
+    #[test]
+    fn a_tip_promises_a_fix_only_when_protection_offers_it() {
+        let mi = "vbs.memory_integrity";
+        let tip = look_tip(mi);
+        let all = vec![mi.to_owned()];
+        // Offered: the review.
+        let r = protection(mi, "attention", "Eligible");
+        assert_eq!(tip_fix(&tip, Some(&r), &all), TipFix::Offered(mi));
+        // Offered by the PC but not in this build's catalog: manual.
+        assert_eq!(tip_fix(&tip, Some(&r), &[]), TipFix::Manual);
+        // Not offered: the reason, and the steps only for a driver.
+        let reason = format!("{}: a.sys", secblitz::vbs::DRIVER);
+        let r = protection(mi, "skipped", &reason);
+        assert_eq!(
+            tip_fix(&tip, Some(&r), &all),
+            TipFix::NotOffered {
+                control: mi,
+                reason: &reason
+            }
+        );
+        assert!(crate::guide::guide_not_offered(mi, &reason).is_some());
+        let r = protection(mi, "skipped", secblitz::vbs::NOT_SUPPORTED);
+        assert!(matches!(tip_fix(&tip, Some(&r), &all), TipFix::NotOffered { .. }));
+        assert!(crate::guide::guide_not_offered(mi, secblitz::vbs::NOT_SUPPORTED).is_none());
+        // No check yet: check now. A check from before this fix existed
+        // looks again; a PC without this fix stays manual.
+        assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
+        let other = protection("uac.enabled", "attention", "");
+        assert_eq!(tip_fix(&tip, Some(&other), &all), TipFix::Unchecked);
+        assert_eq!(tip_fix(&tip, Some(&other), &[]), TipFix::NoFix);
+        // Set (or just applied) but waiting for a restart: only the restart.
+        let r = protection(mi, "compliant", "");
+        assert_eq!(
+            tip_fix(&tip, Some(&r), &all),
+            TipFix::Restart(crate::app::score::RESTART_TO_START)
+        );
+        let r = protection(mi, "applied", "Preference applied; restart required");
+        assert!(matches!(tip_fix(&tip, Some(&r), &all), TipFix::Restart(_)));
+        let stack = look_tip("vbs.kernel_stack_protection");
+        let r = protection("vbs.kernel_stack_protection", "compliant", "");
+        assert_eq!(
+            tip_fix(&stack, Some(&r), &["vbs.kernel_stack_protection".to_owned()]),
+            TipFix::Restart(core_restart_advice("vbs.kernel_stack_protection"))
+        );
+        // Managed, unchecked or already running: manual.
+        for (status, detail) in [
+            ("skipped", "Relevant policy is configured: assessment only"),
+            ("unknown", ""),
+            ("skipped", secblitz::vbs::ALREADY_ON),
+        ] {
+            let r = protection(mi, status, detail);
+            assert_eq!(tip_fix(&tip, Some(&r), &all), TipFix::Manual, "{status} {detail}");
+        }
+        // A tip that is not about a fix is always manual.
+        let manual = look_tip("defender.tamper_protection");
+        assert_eq!(manual.fix, None);
+        let r = protection("defender.tamper_protection", "attention", "");
+        assert_eq!(tip_fix(&manual, Some(&r), &all), TipFix::Manual);
+        // Two older checks have their own ids for the same fix.
+        assert_eq!(rule_fix("remote.rdp"), Some("remote_desktop.disabled"));
+        assert_eq!(rule_fix("smb.v1"), Some("smb1.disabled"));
+        let rdp = look_tip("remote.rdp");
+        let r = protection("remote_desktop.disabled", "attention", "Eligible");
+        assert_eq!(
+            tip_fix(&rdp, Some(&r), &["remote_desktop.disabled".to_owned()]),
+            TipFix::Offered("remote_desktop.disabled")
+        );
+        // The manual text never promises a fix; only `fix_advice` may.
+        for rule in ["remote.rdp", "smb.v1", mi, "vbs.kernel_stack_protection"] {
+            let text = rule_advice(rule).unwrap();
+            assert!(!text.contains("Secblitz can"), "{rule}: {text}");
+            assert!(crate::guide::guide(rule).is_some(), "{rule}: steps for doing it by hand");
+        }
+    }
+
     #[test]
     fn every_profile_lists_known_probes_with_unique_titles() {
         for p in TipProfile::ALL {
@@ -1937,6 +2422,227 @@ mod tests {
                 assert!(!ids[..i].contains(id));
             }
         }
+    }
+
+    fn tip_for(probe_id: diag::ProbeId, rules: &[&str]) -> Tip {
+        let profile = TipProfile::ALL
+            .into_iter()
+            .find(|p| p.probes().contains(&probe_id))
+            .expect("a profile lists the probe");
+        let mut report = diag::collect(profile.profile(), &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == probe_id)
+            .unwrap();
+        probe.status = diag::Status::Attention;
+        probe.assessments = rules
+            .iter()
+            .map(|id| diag::Assessment {
+                status: diag::Status::Attention,
+                detail: String::new(),
+                rule: diag::RuleReference {
+                    id: (*id).into(),
+                    revision: 1,
+                    mapping_version: String::new(),
+                    documentation: vec![],
+                },
+            })
+            .collect();
+        summarize_tips(profile, &report)
+            .tips
+            .into_iter()
+            .find(|t| t.title == tip_title(probe_id))
+            .unwrap()
+    }
+
+    #[test]
+    fn tips_for_checks_we_can_fix_point_to_the_fix_and_keep_the_manual_way() {
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            assert_eq!(rule_fix(id), Some(id), "{id} must be a real fix on the Protection page");
+            // The fix line is only shown while the fix is offered.
+            let fix = rule_fix_advice(id);
+            assert!(fix.contains("We can"), "{id}: {fix}");
+            // The manual line is what the person can do by hand, never a promise.
+            let manual = rule_advice(id).unwrap();
+            assert!(!manual.contains("We can") && !manual.contains("Secblitz can"), "{id}: {manual}");
+            assert!(!manual.contains('\u{2014}'), "{id}");
+        }
+        assert!(rule_advice("persistence.run_and_tasks").unwrap().contains("Task Manager"));
+        // With a manual-only problem listed first, the fixable one still leads.
+        let tip = tip_for(
+            diag::ProbeId::Persistence,
+            &["persistence.wmi_subscriptions", "services.unquoted_paths"],
+        );
+        assert_eq!(tip.fix, Some("services.unquoted_paths"));
+        assert!(!tip.restart && !tip.scan);
+        assert_eq!(tip.advice, rule_advice("services.unquoted_paths").unwrap());
+        assert_eq!(tip.fix_advice, rule_fix_advice("services.unquoted_paths"));
+        assert_eq!(tip.explain.as_deref(), Some("services.unquoted_paths"));
+        // A manual-only problem keeps its manual advice and steps, and offers no fix.
+        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
+        assert!(tip.fix.is_none() && !tip.restart);
+        assert_eq!(tip.guide, crate::guide::guide("persistence.wmi_subscriptions"));
+    }
+
+    #[test]
+    fn review_fix_is_only_said_when_the_protection_page_offers_it() {
+        let id = "net.hosts_file";
+        let tip = tip_for(diag::ProbeId::HostsFile, &[id]);
+        let all = vec![id.to_owned()];
+        assert_eq!(tip_fix(&tip, Some(&protection(id, "attention", "Eligible")), &all), TipFix::Offered(id));
+        // Managed, conflict, already protected or no check yet: no promise of a fix.
+        for status in ["ok", "conflict", "compliant", "unknown"] {
+            assert_eq!(tip_fix(&tip, Some(&protection(id, status, "")), &all), TipFix::Manual, "{status}");
+        }
+        let managed = protection(id, "skipped", "Domain-managed machine: assessment only");
+        assert_eq!(tip_fix(&tip, Some(&managed), &all), TipFix::Manual);
+        assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
+        // A Not offered row: "See why", with no steps for this reason.
+        let reason = "Not offered: the hosts file uses a format we cannot keep exactly";
+        assert_eq!(
+            tip_fix(&tip, Some(&protection(id, "skipped", reason)), &all),
+            TipFix::NotOffered { control: id, reason }
+        );
+        // While a fix is waiting for a restart nothing new is offered.
+        let mut pending = protection(id, "attention", "Eligible");
+        pending.findings.push(secblitz::model::Finding {
+            title: "x".into(),
+            status: "pending".into(),
+            detail: String::new(),
+        });
+        assert_eq!(tip_fix(&tip, Some(&pending), &all), TipFix::Manual);
+        // Another check's fix row never counts for this tip: no row for
+        // this one yet, so it looks again.
+        assert_eq!(
+            tip_fix(&tip, Some(&protection("services.unquoted_paths", "attention", "")), &all),
+            TipFix::Unchecked
+        );
+    }
+
+    #[test]
+    fn overdue_restart_offers_restart_now_instead_of_opening_windows_update() {
+        assert!(rule_restart("update.reboot_overdue") && !rule_restart("update.paused"));
+        let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue"]);
+        assert!(tip.restart && tip.fix.is_none() && tip.open.is_none() && tip.guide.is_none());
+        assert!(tip.advice.contains("Save your work"));
+        // A fix on the same tip still leads; the restart then waits its turn.
+        let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue", "update.paused"]);
+        assert_eq!((tip.fix, tip.restart), (Some("update.paused"), false));
+        // Healthy tips never show either button.
+        let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
+        for probe in &mut report.probes {
+            probe.status = diag::Status::Healthy;
+        }
+        let tips = summarize_tips(TipProfile::Everyday, &report);
+        assert!(tips.tips.iter().all(|t| t.fix.is_none() && !t.restart));
+    }
+
+    /// A tip that still needs the person never ends at a bare sentence: it
+    /// has a Protection fix, an in-app action, or a guide with real steps.
+    #[test]
+    fn every_tip_that_needs_the_person_has_a_fix_an_action_or_steps() {
+        for rule in [
+            "os.feature_release_support",
+            "boot.secure_boot_certs",
+            "defender.tamper_protection",
+            "defender.threats",
+            "defender.exclusions_risky",
+            "defender.scan_age",
+            "smartscreen.apps",
+            "smartscreen.browser_policy",
+            "update.paused",
+            "update.reboot_overdue",
+            "ps.v2_engine",
+            "net.hosts_file",
+            "persistence.wmi_subscriptions",
+            "services.unquoted_paths",
+            "accounts.stale_enabled",
+            "smb.shares_exposed",
+            "firewall.user_dir_inbound_allow",
+            "accounts.daily_admin",
+            "accounts.hello_configured",
+            "accounts.find_my_device",
+            "vbs.memory_integrity",
+            "vbs.kernel_stack_protection",
+            "net.dns_encryption",
+            "net.wifi_security",
+            "persistence.run_and_tasks",
+            "remote.rdp",
+            "smb.v1",
+        ] {
+            let mut tip = look_tip(rule);
+            tip.scan = rule_scan(rule);
+            tip.remove_threats = rule_remove_threats(rule);
+            tip.restart = rule_restart(rule);
+            // Every state the tip can be in, not only "the fix is offered".
+            let mut states = vec![TipFix::Manual];
+            if let Some(control) = tip.fix {
+                states.extend([
+                    TipFix::Unchecked,
+                    TipFix::Offered(control),
+                    TipFix::NotOffered {
+                        control,
+                        reason: "Not offered: some reason",
+                    },
+                ]);
+            }
+            for fix in states {
+                assert_ne!(
+                    tip_action(&tip, fix, true),
+                    TipAction::None,
+                    "{rule} {fix:?}: needs a fix, an action, a page or steps"
+                );
+            }
+        }
+        // A restart that finishes turning something on: the line says it all.
+        let tip = look_tip("vbs.memory_integrity");
+        let fix = TipFix::Restart(crate::app::score::RESTART_TO_START);
+        assert_eq!(tip_action(&tip, fix, true), TipAction::None);
+        assert_eq!(tip_words(&tip, fix), (crate::app::score::RESTART_TO_START, None));
+        // No Protection check yet, nothing else to do: check now. A fix that
+        // is not offered for another reason: Protection says why.
+        let tip = look_tip("net.hosts_file");
+        assert_eq!(tip_action(&tip, TipFix::Unchecked, true), TipAction::CheckNow);
+        assert_eq!(tip_action(&tip, TipFix::Manual, true), TipAction::SeeWhy);
+        assert_eq!(tip_action(&tip, TipFix::Offered("net.hosts_file"), true), TipAction::ReviewFix("net.hosts_file"));
+        // Firewall rules in your folders: the firewall page.
+        let tip = look_tip("firewall.user_dir_inbound_allow");
+        assert_eq!(
+            tip_action(&tip, TipFix::Unchecked, true),
+            TipAction::Open(secblitz::actions::Action::OpenFirewall)
+        );
+        // Hidden background tasks stay with the person: steps, never a fix.
+        let wmi = "persistence.wmi_subscriptions";
+        assert!(rule_fix(wmi).is_none());
+        let guide = crate::guide::guide(wmi).expect("hidden tasks have steps");
+        assert!(guide.steps[0].contains("Don't remove anything yourself"));
+        let tip = tip_for(diag::ProbeId::Persistence, &[wmi]);
+        assert_eq!(tip.guide, Some(guide));
+        // Sharing its tip with a fixable check: the fix leads, and the hidden
+        // task steps stay in every state.
+        let tip = tip_for(diag::ProbeId::Persistence, &["services.unquoted_paths", wmi]);
+        assert_eq!(tip.fix, Some("services.unquoted_paths"));
+        assert_eq!(tip.guide, Some(guide));
+        for fix in [
+            TipFix::Manual,
+            TipFix::Unchecked,
+            TipFix::Offered("services.unquoted_paths"),
+            TipFix::NotOffered {
+                control: "services.unquoted_paths",
+                reason: "Not offered: some reason",
+            },
+        ] {
+            assert_eq!(tip_words(&tip, fix).1, Some(guide), "{fix:?}");
+        }
+        // A fix's own manual steps still give way to the fix.
+        let rdp = look_tip("remote.rdp");
+        assert_eq!(tip_words(&rdp, TipFix::Offered("remote_desktop.disabled")).1, None);
     }
 
     #[test]
@@ -1962,6 +2668,7 @@ mod tests {
             "accounts.daily_admin",
             "accounts.hello_configured",
             "accounts.find_my_device",
+            "vbs.memory_integrity",
             "vbs.kernel_stack_protection",
             "net.dns_encryption",
             "net.wifi_security",
@@ -1972,6 +2679,15 @@ mod tests {
             assert!(text.len() <= 130, "{rule}: keep it to one short line");
         }
         assert_eq!(rule_advice("update.freshness"), None);
+        // A check Secblitz can fix sends the person to the fix, not to a Windows page.
+        // Its manual way (used when the fix is not offered) is Core isolation.
+        for id in ["vbs.memory_integrity", "vbs.kernel_stack_protection"] {
+            assert_eq!(rule_fix(id), Some(id), "{id}");
+            assert_eq!(rule_open(id), Some(secblitz::actions::Action::OpenCoreIsolation), "{id}");
+            assert!(rule_advice(id).unwrap().contains("Protection"), "{id}");
+        }
+        assert_eq!(rule_fix("defender.exclusions_risky"), Some("defender.exclusions_risky"));
+        assert!(rule_fix("defender.tamper_protection").is_none() && rule_fix("update.freshness").is_none());
         assert_eq!(
             rule_open("os.feature_release_support"),
             Some(secblitz::actions::Action::OpenWindowsUpdate)
@@ -2066,15 +2782,15 @@ mod tests {
             .unwrap();
         let guide = tip.guide.expect("guide");
         assert_eq!(guide.page.action(), tip.open.unwrap());
-        assert!(!tip.fix);
+        assert_eq!(tip.fix, None);
         // Every rule with a guide opens the page the guide starts from.
         for rule in ["accounts.find_my_device", "net.wifi_security", "vbs.kernel_stack_protection"] {
             let g = crate::guide::guide(rule).expect(rule);
             assert_eq!(rule_open(rule), Some(g.page.action()), "{rule}");
         }
         // A check that is also a fix points to Protection, not to manual advice.
-        assert!(rule_fix("update.paused"));
-        assert!(!rule_fix("defender.tamper_protection"));
+        assert_eq!(rule_fix("update.paused"), Some("update.paused"));
+        assert_eq!(rule_fix("defender.tamper_protection"), None);
     }
 
     #[test]
