@@ -1,10 +1,4 @@
-//! Reusable visual building blocks. OWNER: design-system agent.
-//!
-//! Every page builds its UI from these so the product looks consistent
-//! (see docs/DESIGN-SYSTEM.md). Signatures are a contract; styling may be
-//! refined. No widget here draws a shadow, a gradient or a surface border:
-//! tonal steps and spacing separate content (see `region`, `group`, `row_item`).
-// The catalogue is larger than what pages use today; pages migrate to it next.
+//! Reusable visual building blocks.
 #![allow(dead_code, unused_imports)]
 
 pub mod anim;
@@ -56,7 +50,6 @@ pub fn body<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
         .color(p.text)
         .into()
 }
-/// [`h2`] centred across the width (under a centred drawing).
 pub fn h2_centred<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
         .size(theme::H2)
@@ -66,7 +59,6 @@ pub fn h2_centred<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> 
         .align_x(iced::alignment::Horizontal::Center)
         .into()
 }
-/// [`muted`] centred across the width, every wrapped line too.
 pub fn muted_centred<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
     text(s.into())
         .size(theme::BODY)
@@ -99,7 +91,6 @@ pub fn icon<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message> {
         .into()
 }
 
-/// The Secblitz shield and bolt, tinted `color`.
 pub fn brand_mark<'a>(size: f32, color: Color) -> Element<'a, Message> {
     svg(svg::Handle::from_memory(super::icons::BRAND_SVG))
         .width(size)
@@ -116,10 +107,8 @@ pub fn icon_filled<'a>(i: Icon, size: f32, color: Color) -> Element<'a, Message>
         .into()
 }
 
-/// Small status label, e.g. "Needs attention".
 pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
     if tone == Tone::Neutral {
-        // A grey filled capsule reads as a button; plain states are text.
         return tag(p, None, label);
     }
     let fg = p.tone_text(tone);
@@ -144,8 +133,6 @@ pub fn pill<'a>(p: Palette, label: impl Into<String>, tone: Tone) -> Element<'a,
     .into()
 }
 
-/// A quiet status label (optional icon + small muted text, no fill), e.g.
-/// "Restart needed". Never looks pressable.
 pub fn tag<'a>(p: Palette, glyph: Option<Icon>, label: impl Into<String>) -> Element<'a, Message> {
     let label = text(label.into())
         .size(theme::SMALL)
@@ -163,18 +150,12 @@ pub fn tag<'a>(p: Palette, glyph: Option<Icon>, label: impl Into<String>) -> Ele
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
-    /// The one main action on a screen.
     Primary,
-    /// Secondary actions, Cancel.
     Secondary,
-    /// Text-like low-emphasis action.
     Ghost,
-    /// Destructive confirmation (remove apps, undo).
     Danger,
 }
 
-/// (background, text, border) for a button in a given state. Every state has
-/// its own solid colour; nothing relies on opacity.
 fn button_colors(
     p: &Palette,
     kind: ButtonKind,
@@ -243,7 +224,6 @@ fn button_style(
     }
 }
 
-/// Foreground used for the icon of a button (matches `button_colors`).
 fn button_fg(p: &Palette, kind: ButtonKind, enabled: bool) -> Color {
     let status = if enabled {
         button::Status::Active
@@ -253,8 +233,6 @@ fn button_fg(p: &Palette, kind: ButtonKind, enabled: bool) -> Color {
     button_colors(p, kind, status).1
 }
 
-/// Standard button: 36 px tall, S4 side padding, S2 between icon and label.
-/// `on_press: None` renders disabled. Keeps the normal arrow cursor.
 pub fn action<'a>(
     p: Palette,
     kind: ButtonKind,
@@ -284,8 +262,6 @@ pub fn action<'a>(
     )
 }
 
-/// Square 36 px icon-only button. Always pair with nearby text or a tooltip
-/// so its meaning is clear.
 pub fn icon_button<'a>(
     p: Palette,
     kind: ButtonKind,
@@ -304,17 +280,8 @@ pub fn icon_button<'a>(
     )
 }
 
-/// The tallest sheet content that fits the smallest window: the scrim's
-/// and the panel's S6 padding on both sides come off. Sheets with a drawing
-/// at the top (fixing, undo, putting back) are exactly this tall in their
-/// working and result views, so the centred panel never moves and the
-/// drawing stays put while rows arrive and when the result replaces the
-/// work.
 pub const SHEET_FIT_HEIGHT: f32 = theme::WINDOW_MIN_HEIGHT - 4.0 * theme::S6;
 
-/// Modal sheet layer (scrim + panel) to stack above the page. The scrim is one static flat colour (no
-/// blur), the panel is a borderless surface tone, R_LARGE corners and S6 padding. Esc
-/// handling is done by the shell via `Message::Escape`.
 pub fn sheet_layer<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
@@ -343,7 +310,6 @@ pub fn sheet_layer<'a>(
     )
 }
 
-/// Page header: title + optional subtitle (S1 apart). Put S6 below it.
 pub fn page_header<'a>(
     p: Palette,
     title: impl Into<String>,

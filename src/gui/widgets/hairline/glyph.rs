@@ -1,8 +1,4 @@
-//! The drawings' icon set: Fluent-like line icons in a 24-unit box, stroke
-//! only. Copied from the approved prototype's `G` table, in its order.
-//!
-//! Place one with [`super::Stage::icon`] (pixels, ready to stroke) or
-//! [`Glyph::data`] plus [`PathData::placed`] (units, to cut or sample).
+//! Fluent-like line icons in a 24-unit box, stroke only.
 use super::svg::PathData;
 use std::sync::OnceLock;
 
@@ -37,7 +33,6 @@ pub enum Glyph {
 }
 
 impl Glyph {
-    /// Every glyph, in the prototype's order.
     pub const ALL: [Glyph; 26] = [
         Glyph::Shield,
         Glyph::Tick,
@@ -67,7 +62,6 @@ impl Glyph {
         Glyph::Folder,
     ];
 
-    /// The prototype's key for this glyph (`G.shield`, `G.tick`, ...).
     pub const fn name(self) -> &'static str {
         match self {
             Glyph::Shield => "shield",
@@ -99,7 +93,6 @@ impl Glyph {
         }
     }
 
-    /// SVG path data in the 24-unit box.
     pub const fn d(self) -> &'static str {
         match self {
             Glyph::Shield => "M12 2.6c2.5 1.8 5.2 2.8 8.3 3V11c0 4.7-2.9 8-8.3 10.2C6.6 19 3.7 15.7 3.7 11V5.6c3.1-.2 5.8-1.2 8.3-3z",
@@ -131,14 +124,12 @@ impl Glyph {
         }
     }
 
-    /// The parsed path in the 24-unit box, parsed once per run.
     pub fn data(self) -> &'static PathData {
         static ALL: OnceLock<Vec<PathData>> = OnceLock::new();
         let all = ALL.get_or_init(|| Glyph::ALL.iter().map(|g| PathData::of(g.d())).collect());
         &all[self as usize]
     }
 
-    /// The glyph with the prototype key `name`.
     pub fn from_name(name: &str) -> Option<Glyph> {
         Glyph::ALL.into_iter().find(|g| g.name() == name)
     }
@@ -168,13 +159,11 @@ mod tests {
 
     #[test]
     fn arcs_in_the_set_land_on_their_end_points() {
-        // Lock shackle: from (8.6, 8.2) an arc to (15.4, 8.2), then down.
         let lock = Glyph::Lock.data();
         assert!(lock
             .segs
             .iter()
             .any(|s| matches!(s, super::super::svg::Seg::Cubic(_, _, p) if (p.x - 15.4).abs() < 1e-4 && (p.y - 8.2).abs() < 1e-4)));
-        // Power: the open ring ends level with where it starts.
         let end = Glyph::Power.data().end().unwrap();
         assert!((end.x - 16.8).abs() < 1e-4 && (end.y - 6.8).abs() < 1e-4);
     }

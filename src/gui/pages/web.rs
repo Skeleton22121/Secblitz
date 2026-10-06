@@ -1,15 +1,5 @@
 //! "Web protection": three switches that block ads, trackers and dangerous
 //! websites, a plain status line, a one-hour pause and today's counts.
-//!
-//! The page opens with a picture of what is happening (the hairline globe
-//! sending traffic to the PC, with the dome that stops ads when protection
-//! is on), the status in words, today's counts and the pause, resume or try
-//! again button beside it.
-//!
-//! Everything that touches the PC (reading the files, asking Windows about the
-//! filter, changing the switches) runs on a worker thread. While the page is
-//! on screen it reads the current state every two seconds. A copy of Secblitz
-//! that is not installed cannot run the filter, so its switches are disabled.
 use crate::app::{history, settings as app_settings};
 use crate::explain;
 use crate::gui::icons::Icon;
@@ -65,13 +55,11 @@ impl Switch {
     }
 }
 
-/// Everything the page shows, read in one go.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub config: Config,
     pub status: Option<Status>,
     pub service: ServiceState,
-    /// Only the installed copy of Secblitz can run web protection.
     pub installed: bool,
     pub now: u64,
 }
@@ -88,45 +76,33 @@ enum Busy {
 pub struct State {
     snapshot: Option<Snapshot>,
     busy: Option<Busy>,
-    /// A read is on its way.
     polling: bool,
-    /// Bumped by every change; a read or an answer from an older one is dropped.
     generation: u32,
     open: Vec<Switch>,
-    /// What the picture shows and when that began (its transitions run from
-    /// there).
     look: Option<(web_globe::Guard, Instant)>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// Two seconds passed while the page is on screen.
     Tick,
     Polled(u32, Box<Snapshot>),
-    /// A switch was flipped (true = turn it on).
     Toggle(Switch, bool),
     Pause,
     Resume,
-    /// Start the filter again with the same switches.
     Retry,
     Done(u32, Result<(), String>),
     ToggleDetail(Switch),
 }
 
-/// What the status line says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Line {
     Off,
     On,
-    /// Everything is off until this Unix time.
     Paused(u64),
     GettingReady,
     NotWorking,
 }
 
-/// The status line from the saved switches, what the filter last reported and
-/// what Windows says about the filter. A filter that is not running, or has not
-/// reported for two minutes, means nothing is being blocked.
 pub fn status_line(
     config: &Config,
     status: Option<&Status>,
@@ -157,12 +133,10 @@ pub fn status_line(
     }
 }
 
-/// The button next to the status line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusAction {
     Pause,
     Resume,
-    /// The filter is down: start it again rather than offer a pause of nothing.
     Retry,
 }
 
@@ -175,7 +149,6 @@ pub fn status_action(line: Line) -> Option<StatusAction> {
     }
 }
 
-/// The status line for a snapshot.
 fn current_line(snapshot: &Snapshot) -> Line {
     status_line(
         &snapshot.config,
@@ -185,7 +158,6 @@ fn current_line(snapshot: &Snapshot) -> Line {
     )
 }
 
-/// What the picture shows for a status line.
 pub fn guard_of(line: Line) -> web_globe::Guard {
     use web_globe::Guard;
     match line {
@@ -197,9 +169,6 @@ pub fn guard_of(line: Line) -> web_globe::Guard {
     }
 }
 
-/// Remember what the picture shows; a new state restarts its clock, the
-/// same state keeps it (so a poll every two seconds does not replay the
-/// transition).
 fn note_look(state: &mut State, snapshot: &Snapshot, now: Instant) {
     let guard = guard_of(current_line(snapshot));
     if state.look.map(|(g, _)| g) != Some(guard) {
@@ -207,17 +176,14 @@ fn note_look(state: &mut State, snapshot: &Snapshot, now: Instant) {
     }
 }
 
-/// Switches and buttons work only on an installed copy, and one change at a time.
 pub fn controls_enabled(snapshot: Option<&Snapshot>, busy: bool) -> bool {
     snapshot.is_some_and(|s| s.installed) && !busy
 }
 
-/// Home suggests web protection while it is installable and everything is off.
 pub fn suggests(snapshot: &Snapshot) -> bool {
     snapshot.installed && !snapshot.config.any_on()
 }
 
-/// Today's blocked counts, when the filter has reported recently.
 fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 3]> {
     let status = snapshot.status.as_ref()?;
     if !snapshot.config.any_on() || !config::fresh(status, snapshot.now) {
@@ -230,9 +196,6 @@ fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 3]> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Reading and changing (always on a worker thread)
-// ---------------------------------------------------------------------------
 
 fn service_state() -> ServiceState {
     #[cfg(windows)]
@@ -323,18 +286,15 @@ fn start(
     })
 }
 
-/// Read the current state when the page opens (and once at start, for Home).
 pub fn on_enter(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
     poll(state)
 }
 
-/// Two-second reads, only while this page is on screen.
 pub fn subscription() -> Subscription<Message> {
     Subscription::run(|| {
         let (tx, rx) = iced::futures::channel::mpsc::unbounded();
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(2));
-            // The receiver is dropped when the page is left: stop then.
             if tx.unbounded_send(()).is_err() {
                 break;
             }
@@ -366,7 +326,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             let mut config = snapshot.config.clone();
             switch.set(&mut config, on);
-            // Changing a switch ends a pause: the person just made a choice.
             config.paused_until = None;
             start(state, Busy::Switch(switch), move || apply(config))
         }
@@ -397,7 +356,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.busy = None;
-            // Anything still on its way predates this change.
             state.generation = state.generation.wrapping_add(1);
             state.polling = false;
             let reread = poll(state);
@@ -420,12 +378,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Text
-// ---------------------------------------------------------------------------
 
-/// Plain words and a next step for a change that did not work. The raw reason
-/// is never shown; unknown reasons get the general message.
 fn failure_text(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
@@ -442,8 +395,6 @@ fn failure_text(raw: &str) -> &'static str {
     }
 }
 
-/// A short reason and fix under the status line, when the filter reported a
-/// problem or is not running. `None` when there is nothing to add.
 fn problem_hint(snapshot: &Snapshot, line: Line) -> Option<&'static str> {
     if !matches!(
         line,
@@ -472,8 +423,6 @@ fn problem_hint(snapshot: &Snapshot, line: Line) -> Option<&'static str> {
     }
 }
 
-/// Time of day for "Paused until": 12-hour with AM/PM in English, 24-hour
-/// elsewhere. `secs` counts from local midnight.
 fn format_clock(lang: Lang, secs: u64) -> String {
     let hour = (secs % SECONDS_PER_DAY) / 3600;
     let minute = (secs % 3600) / 60;
@@ -489,7 +438,6 @@ fn format_clock(lang: Lang, secs: u64) -> String {
     }
 }
 
-/// 1204 -> "1,204" (the separator follows the language).
 fn group_digits(lang: Lang, n: u64) -> String {
     let sep = match lang {
         Lang::En => ",",
@@ -545,7 +493,6 @@ fn line_text(ctx: &Ctx, line: Line) -> String {
     }
 }
 
-/// The title and one-line explanation beside the picture.
 fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
     match line {
         Line::On => (ctx.t("Web protection is on"), None),
@@ -561,8 +508,6 @@ fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
             ctx.t("Web protection is off"),
             Some(ctx.t("Ads, trackers and dangerous websites can load.")),
         ),
-        // The status row below already says the internet still works; the
-        // region shows the reason and what to do instead (see `hero`).
         Line::NotWorking => (ctx.t("Not working right now"), None),
     }
 }
@@ -577,9 +522,6 @@ fn line_look(line: Line) -> (Icon, Tone) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// View
-// ---------------------------------------------------------------------------
 
 fn wrap(msg: Msg) -> Message {
     Message::Web(msg)
@@ -605,7 +547,6 @@ fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
     }
 }
 
-/// Extra lines under a row, lined up with its text.
 fn under<'a>(items: Vec<El<'a>>) -> El<'a> {
     container(column(items).spacing(theme::S2).width(Length::Fill))
         .padding(Padding {
@@ -675,13 +616,9 @@ fn status_rows<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
         space::horizontal().width(0),
         None,
     );
-    // The problem hint sits in the region at the top, next to the button
-    // that answers it.
     vec![head]
 }
 
-/// The pause, resume or try again button for the status, with a bar under
-/// it while that change runs. `None` when the status offers no action.
 fn status_button<'a>(
     state: &'a State,
     ctx: &'a Ctx,
@@ -710,8 +647,6 @@ fn status_button<'a>(
     Some(container(col).padding(Padding::default().top(theme::S2)).into())
 }
 
-/// The region at the top: the picture of what web protection is doing, and
-/// beside it the status in words, today's counts and the status button.
 fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
     let p = ctx.palette;
     let line = current_line(snapshot);
@@ -733,8 +668,6 @@ fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
     if let Some(sub) = sub {
         words = words.push(widgets::muted(p, sub));
     }
-    // What went wrong and what to do, right above "Try again" (installed
-    // copies only, like the button).
     if snapshot.installed {
         if let Some(hint) = problem_hint(snapshot, line) {
             words = words.push(widgets::muted(p, ctx.t(hint)));
@@ -881,7 +814,6 @@ mod tests {
             status_line(&on, Some(&starting), running, NOW),
             Line::GettingReady
         );
-        // Service down, missing or odd: nothing is being blocked.
         for service in [
             ServiceState::Stopped,
             ServiceState::NotInstalled,
@@ -898,7 +830,6 @@ mod tests {
             status_line(&on, Some(&port), running, NOW),
             Line::NotWorking
         );
-        // A download problem alone does not stop blocking.
         let late = Status {
             last_error: Some(ErrorCode::DownloadFailed),
             ..healthy()
@@ -916,7 +847,6 @@ mod tests {
             status_line(&paused, Some(&healthy()), ServiceState::Running, NOW),
             Line::Paused(NOW + 600)
         );
-        // A pause in the past is over.
         let over = Config {
             paused_until: Some(NOW - 1),
             ..config(true)
@@ -925,7 +855,6 @@ mod tests {
             status_line(&over, Some(&healthy()), ServiceState::Running, NOW),
             Line::On
         );
-        // Nothing on: nothing to pause.
         let idle = Config {
             paused_until: Some(NOW + 600),
             ..config(false)
@@ -954,7 +883,6 @@ mod tests {
             status_line(&config(true), None, ServiceState::Running, NOW),
             Line::NotWorking
         );
-        // No counts from a service that stopped reporting.
         assert!(blocked_today(&snapshot(config(true), Some(old), true)).is_none());
     }
 
@@ -964,7 +892,6 @@ mod tests {
         assert!(!controls_enabled(Some(&portable), false));
         let installed = snapshot(config(false), None, true);
         assert!(controls_enabled(Some(&installed), false));
-        // Not while a change is running, nor before the first read.
         assert!(!controls_enabled(Some(&installed), true));
         assert!(!controls_enabled(None, false));
         assert!(!suggests(&portable));
@@ -1021,10 +948,8 @@ mod tests {
         let on = snapshot(config(true), Some(healthy()), true);
         note_look(&mut state, &on, t0);
         assert_eq!(state.look, Some((Guard::On, t0)));
-        // The next poll says the same: the picture's clock stays.
         note_look(&mut state, &on, t0 + Duration::from_secs(2));
         assert_eq!(state.look, Some((Guard::On, t0)));
-        // Turned off: a new state from now.
         let t1 = t0 + Duration::from_secs(4);
         note_look(&mut state, &snapshot(config(false), None, true), t1);
         assert_eq!(state.look, Some((Guard::Off, t1)));
@@ -1062,13 +987,11 @@ mod tests {
         let s = snapshot(on.clone(), Some(port), true);
         let line = status_line(&s.config, s.status.as_ref(), s.service, s.now);
         assert!(!problem_hint(&s, line).unwrap().contains("Try again"));
-        // Service stopped with no report: generic restart advice.
         let down = Snapshot {
             service: ServiceState::Stopped,
             ..snapshot(on.clone(), None, true)
         };
         assert!(problem_hint(&down, Line::NotWorking).unwrap().contains("restart your PC"));
-        // Healthy: nothing to add.
         let ok = snapshot(on, Some(healthy()), true);
         assert!(problem_hint(&ok, Line::On).is_none());
     }

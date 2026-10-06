@@ -1,13 +1,4 @@
 //! Protection page: every check grouped, attention rows selectable.
-//! OWNER: fixes agent.
-//!
-//! Layout (docs/DESIGN-SYSTEM.md): borderless groups of `row_item`s. "Needs
-//! attention" is open, followed by the selectable "Privacy extras" (optional,
-//! never counted); "Worth a look" is a plain group; "Can't check" and
-//! "Protected" are collapsibles. Secondary actions live in an overflow menu.
-//! While a check runs the page shows the compact magnifying glass plus the
-//! status ticker. Row text is translated and built once per check result
-//! (`Cache`) so `view()` only assembles widgets.
 use crate::advice::{self, Group, NextStep};
 use crate::app::flow;
 use crate::app::score::{self, Class};
@@ -31,20 +22,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Rows shown before "See more" in a long list.
 const FIRST_ROWS: usize = 8;
-/// Status lines kept for the ticker.
 const TICKER_LINES: usize = 6;
-/// Left inset that lines expanded text up with a row's title:
-/// checkbox box + its padding, gap, row padding, icon, gap.
 const INDENT: f32 =
     theme::CHECK + theme::S1 * 2.0 + theme::S1 + theme::S4 + theme::ICON_ROW + theme::S4;
-/// Same inset for rows that have no checkbox.
 const INDENT_PLAIN: f32 = theme::S4 + theme::ICON_ROW + theme::S4;
 
 #[derive(Debug)]
 pub struct State {
-    /// `Ctx::checked_at` the selection below belongs to.
     synced_at: Option<u64>,
     selected: HashSet<String>,
     expanded: HashSet<String>,
@@ -55,15 +40,10 @@ pub struct State {
     all_attention: bool,
     all_protected: bool,
     show_error: bool,
-    /// Translated row text for the current report (built lazily, once).
     cache: RefCell<Option<Cached>>,
-    /// Start of the running check on this page (set by the first frame).
     scan: Option<Instant>,
-    /// Timestamp of the latest frame (never `Instant::now()` in `view()`).
     now: Instant,
-    /// Status lines for the ticker, oldest first.
     lines: Vec<(String, Instant)>,
-    /// How many `ctx.checking` items are already in `lines`.
     processed: usize,
 }
 
@@ -102,17 +82,13 @@ pub enum Msg {
     AllAttention,
     AllProtected,
     ErrorDetails,
-    /// Animation frame (only while a check runs).
     Frame(Instant),
-    /// Open a fixed Windows page through the launcher.
     Open(Page),
 }
 
-// ---------------------------------------------------------------- row data
 
 #[derive(Debug)]
 struct Cached {
-    /// Identity of what the rows were built from.
     key: (usize, Lang, usize),
     rows: Rows,
 }
@@ -120,14 +96,11 @@ struct Cached {
 #[derive(Debug, Default)]
 struct Rows {
     attention: Vec<Att>,
-    /// Optional privacy tidy-ups: selectable, but not protection gaps and
-    /// never counted (score::to_check leaves them out too).
     privacy: Vec<Att>,
     others: Vec<Other>,
     protected: Vec<Prot>,
 }
 
-/// A fixable, selectable row.
 #[derive(Debug)]
 struct Att {
     id: String,
@@ -136,19 +109,14 @@ struct Att {
     why: String,
     tech: String,
     restart: bool,
-    /// A choice the person makes: shown unticked with its consequence.
     choice: bool,
-    /// The exact items a fix would change, one plain line each.
     items: Vec<String>,
 }
 
-/// A row of the "worth a look / can't check / managed" groups.
 #[derive(Debug)]
 struct Other {
     key: String,
-    /// Control id or finding title the explanation is looked up by.
     explain: String,
-    /// Findings are reported only; controls can be turned on.
     report_only: bool,
     name: String,
     line: String,
@@ -158,9 +126,7 @@ struct Other {
     bucket: Bucket,
     icon: Icon,
     tech: String,
-    /// Plain numbered steps for what only the person can do in Windows.
     guide: Option<&'static Guide>,
-    /// The Windows page that helps, shown as a visible button.
     page: Option<Page>,
 }
 
@@ -176,11 +142,9 @@ enum Bucket {
     Look,
     Managed,
     Unavailable,
-    /// Notes and "not offered" items: never counted, no action.
     GoodToKnow,
 }
 
-/// Add the names of drivers, when there are any, to a "More details" line.
 fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) -> String {
     match names {
         Some(names) => format!("{tech} · {}", ctx.t(template).replace("{names}", &names)),
@@ -188,22 +152,16 @@ fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) ->
     }
 }
 
-/// Plain-words "More details" text: what the status means and what to do.
-/// The raw backend detail is never shown.
 fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
     let (st, next) = crate::app::flow::plain_detail(status, a);
     format!("{} · {}", lang.t(st), lang.t(next))
 }
 
-/// "Accounts: bob, amy" or "Folders: Photos": the names a fix would change, so
-/// the person knows before approving. None for controls without a list.
 pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
     let (key, names) = item_names(r)?;
     Some(ctx.t(key).replace("{names}", &names.join(", ")))
 }
 
-/// The line template and the names for `items_line`. One folder can be shared
-/// with several groups, so each name is listed once.
 fn item_names(r: &secblitz::engine::Outcome) -> Option<(&'static str, Vec<&str>)> {
     let (key, kind) = match r.id.as_str() {
         "accounts.stale_enabled" => ("Accounts: {names}", "account"),
@@ -231,7 +189,6 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         let a = advice::for_outcome(r);
         let impact = advice::control_impact(id);
         let choice = advice::is_choice(id);
-        // A choice always shows its one-line consequence, never a generic impact.
         let line = if choice || impact.is_empty() {
             match items_line(ctx, r) {
                 Some(items) => format!("{}\n{}", ctx.t(a.next), items),
@@ -264,7 +221,6 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             continue;
         }
         let class = score::classify_in(report, r);
-        // Set but not running: the finding below says so, not a "protected" row.
         if class == Class::Excluded
             && secblitz::vbs::is_vbs(&r.id)
             && score::classify(r) == Class::Protected
@@ -295,8 +251,6 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         } else {
             (Bucket::Look, Tone::Warn)
         };
-        // When the older finding for this control is still listed, it carries
-        // the steps; showing them on this row too would repeat them.
         let finding_listed = report.findings.iter().any(|f| {
             advice::control_for_finding(&f.title) == Some(r.id.as_str())
                 && !score::finding_has_fix(report, f)
@@ -322,12 +276,10 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         if score::finding_has_fix(report, f) {
             continue;
         }
-        // Same words as Home (a core protection waiting for a restart says so).
         let a = score::finding_advice(report, f);
         if a.group == Group::Protected {
             continue;
         }
-        // Same classes as the count (score::to_check), so they always agree.
         let (bucket, tone) = match score::classify_finding(f) {
             Class::Managed => (Bucket::Managed, Tone::Neutral),
             Class::Excluded => (Bucket::GoodToKnow, Tone::Neutral),
@@ -351,7 +303,6 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             None,
         );
         if a.step == NextStep::Restart {
-            // A restart is the one thing to do: no steps or page compete with it.
             row.guide = None;
             row.page = None;
             row.line = ctx.t(a.next);
@@ -372,16 +323,11 @@ fn other(
     bucket: Bucket,
     tone: Tone,
     tech: String,
-    // The control's own result detail, for "Not offered" rows. None for
-    // findings, and for controls whose steps another row already shows.
     detail: Option<&str>,
 ) -> Other {
-    // Settings the PC's owner controls are plain information: nothing to
-    // decide, nothing to open.
     let managed = bucket == Bucket::Managed;
     let guide = match bucket {
         Bucket::Look => guide::guide(explain.0),
-        // Steps only for a reason the person can act on (see the guide module).
         Bucket::GoodToKnow => detail.and_then(|d| guide::guide_not_offered(explain.0, d)),
         _ => None,
     };
@@ -418,10 +364,6 @@ fn other(
     }
 }
 
-/// The words under an "other" row's name: (prefix, text), as catalog keys.
-/// A to-do with steps says why it matters (the steps say what to do). Any
-/// other row, a Not offered one with steps included, says its own next words,
-/// so the reason is never hidden.
 fn other_line(
     bucket: Bucket,
     has_guide: bool,
@@ -436,7 +378,6 @@ fn other_line(
     }
 }
 
-/// The Windows page a row's button opens. `explain` is (id or title, finding).
 fn other_page(
     bucket: Bucket,
     explain: (&str, bool),
@@ -448,9 +389,6 @@ fn other_page(
             .map(|g| g.page)
             .or_else(|| Page::for_finding(explain.0))
             .or_else(|| Page::for_step(step)),
-        // A finding that is only information still gets the page its line
-        // names ("Open Windows Update..."); a Not offered fix gets one only
-        // with its steps.
         Bucket::GoodToKnow if explain.1 => {
             Page::for_finding(explain.0).or_else(|| Page::for_step(step))
         }
@@ -459,7 +397,6 @@ fn other_page(
     }
 }
 
-/// Build the row cache if the report (or language) changed since last time.
 fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
     let key = (
         Arc::as_ptr(report) as usize,
@@ -476,17 +413,12 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
     });
 }
 
-// ------------------------------------------------------------------ update
 
-/// "Firewall rule: name" lines for the items a fix would change. The names come
-/// from this PC; only the kind is translated.
 fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
     items
         .iter()
-        // Accounts and folders are already named on the row (`items_line`).
         .filter(|item| !matches!(item.kind.as_str(), "account" | "share"))
         .map(|item| match item.kind.as_str() {
-            // Items a fix leaves alone say why and what to do instead.
             "skip_missing" => format!(
                 "{}: {}. {}",
                 ctx.t("Left alone"),
@@ -521,8 +453,6 @@ fn candidates(ctx: &Ctx) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Bring the stored selection in line with the latest check: a new check
-/// resets it to the recommended set.
 fn sync(state: &mut State, ctx: &Ctx) {
     if state.synced_at != ctx.checked_at || state.synced_at.is_none() {
         state.synced_at = ctx.checked_at;
@@ -537,7 +467,6 @@ fn sync(state: &mut State, ctx: &Ctx) {
     }
 }
 
-/// Selected ids in list order, limited to what is currently fixable.
 fn selection(state: &State, ctx: &Ctx, all: &[String]) -> Vec<String> {
     if state.synced_at == ctx.checked_at && ctx.checked_at.is_some() {
         all.iter()
@@ -545,8 +474,6 @@ fn selection(state: &State, ctx: &Ctx, all: &[String]) -> Vec<String> {
             .cloned()
             .collect()
     } else {
-        // Not synced yet (no message since the check): show exactly what
-        // `sync` will select, so choices are never drawn ticked.
         let recommended = ctx
             .report
             .as_deref()
@@ -583,7 +510,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     Task::none()
 }
 
-/// Feed the ticker from the live check: one line per newly finished item.
 fn track_scan(state: &mut State, ctx: &Ctx, now: Instant) {
     state.now = now;
     let Some(progress) = &ctx.checking else {
@@ -617,18 +543,13 @@ fn flip(set: &mut HashSet<String>, id: String) {
     }
 }
 
-/// Ask the launcher to open one fixed Windows page. The answer comes back as
-/// `Message::PageOpened`, which tells the person calmly how it went.
 pub fn open_page(ctx: &Ctx, page: Page) -> Task<Message> {
     ctx.broker_task(page.request(), move |reply| {
         Message::PageOpened(page, matches!(reply, Ok(Reply::Done | Reply::OpenedStore)))
     })
 }
 
-// ------------------------------------------------------- shared row pieces
 
-/// Row title (medium weight) with one muted line under it. Shared by the
-/// fix-flow sheets so their rows read the same as the page.
 pub fn row_text<'a>(p: Palette, title: String, line: Option<String>) -> Element<'a, Message> {
     let mut c = column![iced::widget::text(title)
         .size(theme::BODY)
@@ -642,7 +563,6 @@ pub fn row_text<'a>(p: Palette, title: String, line: Option<String>) -> Element<
     c.into()
 }
 
-/// Quiet tonal inset for extra detail (expanded rows). No border.
 pub fn well<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
@@ -660,7 +580,6 @@ pub fn well<'a>(
         })
 }
 
-/// `[lead] [row] [trailing]`, vertically centred, `S1` apart.
 fn line<'a>(
     lead: Option<Element<'a, Message>>,
     content: Element<'a, Message>,
@@ -673,7 +592,6 @@ fn line<'a>(
     r.push(content).push(trailing).into()
 }
 
-/// Expanded text under a row, lined up with the row's title.
 fn expanded<'a>(
     p: Palette,
     indent: f32,
@@ -686,7 +604,6 @@ fn expanded<'a>(
     if let Some(w) = why {
         c = c.push(widgets::body(p, w));
     }
-    // The exact things a fix would change, so nothing is a surprise.
     if let Some((heading, lines)) = items.filter(|(_, lines)| !lines.is_empty()) {
         c = c.push(widgets::section_label(p, heading));
         for line in lines {
@@ -699,9 +616,6 @@ fn expanded<'a>(
     row![space::horizontal().width(indent), well(p, c)].into()
 }
 
-/// The numbered steps of a guide and the visible buttons that open its page.
-/// Shared by the Protection and Tools pages. `indent` lines the text up with
-/// the row's title.
 pub fn guide_block<'a>(
     ctx: &Ctx,
     g: &'static Guide,
@@ -739,7 +653,6 @@ fn nothing<'a>() -> Element<'a, Message> {
     space::horizontal().width(0.0).into()
 }
 
-// -------------------------------------------------------------------- rows
 
 fn attention_row<'a>(
     state: &State,
@@ -753,7 +666,6 @@ fn attention_row<'a>(
     let p = ctx.palette;
     let open = state.expanded.contains(&a.id);
     let mut pills = row![].spacing(theme::S3).align_y(Alignment::Center);
-    // Every privacy extra is a choice; its group already says so.
     if a.choice && !extra {
         pills = pills.push(widgets::pill(p, choice_label.to_owned(), Tone::Neutral));
     }
@@ -770,7 +682,6 @@ fn attention_row<'a>(
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &a.id) {
         tools = tools.push(t);
     }
-    // One action per row: a light text button keeps the long list calm.
     tools = tools.push(widgets::action(
         p,
         ButtonKind::Ghost,
@@ -826,7 +737,6 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &o.explain) {
         tools = tools.push(t);
     }
-    // A row we could not check says so and offers to look again, in plain sight.
     if o.bucket == Bucket::Unavailable || o.step == NextStep::CheckAgain {
         tools = tools.push(widgets::action(
             p,
@@ -836,7 +746,6 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
         ));
     } else if o.step == NextStep::ReviewUndo {
-        // Undoing this change is the next undo: straight to the review sheet.
         tools = tools.push(widgets::action(
             p,
             ButtonKind::Secondary,
@@ -845,7 +754,6 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             (!ctx.busy).then_some(Message::ReviewUndo),
         ));
     } else if o.step == NextStep::OpenHistory {
-        // Other changes came later: undo newest first, from History.
         tools = tools.push(widgets::action(
             p,
             ButtonKind::Secondary,
@@ -854,8 +762,6 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
             Some(Message::Navigate(crate::gui::Page::History)),
         ));
     }
-    // No steps to show: just the button named after the page, on its own
-    // line under the text (as with steps) so the text keeps its width.
     let page_bar = match (o.bucket, o.step, o.page, o.guide) {
         (Bucket::Unavailable, ..)
         | (_, NextStep::CheckAgain | NextStep::ReviewUndo | NextStep::OpenHistory, ..) => None,
@@ -924,7 +830,6 @@ fn protected_row<'a>(ctx: &Ctx, r: &Prot) -> Element<'a, Message> {
     widgets::explain::with_disclosure(ctx, "fixes", &r.id, false, INDENT_PLAIN, head)
 }
 
-/// "See 12 more" / "Show less" under a truncated list.
 fn more<'a>(ctx: &Ctx, total: usize, all: bool, msg: Msg) -> Option<Element<'a, Message>> {
     (total > FIRST_ROWS).then(|| {
         let label = if all {
@@ -945,9 +850,7 @@ fn count_text(ctx: &Ctx, n: usize) -> String {
     }
 }
 
-// -------------------------------------------------------------------- view
 
-/// How far the running check is: (share done, subtitle).
 fn check_status(ctx: &Ctx) -> (f32, String) {
     let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
     let total = ctx.catalog.available.len().max(done + 1);
@@ -962,8 +865,6 @@ fn check_status(ctx: &Ctx) -> (f32, String) {
     (ratio, sub)
 }
 
-/// The magnifying glass for the running check, sitting on `plate`. Its lens
-/// follows the real progress when the total is known.
 fn check_art(state: &State, ctx: &Ctx, plate: Plate, ratio: f32) -> Magnifier {
     Magnifier {
         p: ctx.palette,
@@ -976,8 +877,6 @@ fn check_art(state: &State, ctx: &Ctx, plate: Plate, ratio: f32) -> Magnifier {
     }
 }
 
-/// The first check: the magnifying glass, title, bar and ticker centred in
-/// the page.
 fn first_check<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let (ratio, sub) = check_status(ctx);
     scan::checking_screen(
@@ -991,8 +890,6 @@ fn first_check<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     )
 }
 
-/// Compact magnifying glass with the live status ticker, above the last
-/// results while a new check runs.
 fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     let (ratio, sub) = check_status(ctx);
@@ -1017,8 +914,6 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     widgets::region(p, content).into()
 }
 
-/// Frames while a check runs, for the ticker (the magnifying glass drives
-/// its own). Only asked for while the page is on screen.
 pub fn subscription(ctx: &Ctx) -> Subscription<Message> {
     if ctx.checking.is_some() && anim::animating() {
         iced::window::frames().map(|now| Message::Fixes(Msg::Frame(now)))
@@ -1027,8 +922,6 @@ pub fn subscription(ctx: &Ctx) -> Subscription<Message> {
     }
 }
 
-/// Whether the page is the first check's screen, which fills the window
-/// instead of scrolling: no result yet, and a check running or about to.
 pub fn fills_window(ctx: &Ctx) -> bool {
     ctx.engine_error.is_none()
         && ctx.report.is_none()
@@ -1054,7 +947,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     };
     let mut body = column![].spacing(theme::S8);
 
-    // Could not start.
     if let Some(error) = &ctx.engine_error {
         let details = widgets::expander(
             p,
@@ -1077,7 +969,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         )));
     }
 
-    // First check not finished yet, or it failed.
     let Some(report) = ctx.report.as_ref() else {
         if fills_window(ctx) {
             return page(column![first_check(state, ctx)].height(Length::Fill));
@@ -1151,8 +1042,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Needs attention (open, selectable), then optional privacy extras. One
-    // selection spans both; the Fix button sits on whichever group comes first.
     if rows.attention.is_empty() && ctx.checking.is_none() {
         body = body.push(widgets::region(
             p,
@@ -1245,7 +1134,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         }
         if !rows.privacy.is_empty() {
             let note = ctx.t("Optional. Not part of your protection score.");
-            // Without attention rows this group carries the selection count too.
             let subtitle = if trailing.is_some() {
                 format!("{note} · {count}")
             } else {
@@ -1264,7 +1152,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let bucket =
         |b: Bucket| -> Vec<&Other> { rows.others.iter().filter(|o| o.bucket == b).collect() };
 
-    // Worth a look: a plain group, they need a decision.
     let look = bucket(Bucket::Look);
     if !look.is_empty() {
         body = body.push(widgets::group(
@@ -1276,7 +1163,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Can't check right now: collapsed.
     let cant = bucket(Bucket::Unavailable);
     if !cant.is_empty() {
         let mut list = column![].spacing(theme::S1);
@@ -1293,7 +1179,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Settings this PC's owner controls: checked, but not ours to change.
     let managed = bucket(Bucket::Managed);
     if !managed.is_empty() {
         let mut list = column![].spacing(theme::S1);
@@ -1310,7 +1195,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Good to know: notes only, collapsed, never counted.
     let info = bucket(Bucket::GoodToKnow);
     if !info.is_empty() {
         let mut list = column![].spacing(theme::S1);
@@ -1327,7 +1211,6 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
 
-    // Protected: collapsed by default.
     if !rows.protected.is_empty() {
         let shown = widgets::limited(&rows.protected, FIRST_ROWS, state.all_protected);
         let mut list = column![].spacing(theme::S1);
@@ -1406,7 +1289,6 @@ mod tests {
             assert!(guide::guide_not_offered(id, &detail).is_some(), "{detail}");
             assert_eq!(other_line(Bucket::GoodToKnow, true, &a), (None, a.next), "{detail}");
         }
-        // A to-do with steps still says why it matters.
         let a = advice::for_finding("SMB1", "attention", "");
         assert_eq!(
             other_line(Bucket::Look, true, &a),
@@ -1422,7 +1304,6 @@ mod tests {
             ("Windows updates", Some(Page::WindowsUpdate)),
             ("SmartScreen", Some(Page::AppBrowser)),
             ("Management and mutation eligibility", Some(Page::WorkAccounts)),
-            // "We leave this one alone": nothing to open.
             ("Service permissions: BITS", None),
         ] {
             let a = advice::for_finding(title, "info", "");
@@ -1432,13 +1313,11 @@ mod tests {
                 "{title}"
             );
         }
-        // A Not offered fix without steps opens nothing.
         let a = advice::for_control("accounts.autologon", "skipped", "");
         assert_eq!(
             other_page(Bucket::GoodToKnow, ("accounts.autologon", false), None, a.step),
             None
         );
-        // Settings the owner controls never offer a page.
         let a = advice::for_finding("Windows updates", "info", "");
         assert_eq!(
             other_page(Bucket::Managed, ("Windows updates", true), None, a.step),

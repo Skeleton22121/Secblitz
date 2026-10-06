@@ -1,11 +1,4 @@
 //! Icon-only overflow button ("More", three dots) with a small popup menu.
-//!
-//! Secondary actions live here so a region keeps one visible primary action.
-//! The menu is drawn by hand as an overlay anchored under the button and
-//! right-aligned to it: `popup` tone, `R` corners, `S1` padding, 32 px rows
-//! (icon + label), tonal hover. It closes on a click outside, on Esc and on
-//! selection. It slides 6 px into place over `FAST` and asks for redraws only
-//! while doing so. No shadow, normal arrow cursor.
 use super::anim;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
@@ -23,7 +16,6 @@ use iced::{
 };
 use std::time::Instant;
 
-/// Fluent UI System Icons, "More Horizontal 20 Regular".
 const MORE_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6.25 10C6.25 10.6904 5.69036 11.25 5 11.25C4.30964 11.25 3.75 10.6904 3.75 10C3.75 9.30964 4.30964 8.75 5 8.75C5.69036 8.75 6.25 9.30964 6.25 10ZM11.25 10C11.25 10.6904 10.6904 11.25 10 11.25C9.30964 11.25 8.75 10.6904 8.75 10C8.75 9.30964 9.30964 8.75 10 8.75C10.6904 8.75 11.25 9.30964 11.25 10ZM15 11.25C15.6904 11.25 16.25 10.6904 16.25 10C16.25 9.30964 15.6904 8.75 15 8.75C14.3096 8.75 13.75 9.30964 13.75 10C13.75 10.6904 14.3096 11.25 15 11.25Z" fill="currentColor"/></svg>"#;
 
 const BUTTON: f32 = 32.0;
@@ -31,12 +23,10 @@ const SLIDE_PX: f32 = 6.0;
 const SLIDE_MS: f32 = anim::FAST.as_millis() as f32;
 const ICON: f32 = 16.0;
 
-/// One menu entry.
 pub struct MenuItem {
     pub icon: Icon,
     pub label: String,
     pub message: Message,
-    /// Destructive entries are tinted with the bad tone.
     pub danger: bool,
 }
 
@@ -50,7 +40,6 @@ struct State {
 struct Overflow {
     p: Palette,
     items: Vec<MenuItem>,
-    /// The visible trigger: a press button (hover tween, press scale).
     button: Element<'static, Message>,
 }
 
@@ -143,7 +132,6 @@ impl Widget<Message, Theme, Renderer> for Overflow {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        // The press button animates hover / press; its own message is a no-op.
         let captured_before = shell.is_event_captured();
         self.button.as_widget_mut().update(
             &mut tree.children[0],
@@ -166,8 +154,6 @@ impl Widget<Message, Theme, Renderer> for Overflow {
                 shell.capture_event();
                 shell.request_redraw();
             }
-            // Enter / Space on the focused trigger (the button captures only
-            // then) opens or closes the menu.
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Enter | Named::Space),
                 ..
@@ -425,19 +411,13 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_> {
     }
 }
 
-/// Icon-only "More" button (three dots) that opens a small popup menu of
-/// `(icon, label, message, danger)` entries. Use for secondary actions so a
-/// region shows at most one visible primary. Labels: two or three words.
 pub fn overflow_menu<'a>(
     p: Palette,
     items: Vec<(Icon, String, Message, bool)>,
 ) -> Element<'a, Message> {
-    // Nothing to offer: no trigger, so no empty popup.
     if items.is_empty() {
         return iced::widget::space::horizontal().width(0).into();
     }
-    // A menu is only worth a click when it holds a choice. One action is
-    // shown as itself; destructive ones still confirm in their own sheet.
     if items.len() == 1 {
         let (_, label, message, _) = items.into_iter().next().expect("one item");
         return super::action(p, super::ButtonKind::Secondary, label, None, Some(message));

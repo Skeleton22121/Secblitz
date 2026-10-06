@@ -1,6 +1,4 @@
 //! Form controls: dropdown, segmented control, switch, checkbox, text field.
-//! All are 36 px tall (28 px segments inside a 36 px track), keep the native
-//! arrow cursor and use only theme colours.
 use super::anim;
 use super::cursor::arrow;
 use super::icon;
@@ -23,13 +21,7 @@ fn line(px: f32) -> LineHeight {
     LineHeight::Absolute(Pixels(px))
 }
 
-// ---------------------------------------------------------------- dropdown
 
-/// Polished drop-down list: 36 px filled tonal field (no outline), chevron on
-/// the right, focus ring while open. `selected: None` shows `placeholder`.
-///
-/// Menu rows are as tall as the control (36 px): iced derives both from the
-/// same padding. Wrap in a fixed-width container to size it.
 pub fn dropdown<'a, T>(
     p: Palette,
     options: &'a [T],
@@ -73,7 +65,6 @@ where
         })
         .menu_style(move |_| iced::overlay::menu::Style {
             background: Background::Color(p.surface),
-            // A floating list needs a faint edge: shadows are not allowed.
             border: Border {
                 radius: theme::R.into(),
                 width: 1.0,
@@ -93,16 +84,12 @@ where
     arrow(stack![list, chevron])
 }
 
-// --------------------------------------------------------------- segmented
 
-/// Pill slide duration (between WinUI normal 250 and fast 167).
 const SLIDE: std::time::Duration = std::time::Duration::from_millis(200);
 const MAX_SEGMENTS: usize = 4;
 
 struct SegState {
-    /// Index the pill is heading to.
     sel: usize,
-    /// Pill x / width relative to the widget's left edge when the slide began.
     from: (f32, f32),
     slide: Track,
     hover: [Track; MAX_SEGMENTS],
@@ -117,7 +104,6 @@ struct Segmented<'a> {
 }
 
 impl Segmented<'_> {
-    /// (x, width) of segment `i` relative to the widget's left edge.
     fn seg(&self, layout: Layout<'_>, i: usize) -> (f32, f32) {
         let left = layout.bounds().x;
         match layout.children().nth(i) {
@@ -225,7 +211,6 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
                 if st.sel != self.selected {
-                    // Retarget mid-slide from wherever the pill is now.
                     let (x, w) = self.pill(st, layout);
                     st.from = (x, w);
                     st.sel = self.selected;
@@ -327,7 +312,6 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
         );
         for (i, (label, child)) in self.labels.iter().zip(layout.children()).enumerate() {
             let h = st.hover[i.min(MAX_SEGMENTS - 1)].value.clamp(0.0, 1.0);
-            // The label under the pill darkens as the pill arrives.
             let (x, w) = self.seg(layout, i);
             let under = ((px + pw).min(x + w) - px.max(x)).max(0.0) / w.max(1.0);
             let on = under.clamp(0.0, 1.0);
@@ -345,9 +329,6 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
     }
 }
 
-/// Two-to-four way choice shown as one pill-shaped control (Light / Dark…).
-/// The selection pill slides to the new option (200 ms) and the labels
-/// cross-fade; hovering an option tints it.
 pub fn segmented<'a, T>(
     p: Palette,
     options: &[(T, String)],
@@ -381,15 +362,12 @@ where
     })
 }
 
-// ------------------------------------------------------------------ switch
 
 const SWITCH_W: f32 = 40.0;
 const SWITCH_H: f32 = 20.0;
 
 struct SwitchState {
-    /// 0 = off .. 1 = on.
     progress: Track,
-    /// Knob size: 0 rest, 0.67 hovered, 1 pressed.
     grow: Track,
     hover: Track,
     pressed: bool,
@@ -520,8 +498,6 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
                 p.disabled_bg,
             )
         };
-        // The off track keeps a thin outline (a switch needs an edge to read
-        // as a control); it fades out as the fill takes over.
         let fill = mix(off_fill, on_fill, t);
         renderer.fill_quad(
             renderer::Quad {
@@ -536,7 +512,6 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
             },
             Background::Color(fill),
         );
-        // Knob: 12 px, up to 15 px while pressed (Windows 11).
         let d = 12.0 + 3.0 * st.grow.value.clamp(0.0, 1.0);
         let x = b.x + 10.0 + (b.width - 20.0) * t - d / 2.0;
         renderer.fill_quad(
@@ -574,9 +549,7 @@ pub fn switch<'a>(
     })
 }
 
-// --------------------------------------------------------------- checkbox
 
-/// Checkbox state; `Mixed` is for a group header whose children differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {
     Off,
@@ -594,7 +567,6 @@ impl From<bool> for CheckState {
     }
 }
 
-/// Tick polyline in the 18 px box and its length (for the draw-in).
 const TICK: [(f32, f32); 3] = [(4.8, 9.4), (7.9, 12.5), (13.4, 5.9)];
 
 fn tick_len() -> (f32, f32) {
@@ -603,12 +575,10 @@ fn tick_len() -> (f32, f32) {
 }
 
 struct CheckGlyphState {
-    /// Fill 0..0.4 of the value, tick the rest.
     v: Track,
     state: CheckState,
 }
 
-/// The 18 px box: fill fades in, then the tick draws itself in.
 struct CheckGlyph {
     p: Palette,
     state: CheckState,
@@ -761,9 +731,6 @@ impl Widget<Message, Theme, Renderer> for CheckGlyph {
     }
 }
 
-/// 18 px checkbox with an optional label; the whole line is the click target.
-/// The box fills, then the tick draws itself in (250 ms); the line tints on
-/// hover. `on_press: None` renders it disabled.
 pub fn checkbox<'a>(
     p: Palette,
     state: CheckState,
@@ -805,11 +772,9 @@ pub fn checkbox<'a>(
     )
 }
 
-// ------------------------------------------------------- sliding selection
 
 struct Marker {
     p: Palette,
-    /// Item pitch (height + gap) and item height, in px.
     pitch: f32,
     item: f32,
     index: usize,
@@ -826,7 +791,6 @@ impl Marker {
     fn y(&self, i: f32) -> f32 {
         i * self.pitch
     }
-    /// Height of the whole list (no trailing gap).
     fn total(&self) -> f32 {
         self.y(self.count.saturating_sub(1) as f32) + self.item
     }
@@ -870,7 +834,6 @@ impl Widget<Message, Theme, Renderer> for Marker {
             shell.request_redraw();
         }
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
-            // The pill glides on the point-to-point curve (A to B, soft landing).
             let busy = st
                 .slide
                 .step(*now, std::time::Duration::from_millis(260), |t| {
@@ -912,7 +875,6 @@ impl Widget<Message, Theme, Renderer> for Marker {
             },
             Background::Color(self.p.selected),
         );
-        // A short accent bar on the left edge travels with it.
         let bar_h = 16.0;
         renderer.fill_quad(
             renderer::Quad {
@@ -934,9 +896,6 @@ impl Widget<Message, Theme, Renderer> for Marker {
     }
 }
 
-/// Selection background for a vertical list of `count` equal items
-/// (`item` px tall, `gap` px apart): a rounded fill with a small accent bar
-/// that glides to item `index` instead of jumping. Stack it behind the items.
 pub fn slide_marker<'a>(
     p: Palette,
     index: usize,
@@ -953,10 +912,7 @@ pub fn slide_marker<'a>(
     })
 }
 
-// ------------------------------------------------------------- text field
 
-/// Single-line text field, 36 px: a filled tonal field (no outline), darker on
-/// hover, 2 px focus ring.
 pub fn text_field<'a>(
     p: Palette,
     placeholder: &str,
@@ -999,9 +955,7 @@ pub fn text_field<'a>(
         })
 }
 
-// -------------------------------------------------------------- scrollbar
 
-/// Slim, quiet scrollbar colours (no rail background, no autoscroll shadow).
 pub fn scroll_style(
     p: Palette,
 ) -> impl Fn(&Theme, iced::widget::scrollable::Status) -> iced::widget::scrollable::Style {
@@ -1060,7 +1014,6 @@ pub fn scroll_style(
     }
 }
 
-/// Thin vertical scrollbar geometry to pair with `scroll_style`.
 pub fn scrollbar() -> iced::widget::scrollable::Direction {
     iced::widget::scrollable::Direction::Vertical(
         iced::widget::scrollable::Scrollbar::new()

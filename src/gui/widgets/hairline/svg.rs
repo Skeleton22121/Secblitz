@@ -1,47 +1,24 @@
 //! SVG path data, parsed once into absolute segments.
-//!
-//! [`PathData::parse`] reads the full SVG path grammar (`M m L l H h V v C c
-//! S s Q q T t A a Z z`, implicit repeated commands, numbers such as `-.5`,
-//! `1e-3` and `.5.5`, packed arc flags such as `a1 1 0 011 1`). Elliptical
-//! arcs become cubic Beziers (endpoint to centre parametrization, then one
-//! cubic per quarter turn), so a path never breaks into extra sub-paths and
-//! fills stay whole.
-//!
-//! The parsed data lives in the drawing's own units. Move it with
-//! [`PathData::placed`] (an icon from its 24-unit box) or [`PathData::map`],
-//! turn it into an iced [`Path`] with [`PathData::to_path`] (usually through
-//! [`super::Stage::shape`]), cut it for a line that draws itself in with
-//! [`PathData::partial`], or sample points along it with
-//! [`PathData::samples`].
 use iced::widget::canvas::Path;
 use iced::{Point, Rectangle, Vector};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-/// One absolute segment of a path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Seg {
-    /// Start a new sub-path here.
     Move(Point),
-    /// Straight line to the point.
     Line(Point),
-    /// Quadratic Bezier: control, end.
     Quad(Point, Point),
-    /// Cubic Bezier: first control, second control, end.
     Cubic(Point, Point, Point),
-    /// Close the sub-path with a straight line back to its start.
     Close,
 }
 
-/// A parsed path: absolute segments in the drawing's units.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PathData {
     pub segs: Vec<Seg>,
 }
 
-/// Why a path string did not parse. For developers only; never shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseError {
-    /// Byte offset where reading stopped.
     pub at: usize,
     pub what: &'static str,
 }
@@ -54,9 +31,6 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-// ---------------------------------------------------------------------------
-// Reading
-// ---------------------------------------------------------------------------
 
 struct Reader<'a> {
     s: &'a [u8],
@@ -131,7 +105,6 @@ impl Reader<'_> {
                 what: "bad number",
             })
     }
-    /// An arc flag: a single `0` or `1`, which may touch the next number.
     fn flag(&mut self) -> Result<bool, ParseError> {
         self.skip_sep();
         match self.peek() {
@@ -161,8 +134,6 @@ impl P64 {
 }
 
 impl PathData {
-    /// Parse SVG path data. Anything the grammar does not allow is an error,
-    /// so a typo in a constant fails its unit test instead of drawing junk.
     pub fn parse(d: &str) -> Result<PathData, ParseError> {
         let mut r = Reader {
             s: d.as_bytes(),
@@ -171,7 +142,6 @@ impl PathData {
         let mut segs = Vec::new();
         let mut cur = P64 { x: 0.0, y: 0.0 };
         let mut start = cur;
-        // Reflection points for S and T.
         let mut last_cubic: Option<P64> = None;
         let mut last_quad: Option<P64> = None;
         let mut cmd: Option<u8> = None;
@@ -205,7 +175,6 @@ impl PathData {
                     segs.push(Seg::Move(p.pt()));
                     cur = p;
                     start = p;
-                    // Further pairs are implicit line-tos.
                     cmd = Some(if rel { b'l' } else { b'L' });
                 }
                 b'L' => {
@@ -313,16 +282,12 @@ impl PathData {
         }
     }
 
-    /// An icon drawn in a 24-unit box, placed centred on `centre` at `size`
-    /// units square (the prototype's `icon(parent, name, x, y, size)`).
     pub fn placed(&self, centre: Point, size: f32) -> PathData {
         let k = size / 24.0;
         let o = Vector::new(centre.x - size / 2.0, centre.y - size / 2.0);
         self.map(|p| Point::new(o.x + p.x * k, o.y + p.y * k))
     }
 
-    /// The iced path, every point first moved through `f` (for example
-    /// units to pixels).
     pub fn to_path(&self, f: impl Fn(Point) -> Point) -> Path {
         Path::new(|b| {
             for s in &self.segs {
@@ -337,7 +302,6 @@ impl PathData {
         })
     }
 
-    /// Box around every point, control points included. `None` when empty.
     pub fn bounds(&self) -> Option<Rectangle> {
         let mut pts = self.segs.iter().flat_map(|s| match *s {
             Seg::Move(p) | Seg::Line(p) => vec![p],
@@ -359,7 +323,6 @@ impl PathData {
         ))
     }
 
-    /// The last point the pen reaches. `None` when empty.
     pub fn end(&self) -> Option<Point> {
         let mut start = None;
         let mut cur = None;
@@ -376,8 +339,6 @@ impl PathData {
         cur
     }
 
-    /// Each drawn piece with its start point and length. Moves are not
-    /// pieces: the pen lifts between sub-paths.
     fn pieces(&self) -> Vec<(Point, Seg, f32)> {
         let mut out = Vec::with_capacity(self.segs.len());
         let mut cur = Point::ORIGIN;
@@ -402,15 +363,10 @@ impl PathData {
         out
     }
 
-    /// Total drawn length (sub-paths added, jumps between them not).
     pub fn length(&self) -> f32 {
         self.pieces().iter().map(|p| p.2).sum()
     }
 
-    /// The first `frac` (0..=1) of the path by length, curves cut exactly
-    /// where they should be: a line that draws itself in, like the
-    /// prototype's `drawn()` with `stroke-dashoffset`. Sub-paths draw one
-    /// after the other.
     pub fn partial(&self, frac: f32) -> PathData {
         if frac >= 1.0 {
             return self.clone();
@@ -453,7 +409,6 @@ impl PathData {
         PathData { segs }
     }
 
-    /// The point `frac` (0..=1) of the way along the path by length.
     pub fn point_at(&self, frac: f32) -> Option<Point> {
         let pieces = self.pieces();
         let total: f32 = pieces.iter().map(|p| p.2).sum();
@@ -472,8 +427,6 @@ impl PathData {
         last.or_else(|| self.end())
     }
 
-    /// `n` points spread evenly along the path by length, both ends
-    /// included (for drawings that break a shape into dots).
     pub fn samples(&self, n: usize) -> Vec<Point> {
         match n {
             0 => Vec::new(),
@@ -495,7 +448,6 @@ fn reflect(ctrl: Option<P64>, cur: P64) -> P64 {
     }
 }
 
-/// SVG arc from `from` to `to` as cubics (SVG 1.1 appendix F.6.5).
 #[allow(clippy::too_many_arguments)]
 fn svg_arc(
     segs: &mut Vec<Seg>,
@@ -554,7 +506,6 @@ fn svg_arc(
         dtheta += TAU;
     }
     ellipse_cubics(segs, (cx, cy), (rx, ry), phi, theta1, dtheta);
-    // Land exactly on the end point the data asked for.
     if let Some(Seg::Cubic(_, _, p)) = segs.last_mut() {
         *p = to.pt();
     }
@@ -599,7 +550,6 @@ pub(super) fn ellipse_cubics(
     }
 }
 
-/// Start point of the arc [`ellipse_cubics`] would draw.
 pub(super) fn ellipse_point(c: (f64, f64), r: (f64, f64), phi: f64, t: f64) -> Point {
     let (sin, cos) = phi.sin_cos();
     let (x, y) = (t.cos() * r.0, t.sin() * r.1);
@@ -609,11 +559,7 @@ pub(super) fn ellipse_point(c: (f64, f64), r: (f64, f64), phi: f64, t: f64) -> P
     )
 }
 
-// ---------------------------------------------------------------------------
-// Geometry of one segment
-// ---------------------------------------------------------------------------
 
-/// Samples per curve when measuring length.
 const STEPS: usize = 16;
 
 fn dist(a: Point, b: Point) -> f32 {
@@ -662,7 +608,6 @@ fn seg_len(from: Point, s: Seg) -> f32 {
     }
 }
 
-/// Curve parameter at which the segment has run `len` along its length.
 fn t_at_length(from: Point, s: Seg, len: f32) -> f32 {
     match s {
         Seg::Line(p) => {
@@ -692,7 +637,6 @@ fn t_at_length(from: Point, s: Seg, len: f32) -> f32 {
     }
 }
 
-/// The part of the segment from its start to parameter `t` (de Casteljau).
 fn split(from: Point, s: Seg, t: f32) -> Seg {
     match s {
         Seg::Line(p) => Seg::Line(lerp(from, p, t)),
@@ -737,8 +681,6 @@ mod tests {
 
     #[test]
     fn relative_moves_chain_and_repeat() {
-        // A relative move after a close starts from the sub-path start, and
-        // pairs after `m` are relative line-tos.
         let d = PathData::of("m2 3 4 0 0 4zm1 1l1 1 1 1");
         assert_eq!(
             d.segs,
@@ -780,7 +722,6 @@ mod tests {
         );
         let q = PathData::of("M0 0Q5 10 10 0T20 0");
         assert_eq!(q.segs[2], Seg::Quad(Point::new(15.0, -10.0), Point::new(20.0, 0.0)));
-        // S with no cubic before it uses the current point.
         let s = PathData::of("M0 0L5 0S10 5 10 0");
         assert_eq!(
             s.segs[2],
@@ -790,34 +731,26 @@ mod tests {
 
     #[test]
     fn arcs_end_where_asked_and_stay_on_the_circle() {
-        // Half circle of radius 5 from (0,0) to (10,0). Sweep 1 turns through
-        // growing angles, which on a y-down screen passes over the top.
         let d = PathData::of("M0 0A5 5 0 0 1 10 0");
         assert!(near(d.end().unwrap(), Point::new(10.0, 0.0)));
         assert_eq!(d.segs.len(), 3, "half turn = two quarter cubics");
         let mid = d.point_at(0.5).unwrap();
         assert!(near(mid, Point::new(5.0, -5.0)), "{mid:?}");
         assert!((d.length() - std::f32::consts::PI * 5.0).abs() < 0.05);
-        // Same arc, other sweep: goes underneath.
         let u = PathData::of("M0 0a5 5 0 0 0 10 0");
         assert!(near(u.point_at(0.5).unwrap(), Point::new(5.0, 5.0)));
-        // Too small radii are scaled up to just reach.
         let t = PathData::of("M0 0A1 1 0 0 1 10 0");
         assert!(near(t.end().unwrap(), Point::new(10.0, 0.0)));
-        // Large arc flag: the long way round a radius-10 circle.
         let l = PathData::of("M0 0A10 10 0 1 1 10 0");
         assert!(l.length() > std::f32::consts::PI * 10.0);
         assert!(near(l.end().unwrap(), Point::new(10.0, 0.0)));
-        // Packed flags, as minifiers write them.
         let p = PathData::of("M0 0a5 5 0 0110 0");
         assert!(near(p.end().unwrap(), Point::new(10.0, 0.0)));
-        // Every arc point lies on the circle.
         for i in 0..=20 {
             let q = d.point_at(i as f32 / 20.0).unwrap();
             let r = ((q.x - 5.0).powi(2) + q.y.powi(2)).sqrt();
             assert!((r - 5.0).abs() < 0.01, "{q:?} r={r}");
         }
-        // A full circle written as two arcs closes on itself.
         let c = PathData::of("M12 11.8a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z");
         assert!(near(c.end().unwrap(), Point::new(12.0, 11.8)));
         assert!((c.length() - std::f32::consts::TAU * 3.5).abs() < 0.05);
@@ -833,16 +766,13 @@ mod tests {
         let h = d.partial(0.75);
         assert!(near(h.end().unwrap(), Point::new(10.0, 5.0)));
         assert!((h.length() - 15.0).abs() < 1e-3);
-        // Curves are cut on the curve.
         let a = PathData::of("M0 0A5 5 0 0 1 10 0");
         let half = a.partial(0.5);
         assert!(near(half.end().unwrap(), Point::new(5.0, -5.0)));
-        // Two sub-paths draw one after the other.
         let two = PathData::of("M0 0h10M0 5h10");
         let p = two.partial(0.75);
         assert_eq!(p.segs.len(), 4);
         assert!(near(p.end().unwrap(), Point::new(5.0, 5.0)));
-        // A closed shape draws its closing edge last.
         let sq = PathData::of("M0 0h10v10h-10z");
         let p = sq.partial(0.9);
         assert!(near(p.end().unwrap(), Point::new(0.0, 4.0)));

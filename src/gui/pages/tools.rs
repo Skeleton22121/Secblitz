@@ -1,10 +1,4 @@
-//! Tools page: state and update logic. OWNER: tools agent.
-//!
-//! Everything that touches Windows runs off the UI thread (`blocking`,
-//! `blocking_stream`, `ctx.broker_task`). The drawing code is in `view.rs`.
-//!
-//! Every change to the PC (repair, updates, scans, installs) first opens a
-//! review sheet; the sheet's Cancel button is the safe way out.
+//! Tools page: state and update logic.
 mod view;
 
 use super::personal;
@@ -24,7 +18,6 @@ use std::time::{Duration, Instant};
 
 pub use view::{modal, view};
 
-/// A review sheet waiting for the person's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
     Scan,
@@ -33,11 +26,9 @@ pub enum Sheet {
     Repair(RepairKind),
     InstallUpdates,
     Bitwarden,
-    /// Restart the PC to finish installing updates.
     Restart,
 }
 
-/// Windows Settings pages reachable from the shortcut list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shortcut {
     WindowsUpdate,
@@ -64,7 +55,6 @@ impl Shortcut {
     }
 }
 
-/// Which "More details" expander is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
     Scan,
@@ -73,9 +63,7 @@ pub enum Detail {
     Repair,
     Updates,
     Tips,
-    /// The list of health tips is expanded.
     TipsList,
-    /// The collapsed "All good" group of health tips.
     TipsGood,
     Bitwarden,
     Sheet,
@@ -102,26 +90,19 @@ pub enum Msg {
     ClearUpdates,
     PickTips(TipProfile),
     Tips(Box<TipsReport>),
-    /// The tips list read again quietly after a removal, so it stops
-    /// reporting what was just removed.
     TipsRefreshed(Box<TipsReport>),
     TipChoice(TipProfile),
     NewPassword,
     CopyPassword,
     TogglePassword,
-    /// The brief "Copied" confirmation on the password card is over.
     CopiedReset,
-    /// Animation frame; only delivered while something moves.
     Frame(Instant),
     BitwardenDone(Result<broker::Reply, String>),
-    /// Whether Bitwarden is already installed, asked once on entering.
     BitwardenKnown(Result<broker::Reply, String>),
     ClearBitwarden,
     Open(Shortcut),
-    /// Open the Windows page a health tip points to.
     OpenAction(actions::Action),
     OpenSecurity,
-    /// The restart request was answered: an error means nothing was restarted.
     RestartDone(Result<(), String>),
     ToggleDetail(Detail),
     Personal(personal::Msg),
@@ -200,7 +181,6 @@ pub struct Password {
     copied: bool,
 }
 
-/// Which card a one-shot "finished" animation (check, cross, warning) belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
     Scan,
@@ -212,7 +192,6 @@ enum Slot {
     Copy,
 }
 
-/// How long the check mark replaces the copy button.
 const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 
 pub struct State {
@@ -223,26 +202,16 @@ pub struct State {
     repair: Repair,
     updates: Updates,
     tips: Tips,
-    /// Profile picked in the segmented control (checked on "Check").
     tip_choice: TipProfile,
     password: Password,
     bitwarden: Run<Result<(), String>>,
-    /// Why the last Bitwarden install failed, when it is a known reason
-    /// (`Offline` or `Unavailable` for this account).
     bitwarden_why: Option<broker::Reply>,
-    /// Already installed when the page was opened: nothing to offer.
     pub bitwarden_present: bool,
-    /// Installation is not possible from this account (checked on page enter).
-    /// The Install button is replaced by the "can't install from this account"
-    /// presentation when this is true and Bitwarden is not already installed.
     bitwarden_not_here: bool,
     open_details: Vec<Detail>,
     personal: personal::State,
-    /// Time of the latest animation frame (never read from the clock in `view`).
     now: Instant,
-    /// Zero point for the spinners on rows that are working.
     spin: Instant,
-    /// Finished-state draw-ins that are still moving.
     shots: Vec<(Slot, Clock)>,
 }
 
@@ -253,8 +222,6 @@ impl std::fmt::Debug for State {
 }
 
 impl State {
-    /// Record what the status check found: `Done` means installed,
-    /// `Unavailable` that this account can't install it.
     fn bitwarden_known(&mut self, reply: &Result<broker::Reply, String>) {
         self.bitwarden_present = matches!(reply, Ok(broker::Reply::Done));
         self.bitwarden_not_here = matches!(reply, Ok(broker::Reply::Unavailable));
@@ -298,7 +265,6 @@ fn plain(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
-/// Escape closes an open review sheet (same as Cancel).
 pub fn escape(state: &mut State) {
     if state.sheet.is_some() {
         state.sheet = None;
@@ -306,8 +272,6 @@ pub fn escape(state: &mut State) {
     }
 }
 
-/// Frames for the spinners and draw-ins, only while one is on screen.
-/// The shell merges this into its subscriptions (see `home::subscription`).
 pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
     if state.needs_frames() && anim::animating() {
         iced::window::frames().map(|at| Message::Tools(Msg::Frame(at)))
@@ -316,8 +280,6 @@ pub fn subscription(state: &State, _ctx: &Ctx) -> Subscription<Message> {
     }
 }
 
-/// The Tools page was opened: read the account settings once, and whether
-/// Bitwarden is already there.
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     let settings = personal::on_enter(&mut state.personal, ctx);
     if ctx.broker.is_none() || state.bitwarden_present || !matches!(state.bitwarden, Run::Idle) {
@@ -370,8 +332,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 .is_ok_and(|t| crate::app::tools::threats_result(t) != crate::app::tools::ThreatsResult::Stuck);
             state.threats = Run::Done(r);
             state.finish(Slot::Threats);
-            // Look again so the tip no longer says "something harmful" for
-            // what was just removed.
             match (&state.tips, changed) {
                 (Tips::Done(shown), true) => {
                     let profile = shown.profile;
@@ -546,7 +506,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::NewPassword => {
-            // The old secret is wiped when it is replaced.
             state.password.secret = Secret::generate().ok();
             state.password.shown = true;
             state.password.copied = false;
@@ -637,10 +596,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
-/// Bar position for a repair step (the current step counts as half done).
-/// Each step owns an equal span of the bar. Within it the bar creeps toward
-/// the end without reaching it, so a long system-file check never looks
-/// frozen and the next step never jumps backwards.
 fn repair_ratio(p: &RepairProgress) -> f32 {
     const PACE: f32 = 180.0;
     let creep = 1.0 - (-(p.step_elapsed as f32) / PACE).exp();
@@ -656,25 +611,20 @@ fn stage_ratio(stage: InstallStage) -> f32 {
 }
 
 impl State {
-    /// A job just ended: start its draw-in (check, cross or warning).
     fn finish(&mut self, slot: Slot) {
         self.shots.retain(|(s, _)| *s != slot);
         self.shots.push((slot, Clock::new()));
     }
-    /// 0..1 draw-in progress of a finished state; 1 when it is not moving.
     fn shot(&self, slot: Slot) -> f32 {
         self.shots
             .iter()
             .find(|(s, _)| *s == slot)
             .map_or(1.0, |(_, clock)| clock.progress_at(anim::SLOW, self.now))
     }
-    /// True while a draw-in mark is animating. Progress bars ask for their
-    /// own redraws, so running jobs need no page-wide frame clock.
     fn needs_frames(&self) -> bool {
         !self.shots.is_empty() || self.spinning()
     }
 
-    /// A row shows the working spinner: a job of unknown length is running.
     fn spinning(&self) -> bool {
         matches!(self.scan, Run::Working)
             || matches!(self.threats, Run::Working)
@@ -683,7 +633,6 @@ impl State {
             || matches!(self.updates, Updates::Looking)
     }
 
-    /// Time on the spinners' clock, read from the last frame.
     pub(super) fn spin_elapsed(&self) -> std::time::Duration {
         self.now.saturating_duration_since(self.spin)
     }
@@ -694,7 +643,6 @@ impl State {
     fn detail_open(&self, detail: Detail) -> bool {
         self.open_details.contains(&detail)
     }
-    /// Repair and update jobs never overlap each other.
     fn can_start_change(&self) -> bool {
         !matches!(self.repair, Repair::Working { .. })
             && !matches!(self.updates, Updates::Installing { .. } | Updates::Looking)
@@ -702,8 +650,6 @@ impl State {
 }
 
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
-    // Every sheet confirms a change (a scan or new virus information can
-    // change what a check finds too).
     ctx.forget_check();
     match sheet {
         Sheet::Restart => Task::perform(
@@ -722,11 +668,9 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             )
         }
         Sheet::RemoveThreats => {
-            // Asked while free, but a fix may have started since.
             if ctx.busy || !state.can_start_change() {
                 return Task::none();
             }
-            // Holds off fixes, undo and closing the window until it ends.
             ctx.busy = true;
             state.threats = Run::Working;
             Task::perform(
@@ -815,32 +759,27 @@ mod followup_tests {
         assert!(at(2, 100_000) < 1.0, "only Done fills the bar");
     }
 
-    /// bitwarden_not_here starts false and is set correctly from BitwardenKnown replies.
     #[test]
     fn bitwarden_known_sets_not_here_and_present_correctly() {
         let fresh = State::default();
         assert!(!fresh.bitwarden_not_here, "default: not_here is false");
         assert!(!fresh.bitwarden_present, "default: present is false");
 
-        // Unavailable: install is not possible from this account.
         let mut state = State::default();
         state.bitwarden_known(&Ok(broker::Reply::Unavailable));
         assert!(!state.bitwarden_present, "Unavailable: not present");
         assert!(state.bitwarden_not_here, "Unavailable: not_here is set");
 
-        // Done: Bitwarden is installed.
         let mut state = State::default();
         state.bitwarden_known(&Ok(broker::Reply::Done));
         assert!(state.bitwarden_present, "Done: present");
         assert!(!state.bitwarden_not_here, "Done: not_here stays false");
 
-        // NotApplicable: not installed, install is possible.
         let mut state = State::default();
         state.bitwarden_known(&Ok(broker::Reply::NotApplicable));
         assert!(!state.bitwarden_present, "NotApplicable: not present");
         assert!(!state.bitwarden_not_here, "NotApplicable: not_here is false");
 
-        // Unavailable then Done: re-entering with installed clears not_here.
         let mut state = State::default();
         state.bitwarden_known(&Ok(broker::Reply::Unavailable));
         assert!(state.bitwarden_not_here);

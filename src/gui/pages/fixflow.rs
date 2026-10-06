@@ -1,16 +1,4 @@
 //! Fix / undo flow drawn over any page: review sheet → working → result.
-//! OWNER: fixes agent.
-//!
-//! State machine: Closed -> Review{ids, undo} -> Working -> Result(Summary).
-//! Only `Confirm` in the review sheet starts work; Esc / Cancel close it with
-//! no change. The working view cannot be dismissed.
-//!
-//! Motion (docs/MOTION.md): a hairline drawing at the top of the sheet (the
-//! shield filling up for fixes, the rewind clock for undo) that carries on
-//! into the result, a spinner per running item, a check / cross / warn
-//! draw-in as each item finishes and the overall bar easing to each new
-//! value. The drawing asks for its own frames; `subscription()` runs only
-//! while work runs, for the row marks and the bar.
 use super::fixes::row_text;
 use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
@@ -27,36 +15,21 @@ use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
 use std::time::Instant;
 
-/// Tallest the list inside a sheet grows before it scrolls.
 const LIST_MAX_HEIGHT: f32 = 300.0;
-/// Status mark size in working rows (matches the row icon size).
 const MARK: f32 = theme::ICON_ROW;
-/// Edge of the quiet dot shown for items that have not started.
 const WAIT_DOT: f32 = 6.0;
 
 #[derive(Debug)]
 pub struct State {
     stage: Stage,
-    /// Timestamp of the latest animation frame (never `Instant::now()` in view).
     now: Instant,
-    /// A frame has arrived at least once. Until then nothing can be animating
-    /// (frames not wired, or motion reduced), so marks are drawn finished.
     frames_seen: bool,
-    /// Spinner clock for the working view.
     work: Clock,
-    /// Overall progress bar value while applying or undoing.
     bar: Option<Tween>,
-    /// When the working view or the result appeared (the drawing's clock).
     since: Instant,
-    /// Fixes applied during this session, newest last (ids), so Undo can
-    /// list exactly what will be put back.
     batches: Vec<Vec<String>>,
-    /// What an open undo sheet will restore.
     plan: Vec<PlanRow>,
-    /// Plain sentence about the last recorded fix (from the score log).
     undo_note: Option<String>,
-    /// How many settings the last recorded fix changed (from the score log),
-    /// so undo can show real progress when `plan` is unknown.
     undo_count: usize,
 }
 
@@ -77,7 +50,6 @@ impl Default for State {
     }
 }
 
-/// One line of "what will change", translated once when the sheet opens.
 #[derive(Debug, Clone, Default)]
 struct PlanRow {
     id: String,
@@ -86,7 +58,6 @@ struct PlanRow {
     restart: bool,
 }
 
-/// A finished working item.
 #[derive(Debug, Clone)]
 struct Done {
     id: String,
@@ -106,13 +77,11 @@ enum Stage {
     Working {
         undo: bool,
         phase: Option<Phase>,
-        /// Items as the engine reports them.
         items: Vec<Done>,
     },
     Result {
         undo: bool,
         summary: Summary,
-        /// Raw evidence, shown only inside "More details".
         technical: Vec<String>,
         show_technical: bool,
     },
@@ -123,22 +92,17 @@ pub enum Msg {
     Confirm,
     Cancel,
     Done,
-    /// Close the result and run a fresh check.
     CheckAgain,
     Technical,
-    /// Animation frame (only while something animates).
     Frame(Instant),
-    /// The last recorded fix: (unix seconds, how many settings).
     UndoInfo(Option<(u64, usize)>),
 }
 
 impl State {
-    /// True while the review sheet, working view or result is on screen.
     pub fn is_open(&self) -> bool {
         !matches!(self.stage, Stage::Closed)
     }
 
-    /// Progress 0..=1 of a one-shot started at `start`, as of the last frame.
     fn progress(&self, start: Instant) -> f32 {
         if self.frames_seen {
             Clock::at(start).progress_at(anim::SLOW, self.now)
@@ -147,17 +111,11 @@ impl State {
         }
     }
 
-    /// Something on screen is moving and needs frames.
     fn live(&self) -> bool {
         matches!(self.stage, Stage::Working { .. })
     }
 }
 
-// Batched into the shell's subscriptions (src/gui/mod.rs); until then it is
-// simply unused and every mark is drawn in its finished state.
-/// Frame subscription: on only while work runs (row spinners, marks and
-/// the bar), and never when Windows animations are switched off. The
-/// drawing asks for its own frames.
 pub fn subscription(state: &State) -> Subscription<Message> {
     if state.live() && anim::animating() {
         iced::window::frames().map(|at| Message::Fix(Msg::Frame(at)))
@@ -168,7 +126,6 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 
 fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
     let impact = crate::advice::control_impact(id);
-    // Which accounts or folders would change, so nothing is approved unseen.
     let items = ctx
         .report
         .as_deref()
@@ -176,7 +133,6 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         .and_then(|o| super::fixes::items_line(ctx, o));
     let impact_line = (!impact.is_empty())
         .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
-    // A choice also says what the person will notice, as its row did.
     let consequence = crate::advice::is_choice(id)
         .then(|| crate::advice::choice_consequence(id))
         .filter(|c| !c.is_empty())
@@ -217,7 +173,6 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
     Task::none()
 }
 
-/// The newest fix in the log that no later undo has cancelled.
 fn last_fix(entries: &[Entry]) -> Option<(u64, usize)> {
     let mut sorted: Vec<&Entry> = entries
         .iter()
@@ -242,7 +197,6 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         return Task::none();
     }
     ctx.explain_open = None;
-    // Exact list when this session applied the batch that will be undone.
     state.plan = state
         .batches
         .last()
@@ -264,7 +218,6 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     }
 }
 
-/// Esc: close the review sheet / result (never cancels running work).
 pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     let _ = ctx;
     if matches!(state.stage, Stage::Review { .. } | Stage::Result { .. }) {
@@ -278,8 +231,6 @@ fn close(state: &mut State) {
     state.bar = None;
 }
 
-/// How many settings the running job will touch: the reviewed list, or for
-/// an undo of an earlier session's fix, the count from the score log.
 fn planned(state: &State, undo: bool) -> usize {
     if undo && state.plan.is_empty() {
         state.undo_count
@@ -288,8 +239,6 @@ fn planned(state: &State, undo: bool) -> usize {
     }
 }
 
-/// Share of the overall bar: each planned fix, plus one step for the check
-/// that follows.
 fn bar_target(planned: usize, finished: usize, verifying: bool) -> f32 {
     let total = planned + 1;
     let done = if verifying {
@@ -360,7 +309,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.now = Instant::now();
             state.work = Clock::at(state.now);
             state.since = state.now;
-            // Undo shows real progress too whenever we know what it restores.
             state.bar = (!undo || planned(state, true) > 0)
                 .then(|| Tween::new(0.0, 0.0, anim::NORMAL));
             state.stage = Stage::Working {
@@ -425,7 +373,6 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                     .filter(|r| r.status == "applied" && attempted.contains(&r.id))
                     .map(|r| r.id.clone())
                     .collect();
-                // The engine applied core protections as batches of their own.
                 state
                     .batches
                     .extend(secblitz::vbs::split_batches(&applied));
@@ -468,8 +415,6 @@ fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<S
     };
 }
 
-/// Plain-words lines for the "More details" expander. Raw backend text is
-/// mapped to a friendly sentence with its fix and never shown.
 fn technical_lines(
     ctx: &Ctx,
     attempted: &[String],
@@ -482,8 +427,6 @@ fn technical_lines(
             for r in &report.results {
                 if attempted.is_empty() || attempted.contains(&r.id) {
                     let a = crate::advice::for_outcome(r);
-                    // An apply or undo that errored did not go through; the
-                    // "couldn't read" wording is for the Protection page only.
                     let (status, next) = if r.status == "error" {
                         ("Not done", flow::NOT_DONE)
                     } else {
@@ -510,9 +453,7 @@ fn technical_lines(
     lines
 }
 
-// -------------------------------------------------------------------- view
 
-/// Content of the active review / working / result sheet, if any.
 pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
     match &state.stage {
         Stage::Closed => None,
@@ -536,7 +477,6 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
     }
 }
 
-/// A bounded, scrollable list so a long selection never overflows the window.
 fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
     container(
         scrollable(content)
@@ -547,9 +487,6 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
     .into()
 }
 
-/// The list under the drawing: it takes whatever height the fixed-height
-/// sheet has left ([`widgets::SHEET_FIT_HEIGHT`]) and scrolls beyond it, so
-/// rows arriving never move the drawing.
 fn below_art<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
     container(
         scrollable(content)
@@ -560,9 +497,6 @@ fn below_art<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Messa
     .into()
 }
 
-/// The drawing at the top of the working view and the result: the shield
-/// filling up for fixes, the rewind clock for undo. The same widget in the
-/// same place in both views, so it carries on from one into the other.
 fn art<'a>(
     state: &State,
     ctx: &Ctx,
@@ -598,8 +532,6 @@ fn art<'a>(
     container(drawing).center_x(Length::Fill).into()
 }
 
-/// Share of the work done while it runs: settings finished out of those
-/// planned (all of them once the check runs), when the plan is known.
 fn work_share(planned: usize, finished: usize, verifying: bool) -> Option<f32> {
     (planned > 0).then(|| {
         if verifying {
@@ -610,7 +542,6 @@ fn work_share(planned: usize, finished: usize, verifying: bool) -> Option<f32> {
     })
 }
 
-/// The drawing's state for a result, and how much went through.
 fn result_art(s: &Summary) -> (Run, Option<f32>) {
     let run = match s.kind {
         SummaryKind::Success => Run::Done,
@@ -621,7 +552,6 @@ fn result_art(s: &Summary) -> (Run, Option<f32>) {
     (run, (total > 0).then(|| s.done.len() as f32 / total as f32))
 }
 
-/// Small muted line with a leading icon.
 fn note<'a>(p: Palette, icon: Icon, s: String) -> Element<'a, Message> {
     row![
         widgets::icon(icon, 16.0, p.text_muted),
@@ -632,7 +562,6 @@ fn note<'a>(p: Palette, icon: Icon, s: String) -> Element<'a, Message> {
     .into()
 }
 
-/// Footer action bar: buttons right aligned, `S2` apart, `S6` above.
 fn footer<'a>(buttons: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     let mut r = row![space::horizontal()]
         .spacing(theme::S2)
@@ -746,7 +675,6 @@ fn review_view<'a>(
         .into()
 }
 
-/// Waiting dot for items that have not started.
 fn waiting_mark<'a>(p: Palette) -> Element<'a, Message> {
     container(
         container(space::horizontal())
@@ -765,7 +693,6 @@ fn waiting_mark<'a>(p: Palette) -> Element<'a, Message> {
     .into()
 }
 
-/// Animated mark for one finished item.
 fn done_mark<'a>(state: &State, p: Palette, status: &str, at: Instant) -> Element<'a, Message> {
     let t = state.progress(at);
     match status {
@@ -832,7 +759,6 @@ fn working_view<'a>(
     let mut list = column![].spacing(theme::S3);
     let finished = |d: &Done| done_mark(state, p, &d.status, d.at);
     if undo {
-        // The engine names each setting as it puts it back.
         for d in items {
             list = list.push(step(p, finished(d), d.name.clone(), false));
         }
@@ -1011,7 +937,6 @@ fn result_view<'a>(
         footer(buttons),
     ]
     .spacing(theme::S3)
-    // The working view's height: the drawing stays where it was.
     .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
     .into()
 }
@@ -1055,13 +980,10 @@ mod tests {
 
     #[test]
     fn drawing_follows_the_real_work() {
-        // Working: settings finished out of those planned, full once the
-        // check runs; nothing known, nothing claimed.
         assert_eq!(work_share(0, 0, false), None);
         assert_eq!(work_share(4, 1, false), Some(0.25));
         assert_eq!(work_share(4, 9, false), Some(1.0));
         assert_eq!(work_share(4, 0, true), Some(1.0));
-        // Result: the summary's kind, and how much of it went through.
         let mut s = Summary::default();
         assert_eq!(result_art(&s), (Run::Done, None));
         s.kind = SummaryKind::Partial;

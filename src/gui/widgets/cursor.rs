@@ -1,10 +1,4 @@
 //! Native Windows cursor behaviour.
-//!
-//! iced's `button` asks for the hand cursor. Native Windows apps keep the
-//! normal arrow over buttons, rows, tabs and toggles; the hand is only for
-//! real hyperlinks and the I-beam only for text. [`arrow`] wraps any element
-//! and turns the child's `Pointer` request into the idle arrow, including for
-//! popup menus (dropdown lists) the child opens.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::overlay;
 use iced::advanced::renderer;
@@ -120,7 +114,6 @@ impl<Message> Widget<Message, Theme, Renderer> for Arrow<'_, Message> {
     }
 }
 
-/// Same idea for popups (dropdown menus) opened by the wrapped widget.
 struct ArrowOverlay<'a, Message> {
     inner: overlay::Element<'a, Message, Theme, Renderer>,
 }
@@ -191,8 +184,6 @@ impl<Message> overlay::Overlay<Message, Theme, Renderer> for ArrowOverlay<'_, Me
     }
 }
 
-/// Keep the normal arrow cursor over `content` (buttons, rows, tabs, toggles).
-/// Text inputs still show the I-beam; use plain `button` only for hyperlinks.
 pub fn arrow<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     Element::new(Arrow {
         content: content.into(),

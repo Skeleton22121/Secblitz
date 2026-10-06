@@ -1,11 +1,6 @@
 //! "Remove Secblitz": one sheet that asks what should happen to the changes
 //! Secblitz made, optionally puts everything back (with progress), and then
 //! starts the uninstaller. Opened from the last group on the Settings page.
-//!
-//! All slow or privileged work (counting, putting back, starting the
-//! uninstaller) runs off the UI thread; the sheet only shows state. The pure
-//! decisions (which choices exist, which sentence, what happens next) are
-//! small functions so they are tested without a window.
 use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
 use crate::gui::pages::settings;
@@ -23,7 +18,6 @@ use std::time::Instant;
 
 type El<'a> = Element<'a, Message>;
 
-// ---- texts (rows live in i18n-pending/a6.tsv until merged) ----
 
 pub const SECTION_TITLE: &str = "Remove Secblitz";
 pub const SECTION_ROW: &str = "Remove Secblitz from this PC";
@@ -65,7 +59,6 @@ const LEAVING_TITLE: &str = "Removing Secblitz…";
 const LEAVING_HELP: &str = "This window closes by itself.";
 const CANNOT_START: &str = "We couldn't start the removal. Secblitz was not removed. Close Secblitz, open it again and try once more. If that does not work, restart your PC.";
 
-// ---- pure model ----
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
@@ -73,7 +66,6 @@ pub enum Choice {
     PutBack,
 }
 
-/// The five put-back lines, in the order they run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Item {
     Personal,
@@ -111,41 +103,33 @@ impl Item {
 pub enum StepState {
     Waiting,
     Working,
-    /// Finished; `true` = everything came back. The time drives the draw-in.
     Done(bool, Instant),
 }
 
-/// What the sheet says it will undo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Counts {
     pub changes: usize,
     pub apps: usize,
 }
 
-/// `None` plan = the journals could not be read: the choice stays, without numbers.
 pub fn counts(plan: Option<&Plan>, safe: &[Setting]) -> Option<Counts> {
     let plan = plan?;
     Some(Counts {
         changes: plan.settings
             + safe.len()
-            // The machine-wide suggested-apps block counts once, with its personal half.
             + usize::from(plan.suggested && !safe.contains(&Setting::SuggestedApps)),
         apps: plan.apps_with_copy + plan.apps_store_only,
     })
 }
 
-/// Said under both choices while web protection is on: "keep my PC as it is"
-/// does not keep it, so the person is not surprised by ads coming back.
 pub fn web_note(plan: Option<&Plan>) -> Option<&'static str> {
     plan.is_some_and(|p| p.web_on).then_some(WEB_STOPS)
 }
 
-/// Is there anything the "put back" choice would do?
 pub fn can_put_back(counts: Option<Counts>) -> bool {
     counts.is_none_or(|c| c.changes > 0 || c.apps > 0)
 }
 
-/// The choices on offer. A copy that is not installed can only put back.
 pub fn choices(can_put_back: bool, installed: bool) -> Vec<Choice> {
     match (installed, can_put_back) {
         (true, true) => vec![Choice::Keep, Choice::PutBack],
@@ -155,7 +139,6 @@ pub fn choices(can_put_back: bool, installed: bool) -> Vec<Choice> {
     }
 }
 
-/// The sentence under "Put everything back"; lines with nothing to undo are left out.
 pub fn put_back_key(counts: Option<Counts>) -> &'static str {
     let Some(Counts { changes, apps }) = counts else {
         return "Secblitz undoes the changes it made and brings back the apps you removed first. This can take a few minutes.";
@@ -186,9 +169,7 @@ fn put_back_text(lang: Lang, counts: Option<Counts>) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Start {
     PutBack,
-    /// Straight to the uninstaller.
     Remove,
-    /// A copy that is not installed has nothing to remove.
     Nothing,
 }
 
@@ -206,7 +187,6 @@ pub enum Finish {
     ShowResult,
 }
 
-/// After putting back: remove at once when all came back, otherwise show what is left.
 pub fn finish(lines: &[String], installed: bool) -> Finish {
     if lines.is_empty() && installed {
         Finish::Remove
@@ -230,7 +210,6 @@ pub fn result_actions(installed: bool) -> Vec<ResultAction> {
     }
 }
 
-/// Keep a "could not come back" line only for apps that are still removed.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn prune_apps(left: Vec<Left>, still_removed: &[String]) -> Vec<Left> {
     left.into_iter()
@@ -245,7 +224,6 @@ pub fn prune_apps(left: Vec<Left>, still_removed: &[String]) -> Vec<Left> {
 enum Sheet {
     Closed,
     Loading {
-        /// `Some(None)` = counting failed.
         plan: Option<Option<Plan>>,
         waiting: usize,
         safe: Vec<Setting>,
@@ -268,13 +246,10 @@ enum Sheet {
 #[derive(Debug)]
 pub struct State {
     sheet: Sheet,
-    /// A working uninstaller sits next to this copy.
     installed: bool,
-    /// Bumped on every open; answers from an older one are dropped.
     generation: u32,
     spin: anim::Clock,
     now: Instant,
-    /// When putting back began (the rewind drawing's clock while it works).
     since: Instant,
 }
 
@@ -303,7 +278,6 @@ impl State {
             self.sheet = Sheet::Choose {
                 plan: plan.take(),
                 safe: std::mem::take(safe),
-                // One option is no choice: it is already the answer.
                 choice: (choices.len() == 1).then(|| choices[0]),
             };
         }
@@ -369,12 +343,10 @@ impl State {
     }
 }
 
-/// Progress from the put-back thread.
 #[derive(Debug, Clone)]
 pub enum Event {
     Started(Item),
     Finished(Item, bool),
-    /// Plain lines for what was left (empty = everything came back).
     Done(Vec<String>),
 }
 
@@ -396,10 +368,7 @@ fn wrap(msg: Msg) -> Message {
     Message::Settings(settings::Msg::Remove(msg))
 }
 
-// ---- system pieces (off the UI thread) ----
 
-/// `unins000.exe` next to the installed exe: a plain file owned by SYSTEM or
-/// Administrators. `None` for a copy that is not installed.
 pub fn uninstaller() -> Option<PathBuf> {
     let exe = crate::app::settings::installed_exe()?;
     let path = exe.parent()?.join("unins000.exe");
@@ -428,6 +397,7 @@ fn trusted_owner(path: &std::path::Path) -> bool {
     };
     use windows_sys::Win32::Security::{OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: `wide` is NUL-terminated and outlives the call.
     unsafe {
         let mut owner: PSID = null_mut();
         let mut sd: PSECURITY_DESCRIPTOR = null_mut();
@@ -474,7 +444,6 @@ fn load_plan() -> Result<Plan, String> {
     Ok(Plan::default())
 }
 
-/// Start the uninstaller without a console window. Quiet and detached.
 fn launch_uninstaller() -> bool {
     let Some(path) = uninstaller() else {
         return false;
@@ -518,15 +487,9 @@ fn still_removed_names() -> Vec<String> {
         .collect()
 }
 
-/// How long "put everything back" waits for Store downloads. Quick failures
-/// (an app the Store does not offer here, no internet) show within a second
-/// or two; a download still going after this carries on in the Store by itself.
 #[cfg(windows)]
 const STORE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Apps without a usable saved copy come back from the Store (when online),
-/// all at once rather than one after another. Returns the names of the apps
-/// still downloading when the wait is over.
 #[cfg(windows)]
 fn reinstall_from_store(client: Option<&crate::broker::Client>) -> Vec<String> {
     use secblitz::debloat::{self, journal};
@@ -562,7 +525,6 @@ fn reinstall_from_store(client: Option<&crate::broker::Client>) -> Vec<String> {
         .collect()
 }
 
-/// Only when a switch is on; the uninstaller removes the rest.
 #[cfg(windows)]
 fn web_protection_off() -> bool {
     use secblitz::filter::config::{config_path, load_config, Config};
@@ -575,9 +537,6 @@ fn web_protection_off() -> bool {
     secblitz::filter::control::apply_switches(Config::default()).is_ok()
 }
 
-/// What one personal setting leaves behind after "put everything back".
-/// `reply` is `None` without a connection. A setting with no record is only
-/// a problem when it looked like Secblitz's (`was_ours`).
 #[cfg(any(windows, test))]
 fn put_back_left(setting: Setting, was_ours: bool, reply: Option<Option<&Reply>>) -> Option<Left> {
     match reply {
@@ -603,8 +562,6 @@ fn run_put_back(
     let mut left: Vec<Left> = Vec::new();
 
     emit(Event::Started(Item::Personal));
-    // Every setting is asked, not only the ones that look untouched: one that
-    // is only partly changed back by hand still has values Secblitz set.
     for setting in Setting::ALL {
         let reply = client
             .as_ref()
@@ -617,7 +574,6 @@ fn run_put_back(
     emit(Event::Finished(Item::Personal, left.is_empty()));
 
     emit(Event::Started(Item::Settings));
-    // Apps still downloading from the Store are on their way back.
     let downloading = std::cell::RefCell::new(Vec::new());
     let still_removed = || -> Vec<String> {
         let downloading = downloading.borrow();
@@ -666,7 +622,6 @@ fn run_put_back(
     emit(Event::Done(Vec::new()));
 }
 
-// ---- logic ----
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
@@ -728,7 +683,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         lines,
                         at: state.now,
                     };
-                    // What was put back changes the picture on Home.
                     Task::done(Message::CheckNow)
                 }
             }
@@ -757,7 +711,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 }
 
 fn close(state: &mut State) {
-    // Working and Leaving cannot be dismissed.
     if matches!(
         state.sheet,
         Sheet::Loading { .. } | Sheet::Choose { .. } | Sheet::Result { .. }
@@ -767,7 +720,6 @@ fn close(state: &mut State) {
     }
 }
 
-/// Escape closes the sheet unless work is running.
 pub fn escape(state: &mut State) -> bool {
     let open = !matches!(state.sheet, Sheet::Closed);
     close(state);
@@ -818,7 +770,6 @@ fn remove(state: &mut State) -> Task<Message> {
     Task::perform(blocking(launch_uninstaller), |ok| wrap(Msg::Spawned(ok)))
 }
 
-/// Frame ticks, only while something moves.
 pub fn subscription(state: &State) -> Subscription<Message> {
     let moving = match &state.sheet {
         Sheet::Loading { .. } | Sheet::Working { .. } | Sheet::Leaving => true,
@@ -832,13 +783,11 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     }
 }
 
-// ---- view ----
 
 fn pal(ctx: &Ctx) -> Palette {
     Palette::of(ctx.palette.mode)
 }
 
-/// The sheet, drawn by the shell above the whole window.
 pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<El<'a>> {
     let p = pal(ctx);
     Some(match &state.sheet {
@@ -920,7 +869,6 @@ fn choose_sheet<'a>(
     let offered = choices(can_put_back(n), state.installed);
     let mut col = column![widgets::h2(p, ctx.t(SECTION_TITLE))].spacing(theme::S3);
     if offered.is_empty() {
-        // A copy that is not installed, with nothing to put back.
         col = col.push(widgets::muted(p, ctx.t(NOTHING_TO_PUT_BACK)));
         col = col.push(widgets::muted(p, ctx.t(DELETE_EXE)));
         return col
@@ -1015,9 +963,6 @@ fn choose_sheet<'a>(
         .into()
 }
 
-/// The rewind clock at the top of the working sheet and the result. The
-/// same widget in the same place in both, so it carries on from one into
-/// the other.
 fn rewind_art<'a>(
     ctx: &Ctx,
     p: Palette,
@@ -1039,7 +984,6 @@ fn rewind_art<'a>(
     container(drawing).center_x(Length::Fill).into()
 }
 
-/// The drawing's state for the result: everything back, or some left.
 fn result_run(lines: &[String]) -> Run {
     if lines.is_empty() {
         Run::Done
@@ -1104,8 +1048,6 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
             }),
     ]
     .spacing(theme::S3)
-    // Working and result are the same height, so the centred sheet never
-    // moves and the clock carries straight on.
     .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
     .into()
 }
@@ -1138,7 +1080,6 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
                         .direction(widgets::controls::scrollbar())
                         .style(widgets::controls::scroll_style(p)),
                 )
-                // Room for the drawing above in the smallest window.
                 .max_height(168.0)
                 .style(move |_| container::Style {
                     background: Some(Background::Color(p.surface_alt)),
@@ -1176,7 +1117,6 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
             ),
         });
     }
-    // The buttons sit at the bottom of the working view's height.
     col.push(space::vertical().height(Length::Fill))
         .push(buttons)
         .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
@@ -1232,12 +1172,9 @@ mod tests {
             choices(can_put_back(some), true),
             vec![Choice::Keep, Choice::PutBack]
         );
-        // Personal settings alone are enough to offer it.
         let personal = counts(Some(&plan(0, 0, 0, false)), &[Setting::OfficeMacros]);
         assert!(can_put_back(personal));
-        // Unknown counts keep the choice, without numbers.
         assert!(can_put_back(None));
-        // The sheet goes straight to the answer when only one is on offer.
         let mut state = loading(true);
         state.on_planned(0, Ok(plan(0, 0, 0, false)));
         assert!(matches!(
@@ -1251,7 +1188,6 @@ mod tests {
 
     #[test]
     fn put_back_text_counts() {
-        // The approved sentence, with the real numbers.
         let c = counts(Some(&plan(7, 2, 1, false)), &[Setting::ShowExtensions; 5]);
         assert_eq!(
             c,
@@ -1264,7 +1200,6 @@ mod tests {
             put_back_text(Lang::En, c),
             "Secblitz undoes its 12 changes and brings back 3 removed apps first. This can take a few minutes."
         );
-        // Lines with nothing to undo are hidden, and one is singular.
         assert_eq!(
             put_back_text(
                 Lang::En,
@@ -1285,7 +1220,6 @@ mod tests {
             ),
             "Secblitz brings back 1 removed app first. This can take a few minutes."
         );
-        // The machine-wide suggested-apps block counts once with its personal half.
         let both = counts(
             Some(&plan(0, 0, 0, true)),
             &[Setting::SuggestedApps, Setting::OfficeMacros],
@@ -1293,7 +1227,6 @@ mod tests {
         assert_eq!(both.map(|c| c.changes), Some(2));
         let machine_only = counts(Some(&plan(1, 0, 0, true)), &[]);
         assert_eq!(machine_only.map(|c| c.changes), Some(2));
-        // Every wording keeps its placeholders in every language.
         for (changes, apps) in [
             (0, 1),
             (0, 4),
@@ -1316,7 +1249,6 @@ mod tests {
     fn portable_sheet_offers_put_back_only() {
         assert_eq!(choices(true, false), vec![Choice::PutBack]);
         assert!(choices(false, false).is_empty());
-        // The only option is already chosen; there is nothing to remove after it.
         let mut state = loading(false);
         state.on_planned(0, Ok(plan(3, 0, 0, false)));
         assert!(matches!(
@@ -1328,10 +1260,8 @@ mod tests {
         ));
         assert_eq!(start(Choice::PutBack, false), Start::PutBack);
         assert_eq!(start(Choice::Keep, false), Start::Nothing);
-        // Putting back never removes a portable copy, even when all came back.
         assert_eq!(finish(&[], false), Finish::ShowResult);
         assert_eq!(result_actions(false), vec![ResultAction::Close]);
-        // Picking the removed option is refused.
         state.pick(Choice::Keep);
         assert!(matches!(
             state.sheet,
@@ -1366,7 +1296,6 @@ mod tests {
             result_actions(true),
             vec![ResultAction::Keep, ResultAction::RemoveAnyway]
         );
-        // Everything back and installed: straight to the uninstaller.
         assert_eq!(finish(&[], true), Finish::Remove);
     }
 
@@ -1398,10 +1327,8 @@ mod tests {
             put_back_left(s, false, Some(Some(&Reply::ChangedSince))),
             Some(Left::Setting { reason: crate::uninstall::LeftReason::ChangedSince, .. })
         ));
-        // No record and it did not look like ours: nothing to do.
         assert_eq!(put_back_left(s, false, Some(Some(&Reply::Unavailable))), None);
         assert_eq!(put_back_left(s, false, None), None);
-        // A setting that looked ours but could not be put back is reported.
         assert!(matches!(put_back_left(s, true, None), Some(Left::Personal { .. })));
         assert!(matches!(
             put_back_left(s, false, Some(Some(&Reply::Failed))),
@@ -1423,7 +1350,6 @@ mod tests {
         };
         state.on_planned(4, Ok(plan(1, 0, 0, false)));
         assert!(matches!(state.sheet, Sheet::Loading { .. }));
-        // An answer from an older sheet is dropped.
         state.on_queried(3, Setting::OfficeMacros, Ok(Reply::SafeByUs));
         assert!(matches!(state.sheet, Sheet::Loading { waiting: 2, .. }));
         state.on_queried(4, Setting::OfficeMacros, Ok(Reply::SafeByUs));
@@ -1578,7 +1504,6 @@ mod tests {
                     }
                 }
             } else {
-                // Already merged into the catalog.
                 for lang in &LANGS[1..] {
                     assert_ne!(lang.t(source), source, "{source}");
                 }
