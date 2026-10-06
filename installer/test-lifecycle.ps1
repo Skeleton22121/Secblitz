@@ -99,6 +99,16 @@ function Run-Setup([string]$Exe, [string[]]$Arguments, [int]$ExpectedExit = 0, [
     try {
         $null = $p.Handle
         if (-not $p.WaitForExit($TimeoutMs)) { throw 'Installer test timed out; inspect the disposable runner.' }
+        # The uninstaller's first phase can exit while its second phase is still
+        # purging; only the second phase writes the final log line.
+        $logPath = $Arguments | Where-Object { $_ -like '/LOG=*' } | ForEach-Object { $_.Substring(5).Trim('"') }
+        if ($logPath) {
+            $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+            while (-not (Select-String -LiteralPath $logPath -SimpleMatch 'Log closed.' -Quiet -ErrorAction SilentlyContinue)) {
+                if ([DateTime]::UtcNow -gt $deadline) { throw "Installer log never closed: $logPath" }
+                Start-Sleep -Milliseconds 250
+            }
+        }
         "exit=$($p.ExitCode) exe=$Exe arguments=$($Arguments -join ' ')" | Add-Content (Join-Path $logs 'status.txt')
         if ($p.ExitCode -ne $ExpectedExit) { throw "Installer exited $($p.ExitCode), expected $ExpectedExit; logs: $logs" }
     } finally { $p.Dispose() }
@@ -232,6 +242,8 @@ foreach ($variant in @('command', 'arguments', 'directory', 'principal', 'extra-
     $fixtureSddl = $ownedSddl
     if ($variant -eq 'writable-acl') { $fixtureSddl = 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;BU)' }
     $null = $folder.RegisterTaskDefinition('SecblitzUpdate', $foreign, 20, $foreign.Principal.UserId, $null, 5, $fixtureSddl)
+    # Updating a task ignores the descriptor argument; only this call applies it.
+    $folder.GetTask('SecblitzUpdate').SetSecurityDescriptor($fixtureSddl, 16)
     $before = $folder.GetTask('SecblitzUpdate').Xml
     $beforeAcl = $folder.GetTask('SecblitzUpdate').GetSecurityDescriptor(7)
     Run-Setup $SetupPath @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', "/LOG=`"$logs\foreign-$variant-install.log`"") 7
@@ -239,6 +251,7 @@ foreach ($variant in @('command', 'arguments', 'directory', 'principal', 'extra-
     if ($folder.GetTask('SecblitzUpdate').Xml -cne $before) { throw 'Foreign task was modified.' }
     if ($folder.GetTask('SecblitzUpdate').GetSecurityDescriptor(7) -cne $beforeAcl) { throw 'Foreign task ACL was modified.' }
     $null = $folder.RegisterTask('SecblitzUpdate', $ownedXml, 20, 'S-1-5-18', $null, 5, $ownedSddl)
+    $folder.GetTask('SecblitzUpdate').SetSecurityDescriptor($ownedSddl, 16)
 }
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($folder)
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($scheduler)
