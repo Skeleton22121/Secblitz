@@ -138,11 +138,46 @@ pub enum ToCheck<'a> {
     Finding(&'a secblitz::model::Finding),
 }
 
+/// True when a core protection is set but the PC says it is not running: our
+/// own note after a restart, or the older check of the running state.
+pub fn core_not_running(report: &Report, id: &str) -> bool {
+    report.findings.iter().any(|f| {
+        (secblitz::vbs::finding_control(&f.title) == Some(id)
+            && f.title != secblitz::vbs::DEVICE_BLOCKED)
+            || (advice::finding_replaced_by(&f.title) == Some(id) && f.status == "attention")
+    })
+}
+
+/// A control that says "set" while the PC says "not running" is not protected
+/// and is not listed as protected: the finding is the row that tells the truth.
+pub fn classify_in(report: &Report, r: &Outcome) -> Class {
+    match classify(r) {
+        Class::Protected
+            if secblitz::vbs::is_vbs(&r.id) && core_not_running(report, &r.id) =>
+        {
+            Class::Excluded
+        }
+        other => other,
+    }
+}
+
 /// A finding is hidden when a fix row for the same thing is in the report
-/// (the control says it better and can fix it).
+/// (the control says it better and can fix it). The older tip about the
+/// running state stays when the control says it is set but the PC says it is
+/// not running, unless our own note already says so.
 pub fn finding_shown(report: &Report, f: &secblitz::model::Finding) -> bool {
-    advice::finding_replaced_by(&f.title)
-        .is_none_or(|id| !report.results.iter().any(|r| r.id == id))
+    let Some(id) = advice::finding_replaced_by(&f.title) else {
+        return true;
+    };
+    let Some(r) = report.results.iter().find(|r| r.id == id) else {
+        return true;
+    };
+    r.status == "compliant"
+        && f.status == "attention"
+        && !report
+            .findings
+            .iter()
+            .any(|n| secblitz::vbs::finding_control(&n.title) == Some(id))
 }
 
 /// What the person should look at, in report order: control results that need
@@ -153,7 +188,7 @@ pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
     let controls = report
         .results
         .iter()
-        .filter(|r| matches!(classify(r), Class::Fixable | Class::Review))
+        .filter(|r| matches!(classify_in(report, r), Class::Fixable | Class::Review))
         .map(ToCheck::Control);
     let findings = report
         .findings
@@ -207,7 +242,7 @@ impl Score {
     pub fn of(report: &Report) -> Self {
         let mut s = Score::default();
         for r in &report.results {
-            match classify(r) {
+            match classify_in(report, r) {
                 Class::Protected => s.protected += 1,
                 Class::Fixable | Class::Review => s.attention += 1,
                 Class::Unknown => s.unknown += 1,
@@ -396,6 +431,50 @@ mod tests {
         r.findings.push(find("Memory integrity"));
         assert!(finding_shown(&r, &r.findings[0]));
         assert_eq!(to_check_count(&r), 1);
+    }
+
+    #[test]
+    fn a_core_protection_that_is_set_but_not_running_is_never_counted_as_protected() {
+        let find = |title: &str, status: &str| secblitz::model::Finding {
+            title: title.into(),
+            status: status.into(),
+            detail: String::new(),
+        };
+        // Set, and the older check says it runs: protected, no tip.
+        let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
+        r.findings.push(find("Memory integrity", "ok"));
+        assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
+        assert_eq!(Score::of(&r).protected, 1);
+        assert!(!finding_shown(&r, &r.findings[0]) || r.findings[0].status == "ok");
+        // Set, but the PC says it is not running: the old tip stays, the
+        // control is neither protected nor listed as protected.
+        let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
+        r.findings.push(find("Memory integrity", "attention"));
+        assert!(finding_shown(&r, &r.findings[0]));
+        assert_eq!(classify_in(&r, &r.results[0]), Class::Excluded);
+        assert_eq!(Score::of(&r).protected, 0);
+        assert_eq!(to_check_count(&r), 1);
+        // Our own note replaces the old tip: one row, never two.
+        r.findings
+            .push(find("Memory integrity not running", "attention"));
+        assert!(!finding_shown(&r, &r.findings[0]));
+        assert!(finding_shown(&r, &r.findings[1]));
+        assert_eq!(to_check_count(&r), 1);
+        // Stack protection has only our own note.
+        let mut r = rep(vec![out("vbs.kernel_stack_protection", "compliant")]);
+        assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
+        r.findings
+            .push(find("Kernel stack protection not running", "attention"));
+        assert_eq!(classify_in(&r, &r.results[0]), Class::Excluded);
+        // A blocked device while it runs does not make it "not running".
+        let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
+        r.findings.push(find("A device may not be working", "attention"));
+        assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
+        assert_eq!(to_check_count(&r), 1);
+        // Running already (not offered because it is on) counts as protected.
+        let mut on = out("vbs.memory_integrity", "skipped");
+        on.detail = secblitz::vbs::ALREADY_ON.into();
+        assert_eq!(classify(&on), Class::Protected);
     }
 
     #[test]

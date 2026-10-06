@@ -850,6 +850,18 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     out
 }
 
+/// True when the last Protection check offers this control as a fix.
+fn fix_offered(ctx: &Ctx, id: Option<&str>) -> bool {
+    id.is_some_and(|id| {
+        ctx.report.as_deref().is_some_and(|report| {
+            report
+                .results
+                .iter()
+                .any(|r| r.id == id && r.status == "attention")
+        })
+    })
+}
+
 fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     let p = ctx.palette;
     let (tone, icon, words) = match tip.state {
@@ -866,10 +878,15 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
-        _ if tip.fix => widgets::action(
+        _ if tip.fix.is_some() => widgets::action(
             p,
             ButtonKind::Secondary,
-            ctx.t("See the fix"),
+            // Only a fix that the last check offered is called a fix.
+            ctx.t(if fix_offered(ctx, tip.fix) {
+                "See the fix"
+            } else {
+                "See why"
+            }),
             None,
             Some(Message::Navigate(crate::gui::Page::Fixes)),
         ),
