@@ -3,10 +3,10 @@ import pathlib
 import re
 
 
-INSTALL_KEYS = ("Monitor", "Failed", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon")
+INSTALL_KEYS = ("Monitor", "Failed", "FixedFolder", "DesktopIcon", "LaunchSecblitz", "AutoUpdates", "TrayIcon")
 # The keep-or-put-back question and its results, shown by the uninstaller.
 REMOVE_KEYS = ("RemoveTitle", "RemoveQuestion", "KeepChoice", "KeepDetail", "PutBackChoice",
-               "PutBackDetail", "RemoveNote", "WebStops", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft")
+               "PutBackDetail", "RemoveNote", "WebStops", "PuttingBack", "LeftIntro", "PersonalLeft", "SettingsLeft", "RemoveFailed")
 
 
 def check(source):
