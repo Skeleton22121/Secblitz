@@ -11,7 +11,7 @@ use crate::gui::{blocking, blocking_stream, Ctx, Message};
 use crate::i18n::Lang;
 use crate::uninstall::{Left, Plan};
 use crate::user_settings::{Op, Setting};
-use iced::widget::{column, container, row, scrollable, space};
+use iced::widget::{column, container, row, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -1038,14 +1038,7 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
         progress::bar_eased(p, ratio, Tone::Brand),
         container(list)
             .padding(theme::S3)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.surface_alt)),
-                border: Border {
-                    radius: theme::R.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            }),
+            .style(widgets::well_style(p)),
     ]
     .spacing(theme::S3)
     .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
@@ -1074,22 +1067,7 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
                     DELETE_EXE
                 }),
             ))
-            .push(
-                container(
-                    scrollable(container(list).padding(theme::S3).width(Length::Fill))
-                        .direction(widgets::controls::scrollbar())
-                        .style(widgets::controls::scroll_style(p)),
-                )
-                .max_height(168.0)
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(p.surface_alt)),
-                    border: Border {
-                        radius: theme::R.into(),
-                        ..Border::default()
-                    },
-                    ..container::Style::default()
-                }),
-            );
+            .push(widgets::scroll_well(p, list, 168.0));
     }
     let mut buttons = row![space::horizontal()].spacing(theme::S2);
     for action in result_actions(state.installed) {
