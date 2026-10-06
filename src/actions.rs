@@ -31,6 +31,7 @@ pub enum Action {
     OpenBackup,
     OpenStorage,
     OpenInstalledApps,
+    OpenTaskbar,
     OpenReportProblem,
     OpenSuggestFeature,
     OpenPrivacyPolicy,
@@ -115,6 +116,7 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenBackup => Uri("ms-settings:backup"),
         Action::OpenStorage => Uri("ms-settings:storagesense"),
         Action::OpenInstalledApps => Uri("ms-settings:appsfeatures"),
+        Action::OpenTaskbar => Uri("ms-settings:taskbar"),
         Action::OpenReportProblem => Uri(REPORT_PROBLEM_URL),
         Action::OpenSuggestFeature => Uri(SUGGEST_FEATURE_URL),
         Action::OpenPrivacyPolicy => Uri(PRIVACY_POLICY_URL),
@@ -162,6 +164,7 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | "ms-settings:backup"
                 | "ms-settings:storagesense"
                 | "ms-settings:appsfeatures"
+                | "ms-settings:taskbar"
         ),
         "Unknown settings URI"
     );
@@ -283,6 +286,7 @@ mod tests {
             (Action::OpenBackup, "ms-settings:backup"),
             (Action::OpenStorage, "ms-settings:storagesense"),
             (Action::OpenInstalledApps, "ms-settings:appsfeatures"),
+            (Action::OpenTaskbar, "ms-settings:taskbar"),
             (Action::OpenReportProblem, REPORT_PROBLEM_URL),
             (Action::OpenSuggestFeature, SUGGEST_FEATURE_URL),
             (Action::OpenPrivacyPolicy, PRIVACY_POLICY_URL),
@@ -376,6 +380,7 @@ mod tests {
             Action::OpenBackup,
             Action::OpenStorage,
             Action::OpenInstalledApps,
+            Action::OpenTaskbar,
             Action::OpenReportProblem,
             Action::OpenSuggestFeature,
             Action::OpenPrivacyPolicy,

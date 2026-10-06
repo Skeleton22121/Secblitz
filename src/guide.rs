@@ -27,10 +27,11 @@ pub enum Page {
     Backup,
     Storage,
     InstalledApps,
+    Taskbar,
 }
 
 impl Page {
-    pub const ALL: [Page; 23] = [
+    pub const ALL: [Page; 24] = [
         Page::CoreIsolation,
         Page::Firewall,
         Page::DeviceSecurity,
@@ -54,6 +55,7 @@ impl Page {
         Page::Backup,
         Page::Storage,
         Page::InstalledApps,
+        Page::Taskbar,
     ];
 
     pub fn name(self) -> &'static str {
@@ -81,6 +83,7 @@ impl Page {
             Page::Backup => "Windows Backup",
             Page::Storage => "Storage",
             Page::InstalledApps => "Installed apps",
+            Page::Taskbar => "Taskbar settings",
         }
     }
 
@@ -109,6 +112,7 @@ impl Page {
             Page::Backup => "Open Windows Backup",
             Page::Storage => "Open Storage",
             Page::InstalledApps => "Open Installed apps",
+            Page::Taskbar => "Open Taskbar settings",
         }
     }
 
@@ -137,6 +141,7 @@ impl Page {
             Page::Backup => Action::OpenBackup,
             Page::Storage => Action::OpenStorage,
             Page::InstalledApps => Action::OpenInstalledApps,
+            Page::Taskbar => Action::OpenTaskbar,
         }
     }
 
@@ -165,6 +170,7 @@ impl Page {
             Page::Backup => Request::OpenBackup,
             Page::Storage => Request::OpenStorage,
             Page::InstalledApps => Request::OpenInstalledApps,
+            Page::Taskbar => Request::OpenTaskbar,
         }
     }
 
@@ -371,6 +377,13 @@ static THREATS: Guide = g(
         "Choose Remove or Quarantine, then run a quick scan.",
     ],
 );
+static WIDGETS: Guide = g(
+    Page::Taskbar,
+    &[
+        "Turn off Widgets under Taskbar items.",
+        "This hides Widgets for your account. Anyone else who uses this PC can do the same.",
+    ],
+);
 /// Hidden background tasks (WMI): nothing is removed by hand, since some work
 /// and hardware tools use them. A deep scan cleans what is really harmful.
 static HIDDEN_TASKS: Guide = g(
@@ -409,12 +422,15 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
     })
 }
 
+const WIDGETS_YOURSELF: &str = "Not offered: Windows keeps this setting for you to change yourself";
+
 /// Only reasons the person can act on get steps. Unsupported hardware, firmware locks, pending restarts and the like get none: following them would do nothing or harm. Matched on exact backend reasons.
 pub fn guide_not_offered(key: &str, detail: &str) -> Option<&'static Guide> {
     use secblitz::vbs;
     match key {
         vbs::MEMORY_INTEGRITY if vbs::is_driver_reason(detail) => Some(&MEMORY_INTEGRITY),
         vbs::STACK_PROTECTION if detail == vbs::NEEDS_MEMORY_INTEGRITY => Some(&KERNEL_STACK),
+        "debloat.widgets_policy" if detail == WIDGETS_YOURSELF => Some(&WIDGETS),
         _ => None,
     }
 }
@@ -557,6 +573,10 @@ mod tests {
         for key in ["remote_desktop.disabled", "smb1.disabled", "accounts.autologon"] {
             assert!(guide_not_offered(key, vbs::DRIVER).is_none(), "{key}");
         }
+        let widgets = guide_not_offered("debloat.widgets_policy", WIDGETS_YOURSELF).expect("steps");
+        assert_eq!(widgets.page, Page::Taskbar);
+        let home = "Not offered: this setting is not available on Windows Home";
+        assert!(guide_not_offered("debloat.widgets_policy", home).is_none());
     }
 
     #[test]
