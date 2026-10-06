@@ -387,6 +387,7 @@ fn a_run_cut_short_still_leaves_every_removed_app_on_the_list() {
             // What a crash right here would leave behind.
             journal::upsert_to(&path, b).unwrap();
             seen.borrow_mut().push(journal::load_from(&path));
+            Ok(())
         },
     )
     .unwrap();
@@ -397,6 +398,61 @@ fn a_run_cut_short_still_leaves_every_removed_app_on_the_list() {
     assert_eq!(seen[1].len(), 1, "one line per run, not one per app");
     assert_eq!(seen[1][0].removed.len(), 2);
     assert_eq!(journal::load_from(&path), vec![batch]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_run_stops_removing_when_its_record_cannot_be_saved() {
+    use std::cell::Cell;
+    let news = idx("Microsoft.BingNews");
+    let weather = idx("Microsoft.BingWeather");
+    let installed: Vec<Installed> = [(news, "Microsoft.BingNews"), (weather, "Microsoft.BingWeather")]
+        .into_iter()
+        .map(|(index, package)| Installed {
+            index,
+            package: package.into(),
+            version: "1".into(),
+        })
+        .collect();
+    let ran = Cell::new(0);
+    let batch = remove_with_checkpoint(
+        &[news, weather],
+        &installed,
+        &|_| Ok(()),
+        &|_| {
+            ran.set(ran.get() + 1);
+            PackageOutcome::Removed
+        },
+        &|_| {},
+        &|_| anyhow::bail!("disk full"),
+    )
+    .unwrap();
+    assert_eq!(ran.get(), 1, "the second app is not touched");
+    assert_eq!(batch.removed.len(), 1);
+    assert_eq!(batch.failed.len(), 1);
+    assert_eq!(batch.failed[0].index, weather);
+}
+
+#[test]
+fn a_second_run_in_the_same_second_is_a_new_line() {
+    let item = |index| Removed {
+        index,
+        package: "p".into(),
+        version: "1".into(),
+        restored: false,
+    };
+    let dir = std::env::temp_dir().join(format!("secblitz-upsert-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("debloat.jsonl");
+    let _ = std::fs::remove_file(&path);
+    let first = Batch { t: 5, removed: vec![item(1)], ..Batch::default() };
+    let other = Batch { t: 5, removed: vec![item(2)], ..Batch::default() };
+    let grown = Batch { t: 5, removed: vec![item(2), item(3)], ..Batch::default() };
+    journal::upsert_to(&path, &first).unwrap();
+    journal::upsert_to(&path, &other).unwrap();
+    assert_eq!(journal::load_from(&path), vec![first.clone(), other]);
+    journal::upsert_to(&path, &grown).unwrap();
+    assert_eq!(journal::load_from(&path), vec![first, grown]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

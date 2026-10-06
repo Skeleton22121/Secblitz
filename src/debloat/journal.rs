@@ -71,7 +71,16 @@ pub fn append_to(path: &Path, batch: &Batch) -> Result<()> {
 pub fn upsert_to(path: &Path, batch: &Batch) -> Result<()> {
     let mut batches = load_from(path);
     match batches.last_mut() {
-        Some(last) if last.t == batch.t && last.removed.iter().all(|r| !r.restored) => {
+        // Same run: same start second, and the older line is an earlier
+        // checkpoint of this batch (a prefix), not a different run.
+        Some(last)
+            if last.t == batch.t
+                && last.removed.iter().all(|r| !r.restored)
+                && batch.removed.starts_with(&last.removed)
+                && batch.skipped.starts_with(&last.skipped)
+                && batch.kept.starts_with(&last.kept)
+                && batch.failed.starts_with(&last.failed) =>
+        {
             *last = batch.clone();
         }
         _ => batches.push(batch.clone()),
