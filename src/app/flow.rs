@@ -306,12 +306,11 @@ pub fn summarize(
 pub fn with_dependents(mut chosen: Vec<String>, undoable: &[String]) -> (Vec<String>, bool) {
     use secblitz::vbs::{MEMORY_INTEGRITY, STACK_PROTECTION};
     let has = |list: &[String], id: &str| list.iter().any(|i| i == id);
-    if has(&chosen, MEMORY_INTEGRITY)
-        && !has(&chosen, STACK_PROTECTION)
-        && has(undoable, STACK_PROTECTION)
-    {
-        chosen.push(STACK_PROTECTION.to_owned());
-        return (chosen, true);
+    if !has(&chosen, STACK_PROTECTION) && has(undoable, STACK_PROTECTION) {
+        if let Some(at) = chosen.iter().position(|i| i == MEMORY_INTEGRITY) {
+            chosen.insert(at, STACK_PROTECTION.to_owned());
+            return (chosen, true);
+        }
     }
     (chosen, false)
 }
@@ -686,14 +685,14 @@ mod tests {
     #[test]
     fn memory_integrity_brings_stack_protection_when_that_can_be_put_back() {
         use secblitz::vbs::{MEMORY_INTEGRITY, STACK_PROTECTION};
-        let both = ids(&[MEMORY_INTEGRITY, STACK_PROTECTION]);
+        let both = ids(&[STACK_PROTECTION, MEMORY_INTEGRITY]);
         assert_eq!(
             with_dependents(ids(&[MEMORY_INTEGRITY]), &both),
             (both.clone(), true)
         );
         assert_eq!(
             with_dependents(ids(&[MEMORY_INTEGRITY, STACK_PROTECTION]), &both),
-            (both.clone(), false)
+            (ids(&[MEMORY_INTEGRITY, STACK_PROTECTION]), false)
         );
         assert_eq!(
             with_dependents(ids(&[MEMORY_INTEGRITY]), &ids(&[MEMORY_INTEGRITY])),
