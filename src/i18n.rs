@@ -374,6 +374,10 @@ mod tests {
         for (name, source) in [
             ("main", include_str!("main.rs")),
             ("advice", include_str!("advice.rs")),
+            ("advice/choice", include_str!("advice/choice.rs")),
+            ("advice/impact", include_str!("advice/impact.rs")),
+            ("advice/labels", include_str!("advice/labels.rs")),
+            ("advice/reasons", include_str!("advice/reasons.rs")),
             ("actions", include_str!("actions.rs")),
             ("actions/windows", include_str!("actions/windows.rs")),
             ("tools", include_str!("tools.rs")),
