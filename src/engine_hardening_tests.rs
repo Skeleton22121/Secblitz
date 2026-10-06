@@ -28,6 +28,36 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "proc:powershell.exe": 1,
         }});
     }
+    if spec.source == Source::UnquotedServices {
+        return json!({"items": {"Acme Updater": 1, "VendorSvc": 1, "OldFixed": 0}});
+    }
+    if spec.source == Source::UserDirFirewall {
+        return json!({"items": {"{11111111-2222-3333-4444-555555555555}": 1, "torrent-in": 1}});
+    }
+    if spec.source == Source::HostsFile {
+        return json!({"items": {"hosts": 1}});
+    }
+    if spec.source == Source::StartupItems {
+        return json!({"items": {
+            "run-user:Updater": 1,
+            "folder-user:Helper.lnk": 1,
+            "task:\\Vendor\\Sync": 1,
+        }});
+    }
+    if spec.source == Source::StaleAccounts {
+        // Two old accounts still on, one already switched off.
+        return json!({"items": {
+            "S-1-5-21-1111111111-2222222222-3333333333-1001": 1,
+            "S-1-5-21-1111111111-2222222222-3333333333-1002": 1,
+            "S-1-5-21-1111111111-2222222222-3333333333-1003": 0,
+        }});
+    }
+    if spec.source == Source::ShareGrants {
+        return json!({"items": {
+            "Photos|S-1-1-0|Change": 1,
+            "Work files|S-1-5-32-546|Full": 1,
+        }});
+    }
     let mut items = serde_json::Map::new();
     for (i, k) in spec.keys.iter().enumerate() {
         let Rule::Set {
@@ -315,6 +345,57 @@ fn risky_exclusion_removal_is_recorded_and_undo_re_adds_it() {
 }
 
 #[test]
+fn old_accounts_are_switched_off_never_deleted_and_undo_switches_them_back_on() {
+    let id = "accounts.stale_enabled";
+    let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+    let b = "S-1-5-21-1111111111-2222222222-3333333333-1002";
+    let before = json!({"items": {a: 1, b: 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, "attention");
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
+    // Switched-off accounts are no longer listed: still the recorded safe state.
+    state.borrow_mut().values.insert(id.into(), json!({"items": {}}));
+    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn an_old_account_switched_on_again_by_hand_is_not_written_by_undo() {
+    let id = "accounts.stale_enabled";
+    let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+    let (_dir, state, mut e) = fixture(id, json!({"items": {a: 1}}));
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    // The person switched it on again by hand: the recorded original is
+    // already in place, so undo has nothing to write.
+    state.borrow_mut().values.insert(id.into(), json!({"items": {a: 1}}));
+    let writes = state.borrow().writes.len();
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "unchanged");
+    assert_eq!(state.borrow().writes.len(), writes);
+}
+
+#[test]
+fn broad_share_entries_are_removed_one_by_one_and_undo_adds_back_exactly_those() {
+    let id = "smb.shares_exposed";
+    let a = "Photos|S-1-1-0|Change";
+    let b = "Work files|S-1-5-32-546|Full";
+    let before = json!({"items": {a: 1, b: 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
+    // A new broad entry appeared on another share meanwhile: undo restores the
+    // recorded entries only and never touches the new one.
+    state.borrow_mut().values.insert(
+        id.into(),
+        json!({"items": {"Games|S-1-1-0|Full": 1}}),
+    );
+    let undone = e.revert(|_, _| {}).unwrap();
+    assert_eq!(undone.results[0].status, "restored");
+    assert_eq!(state.borrow().writes.last().unwrap().1, before);
+}
+
+#[test]
 fn update_pause_undo_restores_every_saved_time() {
     let id = "update.paused";
     let before = json!({"items": {
@@ -389,4 +470,63 @@ fn diagnostic_data_is_never_lowered_to_zero_and_zero_is_left_alone() {
     let (_dir, state, mut e) = fixture(id, json!({"items": {"AllowTelemetry": 0}}));
     assert_eq!(e.audit().unwrap().results[0].status, "compliant");
     assert!(state.borrow().writes.is_empty());
+}
+
+#[test]
+fn handled_item_controls_switch_off_only_flagged_items_and_never_touch_changed_ones() {
+    for (id, before, a) in [
+        (
+            "services.unquoted_paths",
+            json!({"items": {"Acme Updater": 1, "VendorSvc": 1, "OldHandled": 0}}),
+            "Acme Updater",
+        ),
+        (
+            "firewall.user_dir_inbound_allow",
+            json!({"items": {"torrent-in": 1, "game-in": 1, "OldHandled": 0}}),
+            "torrent-in",
+        ),
+        (
+            "persistence.run_and_tasks",
+            json!({"items": {"run-user:Updater": 1, "task:\\Vendor\\Sync": 1, "run-user:Old": 0}}),
+            "run-user:Updater",
+        ),
+        ("net.hosts_file", json!({"items": {"hosts": 1}}), "hosts"),
+    ] {
+        let (_dir, state, mut e) = fixture(id, before.clone());
+        e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+        let after = state.borrow().values[id].clone();
+        for (k, v) in after["items"].as_object().unwrap() {
+            assert_eq!(v, 0, "{id} {k} is switched off");
+        }
+        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        // Somebody changed one of the fixed items again: undo leaves it alone.
+        let mut changed = after.clone();
+        changed["items"][a] = json!(2);
+        state.borrow_mut().values.insert(id.into(), changed);
+        let writes = state.borrow().writes.len();
+        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "conflict", "{id}");
+        assert_eq!(state.borrow().writes.len(), writes, "{id} nothing was written");
+        // Back as we left it: undo restores the original flags exactly.
+        state.borrow_mut().values.insert(id.into(), after);
+        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored", "{id}");
+        assert_eq!(state.borrow().values[id], before, "{id}");
+    }
+}
+
+#[test]
+fn handled_item_controls_do_not_offer_a_fix_for_items_already_changed_or_handled() {
+    for (id, key) in [
+        ("services.unquoted_paths", "Acme Updater"),
+        ("firewall.user_dir_inbound_allow", "torrent-in"),
+        ("persistence.run_and_tasks", "run-user:Updater"),
+        ("net.hosts_file", "hosts"),
+    ] {
+        for value in [0, 2] {
+            let (_dir, state, mut e) = fixture(id, json!({"items": {key: value}}));
+            assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id} {value}");
+            let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+            assert_ne!(report.results[0].status, "applied", "{id} {value}");
+            assert!(state.borrow().writes.is_empty(), "{id} {value}");
+        }
+    }
 }

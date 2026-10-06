@@ -7,11 +7,12 @@
 # PowerShell rules equal the compiled catalog for every spec and candidate value.
 param(
     [string]$BackendPath = (Join-Path $PSScriptRoot 'backend.ps1'),
-    [string]$HardeningPath = (Join-Path $PSScriptRoot 'hardening.ps1')
+    [string]$HardeningPath = (Join-Path $PSScriptRoot 'hardening.ps1'),
+    [string]$HandledPath = (Join-Path $PSScriptRoot 'hardening.handled.ps1')
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
-foreach ($path in @($BackendPath, $HardeningPath)) {
+foreach ($path in @($BackendPath, $HandledPath, $HardeningPath)) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
     if ($errors.Count) { throw ($errors | Out-String) }
@@ -19,7 +20,7 @@ foreach ($path in @($BackendPath, $HardeningPath)) {
         if ($node -is [Management.Automation.Language.FunctionDefinitionAst]) { . ([scriptblock]::Create($node.Extent.Text)) }
         # Module-level constants of hardening.ps1 ($hName = literal), so new
         # constants never need copying into this file by hand.
-        elseif ($path -eq $HardeningPath -and $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        elseif ($path -ne $BackendPath -and $node -is [Management.Automation.Language.AssignmentStatementAst] -and
                 $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
                 $node.Left.VariablePath.UserPath -cmatch '^h[A-Z]' -and
                 $node.Right.Extent.Text -notmatch '\$(?!true|false|null)') { . ([scriptblock]::Create($node.Extent.Text)) }
@@ -38,12 +39,12 @@ $backendText = [IO.File]::ReadAllText($BackendPath)
 $delimiter = "`ntry {`n    switch -CaseSensitive (`$action) {"
 $cut = $backendText.IndexOf($delimiter)
 if ($cut -lt 0) { throw 'Backend dispatcher boundary changed' }
-$combined = $backendText.Substring(0, $cut) + "`n" + [IO.File]::ReadAllText($HardeningPath)
+$combined = $backendText.Substring(0, $cut) + "`n" + [IO.File]::ReadAllText($HandledPath) + "`n" + [IO.File]::ReadAllText($HardeningPath)
 $tokens = $null; $errors = $null
 $combinedAst = [Management.Automation.Language.Parser]::ParseInput($combined, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
 $names = @($combinedAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) | ForEach-Object { $_.Name.ToLowerInvariant() })
-if (@($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { throw 'Duplicate function definition across backend.ps1 and hardening.ps1' }
+if (@($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { throw 'Duplicate function definition across backend.ps1, hardening.handled.ps1 and hardening.ps1' }
 $realHRead = ${function:HRead}
 $realHPreflight = ${function:HPreflight}
 function Assert($ok, [string]$message) { if (!$ok) { throw $message }; $script:checks++ }
@@ -862,6 +863,8 @@ $script:lockDuration = 1800
 HPreflight
 Remove-Item -LiteralPath function:HLockoutInfo
 # Spooler: restart only when nothing is queued, except when applying (preflight already said idle).
+# The spool folder falls back to %SystemRoot%; give it one when these tests run off Windows.
+if (!$env:SystemRoot) { $env:SystemRoot = 'C:\Windows' }
 $script:queueItems = @(); $script:queueFails = $false; $script:restarts = 0
 function Get-ChildItem { param($LiteralPath, [switch]$Force, $ErrorAction); if ($script:queueFails) { throw 'denied' }; return $script:queueItems }
 function Get-ItemProperty { param($LiteralPath, $Name, $ErrorAction); return $null }
@@ -1102,5 +1105,422 @@ Reject { HPreflight } 'this PC is set up as a kiosk'
 $script:kioskKey = KioskKey @('Version') @()
 Reject { HPreflight } 'this PC is set up as a kiosk'
 $script:fakeFs = $false
+# ---- handled-item controls (hardening.handled.ps1)
+$gateJson = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
+function HandledJson([string]$id, [string]$source) { return ('{"id":"' + $id + '","source":"' + $source + '","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0,2],"absentSafe":false,"fix":0,"max":2}],' + $gateJson + '}') }
+MakeSpec (HandledJson 'services.unquoted_paths' 'UnquotedServices')
+foreach ($ok in @('Spooler','My Service','svc.name$1','Intel(R) Update {1}+x','App#2,b&c')) { Assert (HNameOk $ok) "service name $ok" }
+foreach ($bad in @('','a"b',' lead','trail ','x/y','x\y','a*b','a?b','a[1]',("t`tab"),('s' * 257))) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }
+Assert (HNameOk ('s' * 256)) 'a 256 character service name is accepted'
+MakeSpec (HandledJson 'firewall.user_dir_inbound_allow' 'UserDirFirewall')
+Assert (HNameOk 'My app (inbound)') 'firewall rule name'
+foreach ($bad in @('','a"b','wild*card','x[1]',' pad',("t`tab"),('r' * 201))) { Assert (!(HNameOk $bad)) "firewall name accepted: $bad" }
+MakeSpec (HandledJson 'net.hosts_file' 'HostsFile')
+Assert ((HNameOk 'hosts') -and !(HNameOk 'Hosts') -and !(HNameOk 'hosts2') -and !(HNameOk '')) 'hosts name is exactly hosts'
+MakeSpec (HandledJson 'persistence.run_and_tasks' 'StartupItems')
+foreach ($ok in @('run-machine:Updater','run-user:My App','folder-user:a.lnk','task:\Vendor\Sync')) { Assert (HNameOk $ok) "startup name $ok" }
+foreach ($bad in @('Updater','run-other:x','run-user:','task:Vendor\x','task:\Vendor\','run-user:a*b','run-user:a"b','run-user:x ',('run-user:' + ('n' * 260)))) { Assert (!(HNameOk $bad)) "startup name accepted: $bad" }
+
+# hosts lines: the same flags as the Tools security check
+foreach ($flagged in @('0.0.0.0 windowsupdate.com','127.0.0.1 update.microsoft.com','1.2.3.4 www.paypal.com','10.0.0.9   login.microsoft.com # note')) { Assert (HHostsLineFlag $flagged) "hosts line should be flagged: $flagged" }
+foreach ($fine in @('127.0.0.1 localhost','::1 localhost','# 1.2.3.4 paypal.com','','   ','1.2.3.4','not-an-ip paypal.com','192.168.1.5 printer.lan')) { Assert (!(HHostsLineFlag $fine)) "hosts line should be left alone: $fine" }
+
+# HHostsFix touches only flagged lines and keeps every other byte, line ending and BOM
+$latin = [Text.Encoding]::GetEncoding(28591)
+$original = $latin.GetBytes("# my notes`r`n127.0.0.1 localhost`r`n1.2.3.4 www.paypal.com`r`n`r`n192.168.1.5 printer.lan   # keep`r`n0.0.0.0 windowsupdate.com")
+$fixedBytes = HHostsFix $original
+$fixedText = $latin.GetString($fixedBytes)
+Assert ($fixedText -ceq "# my notes`r`n127.0.0.1 localhost`r`n# turned off by Secblitz 1.2.3.4 www.paypal.com`r`n`r`n192.168.1.5 printer.lan   # keep`r`n# turned off by Secblitz 0.0.0.0 windowsupdate.com") "hosts fix text: $fixedText"
+Assert (@(HHostsFlaggedLines $fixedBytes).Count -eq 0) 'a fixed hosts file has nothing flagged'
+Assert (@(HHostsFlaggedLines $original).Count -eq 2) 'two flagged lines found'
+$unmarked = $fixedText.Replace('# turned off by Secblitz ', '')
+Assert ($unmarked -ceq $latin.GetString($original)) 'removing the note gives back the original text'
+$bomBytes = [byte[]](@(0xEF, 0xBB, 0xBF) + @($latin.GetBytes("1.2.3.4 www.paypal.com`n")))
+$bomFixed = HHostsFix $bomBytes
+Assert ($bomFixed[0] -eq 0xEF -and $bomFixed[1] -eq 0xBB -and $bomFixed[2] -eq 0xBF -and $latin.GetString($bomFixed, 3, $bomFixed.Length - 3) -ceq "# turned off by Secblitz 1.2.3.4 www.paypal.com`n") 'BOM kept in front of the note'
+Assert (HHostsPlain $original) 'plain text accepted'
+Assert (!(HHostsPlain ([byte[]]@(0xFF, 0xFE, 0x31, 0x00)))) 'UTF-16 refused'
+Assert (!(HHostsPlain ([byte[]]@(0x31, 0x00, 0x32)))) 'NUL bytes refused'
+Assert (!(HHostsPlain $latin.GetBytes("a`rb`n"))) 'a lone carriage return is refused'
+Assert (!(HHostsPlain $latin.GetBytes("a`r"))) 'a trailing lone carriage return is refused'
+Assert (HHostsPlain $latin.GetBytes("a`r`nb`n")) 'CRLF and LF are accepted'
+# a byte order mark only counts at the very start of the file
+$midBom = [byte[]](@($latin.GetBytes("127.0.0.1 localhost`n")) + @(0xEF, 0xBB, 0xBF) + @($latin.GetBytes("1.2.3.4 www.paypal.com`n")))
+Assert (@(HHostsFlaggedLines $midBom).Count -eq 0) 'a mid-file BOM line is not read as flagged'
+Assert (@(HHostsFlaggedLines (HHostsFix $midBom)).Count -eq 0) 'fix and reader agree on a mid-file BOM line'
+
+# hosts: read, fix, undo, and a change in between (state and file are doubles)
+function HHostsBytes { if ($null -eq $script:hostsFile) { return $null }; return [byte[]]$script:hostsFile }
+function HHostsWrite([byte[]]$bytes) { $script:hostsWrites++; if ($script:hostsFail) { throw 'fixture write failure' }; $script:hostsFile = [byte[]]$bytes }
+function HFlushDns { $script:dnsFlushes++ }
+function HHostsReadOnly { return [bool]$script:hostsRo }
+function HHostsSetReadOnly([bool]$on) { $script:hostsRo = $on }
+function HHostsFlaggedOther { return @('1.2.3.4 www.paypal.com') }
+$script:hostsRo = $false
+function HStateGet([string]$name) { if ($script:undoState.ContainsKey($name)) { return $script:undoState[$name] }; return $null }
+function HStateSet([string]$name, $data) { $script:undoState[$name] = $data }
+function HStateRemove([string]$name) { $script:undoState.Remove($name) }
+$script:undoState = @{}; $script:hostsWrites = 0; $script:dnsFlushes = 0; $script:hostsFail = $false
+$script:hostsFile = $original
+$r = HReadHosts
+Assert ($r['hosts'] -eq 1) 'flagged hosts file reads 1'
+Assert ($script:hLabels.Count -gt 0) 'the flagged hosts lines are named'
+HSetHosts 'hosts' 0
+Assert ($latin.GetString($script:hostsFile) -ceq $fixedText) 'fix writes the commented file'
+Assert ($script:dnsFlushes -eq 1) 'DNS cache flushed after the fix'
+Assert ((HReadHosts)['hosts'] -eq 0) 'fixed and unchanged reads 0'
+HSetHosts 'hosts' 1
+Assert ([Convert]::ToBase64String($script:hostsFile) -ceq [Convert]::ToBase64String($original)) 'undo restores the exact original bytes'
+Assert ($script:undoState.Count -eq 0 -and $script:dnsFlushes -eq 2) 'undo clears the saved state and flushes DNS'
+Assert ((HReadHosts)['hosts'] -eq 1) 'after undo it is flagged again'
+HSetHosts 'hosts' 0
+$script:hostsFile = [byte[]](@($script:hostsFile) + @($latin.GetBytes("`r`n# someone else was here")))
+Assert ((HReadHosts)['hosts'] -eq 2) 'a file changed since reads 2'
+$before = [Convert]::ToBase64String($script:hostsFile)
+Reject { HSetHosts 'hosts' 1 } 'changed again'
+Assert ([Convert]::ToBase64String($script:hostsFile) -ceq $before) 'a changed hosts file is left alone on undo'
+# a read-only hosts file: the mark is cleared for the change and put back by undo
+$script:undoState = @{}; $script:hostsFile = $original; $script:hostsRo = $true
+HSetHosts 'hosts' 0
+Assert (!$script:hostsRo) 'the read-only mark is cleared for the change'
+Assert ((HReadHosts)['hosts'] -eq 0) 'fixed and unlocked reads 0'
+$script:hostsRo = $true
+Assert ((HReadHosts)['hosts'] -eq 2) 'a read-only mark added since reads 2'
+Reject { HSetHosts 'hosts' 1 } 'changed again'
+$script:hostsRo = $false
+HSetHosts 'hosts' 1
+Assert ($script:hostsRo -and [Convert]::ToBase64String($script:hostsFile) -ceq [Convert]::ToBase64String($original)) 'undo restores the bytes and the read-only mark'
+# UTF-16 is read the way the Tools check reads it: flagged, then Not offered
+$script:undoState = @{}; $script:hostsRo = $false
+$script:hostsFile = [byte[]]@(0xFF, 0xFE, 0x31, 0x00)
+Assert ((HReadHosts)['hosts'] -eq 1) 'a UTF-16 hosts file with a redirect reads 1'
+# a failed write is rolled back and leaves no saved state
+$script:undoState = @{}; $script:hostsFile = $original; $script:hostsFail = $true
+Reject { HSetHosts 'hosts' 0 } 'fixture write failure'
+$script:hostsFail = $false
+Assert ($script:undoState.Count -eq 0) 'a failed fix leaves no saved state'
+$script:hostsFile = $latin.GetBytes("127.0.0.1 localhost`r`n")
+Reject { HSetHosts 'hosts' 0 } 'no longer needs a change'
+Reject { HSetHosts 'other' 0 } 'Invalid hosts file state'
+Reject { HSetHosts 'hosts' 2 } 'Invalid hosts file state'
+# preflight reasons
+$script:hostsFile = $null
+Reject { HHostsPreflight } 'Not offered: the hosts file could not be found'
+$script:hostsFile = [byte[]](New-Object byte[] ($hHostsMaxBytes + 1))
+Reject { HHostsPreflight } 'Not offered: the hosts file is too large'
+$script:hostsFile = [byte[]]@(0xFF, 0xFE, 0x31, 0x00)
+Reject { HHostsPreflight } 'Not offered: the hosts file uses a format we cannot keep exactly'
+
+# start-up items: Task Manager's on/off record
+Assert (HApprovedEnabled $null) 'no record means on'
+Assert (HApprovedEnabled ([byte[]]@(2,0,0,0,0,0,0,0,0,0,0,0))) 'even first byte means on'
+Assert (!(HApprovedEnabled ([byte[]]@(3,0,0,0,0,0,0,0,0,0,0,0)))) 'odd first byte means off'
+Assert (!(HApprovedEnabled ([byte[]]@(2,0)))) 'a short record is treated as off, never overwritten'
+Assert (HIsUserKind 'run-user' -and HIsUserKind 'folder-user' -and !(HIsUserKind 'run-machine') -and !(HIsUserKind 'folder-machine')) 'only per-user kinds depend on who is signed in'
+# ---- accounts.stale_enabled (old accounts: switched off, never deleted)
+$staleJson = '{"id":"accounts.stale_enabled","source":"StaleAccounts","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
+MakeSpec $staleJson
+$bob = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+$amy = 'S-1-5-21-1111111111-2222222222-3333333333-1002'
+$me = 'S-1-5-21-1111111111-2222222222-3333333333-1003'
+$adm = 'S-1-5-21-1111111111-2222222222-3333333333-500'
+foreach ($ok in @($bob, 'S-1-5-21-1-2-3-1000', 'S-1-5-21-1-2-3-4294967295')) { Assert (HNameOk $ok) "account $ok" }
+foreach ($bad in @('', 'Bob', 'S-1-5-21-1-2-3-500', 'S-1-5-21-1-2-3-501', 'S-1-5-21-1-2-3-503', 'S-1-5-21-1-2-3-504', 'S-1-5-21-1-2-3-999', 'S-1-5-21-1-2-3-01001', 'S-1-5-21-1-2-3', 'S-1-5-21-1-2-3-1001-5', 'S-1-5-32-544', 'S-1-1-0', 's-1-5-21-1-2-3-1001', "S-1-5-21-1-2-3-1001'; calc", 'S-1-5-21-1-2-3-4294967296', "S-1-5-21-1-2-3-1001`n")) { Assert (!(HNameOk $bad)) "account name accepted: $bad" }
+function U([string]$sid, [bool]$enabled, $last) { [pscustomobject]@{ SID = [pscustomobject]@{ Value = $sid }; Enabled = $enabled; LastLogon = $last; Name = $(if ($sid -ceq $bob) { 'bob' } elseif ($sid -ceq $amy) { 'amy' } else { 'user' + $sid.Substring($sid.Length - 4) }) } }
+$old = (Get-Date).AddDays(-400); $recent = (Get-Date).AddDays(-10)
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent), (U $adm $true $old), (U 'S-1-5-21-1111111111-2222222222-3333333333-1004' $false $old), (U 'S-1-5-21-1111111111-2222222222-3333333333-1005' $true $null), (U 'S-1-5-21-1111111111-2222222222-3333333333-501' $true $old))
+function Get-LocalUser { param($SID, $ErrorAction)
+    if ($null -eq $SID) { return $script:users }
+    $s = if ($SID -is [string]) { $SID } else { [string]$SID.Value }
+    $f = @($script:users | Where-Object { $_.SID.Value -ceq $s })
+    if ($f.Count -eq 0) { $e = [Management.Automation.ErrorRecord]::new([Exception]::new('not found'), 'UserNotFound', [Management.Automation.ErrorCategory]::ObjectNotFound, $s); throw $e }
+    return $f[0]
+}
+$script:inUse = @{ $me = $true }
+$script:inUseFails = $false
+function HAccountsInUse { if ($script:inUseFails) { throw 'sessions unreadable' }; return $script:inUse.Clone() }
+$script:admins = @($me, $bob)
+function HEnabledAdminSids { if ($script:adminsFail) { throw 'group unreadable' }; return @($script:admins) }
+$script:adminsFail = $false
+$script:hWanted = @{}
+$r = HReadStale
+Assert ($script:hLabels.Count -eq 2 -and $script:hLabels[$bob] -ceq 'bob' -and $script:hLabels[$amy] -ceq 'amy') "account names are kept for the review sheet: $(($script:hLabels.Values | Sort-Object) -join ',')"
+Assert ((HLabelKind $bob) -ceq 'account') 'old accounts are labelled as accounts'
+Assert ($r.Count -eq 2 -and $r[$bob] -eq 1 -and $r[$amy] -eq 1) 'only enabled, user-created accounts idle for 180 days are listed (never built-ins, new, disabled or never-signed-in ones)'
+$script:inUse = @{ $me = $true; $bob = $true }
+$r = HReadStale
+Assert ($r.Count -eq 1 -and $r[$amy] -eq 1) 'an account that is signed in or runs a service is never listed'
+$script:inUseFails = $true
+$r = HReadStale
+Assert ($r.Count -eq 2) 'unreadable sessions still list candidates (the preflight then refuses)'
+$script:inUseFails = $false; $script:inUse = @{ $me = $true }
+$script:hWanted = @{ $bob = 1; 'S-1-5-21-1111111111-2222222222-3333333333-1099' = 0 }
+$script:users = @((U $bob $false $old), (U $amy $true $old))
+$r = HReadStale
+Assert ($r[$bob] -eq 0 -and $r['S-1-5-21-1111111111-2222222222-3333333333-1099'] -eq 0 -and $r[$amy] -eq 1) 'a switched-off account reads as 0, never dropped'
+$script:hWanted = @{}
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent), (U $adm $true $old))
+# Preflight: sessions must be readable, and an administrator must stay.
+HStalePreflight
+$script:inUseFails = $true
+Reject { HStalePreflight } 'Not offered: Secblitz cannot tell who is signed in'
+$script:inUseFails = $false
+$script:admins = @($bob); $script:inUse = @{ $me = $true }
+Reject { HStalePreflight } 'Not offered: no other administrator account is enabled'
+$script:admins = @($bob, $adm)
+Reject { HStalePreflight } 'Not offered: no other administrator account is enabled'
+$script:admins = @($bob, $me)
+HStalePreflight
+$script:adminsFail = $true
+Reject { HStalePreflight } 'could be confirmed'
+$script:adminsFail = $false
+$script:admins = @($me, $amy)
+HStalePreflight
+# Writers: Disable-LocalUser / Enable-LocalUser only, with the checks repeated at write time.
+$script:calls = @()
+function Disable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('disable', $SID) }
+function Enable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('enable', $SID) }
+$script:admins = @($me, $bob)
+HSetStale $bob 0
+HSetStale $bob 1
+Assert ((CallLog) -ceq 'disable:S-1-5-21-1111111111-2222222222-3333333333-1001,enable:S-1-5-21-1111111111-2222222222-3333333333-1001') "stale writer: $(CallLog)"
+$script:calls = @()
+$script:inUse = @{ $me = $true; $bob = $true }
+Reject { HSetStale $bob 0 } 'in use'
+$script:inUse = @{ $me = $true }
+$script:admins = @($bob)
+Reject { HSetStale $bob 0 } 'last administrator'
+$script:admins = @($bob, $adm)
+Reject { HSetStale $bob 0 } 'last administrator'
+Reject { HSetStale 'S-1-5-21-1-2-3-500' 0 } 'Invalid account'
+Reject { HSetStale 'Bob' 0 } 'Invalid account'
+Reject { HSetStale $bob 2 } 'Invalid account'
+Reject { HSetStale $bob $null } 'Invalid account'
+Reject { HSetStale 'S-1-5-21-1111111111-2222222222-3333333333-1077' 0 } 'no longer exists'
+HSetStale 'S-1-5-21-1111111111-2222222222-3333333333-1077' 1
+Assert ($script:calls.Count -eq 0) 'nothing is written for a refused or deleted account'
+Assert (HItemGone 'S-1-5-21-1111111111-2222222222-3333333333-1077') 'a deleted account is gone'
+Assert (!(HItemGone $bob)) 'an existing account is not gone'
+Assert (!(HVerified $bob 0 1)) 'switched-off account does not verify as restored'
+Assert (HVerified 'S-1-5-21-1111111111-2222222222-3333333333-1077' 0 1) 'undo of a deleted account is complete'
+Assert (!(HVerified 'S-1-5-21-1111111111-2222222222-3333333333-1077' 1 0)) 'a deleted account never verifies a switch-off'
+# Whole write transition through HWrite with the real reader.
+${function:HRead} = $realHRead
+function HSet([string]$name, $v) { if ($spec.source -ceq 'StaleAccounts') { HSetStale $name $v } else { HSetShare $name $v } }
+$script:preflightFails = $false; $script:blocked = $false
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent))
+$script:calls = @(); $script:admins = @($me)
+$script:inUse = @{ $me = $true }
+function Disable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('disable', $SID); ($script:users | Where-Object { $_.SID.Value -ceq $SID }).Enabled = $false }
+function Enable-LocalUser { param($SID, $ErrorAction); $script:calls += ,@('enable', $SID); ($script:users | Where-Object { $_.SID.Value -ceq $SID }).Enabled = $true }
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":0,`"$amy`":0}}")
+Assert ((CallLog) -ceq "disable:$bob,disable:$amy" -and !$script:users[0].Enabled -and !$script:users[1].Enabled -and $script:users[2].Enabled) "both old accounts were switched off, my own was not: $(CallLog)"
+$script:calls = @()
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":1,`"$amy`":1}}")
+Assert ((CallLog) -ceq "enable:$bob,enable:$amy" -and $script:users[0].Enabled -and $script:users[1].Enabled) "undo switched them back on: $(CallLog)"
+# An account that signed in meanwhile is no longer old: it is refused, nothing is written.
+$script:calls = @(); $script:users = @((U $bob $true $recent), (U $me $true $recent))
+Reject { HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":0}}") } 'no longer an old account'
+Assert ($script:calls.Count -eq 0) 'no write for an account that is no longer old'
+# Undo after the person deleted the account: nothing to put back, and that is fine.
+$script:calls = @(); $script:users = @((U $me $true $recent))
+HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":1}}")
+Assert ($script:calls.Count -eq 0) 'undo of a deleted account writes nothing and succeeds'
+
+# ---- smb.shares_exposed (broad Change/Full entries on shared folders)
+$shareJson = '{"id":"smb.shares_exposed","source":"ShareGrants","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":1}],' + $noGate + '}'
+MakeSpec $shareJson
+foreach ($ok in @('Photos|S-1-1-0|Change', 'Work files|S-1-5-32-546|Full', 'Public|S-1-5-7|Change', 'Fotos für alle|S-1-1-0|Full', "Mom's files|S-1-1-0|Change", 'Backup$|S-1-1-0|Full')) { Assert (HNameOk $ok) "share entry $ok" }
+foreach ($bad in @('', 'C$|S-1-1-0|Full', 'ADMIN$|S-1-1-0|Full', 'IPC$|S-1-1-0|Change', 'print$|S-1-1-0|Full', 'c$|S-1-1-0|Full', 'Print$|S-1-1-0|Full', 'Photos|S-1-5-11|Change', 'Photos|S-1-1-0|Read', 'Photos|S-1-1-0|change', 'Photos|Everyone|Change', 'Photos|S-1-1-0', 'Photos|S-1-1-0|Change|x', '|S-1-1-0|Change', ' Photos|S-1-1-0|Change', 'Pho"tos|S-1-1-0|Change', "Pho`ntos|S-1-1-0|Change", 'Pho\tos|S-1-1-0|Change', 'Pho:tos|S-1-1-0|Change', "Photos|S-1-1-0|Change`n", ('x' * 81) + '|S-1-1-0|Full')) { Assert (!(HNameOk $bad)) "share entry accepted: $bad" }
+function HAccountOfSid([string]$sid) { switch ($sid) { 'S-1-1-0' { return 'Everyone' } 'S-1-5-7' { return 'NT AUTHORITY\ANONYMOUS LOGON' } 'S-1-5-32-546' { return 'BUILTIN\Guests' } 'S-1-5-32-544' { return 'BUILTIN\Administrators' } 'S-1-5-18' { return 'NT AUTHORITY\SYSTEM' } }; throw 'unexpected SID' }
+function Sh([string]$name, [bool]$special = $false) { [pscustomobject]@{ Name = $name; Special = $special } }
+function Ac([string]$account, [string]$right, [string]$type = 'Allow') { [pscustomobject]@{ AccountName = $account; AccessRight = $right; AccessControlType = $type } }
+$script:shares = @((Sh 'Photos'), (Sh 'Work files'), (Sh 'Music'), (Sh 'Locked'), (Sh 'C$' $true), (Sh 'Hidden$'), (Sh 'Weird''name'))
+$script:acl = @{
+    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
+    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'), (Ac 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
+    'Music' = @((Ac 'Everyone' 'Read'), (Ac 'PC\Bob' 'Full'))
+    'Locked' = @((Ac 'Everyone' 'Change' 'Deny'), (Ac 'PC\Amy' 'Read'))
+    'C$' = @((Ac 'Everyone' 'Full'))
+    'Hidden$' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Read'))
+    'Weird''name' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Read'))
+}
+$script:smbFail = $false
+function Get-SmbShare { param($Name, $ErrorAction)
+    if ($script:smbFail) { throw 'Access is denied' }
+    if ($Name) {
+        $f = @($script:shares | Where-Object { $_.Name -ceq $Name })
+        if ($f.Count -eq 0) { throw ([Management.Automation.ErrorRecord]::new([Exception]::new('No MSFT_SmbShare objects found'), 'CmdletizationQuery_NotFound', [Management.Automation.ErrorCategory]::ObjectNotFound, $Name)) }
+        return $f
+    }
+    return $script:shares
+}
+function Get-SmbShareAccess { param($Name, $ErrorAction); if ($script:acl.ContainsKey($Name)) { return $script:acl[$Name] }; return @() }
+$script:hWanted = @{}
+$r = HReadShares
+Assert ($r.Count -eq 4 -and $r['Photos|S-1-1-0|Change'] -eq 1 -and $r['Work files|S-1-5-32-546|Full'] -eq 1 -and $r['Hidden$|S-1-1-0|Full'] -eq 1 -and $r["Weird'name|S-1-1-0|Full"] -eq 1) 'Everyone, Anonymous or Guests with Change or Full on a user-made share are listed, hidden and apostrophe names included (not Read, Deny or built-in shares)'
+Assert (HAnyUnsafe $r) 'a broad entry is unsafe'
+Assert ($script:hLabels['Photos|S-1-1-0|Change'] -ceq 'Photos' -and $script:hLabels['Work files|S-1-5-32-546|Full'] -ceq 'Work files') 'each shared entry is named by its folder for the review sheet'
+Assert ((HLabelKind 'Photos|S-1-1-0|Change') -ceq 'share') 'shared entries are labelled as folders'
+$script:hWanted = @{ 'Photos|S-1-1-0|Change' = 1; 'Gone|S-1-1-0|Full' = 1 }
+$script:acl['Photos'] = @((Ac 'BUILTIN\Administrators' 'Full'))
+$r = HReadShares
+Assert ($r['Photos|S-1-1-0|Change'] -eq 0 -and $r['Gone|S-1-1-0|Full'] -eq 0) 'a removed entry reads as 0, never dropped'
+$script:hWanted = @{}
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
+$script:shares = @($script:shares[0..6]) + @((Sh 'Extra1'))
+HSharesPreflight
+Assert $true 'folders that keep another allowed entry pass the preflight'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'))
+Reject { HSharesPreflight } 'Not offered: a shared folder would be left with no one who can open it'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'PC\Amy' 'Read' 'Deny'))
+Reject { HSharesPreflight } 'no one who can open it'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
+$script:acl['Work files'] = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'NT AUTHORITY\ANONYMOUS LOGON' 'Read'))
+HSharesPreflight
+Assert $true 'a broad Read entry that stays counts as someone who can open it'
+# Writers: Revoke / Grant only, exactly the recorded entry.
+$script:calls = @()
+$script:rows = @{}
+function Revoke-SmbShareAccess { param($Name, $AccountName, [switch]$Force, $ErrorAction); $script:calls += ,@('revoke', $Name, $AccountName); $script:acl[$Name] = @($script:acl[$Name] | Where-Object { $_.AccountName -ine $AccountName }) }
+function Grant-SmbShareAccess { param($Name, $AccountName, $AccessRight, [switch]$Force, $ErrorAction); $script:calls += ,@('grant', $Name, $AccountName, $AccessRight); $script:acl[$Name] = @($script:acl[$Name]) + @((Ac $AccountName ([string]$AccessRight))) }
+$script:acl['Work files'] = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+HSetShare 'Photos|S-1-1-0|Change' 0
+HSetShare 'Photos|S-1-1-0|Change' 1
+Assert ((CallLog) -ceq 'revoke:Photos:Everyone,grant:Photos:Everyone:Change') "share writer: $(CallLog)"
+Assert (@($script:acl['Photos']).Count -eq 3 -and @($script:acl['Photos'] | Where-Object { $_.AccountName -ceq 'BUILTIN\Administrators' }).Count -eq 1) 'the other entries are untouched'
+$script:calls = @()
+Reject { HSetShare 'Photos|S-1-1-0|Full' 0 } 'entry changed'
+Reject { HSetShare 'Photos|S-1-5-7|Change' 0 } 'entry changed'
+Reject { HSetShare 'Photos|S-1-1-0|Change' 2 } 'Invalid shared folder state'
+Reject { HSetShare 'Photos|S-1-1-0|Change' $null } 'Invalid shared folder state'
+Reject { HSetShare 'C$|S-1-1-0|Full' 0 } 'Unknown hardening item'
+Reject { HSetShare 'Photos|S-1-5-11|Change' 0 } 'Unknown hardening item'
+Reject { HSetShare 'Missing|S-1-1-0|Change' 0 } 'no longer exists'
+HSetShare 'Missing|S-1-1-0|Change' 1
+$script:acl['Locked'] = @((Ac 'Everyone' 'Change'))
+Reject { HSetShare 'Locked|S-1-1-0|Change' 0 } 'no one who can open it'
+$script:acl['Locked'] = @((Ac 'Everyone' 'Read'), (Ac 'PC\Amy' 'Read'))
+Reject { HSetShare 'Locked|S-1-1-0|Change' 1 } 'left alone'
+Assert ($script:calls.Count -eq 0) 'nothing is written for a refused change'
+$script:acl['Locked'] = @((Ac 'Everyone' 'Change'), (Ac 'PC\Amy' 'Read'))
+HSetShare 'Locked|S-1-1-0|Change' 1
+Assert ($script:calls.Count -eq 0) 'putting back an entry that is already there writes nothing'
+Assert (HItemGone 'Missing|S-1-1-0|Change') 'a removed share is gone'
+Assert (!(HItemGone 'Photos|S-1-1-0|Change')) 'an existing share is not gone'
+Assert (HVerified 'Missing|S-1-1-0|Change' 0 1) 'undo of a removed share is complete'
+Assert (!(HVerified 'Photos|S-1-1-0|Change' 0 1)) 'a missing entry on an existing share does not verify as restored'
+# Whole write transition through HWrite with the real reader.
+$script:calls = @(); $script:hWanted = @{}
+$script:shares = @((Sh 'Photos'), (Sh 'Work files'))
+$script:acl = @{
+    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Read'))
+    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+}
+HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}')
+Assert ((CallLog) -ceq 'revoke:Photos:Everyone,revoke:Work files:BUILTIN\Guests' -and @($script:acl['Photos']).Count -eq 2 -and @($script:acl['Work files']).Count -eq 1) "both broad entries removed: $(CallLog)"
+$script:calls = @()
+HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":1,"Work files|S-1-5-32-546|Full":1}}')
+Assert ((CallLog) -ceq 'grant:Photos:Everyone:Change,grant:Work files:BUILTIN\Guests:Full' -and @($script:acl['Photos']).Count -eq 3 -and @($script:acl['Work files']).Count -eq 2) "undo put both entries back: $(CallLog)"
+# A folder that would be left empty blocks the repair before anything is written.
+$script:calls = @()
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'))
+Reject { HWrite (ConvertFrom-Json '{"items":{"Photos|S-1-1-0|Change":0,"Work files|S-1-5-32-546|Full":0}}') } 'Not offered'
+Assert ($script:calls.Count -eq 0) 'no entry was removed from any folder'
+
+# ---- review fixes: exact share entries, honest failures, real account state
+# One account with two rows (Read and Change) cannot be removed and put back exactly.
+$script:smbFail = $false
+$script:calls = @()
+$script:shares = @((Sh 'Photos'), (Sh 'Work files'))
+$script:acl = @{
+    'Photos' = @((Ac 'Everyone' 'Change'), (Ac 'Everyone' 'Read'), (Ac 'PC\Amy' 'Read'))
+    'Work files' = @((Ac 'BUILTIN\Guests' 'Full'), (Ac 'PC\Bob' 'Change'))
+}
+Reject { HSetShare 'Photos|S-1-1-0|Change' 0 } 'entry changed'
+Assert ($script:calls.Count -eq 0) 'nothing is revoked when the account has two rows'
+Reject { HSharesPreflight } 'could not be put back exactly'
+# A Deny row for the same account is also more than one row.
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'Everyone' 'Full' 'Deny'), (Ac 'PC\Amy' 'Read'))
+Reject { HSetShare 'Photos|S-1-1-0|Change' 0 } 'entry changed'
+# Only administrators would be left: not offered.
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'NT AUTHORITY\SYSTEM' 'Full'))
+Reject { HSharesPreflight } 'only administrators'
+$script:acl['Photos'] = @((Ac 'Everyone' 'Change'), (Ac 'BUILTIN\Administrators' 'Full'), (Ac 'PC\Amy' 'Change'))
+HSharesPreflight
+# A failed read is not a deleted share.
+$script:smbFail = $true
+Reject { HSetShare 'Photos|S-1-1-0|Change' 1 } 'Access is denied'
+Reject { HItemGone 'Photos|S-1-1-0|Change' } 'Access is denied'
+Reject { HVerified 'Photos|S-1-1-0|Change' 0 1 } 'Access is denied'
+$script:smbFail = $false
+Assert (HItemGone 'Gone|S-1-1-0|Change') 'a share that does not exist is gone'
+# Hidden user shares and apostrophes are handled like any other share; built-in ones never.
+$script:shares = @((Sh 'Mom''s files'), (Sh 'Backup$'), (Sh 'D$' $true), (Sh 'ADMIN$' $true))
+$script:acl = @{ 'Mom''s files' = @((Ac 'Everyone' 'Full'), (Ac 'PC\Bob' 'Change')); 'Backup$' = @((Ac 'Everyone' 'Change'), (Ac 'PC\Bob' 'Change')); 'D$' = @((Ac 'Everyone' 'Full')); 'ADMIN$' = @((Ac 'Everyone' 'Full')) }
+$script:hWanted = @{}
+$r = HReadShares
+Assert ($r.Count -eq 2 -and $r["Mom's files|S-1-1-0|Full"] -eq 1 -and $r['Backup$|S-1-1-0|Change'] -eq 1) 'the check and the fix see the same shares'
+HSharesPreflight
+$script:calls = @()
+HSetShare "Mom's files|S-1-1-0|Full" 0
+Assert ((CallLog) -ceq "revoke:Mom's files:Everyone") "apostrophe share: $(CallLog)"
+Reject { HSetShare 'D$|S-1-1-0|Full' 0 } 'Unknown hardening item'
+
+# An account that is signed in or runs a service reads as still switched on.
+MakeSpec $staleJson
+$script:users = @((U $bob $true $old), (U $amy $true $old), (U $me $true $recent))
+$script:inUse = @{ $me = $true; $bob = $true }
+$script:inUseFails = $false
+$script:hWanted = @{ $bob = 0; $amy = 0 }
+$r = HReadStale
+Assert ($r[$bob] -eq 1 -and $r[$amy] -eq 1) 'an account in use reads as 1, not 0'
+$script:calls = @()
+$script:admins = @($me, $amy)
+Reject { HWrite (ConvertFrom-Json "{`"items`":{`"$bob`":0,`"$amy`":0}}") } 'in use'
+Assert (@($script:calls | Where-Object { $_[0] -eq 'disable' -and $_[1] -eq $bob }).Count -eq 0) 'the account in use was never switched off'
+$script:hWanted = @{}
+
+# The real "who is signed in" and administrator readers, with doubles for the system only.
+foreach ($fn in @('HAccountsInUse', 'HEnabledAdminSids')) {
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($HardeningPath, [ref]$tokens, [ref]$errors)
+    $node = $ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $fn }
+    . ([scriptblock]::Create($node.Extent.Text))
+}
+$env:COMPUTERNAME = 'PC'
+$sidOf = @{ 'PC\Bob' = $bob; 'PC\Amy' = $amy; 'PC\Cara' = 'S-1-5-21-1111111111-2222222222-3333333333-1010'; 'PC\svcuser' = 'S-1-5-21-1111111111-2222222222-3333333333-1011' }
+function HCurrentSid { return $me }
+function HSidOfAccount([string]$account) { if ($sidOf.ContainsKey($account)) { return $sidOf[$account] }; throw 'No mapping' }
+function LU([string]$domain, [string]$name, [string]$logon) { [pscustomobject]@{ Antecedent = [pscustomobject]@{ Domain = $domain; Name = $name }; Dependent = [pscustomobject]@{ LogonId = $logon } } }
+$script:cim = @{
+    Win32_LogonSession = @([pscustomobject]@{ LogonId = '1' }, [pscustomobject]@{ LogonId = '2' }, [pscustomobject]@{ LogonId = '3' })
+    Win32_LoggedOnUser = @((LU 'PC' 'Bob' '1'), (LU 'NT AUTHORITY' 'SYSTEM' '2'), (LU 'Window Manager' 'DWM-1' '3'), (LU 'PC' 'Amy' '9'))
+    Win32_ComputerSystem = @([pscustomobject]@{ UserName = 'PC\Cara' })
+    Win32_Service = @([pscustomobject]@{ StartName = '.\svcuser' }, [pscustomobject]@{ StartName = 'LocalSystem' }, [pscustomobject]@{ StartName = 'NT AUTHORITY\NetworkService' }, [pscustomobject]@{ StartName = 'NT SERVICE\x' }, [pscustomobject]@{ StartName = 'PC\Nobody' }, [pscustomobject]@{ StartName = $null })
+}
+function Get-CimInstance { param($ClassName); return $script:cim[$ClassName] }
+$u = HAccountsInUse
+Assert ($u.Count -eq 4 -and $u.ContainsKey($me) -and $u.ContainsKey($bob) -and $u.ContainsKey($sidOf['PC\Cara']) -and $u.ContainsKey($sidOf['PC\svcuser'])) "in use: the running account, a live session, the console user and a service account: $($u.Keys -join ',')"
+Assert (!$u.ContainsKey($amy)) 'an ended session does not count'
+$script:cim.Win32_LoggedOnUser = @((LU 'PC' 'Ghost' '1'))
+Reject { HAccountsInUse } 'No mapping'
+$script:cim.Win32_LoggedOnUser = @()
+$script:cim.Win32_ComputerSystem = @([pscustomobject]@{ UserName = 'PC\Ghost' })
+Reject { HAccountsInUse } 'No mapping'
+$script:cim.Win32_ComputerSystem = @([pscustomobject]@{ UserName = $null })
+Assert ((HAccountsInUse).Count -eq 2) 'no console user and no live sessions leaves the running account and the service account'
+
+function Mem([string]$sid, [string]$class) { [pscustomobject]@{ SID = [pscustomobject]@{ Value = $sid }; ObjectClass = $class } }
+$grp = 'S-1-5-21-1111111111-2222222222-3333333333-1500'
+$script:users = @((U $bob $true $old), (U $amy $false $old), (U $adm $true $old))
+function Get-LocalGroupMember { param($SID, $ErrorAction); return @((Mem $bob 'User'), (Mem $amy 'User'), (Mem $adm 'User'), (Mem $grp 'Group'), (Mem 'S-1-12-1-1-2-3-4' 'User')) }
+$a = @(HEnabledAdminSids)
+Assert ($a.Count -eq 2 -and $a -ccontains $bob -and $a -ccontains $adm) 'enabled administrators: users only, switched on, local'
+# The built-in Administrator never counts as an administrator who stays.
+function HAccountsInUse { return @{ $me = $true } }
+$script:users = @((U $bob $true $old), (U $adm $true $old))
+function Get-LocalGroupMember { param($SID, $ErrorAction); return @((Mem $bob 'User'), (Mem $adm 'User')) }
+Reject { HStalePreflight } 'no other administrator account is enabled'
 
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

@@ -90,8 +90,11 @@ mod tests {
     }
 
     // Titles that Rust code emits (engine journal check, service audit).
-    const RUST_FINDINGS: [&str; 8] = [
+    const RUST_FINDINGS: [&str; 11] = [
         "Journal recovery",
+        "Memory integrity not running",
+        "Kernel stack protection not running",
+        "A device may not be working",
         "Assessment unavailable",
         "Service permission audit",
         "Service permissions: BITS",

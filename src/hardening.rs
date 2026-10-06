@@ -90,7 +90,43 @@ pub enum Source {
     /// parts (1 enabled, 0 disabled or absent). Turned off without removing
     /// the files, so undo can turn exactly the same parts back on.
     SmbFeature,
+    /// Dynamic: services whose program path is unquoted (1), quoted by us (0),
+    /// or quoted by us and changed since (2). The exact original is kept in
+    /// Secblitz-owned state.
+    UnquotedServices,
+    /// Dynamic: inbound allow rules for programs in Downloads, Desktop or Temp
+    /// (1 enabled, 0 switched off by us, 2 switched off by us and changed since).
+    UserDirFirewall,
+    /// One key, `hosts`: redirects of trusted names (1), commented out by us
+    /// (0), commented out by us and changed since (2).
+    HostsFile,
+    /// Dynamic: risky start-up entries and scheduled tasks (1 enabled, 0 switched
+    /// off by us, 2 switched off by us and changed since).
+    StartupItems,
+    /// Dynamic: old local accounts that are still switched on (1 on, 0 off).
+    StaleAccounts,
+    /// Dynamic: one broad grant (Everyone, Anonymous or Guests) on a shared
+    /// folder's permission list (1 present, 0 removed).
+    ShareGrants,
 }
+
+/// Value of an item a fix switched off: the state Secblitz left behind.
+pub const ITEM_FIXED: u32 = 0;
+/// Value of an item that is flagged and still in its original state.
+pub const ITEM_FLAGGED: u32 = 1;
+/// Value of an item Secblitz fixed that someone changed again afterwards.
+pub const ITEM_CHANGED: u32 = 2;
+/// Safe values of the four "handled" sources: ours (0) or changed since (2).
+const HANDLED_SAFE: &[u32] = &[ITEM_FIXED, ITEM_CHANGED];
+/// Start-up item key prefixes (the rest is the entry or task name).
+pub const STARTUP_PREFIXES: [&str; 6] = [
+    "run-machine:",
+    "run-machine32:",
+    "run-user:",
+    "folder-machine:",
+    "folder-user:",
+    "task:",
+];
 
 /// Management and capability evidence the backend must find clean.
 #[derive(Clone, Copy, Debug)]
@@ -117,6 +153,20 @@ const NO_GATE: Gate = Gate {
     secedit: false,
     own_policy_key: "",
     policy_values: &[],
+};
+
+/// Any policy for virtualization-based security, in the policy store or in
+/// Mobile Device Management, means somebody else decides: assessment only.
+const VBS_GATE: Gate = Gate {
+    areas: &["DeviceGuard", "VirtualizationBasedTechnology"],
+    own_policy_key: DEVICE_GUARD_POLICY,
+    policy_values: &[
+        (DEVICE_GUARD_POLICY, "EnableVirtualizationBasedSecurity"),
+        (DEVICE_GUARD_POLICY, "HypervisorEnforcedCodeIntegrity"),
+        (DEVICE_GUARD_POLICY, "RequirePlatformSecurityFeatures"),
+        (DEVICE_GUARD_POLICY, "ConfigureKernelShadowStacksLaunch"),
+    ],
+    ..NO_GATE
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +222,10 @@ const DATA_COLLECTION_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows
 const DELIVERY_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization";
 const POWER_CONSOLELOCK_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\0e796bdb-100d-47d6-a2d5-f7d2daa51f51";
+const DEVICE_GUARD_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard";
+const HVCI_SCENARIO: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
+const STACK_SCENARIO: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks";
 /// Exploit protection states: 0 off, 1 on, 2 not set (Windows default).
 const MITIGATION_STATES: &[u32] = &[0, 1, 2];
 /// Pause markers are minutes since 1970; the cap keeps them inside a PowerShell int.
@@ -262,6 +316,8 @@ const WINLOGON: &str = r"HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winl
 const TERMINAL_SERVER: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server";
 const TERMINAL_SERVICES_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
+const EDGE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
+const CHROME_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
 
 const TCPIP: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
 const TCPIP6: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters";
@@ -954,6 +1010,38 @@ static SPECS: &[Spec] = &[
         },
     },
     Spec {
+        id: "vbs.memory_integrity",
+        title: "Memory integrity",
+        description: "Turn on Memory integrity (Core isolation in Windows Security) by setting Enabled=1, and WasEnabledBy=2 so Windows Security shows the switch as normal, under the HypervisorEnforcedCodeIntegrity scenario. Locked is never written, so there is no firmware lock. Offered only when the hardware supports it, nothing manages it, nothing is locked and every driver passes the static compatibility scan. Needs a restart; undo restores the exact earlier values.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1],
+                ..set("Enabled", HVCI_SCENARIO, &[1], false, Some(1), 1)
+            },
+            set("WasEnabledBy", HVCI_SCENARIO, &[2], false, Some(2), 255),
+        ],
+        gate: VBS_GATE,
+    },
+    Spec {
+        id: "vbs.kernel_stack_protection",
+        title: "Kernel-mode hardware-enforced stack protection",
+        description: "Turn on Kernel-mode Hardware-enforced Stack Protection by setting Enabled=1 and WasEnabledBy=2 under the KernelShadowStacks scenario. Locked is never written. Offered only when Memory integrity is running and the processor supports shadow stacks. Needs a restart; undo restores the exact earlier values.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1],
+                ..set("Enabled", STACK_SCENARIO, &[1], false, Some(1), 1)
+            },
+            set("WasEnabledBy", STACK_SCENARIO, &[2], false, Some(2), 255),
+        ],
+        gate: VBS_GATE,
+    },
+    Spec {
         id: "privacy.recall",
         title: "Recall screenshots",
         description: "Stop Windows saving snapshots of your screen for Recall (DisableAIDataAnalysis=1) on PCs that have the Recall feature. Existing snapshots are removed by Windows. Not offered where Recall does not exist; undo removes the setting.",
@@ -1064,6 +1152,92 @@ static SPECS: &[Spec] = &[
         ],
         gate: NO_GATE,
     },
+    Spec {
+        id: "services.unquoted_paths",
+        title: "Background programs with unquoted paths",
+        description: "Put quotes around the program path of each background program that has spaces in an unquoted path a standard user could hijack. Only the path text changes, and only when the program file exists and nothing else in the path could be started first. The exact original is kept and put back on undo.",
+        source: Source::UnquotedServices,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "firewall.user_dir_inbound_allow",
+        title: "Firewall allowances for downloaded programs",
+        description: "Switch off (never delete) the inbound allow rules of programs that sit in Downloads, Desktop or Temp folders. Undo switches exactly those rules back on.",
+        source: Source::UserDirFirewall,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "net.hosts_file",
+        title: "Redirected trusted websites",
+        description: "Comment out only the lines of the hosts file that send a trusted website, bank or security product somewhere else or block its updates. Each line is marked with a note. The original file is kept and put back byte for byte on undo.",
+        source: Source::HostsFile,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "persistence.run_and_tasks",
+        title: "Risky programs that start by themselves",
+        description: "Switch off, the way Task Manager does, start-up entries and scheduled tasks that start unsigned programs from Temp, Downloads or similar places. Nothing is deleted. Undo switches exactly those items back on.",
+        source: Source::StartupItems,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "accounts.stale_enabled",
+        title: "Old accounts that are still switched on",
+        description: "Switch off (never delete) local accounts that are switched on but have not signed in for 180 days. Never your own account, an account signed in now, the last administrator or a built-in account. Every account is recorded and undo switches it back on.",
+        source: Source::StaleAccounts,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "smb.shares_exposed",
+        title: "Shared folders open to everyone",
+        description: "Remove only the Everyone, Anonymous or Guests entry that gives Change or Full access from a shared folder's permission list. Every removed entry is recorded exactly and undo adds it back. Built-in shares (C$, ADMIN$, IPC$, print$) and all other entries are never touched.",
+        source: Source::ShareGrants,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[0], false, Some(0), 1)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "smartscreen.browser_policy",
+        title: "Browser warnings about dangerous sites",
+        description: "Remove a locally set policy value that switches off the Edge or Chrome warning about dangerous websites. Managed devices and Group Policy values are left alone. The removed value is recorded and undo puts it back exactly.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            set("SmartScreenEnabled", EDGE_POLICY, &[1], true, None, 1),
+            Key {
+                allowed: &[0, 1, 2],
+                ..set("SafeBrowsingProtectionLevel", CHROME_POLICY, &[1, 2], true, None, 2)
+            },
+            set("SafeBrowsingEnabled", CHROME_POLICY, &[1], true, None, 1),
+        ],
+        gate: Gate {
+            areas: &["Browser", "Edge", "ADMX_MicrosoftEdge"],
+            pattern: "SmartScreen|SafeBrowsing",
+            // A browser enrolled in cloud management is run by an organization.
+            policy_values: &[
+                (CHROME_POLICY, "CloudManagementEnrollmentToken"),
+                (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+            ],
+            ..NO_GATE
+        },
+    },
 ];
 
 pub fn all() -> &'static [Spec] {
@@ -1139,8 +1313,98 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                 && !name.chars().any(|c| c.is_control() || c == '"')
                 && name.trim() == name
         }
+        Source::UnquotedServices => {
+            // Service key names: up to 256 characters, no path separators or wildcards.
+            !name.is_empty()
+                && name.chars().count() <= 256
+                && name.trim() == name
+                && !name
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '"' | '\\' | '/' | '*' | '?' | '[' | ']'))
+        }
+        Source::UserDirFirewall => {
+            !name.is_empty()
+                && name.chars().count() <= 200
+                && name.trim() == name
+                // Wildcards would let one name match many rules.
+                && !name
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '"' | '*' | '?' | '[' | ']'))
+        }
+        Source::HostsFile => name == "hosts",
+        Source::StartupItems => {
+            let rest = STARTUP_PREFIXES.iter().find_map(|p| name.strip_prefix(p));
+            rest.is_some_and(|r| {
+                !r.is_empty()
+                    && (!name.starts_with("task:") || r.starts_with('\\'))
+                    && !r.ends_with('\\')
+            }) && name.chars().count() <= 260
+                && name.trim() == name
+                && !name
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '"' | '*' | '?' | '[' | ']'))
+        }
+        Source::StaleAccounts => stale_account_name_ok(name),
+        Source::ShareGrants => share_grant_name_ok(name),
         _ => false,
     }
+}
+
+/// A local account SID with a user-created RID (1000 and up): never the
+/// built-in Administrator, Guest, DefaultAccount or WDAGUtilityAccount.
+fn stale_account_name_ok(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("S-1-5-21-") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('-').collect();
+    parts.len() == 4
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 10 && p.bytes().all(|b| b.is_ascii_digit()))
+        && !parts[3].starts_with('0')
+        && parts[3]
+            .parse::<u64>()
+            .is_ok_and(|rid| (1000..=u64::from(u32::MAX)).contains(&rid))
+}
+
+/// Who counts as "everyone" on a share: Everyone, Anonymous logon, Guests.
+pub const BROAD_SIDS: &[&str] = &["S-1-1-0", "S-1-5-7", "S-1-5-32-546"];
+/// The share rights broad enough to matter (the same ones the check flags).
+pub const BROAD_RIGHTS: &[&str] = &["Change", "Full"];
+
+/// `<share name>|<SID>|<right>`: one entry of a share's permission list.
+/// Windows share names cannot hold `|`, quotes or control characters. The
+/// built-in shares (C$, ADMIN$, IPC$, print$, drive shares) are never named;
+/// a hidden share the person made themselves (ending in `$`) can be.
+fn share_grant_name_ok(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('|').collect();
+    let [share, sid, right] = parts[..] else {
+        return false;
+    };
+    !share.is_empty()
+        && share.chars().count() <= 80
+        && !builtin_share(share)
+        && share.trim() == share
+        && !share.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '"' | '/' | '\\' | '[' | ']' | ':' | '<' | '>' | '+' | '=' | ';' | ',' | '?' | '*'
+                )
+        })
+        && BROAD_SIDS.contains(&sid)
+        && BROAD_RIGHTS.contains(&right)
+}
+
+/// Administrative shares Windows makes itself: never touched.
+fn builtin_share(name: &str) -> bool {
+    let up = name.to_ascii_uppercase();
+    if matches!(up.as_str(), "ADMIN$" | "IPC$" | "PRINT$") {
+        return true;
+    }
+    // Drive shares: a single letter followed by `$`.
+    let b = up.as_bytes();
+    b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b'$'
 }
 
 /// The only services the legacy-remote-access control may stop and disable.
@@ -1163,6 +1427,12 @@ impl Spec {
                 | Source::NetbiosAdapters
                 | Source::LegacyServices
                 | Source::DefenderExclusions
+                | Source::UnquotedServices
+                | Source::UserDirFirewall
+                | Source::HostsFile
+                | Source::StartupItems
+                | Source::StaleAccounts
+                | Source::ShareGrants
         )
     }
 
@@ -1264,6 +1534,13 @@ impl Spec {
         Ok(json!({ "items": items }))
     }
 
+    /// Controls whose recorded items are compared exactly as journaled (never
+    /// narrowed by what is observed now): the observation is narrowed to them
+    /// instead, with vanished items read as "0" (see [`Spec::view`]).
+    pub fn exact_recorded(&self) -> bool {
+        matches!(self.source, Source::StaleAccounts | Source::ShareGrants)
+    }
+
     /// Restrict an observation to the keys of a journaled template. Fixed
     /// controls observe exactly their keys, so only dynamic ones are narrowed:
     /// a Wi-Fi network or firewall rule that appeared after the fix must not
@@ -1278,6 +1555,17 @@ impl Spec {
         ) else {
             return observed.clone();
         };
+        if self.exact_recorded() {
+            // Exactly the recorded items: an account that was switched off or a
+            // share entry that was removed is simply no longer listed, which
+            // is "0". Items that appeared since belong to somebody else's
+            // change and are never looked at, so they cannot block an undo.
+            let items: Map<String, Value> = t
+                .keys()
+                .map(|k| (k.clone(), o.get(k).cloned().unwrap_or_else(|| json!(0))))
+                .collect();
+            return json!({ "items": items });
+        }
         if self.source == Source::DefenderExclusions {
             // A removed exclusion is simply no longer listed: that is "0".
             // Nothing is filtered out (the engine passes either side as the
@@ -1746,6 +2034,57 @@ mod tests {
         assert!(spec("net.wpad").unwrap().keys[0].name == "DisableWpad");
     }
 
+    #[test]
+    fn core_protections_write_only_the_documented_values_and_never_a_lock() {
+        for (id, scenario) in [
+            ("vbs.memory_integrity", "HypervisorEnforcedCodeIntegrity"),
+            ("vbs.kernel_stack_protection", "KernelShadowStacks"),
+        ] {
+            let s = spec(id).unwrap();
+            assert!(s.reboot && s.ask && !s.dynamic(), "{id}");
+            let names: Vec<&str> = s.keys.iter().map(|k| k.name).collect();
+            assert_eq!(names, ["Enabled", "WasEnabledBy"], "{id}");
+            for k in s.keys {
+                assert!(k.path.ends_with(&format!("Scenarios\\{scenario}")), "{id}");
+                assert!(!k.name.contains("Lock") && !k.value.contains("Lock"));
+            }
+            // Absent is unsafe and becomes Enabled=1, WasEnabledBy=2.
+            let absent = items(s, &[None, None]);
+            assert!(s.any_unsafe(&absent));
+            assert_eq!(
+                s.derive_target(&absent).unwrap(),
+                items(s, &[Some(1), Some(2)])
+            );
+            // Explicitly off keeps whatever marker Windows left.
+            let off = items(s, &[Some(0), Some(2)]);
+            assert_eq!(
+                s.derive_target(&off).unwrap(),
+                items(s, &[Some(1), Some(2)])
+            );
+            let marker = items(s, &[Some(0), Some(1)]);
+            assert_eq!(
+                s.derive_target(&marker).unwrap(),
+                items(s, &[Some(1), Some(2)])
+            );
+            // Already on: nothing to fix and nothing rewritten.
+            let on = items(s, &[Some(1), Some(2)]);
+            assert!(!s.any_unsafe(&on));
+            assert_eq!(s.derive_target(&on).unwrap(), on);
+            // Enabled can only ever be 0 or 1.
+            assert!(s
+                .validate(&json!({"items": {"Enabled": 2, "WasEnabledBy": 2}}))
+                .is_err());
+            assert!(s.validate(&json!({"items": {"Enabled": 1}})).is_err());
+            // Anyone else's policy for this area means assessment only.
+            let gate = serde_json::from_str::<Value>(&s.script_json()).unwrap()["gate"].clone();
+            assert!(gate["ownPolicyKey"]
+                .as_str()
+                .unwrap()
+                .ends_with("Windows\\DeviceGuard"));
+            assert!(gate["areas"].as_array().unwrap().len() >= 2);
+        }
+    }
+
     /// When SECBLITZ_PARITY_OUT names a file, write every spec with the Rust
     /// verdict (safe / fix) for each candidate value. The PowerShell fixture
     /// replays it so both implementations of the rules provably agree.
@@ -1836,6 +2175,274 @@ mod tests {
             fw.view(&json!({"items": {}}), &json!({"items": {"FPS-A": 15}})),
             json!({"items": {}})
         );
+    }
+
+    #[test]
+    fn handled_item_controls_accept_only_their_own_names_and_values() {
+        let svc = spec("services.unquoted_paths").unwrap();
+        svc.validate(&json!({"items": {"Acme Updater": 1, "MSSQL$SQLEXPRESS": 0, "a.b-c_d": 2, "Intel(R) Update {1}+x": 1}}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"": 1}}),
+            json!({"items": {" Acme": 1}}),
+            json!({"items": {"Acme\\Run": 1}}),
+            json!({"items": {"Acme\"x": 1}}),
+            json!({"items": {"Acme/Run": 1}}),
+            json!({"items": {"Acme*": 1}}),
+            json!({"items": {"Acme[1]": 1}}),
+            json!({"items": {"Acme\n": 1}}),
+            json!({"items": {"Acme": 3}}),
+            json!({"items": {"x".repeat(257): 1}}),
+        ] {
+            assert!(svc.validate(&bad).is_err(), "accepted {bad}");
+        }
+        let fw = spec("firewall.user_dir_inbound_allow").unwrap();
+        fw.validate(&json!({"items": {"{8C1D4B7E-0000-4000-8000-000000000000}": 1, "uTorrent (TCP-In)": 0}}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"*": 1}}),
+            json!({"items": {"Any*": 1}}),
+            json!({"items": {"a?b": 1}}),
+            json!({"items": {"[x]": 1}}),
+            json!({"items": {"a\"b": 1}}),
+            json!({"items": {"a\nb": 1}}),
+            json!({"items": {"x".repeat(201): 1}}),
+        ] {
+            assert!(fw.validate(&bad).is_err(), "accepted {bad}");
+        }
+        let hosts = spec("net.hosts_file").unwrap();
+        hosts.validate(&json!({"items": {"hosts": 1}})).unwrap();
+        assert!(hosts.validate(&json!({"items": {"hosts2": 1}})).is_err());
+        assert!(hosts.validate(&json!({"items": {"hosts": 3}})).is_err());
+        let startup = spec("persistence.run_and_tasks").unwrap();
+        startup
+            .validate(&json!({"items": {
+                "run-machine:Updater": 1, "run-machine32:Old": 0, "run-user:My App": 1,
+                "folder-user:Helper.lnk": 2, "folder-machine:x.bat": 1, "task:\\Vendor\\Sync": 1,
+                "task:\\Top": 0,
+            }}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"run-user:": 1}}),
+            json!({"items": {"run:Updater": 1}}),
+            json!({"items": {"task:Vendor\\Sync": 1}}),
+            json!({"items": {"task:\\Vendor\\": 1}}),
+            json!({"items": {"run-user:a*": 1}}),
+            json!({"items": {"run-user:a\"b": 1}}),
+            json!({"items": {" run-user:a": 1}}),
+            json!({"items": {"run-user:a": 4}}),
+        ] {
+            assert!(startup.validate(&bad).is_err(), "accepted {bad}");
+        }
+        // A fix only ever moves a flagged item (1) to handled (0).
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            let s = spec(id).unwrap();
+            assert!(s.ask && s.dynamic() && !s.reboot, "{id}");
+            let key = match id {
+                "net.hosts_file" => "hosts",
+                "persistence.run_and_tasks" => "run-user:A",
+                _ => "A",
+            };
+            let before = json!({"items": {key: 1}});
+            assert!(s.any_unsafe(&before));
+            assert_eq!(s.derive_target(&before).unwrap(), json!({"items": {key: 0}}));
+            for safe in [0, 2] {
+                let state = json!({"items": {key: safe}});
+                assert!(!s.any_unsafe(&state), "{id} {safe}");
+                assert_eq!(s.derive_target(&state).unwrap(), state);
+            }
+            // Items that were fixed and changed since stay in the view for the conflict check.
+            let template = json!({"items": {key: 1}});
+            assert_eq!(s.view(&json!({"items": {key: 2, "other": 1}}), &template), json!({"items": {key: 2}}));
+        }
+    }
+
+    #[test]
+    fn hosts_rules_match_the_security_check_probe() {
+        // The fix and the Tools check must flag exactly the same lines: both
+        // scripts carry the same two patterns (\z in the fix is $ in the probe).
+        let probe = include_str!("diagnostics/probes.ps1");
+        let handled = include_str!("platform/hardening.handled.ps1");
+        for var in ["$hHostsBroad", "$hHostsUpdate"] {
+            let line = handled
+                .lines()
+                .find(|l| l.starts_with(&format!("{var} = '")))
+                .unwrap_or_else(|| panic!("{var}"));
+            let pattern = line.split('\'').nth(1).unwrap().replace("\\z", "$");
+            assert!(probe.contains(&pattern), "{var} drifted from the probe");
+        }
+        let risky = handled
+            .lines()
+            .find(|l| l.starts_with("$hUserDirPattern = '"))
+            .unwrap();
+        let pattern = risky.split('\'').nth(1).unwrap();
+        let rules = include_str!("diagnostics/probes.ps1");
+        // The firewall probe writes the same alternatives inside a -match test.
+        assert!(
+            rules.contains(pattern),
+            "the firewall pattern drifted from the probe"
+        );
+    }
+
+    #[test]
+    fn old_accounts_are_named_by_user_sid_and_never_built_in_ones() {
+        let st = spec("accounts.stale_enabled").unwrap();
+        assert!(st.ask && st.dynamic() && !st.reboot);
+        let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+        st.validate(&json!({"items": {a: 1, "S-1-5-21-1-2-3-1000": 0}}))
+            .unwrap();
+        for bad in [
+            // Built-in Administrator, Guest, DefaultAccount, WDAGUtilityAccount.
+            "S-1-5-21-1111111111-2222222222-3333333333-500",
+            "S-1-5-21-1111111111-2222222222-3333333333-501",
+            "S-1-5-21-1111111111-2222222222-3333333333-503",
+            "S-1-5-21-1111111111-2222222222-3333333333-504",
+            "S-1-5-21-1111111111-2222222222-3333333333-999",
+            "S-1-5-21-1111111111-2222222222-3333333333-01001",
+            "S-1-5-21-1111111111-2222222222-3333333333",
+            "S-1-5-21-1111111111-2222222222-3333333333-1001-5",
+            "S-1-5-32-544",
+            "S-1-1-0",
+            "Bob",
+            "s-1-5-21-1-2-3-1001",
+            "S-1-5-21-1-2-3-1001'; x",
+            "S-1-5-21-1-2-3-99999999999",
+        ] {
+            assert!(
+                st.validate(&json!({"items": {bad: 1}})).is_err(),
+                "accepted {bad}"
+            );
+        }
+        assert!(st.validate(&json!({"items": {a: 2}})).is_err());
+        // Switching off is the only repair; off stays off.
+        assert!(st.any_unsafe(&json!({"items": {a: 1}})));
+        assert!(!st.any_unsafe(&json!({"items": {a: 0}})));
+        assert_eq!(
+            st.derive_target(&json!({"items": {a: 1}})).unwrap(),
+            json!({"items": {a: 0}})
+        );
+        assert_eq!(st.catalog_target(), json!("derived-items-v1"));
+    }
+
+    #[test]
+    fn broad_share_entries_name_one_share_one_broad_sid_and_one_right() {
+        let sh = spec("smb.shares_exposed").unwrap();
+        assert!(sh.ask && sh.dynamic() && !sh.reboot);
+        for ok in [
+            "Photos|S-1-1-0|Change",
+            "Work files|S-1-5-32-546|Full",
+            "Public|S-1-5-7|Change",
+            "Fotos für alle|S-1-1-0|Full",
+            "Mom's files|S-1-1-0|Change",
+            "Backup$|S-1-1-0|Full",
+        ] {
+            sh.validate(&json!({"items": {ok: 1}})).unwrap();
+        }
+        for bad in [
+            // Built-in and hidden shares are never named.
+            "C$|S-1-1-0|Full",
+            "ADMIN$|S-1-1-0|Full",
+            "IPC$|S-1-1-0|Change",
+            "print$|S-1-1-0|Full",
+            "c$|S-1-1-0|Full",
+            "Print$|S-1-1-0|Full",
+            // Only the broad SIDs and the two rights the check flags.
+            "Photos|S-1-5-11|Change",
+            "Photos|S-1-1-0|Read",
+            "Photos|S-1-1-0|change",
+            "Photos|Everyone|Change",
+            "Photos|S-1-1-0",
+            "Photos|S-1-1-0|Change|x",
+            "|S-1-1-0|Change",
+            " Photos|S-1-1-0|Change",
+            "Pho\"tos|S-1-1-0|Change",
+            "Pho\ntos|S-1-1-0|Change",
+            "Pho\\tos|S-1-1-0|Change",
+            "Pho:tos|S-1-1-0|Change",
+        ] {
+            assert!(
+                sh.validate(&json!({"items": {bad: 1}})).is_err(),
+                "accepted {bad}"
+            );
+        }
+        assert!(sh.validate(&json!({"items": {"Photos|S-1-1-0|Full": 2}})).is_err());
+        let long = format!("{}|S-1-1-0|Full", "x".repeat(81));
+        assert!(sh.validate(&json!({"items": {long: 1}})).is_err());
+    }
+
+    #[test]
+    fn recorded_items_are_compared_exactly_and_new_items_never_block_undo() {
+        for id in ["accounts.stale_enabled", "smb.shares_exposed"] {
+            let s = spec(id).unwrap();
+            assert!(s.exact_recorded(), "{id}");
+            let (a, b, new) = if id == "smb.shares_exposed" {
+                ("Photos|S-1-1-0|Change", "Work|S-1-1-0|Full", "New|S-1-1-0|Full")
+            } else {
+                (
+                    "S-1-5-21-1-2-3-1001",
+                    "S-1-5-21-1-2-3-1002",
+                    "S-1-5-21-1-2-3-1003",
+                )
+            };
+            let recorded = json!({"items": {a: 1, b: 1}});
+            // Gone from the listing reads as "0"; an item that appeared since is ignored.
+            let observed = json!({"items": {a: 0, new: 1}});
+            assert_eq!(
+                s.view(&observed, &recorded),
+                json!({"items": {a: 0, b: 0}})
+            );
+            // Still listed as on: that is the recorded original.
+            assert_eq!(
+                s.view(&json!({"items": {a: 1, b: 1}}), &recorded),
+                recorded
+            );
+        }
+        // The older dynamic controls keep their own narrowing.
+        assert!(!spec("net.public_sharing_exposure").unwrap().exact_recorded());
+        assert!(!spec("defender.exclusions_risky").unwrap().exact_recorded());
+    }
+
+    #[test]
+    fn browser_warning_policy_only_removes_values_that_switch_the_warning_off() {
+        let b = spec("smartscreen.browser_policy").unwrap();
+        assert!(b.ask && !b.dynamic() && !b.reboot);
+        assert_eq!(b.source, Source::Registry);
+        let names: Vec<_> = b.keys.iter().map(|k| k.name).collect();
+        assert_eq!(
+            names,
+            ["SmartScreenEnabled", "SafeBrowsingProtectionLevel", "SafeBrowsingEnabled"]
+        );
+        // Every key is only ever removed, never written to a new value.
+        for k in b.keys {
+            let Rule::Set { fix, absent_safe, .. } = k.rule else {
+                unreachable!()
+            };
+            assert_eq!(fix, None, "{}", k.name);
+            assert!(absent_safe, "{}", k.name);
+            assert!(k.path.starts_with("HKLM:\\SOFTWARE\\Policies\\"), "{}", k.name);
+        }
+        // Absent and "on" values are protected; only an explicit 0 is repaired.
+        assert!(!b.any_unsafe(&items(b, &[None, None, None])));
+        assert!(!b.any_unsafe(&items(b, &[Some(1), Some(2), Some(1)])));
+        assert!(b.any_unsafe(&items(b, &[Some(0), None, None])));
+        assert!(b.any_unsafe(&items(b, &[None, Some(0), None])));
+        assert!(b.any_unsafe(&items(b, &[None, None, Some(0)])));
+        // Chrome's "standard" and "enhanced" levels stay; only 0 goes.
+        assert_eq!(
+            b.derive_target(&items(b, &[Some(0), Some(2), Some(0)])).unwrap(),
+            items(b, &[None, Some(2), None])
+        );
+        assert!(b.validate(&items(b, &[Some(3), None, None])).is_err());
+        // Groups of other policy values are left alone: the gate lists browser areas only.
+        assert!(b.gate.areas.contains(&"Edge"));
+        // A browser enrolled in cloud management belongs to an organization.
+        assert!(b.gate.policy_values.contains(&(CHROME_POLICY, "CloudManagementEnrollmentToken")));
+        assert!(b.gate.policy_values.contains(&(EDGE_POLICY, "EdgeManagementEnrollmentToken")));
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::app::tools::{
 };
 use crate::broker;
 use crate::gui::widgets::anim::{self, Clock};
-use crate::gui::{blocking, blocking_stream, Ctx, Message};
+use crate::gui::{blocking, blocking_stream, Ctx, Message, Tone};
 use iced::{Subscription, Task};
 use secblitz::actions;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,10 +28,13 @@ pub use view::{modal, view};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
     Scan,
+    RemoveThreats,
     DefenderUpdate,
     Repair(RepairKind),
     InstallUpdates,
     Bitwarden,
+    /// Restart the PC to finish installing updates.
+    Restart,
 }
 
 /// Windows Settings pages reachable from the shortcut list.
@@ -65,6 +68,7 @@ impl Shortcut {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
     Scan,
+    Threats,
     Defender,
     Repair,
     Updates,
@@ -83,6 +87,8 @@ pub enum Msg {
     CloseSheet,
     Confirm,
     ScanDone(Result<(), String>),
+    ThreatsDone(Result<actions::ThreatRemoval, String>),
+    ClearThreats,
     DefenderDone(Result<(), String>),
     ClearScan,
     ClearDefender,
@@ -96,6 +102,9 @@ pub enum Msg {
     ClearUpdates,
     PickTips(TipProfile),
     Tips(Box<TipsReport>),
+    /// The tips list read again quietly after a removal, so it stops
+    /// reporting what was just removed.
+    TipsRefreshed(Box<TipsReport>),
     TipChoice(TipProfile),
     NewPassword,
     CopyPassword,
@@ -112,6 +121,8 @@ pub enum Msg {
     /// Open the Windows page a health tip points to.
     OpenAction(actions::Action),
     OpenSecurity,
+    /// The restart request was answered: an error means nothing was restarted.
+    RestartDone(Result<(), String>),
     ToggleDetail(Detail),
     Personal(personal::Msg),
 }
@@ -193,6 +204,7 @@ pub struct Password {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
     Scan,
+    Threats,
     Defender,
     Repair,
     Updates,
@@ -206,6 +218,7 @@ const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 pub struct State {
     sheet: Option<Sheet>,
     scan: Run<Result<(), String>>,
+    threats: Run<Result<actions::ThreatRemoval, String>>,
     defender: Run<Result<(), String>>,
     repair: Repair,
     updates: Updates,
@@ -253,6 +266,7 @@ impl Default for State {
         Self {
             sheet: None,
             scan: Run::Idle,
+            threats: Run::Idle,
             defender: Run::Idle,
             repair: Repair::Idle,
             updates: Updates::Idle,
@@ -320,7 +334,12 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Ask(sheet) => {
-            let changes_pc = matches!(sheet, Sheet::Repair(_) | Sheet::InstallUpdates);
+            // A restart would cut a running fix, repair or update short, and
+            // a threat removal must not run alongside a fix or undo.
+            let changes_pc = matches!(
+                sheet,
+                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart | Sheet::RemoveThreats
+            );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
             if !blocked {
                 state.sheet = Some(sheet);
@@ -342,6 +361,36 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::ScanDone(r) => {
             state.scan = Run::Done(r);
             state.finish(Slot::Scan);
+            Task::none()
+        }
+        Msg::ThreatsDone(r) => {
+            ctx.busy = false;
+            let changed = r
+                .as_ref()
+                .is_ok_and(|t| crate::app::tools::threats_result(t) != crate::app::tools::ThreatsResult::Stuck);
+            state.threats = Run::Done(r);
+            state.finish(Slot::Threats);
+            // Look again so the tip no longer says "something harmful" for
+            // what was just removed.
+            match (&state.tips, changed) {
+                (Tips::Done(shown), true) => {
+                    let profile = shown.profile;
+                    Task::perform(blocking(move || logic::run_tips(profile)), |r| {
+                        tools(Msg::TipsRefreshed(Box::new(r)))
+                    })
+                }
+                _ => Task::none(),
+            }
+        }
+        Msg::TipsRefreshed(report) => {
+            if matches!(state.tips, Tips::Done(_)) {
+                state.tips = Tips::Done(report);
+            }
+            Task::none()
+        }
+        Msg::ClearThreats => {
+            state.threats = Run::Idle;
+            state.close_detail(Detail::Threats);
             Task::none()
         }
         Msg::DefenderDone(r) => {
@@ -566,6 +615,16 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             None => Task::none(),
         },
         Msg::OpenSecurity => super::fixes::open_page(ctx, crate::guide::Page::WindowsSecurity),
+        Msg::RestartDone(result) => match result {
+            Ok(()) => Task::done(Message::Toast(
+                ctx.t("Restarting now. Programs with unsaved work will ask you first."),
+                Tone::Good,
+            )),
+            Err(_) => Task::done(Message::Toast(
+                ctx.t("We couldn't restart your PC. Restart it from the Start menu instead."),
+                Tone::Warn,
+            )),
+        },
         Msg::Personal(msg) => personal::update(&mut state.personal, msg, ctx),
         Msg::ToggleDetail(detail) => {
             if state.open_details.contains(&detail) {
@@ -618,6 +677,7 @@ impl State {
     /// A row shows the working spinner: a job of unknown length is running.
     fn spinning(&self) -> bool {
         matches!(self.scan, Run::Working)
+            || matches!(self.threats, Run::Working)
             || matches!(self.defender, Run::Working)
             || matches!(self.bitwarden, Run::Working)
             || matches!(self.updates, Updates::Looking)
@@ -643,6 +703,10 @@ impl State {
 
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
     match sheet {
+        Sheet::Restart => Task::perform(
+            blocking(|| actions::restart_for_updates().map_err(plain)),
+            |r| tools(Msg::RestartDone(r)),
+        ),
         Sheet::Scan => {
             state.scan = Run::Working;
             Task::perform(
@@ -652,6 +716,19 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                         .map_err(plain)
                 }),
                 |r| tools(Msg::ScanDone(r)),
+            )
+        }
+        Sheet::RemoveThreats => {
+            // Asked while free, but a fix may have started since.
+            if ctx.busy || !state.can_start_change() {
+                return Task::none();
+            }
+            // Holds off fixes, undo and closing the window until it ends.
+            ctx.busy = true;
+            state.threats = Run::Working;
+            Task::perform(
+                blocking(|| actions::remove_threats().map_err(plain)),
+                |r| tools(Msg::ThreatsDone(r)),
             )
         }
         Sheet::DefenderUpdate => {

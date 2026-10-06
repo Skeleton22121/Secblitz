@@ -1,15 +1,62 @@
 use super::Target;
 use anyhow::{ensure, Result};
+use std::mem::zeroed;
 use std::ptr::{null, null_mut};
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-use windows_sys::Win32::Security::{
-    GetTokenInformation, IsWellKnownSid, TokenElevationType, TokenElevationTypeFull, TokenUser,
-    WinLocalServiceSid, WinLocalSystemSid, WinNetworkServiceSid, TOKEN_ELEVATION_TYPE,
-    TOKEN_QUERY, TOKEN_USER,
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_NOT_ALL_ASSIGNED, HANDLE, LUID,
 };
+use windows_sys::Win32::Security::{
+    AdjustTokenPrivileges, GetTokenInformation, IsWellKnownSid, LookupPrivilegeValueW,
+    TokenElevationType, TokenElevationTypeFull, TokenUser, WinLocalServiceSid,
+    WinLocalSystemSid, WinNetworkServiceSid, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
+    TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION_TYPE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+};
+use windows_sys::Win32::System::Shutdown::InitiateShutdownW;
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+/// Restart the PC the way Windows Update would: a planned "Operating System:
+/// Security fix" restart through the documented shutdown API (no console, no
+/// child process). Open programs are asked to close and may stop it, so
+/// unsaved work is never thrown away.
+pub(super) fn restart_for_updates() -> Result<()> {
+    unsafe {
+        let mut token: HANDLE = null_mut();
+        ensure!(
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                &mut token
+            ) != 0,
+            "Windows would not let us restart this PC. Restart it from the Start menu instead."
+        );
+        let name: Vec<u16> = "SeShutdownPrivilege".encode_utf16().chain(Some(0)).collect();
+        let mut luid: LUID = zeroed();
+        let enabled = LookupPrivilegeValueW(null(), name.as_ptr(), &mut luid) != 0 && {
+            let privileges = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: SE_PRIVILEGE_ENABLED,
+                }],
+            };
+            AdjustTokenPrivileges(token, 0, &privileges, 0, null_mut(), null_mut()) != 0
+                && GetLastError() != ERROR_NOT_ALL_ASSIGNED
+        };
+        CloseHandle(token);
+        ensure!(enabled, "Windows would not let us restart this PC. Restart it from the Start menu instead.");
+        let code = InitiateShutdownW(
+            null(),
+            null(),
+            0,
+            super::RESTART_FLAGS,
+            super::RESTART_REASON,
+        );
+        ensure!(code == 0, "Windows could not start the restart. Restart it from the Start menu instead.");
+    }
+    Ok(())
+}
 
 /// True only for the elevated half of a split (UAC) administrator token.
 /// A full-token administrator (built-in Administrator, or UAC off) reports

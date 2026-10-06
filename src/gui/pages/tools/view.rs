@@ -16,7 +16,7 @@ use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
-use crate::gui::{Ctx, Message};
+use crate::gui::{Ctx, Message, Page};
 use iced::widget::{column, container, row, space, text};
 use iced::{Alignment, Element, Font, Length};
 
@@ -48,7 +48,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ctx.t("Virus protection"),
             None,
             None,
-            vec![scan_row(state, ctx), defender_row(state, ctx)],
+            virus_rows(state, ctx),
         ),
         widgets::group(
             p,
@@ -273,6 +273,91 @@ fn busy_hint(ctx: &Ctx) -> String {
 // ---------------------------------------------------------------------------
 // Virus protection
 // ---------------------------------------------------------------------------
+
+/// Scan and update, plus the result of removing found threats while there is one.
+fn virus_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
+    let mut rows = vec![scan_row(state, ctx), defender_row(state, ctx)];
+    if !matches!(state.threats, Run::Idle) {
+        rows.insert(0, threats_row(state, ctx));
+    }
+    rows
+}
+
+/// Removing found threats: shown only after the person chose it from a tip.
+fn threats_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    let p = ctx.palette;
+    let title = ctx.t("Remove found threats");
+    let again = |label: String| entry(Icon::Refresh, label, Msg::ClearThreats);
+    match &state.threats {
+        Run::Idle => space::horizontal().width(0).into(),
+        Run::Working => busy_row(
+            state,
+            p,
+            Icon::Bug,
+            title,
+            ctx.t("Removing what Windows Security found…"),
+        ),
+        Run::Done(Ok(result)) => {
+            let (tone, headline, sub) = match logic::threats_result(result) {
+                logic::ThreatsResult::Nothing => (
+                    Tone::Good,
+                    ctx.t("Nothing to remove"),
+                    ctx.t("Windows Security reports no active threats right now."),
+                ),
+                logic::ThreatsResult::Removed => (
+                    Tone::Good,
+                    ctx.t("Harmful files removed"),
+                    ctx.t("{n} removed. Windows Security usually keeps them in quarantine, where you can restore one if you need to.")
+                        .replace("{n}", &result.removed.to_string()),
+                ),
+                logic::ThreatsResult::Partly => (
+                    Tone::Warn,
+                    ctx.t("Some are still there"),
+                    ctx.t("{removed} removed, {left} still need you. Open Windows Security to finish.")
+                        .replace("{removed}", &result.removed.to_string())
+                        .replace("{left}", &result.left.to_string()),
+                ),
+                logic::ThreatsResult::Stuck => (
+                    Tone::Warn,
+                    ctx.t("We couldn't remove them"),
+                    ctx.t("Open Windows Security and follow the steps there."),
+                ),
+            };
+            finished(
+                state,
+                ctx,
+                Outcome {
+                    slot: Slot::Threats,
+                    icon: Icon::Bug,
+                    tone,
+                    title: headline,
+                    sub: Some(sub),
+                    menu: open_security_entry(ctx)
+                        .into_iter()
+                        .chain([entry(Icon::Check, ctx.t("Done"), Msg::ClearThreats)])
+                        .collect(),
+                    raw: None,
+                },
+            )
+        }
+        Run::Done(Err(raw)) => finished(
+            state,
+            ctx,
+            Outcome {
+                slot: Slot::Threats,
+                icon: Icon::Bug,
+                tone: Tone::Warn,
+                title: ctx.t("We couldn't remove them"),
+                sub: Some(ctx.t("Open Windows Security and follow the steps there.")),
+                menu: open_security_entry(ctx)
+                    .into_iter()
+                    .chain([again(ctx.t("Done"))])
+                    .collect(),
+                raw: Some((Detail::Threats, logic::friendly_why(raw).to_owned())),
+            },
+        ),
+    }
+}
 
 fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
@@ -809,12 +894,13 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     )];
     if let Tips::Done(report) = &state.tips {
         let scanning = matches!(state.scan, Run::Working);
+        let threats_busy = matches!(state.threats, Run::Working);
         let (needs, fine): (Vec<&logic::Tip>, Vec<&logic::Tip>) = report
             .tips
             .iter()
             .partition(|tip| tip.state != TipState::Good);
         let rows = |tips: &[&logic::Tip]| -> El<'a> {
-            column(tips.iter().map(|tip| tip_row(ctx, tip, scanning)))
+            column(tips.iter().map(|tip| tip_row(ctx, tip, scanning, threats_busy)))
                 .spacing(theme::S1)
                 .width(Length::Fill)
                 .into()
@@ -850,33 +936,64 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     out
 }
 
-fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
+fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) -> El<'a> {
     let p = ctx.palette;
+    // A fix is only promised when the latest Protection check offers it. A
+    // Not offered control says why on Protection; otherwise the manual steps.
+    let fix = logic::tip_fix(tip, ctx.report.as_deref(), &ctx.catalog.available);
+    let (advice, guide) = logic::tip_words(tip, fix);
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
-        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
+        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
-    // One compact action: the usual scan (after its own confirmation), or the
-    // Windows page that helps. Nothing starts without the person's say-so.
-    let action: El<'a> = match tip.open {
-        _ if tip.state != TipState::Look => space::horizontal().width(0).into(),
-        _ if tip.fix => widgets::action(
+    // One compact action: the fix review, the usual scan (after its own
+    // confirmation), or the Windows page that helps. Nothing starts without
+    // the person's say-so.
+    let action: El<'a> = match logic::tip_action(tip, fix, ctx.broker.is_some()) {
+        // Opens the same review sheet as Protection; nothing changes until
+        // the person agrees there. Same conditions as Protection's button.
+        logic::TipAction::ReviewFix(id) => widgets::action(
             p,
             ButtonKind::Secondary,
-            ctx.t("Go to Protection"),
+            ctx.t("Review fix"),
+            Some(Icon::ShieldCheck),
+            (!ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none())
+                .then_some(Message::ReviewFixes(vec![id.to_owned()])),
+        ),
+        logic::TipAction::SeeWhy => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("See why"),
             None,
-            Some(Message::Navigate(crate::gui::Page::Fixes)),
+            Some(Message::Navigate(Page::Fixes)),
+        ),
+        // No Protection check yet: run one; the tip then says what it found.
+        logic::TipAction::CheckNow => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Check now"),
+            Some(Icon::Refresh),
+            (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
+        ),
+        // A restart that finishes updates, after its own confirmation.
+        logic::TipAction::RestartNow => {
+            secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart)))
+        }
+        // Found threats go after their own confirmation sheet, never while
+        // a fix or undo runs.
+        logic::TipAction::RemoveThreats => secondary(
+            p,
+            ctx.t("Remove"),
+            (!threats_busy && !ctx.busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
         ),
         // The in-app scan stays reachable even when steps are shown below.
-        _ if tip.scan => secondary(
+        logic::TipAction::Scan => secondary(
             p,
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
-        // A guide shows its own button under the steps.
-        _ if tip.guide.is_some() => space::horizontal().width(0).into(),
-        Some(open) if ctx.broker.is_some() => {
+        logic::TipAction::Open(open) => {
             // The button is named after the page it opens.
             let label = crate::guide::Page::from_action(open)
                 .map_or("Open", crate::guide::Page::button);
@@ -888,7 +1005,8 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
                 Some(tools(Msg::OpenAction(open))),
             )
         }
-        _ => space::horizontal().width(0).into(),
+        // A guide shows its own button under the steps.
+        logic::TipAction::Steps | logic::TipAction::None => space::horizontal().width(0).into(),
     };
     let head = widgets::row_item_tinted(
         p,
@@ -900,7 +1018,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
         None,
     );
     // The steps need no launcher; only the buttons that open pages do.
-    let head = match (tip.guide, tip.state) {
+    let head = match (guide, tip.state) {
         (Some(g), TipState::Look) => column![
             head,
             crate::gui::pages::fixes::guide_block(
@@ -1184,6 +1302,16 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             ],
             ctx.t("Start scan"),
         ),
+        Sheet::RemoveThreats => (
+            Icon::Bug,
+            ctx.t("Remove the harmful files?"),
+            vec![
+                ctx.t("Windows Security will remove the harmful files it has found on this PC."),
+                ctx.t("It usually keeps what it removes in quarantine. If it was a mistake, you can restore an item in Windows Security."),
+                ctx.t("You can keep using your PC while it works."),
+            ],
+            ctx.t("Remove them"),
+        ),
         Sheet::DefenderUpdate => (
             Icon::Download,
             ctx.t("Update virus protection?"),
@@ -1229,6 +1357,15 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                 ctx.t("Install now"),
             )
         }
+        Sheet::Restart => (
+            Icon::Restart,
+            ctx.t("Restart your PC now?"),
+            vec![
+                ctx.t("Your PC restarts to finish installing updates."),
+                ctx.t("Save your work first. Programs with unsaved work will ask you before they close."),
+            ],
+            ctx.t("Restart now"),
+        ),
         Sheet::Bitwarden => (
             Icon::Lock,
             ctx.t("Install Bitwarden?"),

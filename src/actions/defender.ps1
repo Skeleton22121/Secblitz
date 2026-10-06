@@ -1,7 +1,7 @@
 # Fixed support operations only. Policy helpers and trusted module bootstrap
 # come from the compiled backend, with its dispatcher excluded by Rust.
 try {
-    if ($supportId -cnotin @('defender_update','defender_quickscan')) { throw 'Unknown support operation' }
+    if ($supportId -cnotin @('defender_update','defender_quickscan','defender_remove_threats')) { throw 'Unknown support operation' }
     Load 'CimCmdlets'
     $os = Get-CimInstance Win32_OperatingSystem
     if ($os.ProductType -ne 1 -or [int]$os.BuildNumber -lt 10240 -or ![Environment]::Is64BitProcess) { throw 'Unsupported Windows client capability' }
@@ -23,11 +23,28 @@ try {
     if ($s.AMServiceEnabled -isnot [bool] -or $s.AntivirusEnabled -isnot [bool] -or !$s.AMServiceEnabled -or !$s.AntivirusEnabled -or $s.AMRunningMode -cne 'Normal') { throw 'Defender is not confirmed active in Normal mode' }
     # Tamper protection is never disabled or altered; supported update/scan
     # operations do not change preferences. No source override or executable download.
+    $reply = @{ok=$true}
     switch -CaseSensitive ($supportId) {
         'defender_update' { $null = Update-MpSignature -ErrorAction Stop }
         'defender_quickscan' { $null = Start-MpScan -ScanType QuickScan -ErrorAction Stop }
+        'defender_remove_threats' {
+            # Defender's own remediation, for the threats it already reports as
+            # active. It moves what it removes to quarantine, where Windows
+            # Security can restore it. Counts come from Defender, before and after.
+            $found = @(Get-MpThreat -ErrorAction Stop | Where-Object { $_.IsActive -eq $true }).Count
+            $left = $found
+            if ($found -gt 0) {
+                Remove-MpThreat -ErrorAction Stop
+                for ($attempt = 0; $attempt -lt 15; $attempt++) {
+                    $left = @(Get-MpThreat -ErrorAction Stop | Where-Object { $_.IsActive -eq $true }).Count
+                    if ($left -eq 0) { break }
+                    Start-Sleep -Seconds 2
+                }
+            }
+            $reply = @{ok=$true; found=[int]$found; removed=[int][Math]::Max(0, $found - $left); left=[int]$left}
+        }
         default { throw 'Unknown support operation' }
     }
     # This acknowledges command return, not scan completion or threat absence.
-    Emit @{ok=$true}
+    Emit $reply
 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }

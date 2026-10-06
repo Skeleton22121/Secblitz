@@ -64,6 +64,9 @@ pub struct Outcome {
     pub effective: Option<EffectiveFirewall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
+    /// The exact items a fix would change (plain names, display only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<crate::model::ItemLabel>,
 }
 
 /// Downcast an Engine::open/operation error to this type to offer diagnostics.
@@ -1368,6 +1371,7 @@ impl Engine {
         Outcome {
             effective: observation.effective,
             authority: observation.authority,
+            items: crate::model::ItemLabel::clean(&observation.labels),
             ..Self::outcome(c, status, detail)
         }
     }
@@ -1382,13 +1386,64 @@ impl Engine {
     fn findings(&mut self) -> Vec<Finding> {
         // Findings are assessment, not mutation acknowledgment. A failed final
         // transport/probe must not discard already durable operation outcomes.
-        self.backend.findings().unwrap_or_else(|e| {
+        let mut found = self.backend.findings().unwrap_or_else(|e| {
             vec![Finding {
                 title: "Assessment unavailable".into(),
                 status: "unknown".into(),
                 detail: format!("Findings could not be collected: {e:#}"),
             }]
-        })
+        });
+        self.keep_own_core_protection_findings(&mut found);
+        found
+    }
+
+    /// "Not running" notes for memory integrity and stack protection are only
+    /// about a change Secblitz made: the journal must hold that change, not
+    /// yet undone, and the PC must have restarted since it was written. The
+    /// note says whether undoing that change is the next undo, so the Undo
+    /// button never reverts something else. Anything unreadable drops the note.
+    fn keep_own_core_protection_findings(&self, found: &mut Vec<Finding>) {
+        if !found
+            .iter()
+            .any(|f| crate::vbs::finding_control(&f.title).is_some())
+        {
+            return;
+        }
+        let transactions = self.load().unwrap_or_default();
+        let newest = transactions.iter().rev().find(|t| !t.reverted);
+        found.retain_mut(|f| {
+            let Some(id) = crate::vbs::finding_control(&f.title) else {
+                return true;
+            };
+            let Some(boot) = crate::vbs::boot_from_detail(&f.detail) else {
+                return false;
+            };
+            let Some(tx) = transactions.iter().rev().find(|t| {
+                !t.reverted
+                    && t.sealed
+                    && !t.reverting
+                    && t.entries
+                        .iter()
+                        .any(|e| e.id == id && e.state == State::Applied)
+            }) else {
+                return false;
+            };
+            let written = tx
+                .file
+                .as_ref()
+                .and_then(|file| file.metadata().ok())
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|age| i64::try_from(age.as_secs()).ok());
+            if !crate::vbs::restarted_since(written, Some(boot)) {
+                return false;
+            }
+            let own_batch = tx.entries.iter().all(|e| e.id == id);
+            if own_batch && newest.is_some_and(|n| n.sequence == tx.sequence) {
+                f.detail = format!("{}. {}", crate::vbs::UNDO_READY, f.detail);
+            }
+            true
+        });
     }
 
     fn journal_finding(tx: &Transaction) -> Finding {
@@ -1804,8 +1859,8 @@ impl Engine {
             let c = self.control(&id)?.clone();
             let expected = target_for(&id, &before)?;
             let observation = self.observe(&id)?;
-            let before_eff = scope(&id, &before, Some(&observation.value));
-            let expected_eff = scope(&id, &expected, Some(&observation.value));
+            let before_eff = recorded_scope(&id, &before, &observation.value);
+            let expected_eff = recorded_scope(&id, &expected, &observation.value);
             let seen = scope(&id, &observation.value, Some(&before_eff));
             let result = if seen == before_eff {
                 // Includes a prepared apply that never wrote, and a restore
@@ -1918,8 +1973,8 @@ impl Engine {
             let c = self.control(&entry.id)?.clone();
             let expected = target_for(&entry.id, &entry.before)?;
             let observation = self.observe(&entry.id)?;
-            let before_eff = scope(&entry.id, &entry.before, Some(&observation.value));
-            let expected_eff = scope(&entry.id, &expected, Some(&observation.value));
+            let before_eff = recorded_scope(&entry.id, &entry.before, &observation.value);
+            let expected_eff = recorded_scope(&entry.id, &expected, &observation.value);
             let seen = scope(&entry.id, &observation.value, Some(&before_eff));
             if seen == before_eff {
                 continue;
@@ -2001,6 +2056,17 @@ fn scope(id: &str, observed: &Value, template: Option<&Value>) -> Value {
     match (crate::hardening::spec(id), template) {
         (Some(spec), Some(template)) => spec.view(observed, template),
         _ => observed.clone(),
+    }
+}
+
+/// A recorded (journaled or derived) state, seen through what exists now.
+/// Controls that compare their recorded items exactly keep every one of them,
+/// including items that are no longer listed (switched-off accounts, removed
+/// share entries); the others only keep what still exists.
+fn recorded_scope(id: &str, recorded: &Value, observed: &Value) -> Value {
+    match crate::hardening::spec(id) {
+        Some(spec) if spec.exact_recorded() => recorded.clone(),
+        _ => scope(id, recorded, Some(observed)),
     }
 }
 
@@ -2717,6 +2783,49 @@ mod tests {
     }
 
     #[test]
+    fn not_running_notes_for_core_protections_are_only_about_our_own_undoable_change() {
+        let id = crate::vbs::MEMORY_INTEGRITY;
+        let note = |boot: i64| Finding {
+            title: crate::vbs::MEMORY_INTEGRITY_NOT_RUNNING.into(),
+            status: "attention".into(),
+            detail: format!("Not running. {}{boot}.", crate::vbs::BOOT_PREFIX),
+        };
+        let later = i64::MAX / 4;
+        let (dir, state, mut e) = fixture(id, json!({"items": {"Enabled": null, "WasEnabledBy": null}}));
+        state.borrow_mut().extra_findings = vec![note(later)];
+        // Nothing of ours in the journal: somebody else turned it on.
+        assert!(e.findings().is_empty());
+        e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+        // Written after the start-up time: still waiting for the first restart.
+        state.borrow_mut().extra_findings = vec![note(0)];
+        assert!(e.findings().is_empty());
+        // Restarted since: the note stays, and undo is its own next undo.
+        state.borrow_mut().extra_findings = vec![note(later)];
+        let found = e.findings();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].detail.starts_with(crate::vbs::UNDO_READY));
+        // A note without a start-up time is dropped.
+        state.borrow_mut().extra_findings = vec![Finding {
+            detail: "Not running.".into(),
+            ..note(later)
+        }];
+        assert!(e.findings().is_empty());
+        // Another fix made after it: the note stays but never offers a blind undo.
+        drop(e);
+        state.borrow_mut().values.insert(DEFENDER.into(), json!(true));
+        let mut e = reopen(&dir, &state, &[id, DEFENDER]);
+        e.apply_selected(&[DEFENDER.into()], |_, _| {}).unwrap();
+        state.borrow_mut().extra_findings = vec![note(later)];
+        let found = e.findings();
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].detail.starts_with(crate::vbs::UNDO_READY));
+        // Undone: nothing left to say.
+        e.revert(|_, _| {}).unwrap();
+        e.revert(|_, _| {}).unwrap();
+        assert!(e.findings().is_empty());
+    }
+
+    #[test]
     fn selected_exact_acl_conflict_blocks_entire_mixed_batch() {
         let id = "permissions.service.bits";
         let before = acl_snapshot(0x0002_0012, 1);
@@ -2910,6 +3019,7 @@ mod tests {
         readiness: Readiness,
         readiness_count: usize,
         short_batch: bool,
+        extra_findings: Vec<Finding>,
     }
     struct Fake {
         state: Rc<RefCell<FakeState>>,
@@ -3011,6 +3121,7 @@ mod tests {
                 reason: reason.into(),
                 effective,
                 authority,
+                ..Observation::default()
             })
         }
         fn write(&mut self, id: &str, value: &Value) -> Result<()> {
@@ -3036,7 +3147,7 @@ mod tests {
             if self.state.borrow().fail_findings {
                 bail!("Simulated findings transport failure");
             }
-            Ok(Vec::new())
+            Ok(self.state.borrow().extra_findings.clone())
         }
         fn readiness(&mut self) -> Readiness {
             let mut state = self.state.borrow_mut();
