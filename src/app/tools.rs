@@ -1257,9 +1257,13 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
     })
 }
 
-/// Which existing Settings page helps with this check (no new links are added here).
+/// Which Settings page helps with this check (a fixed, allowlisted page).
 pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     use secblitz::actions::Action;
+    // A step-by-step guide names the exact page it starts from.
+    if let Some(g) = crate::guide::guide(rule_id) {
+        return Some(g.page.action());
+    }
     match rule_id {
         "os.feature_release_support"
         | "boot.secure_boot_certs"
@@ -1276,6 +1280,17 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         "accounts.hello_configured" => Some(Action::OpenSignInSettings),
         _ => None,
     }
+}
+
+/// The tip line for a check that Secblitz can fix itself: the fix lives on the
+/// Protection page, under "Needs your attention", and is never started here.
+pub const TIP_FIX: &str =
+    "Secblitz can help with this. Go to Protection to fix it or see the steps.";
+
+/// True when the check is also a fix on the Protection page. A check and its
+/// fix share one id, so the tip offers the fix instead of manual advice.
+pub fn rule_fix(rule_id: &str) -> bool {
+    secblitz::hardening::is_hardening(rule_id)
 }
 
 /// Checks where the Tools page can offer its existing "scan for viruses" job
@@ -1300,6 +1315,11 @@ pub struct Tip {
     pub open: Option<secblitz::actions::Action>,
     /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
+    /// Numbered plain steps and the page they start from, for things only the
+    /// person can do in Windows.
+    pub guide: Option<&'static crate::guide::Guide>,
+    /// Secblitz can fix it: the tip points to the Protection page.
+    pub fix: bool,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1356,11 +1376,17 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             technical.push_str(&format!("  {:?}: {}\n", a.status, a.detail));
         }
         // The first check that needs a look decides the exact next step.
-        let first = probe
+        let first_rule = probe
             .assessments
             .iter()
             .filter(|a| a.status == diag::Status::Attention)
-            .find_map(|a| rule_advice(&a.rule.id).map(|text| (text, rule_open(&a.rule.id))));
+            .find(|a| rule_advice(&a.rule.id).is_some())
+            .map(|a| a.rule.id.as_str());
+        let fix = first_rule.is_some_and(rule_fix);
+        let guide = first_rule.filter(|_| !fix).and_then(crate::guide::guide);
+        let first = first_rule.and_then(|id| {
+            rule_advice(id).map(|text| (if fix { TIP_FIX } else { text }, rule_open(id)))
+        });
         let scan = probe
             .assessments
             .iter()
@@ -1385,6 +1411,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             },
             open: match (look, first.and_then(|(_, open)| open), id) {
                 (false, _, _) => None,
+                (true, _, _) if fix => None,
                 (true, Some(open), _) => Some(open),
                 (true, None, diag::ProbeId::UpdateCache | diag::ProbeId::UpdateHistory) => {
                     Some(secblitz::actions::Action::OpenWindowsUpdate)
@@ -1392,6 +1419,8 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, None, _) => None,
             },
             scan: look && scan,
+            guide: if look { guide } else { None },
+            fix: look && fix,
         });
     }
     let rank = |s: TipState| match s {
@@ -1953,7 +1982,7 @@ mod tests {
         );
         assert_eq!(
             rule_open("defender.threats"),
-            Some(A::OpenProtectionHistory)
+            Some(A::OpenProtectionHistoryList)
         );
         assert_eq!(
             rule_open("defender.scan_age"),
@@ -2006,6 +2035,44 @@ mod tests {
             tip.open,
             Some(secblitz::actions::Action::OpenTamperProtection)
         );
+    }
+
+    #[test]
+    fn a_tip_for_something_only_the_person_can_do_carries_numbered_steps() {
+        let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::DefenderProtection)
+            .unwrap();
+        probe.status = diag::Status::Attention;
+        probe.assessments = vec![diag::Assessment {
+            status: diag::Status::Attention,
+            detail: String::new(),
+            rule: diag::RuleReference {
+                id: "defender.tamper_protection".into(),
+                revision: 1,
+                mapping_version: String::new(),
+                documentation: vec![],
+            },
+        }];
+        let tips = summarize_tips(TipProfile::Everyday, &report);
+        let tip = tips
+            .tips
+            .iter()
+            .find(|t| t.title == tip_title(diag::ProbeId::DefenderProtection))
+            .unwrap();
+        let guide = tip.guide.expect("guide");
+        assert_eq!(guide.page.action(), tip.open.unwrap());
+        assert!(!tip.fix);
+        // Every rule with a guide opens the page the guide starts from.
+        for rule in ["accounts.find_my_device", "net.wifi_security", "vbs.kernel_stack_protection"] {
+            let g = crate::guide::guide(rule).expect(rule);
+            assert_eq!(rule_open(rule), Some(g.page.action()), "{rule}");
+        }
+        // A check that is also a fix points to Protection, not to manual advice.
+        assert!(rule_fix("update.paused"));
+        assert!(!rule_fix("defender.tamper_protection"));
     }
 
     #[test]

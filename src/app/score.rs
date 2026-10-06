@@ -138,6 +138,17 @@ pub enum ToCheck<'a> {
     Finding(&'a secblitz::model::Finding),
 }
 
+/// A finding whose own control row carries it: only when that control can be
+/// fixed, needs a choice or is already protected. A control that could not be
+/// checked or is managed elsewhere counts for nothing, so the finding stays.
+pub fn superseded(report: &Report, f: &secblitz::model::Finding) -> bool {
+    crate::advice::control_for_finding(&f.title).is_some_and(|id| {
+        report.results.iter().any(|r| {
+            r.id == id && matches!(classify(r), Class::Fixable | Class::Review | Class::Protected)
+        })
+    })
+}
+
 /// What the person should look at, in report order: control results that need
 /// a fix, a choice or a step, then findings that are actual tips. Protected,
 /// informational, owner-managed and unverifiable items are never included.
@@ -151,6 +162,7 @@ pub fn to_check(report: &Report) -> Vec<ToCheck<'_>> {
     let findings = report
         .findings
         .iter()
+        .filter(|f| !superseded(report, f))
         .filter(|f| matches!(classify_finding(f), Class::Fixable | Class::Review))
         .map(ToCheck::Finding);
     controls.chain(findings).collect()
@@ -251,6 +263,44 @@ mod tests {
             results,
             ..Report::default()
         }
+    }
+
+    #[test]
+    fn a_finding_is_replaced_by_its_own_fix_row() {
+        let finding = secblitz::model::Finding {
+            title: "SMB1".into(),
+            status: "attention".into(),
+            detail: String::new(),
+        };
+        let mut report = rep(vec![]);
+        report.findings.push(finding.clone());
+        assert!(!superseded(&report, &finding), "no fix in this report yet");
+        assert_eq!(to_check_count(&report), 1);
+        report.results.push(out("smb1.disabled", "compliant"));
+        assert!(superseded(&report, &finding));
+        let other = secblitz::model::Finding {
+            title: "Secure Boot".into(),
+            ..finding
+        };
+        assert!(!superseded(&report, &other));
+        assert!(to_check_ids(&report).iter().all(|id| !id.starts_with("finding.")));
+    }
+
+    #[test]
+    fn a_finding_stays_when_its_control_could_not_be_checked_or_is_managed() {
+        let finding = secblitz::model::Finding {
+            title: "SMB1".into(),
+            status: "attention".into(),
+            detail: String::new(),
+        };
+        let mut report = rep(vec![out("smb1.disabled", "unknown")]);
+        report.findings.push(finding.clone());
+        assert_eq!(classify(&report.results[0]), Class::Unknown);
+        assert!(!superseded(&report, &finding));
+        let mut done = rep(vec![out("smb1.disabled", "compliant")]);
+        done.findings.push(finding.clone());
+        assert_eq!(classify(&done.results[0]), Class::Protected);
+        assert!(superseded(&done, &finding));
     }
 
     /// Protection lists every fix candidate: counted ones under "Needs your

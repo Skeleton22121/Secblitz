@@ -1,5 +1,16 @@
 //! Presentation-only advice. These are translation source keys, never commands
 //! or mutation authority. Only a control outcome of `attention` offers a fix.
+/// The control that now fixes what an older finding only reported.
+pub fn control_for_finding(title: &str) -> Option<&'static str> {
+    Some(match title {
+        "Memory integrity" => "vbs.memory_integrity",
+        "Automatic logon" => "accounts.autologon",
+        "Remote Desktop" => "remote_desktop.disabled",
+        "SMB1" => "smb1.disabled",
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NextStep {
     None,
