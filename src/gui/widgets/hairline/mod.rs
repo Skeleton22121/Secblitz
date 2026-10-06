@@ -74,6 +74,7 @@
 //! The test at the bottom of this file is a complete tiny drawing.
 pub mod glyph;
 pub mod live;
+pub mod magnifier;
 pub mod motion;
 pub mod parallax;
 pub mod parts;

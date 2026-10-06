@@ -5,9 +5,9 @@
 //! attention" is open, followed by the selectable "Privacy extras" (optional,
 //! never counted); "Worth a look" is a plain group; "Can't check" and
 //! "Protected" are collapsibles. Secondary actions live in an overflow menu.
-//! While a check runs the page shows the compact check hero plus the status
-//! ticker. Row text is translated and built once per check result (`Cache`)
-//! so `view()` only assembles widgets.
+//! While a check runs the page shows the compact magnifying glass plus the
+//! status ticker. Row text is translated and built once per check result
+//! (`Cache`) so `view()` only assembles widgets.
 use crate::advice::{self, Group, NextStep};
 use crate::app::flow;
 use crate::app::score::{self, Class};
@@ -15,6 +15,8 @@ use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim;
+use crate::gui::widgets::hairline::magnifier::{self, Labels, Magnifier, Status};
+use crate::gui::widgets::hairline::Plate;
 use crate::gui::widgets::scan;
 use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
@@ -701,8 +703,8 @@ fn count_text(ctx: &Ctx, n: usize) -> String {
 
 // -------------------------------------------------------------------- view
 
-/// How far the running check is: (share done, subtitle, time since it began).
-fn check_status(state: &State, ctx: &Ctx) -> (f32, String, std::time::Duration) {
+/// How far the running check is: (share done, subtitle).
+fn check_status(ctx: &Ctx) -> (f32, String) {
     let done = ctx.checking.as_ref().map_or(0, |c| c.items.len());
     let total = ctx.catalog.available.len().max(done + 1);
     let ratio = (done as f32 / total as f32).min(0.96);
@@ -713,33 +715,43 @@ fn check_status(state: &State, ctx: &Ctx) -> (f32, String, std::time::Duration) 
     } else {
         ctx.t("This takes about a minute. Nothing is changed.")
     };
-    let elapsed = state
-        .scan
-        .map(|s| state.now.saturating_duration_since(s))
-        .unwrap_or_default();
-    (ratio, sub, elapsed)
+    (ratio, sub)
 }
 
-/// The first check: the radar, title, bar and ticker centred in the page.
+/// The magnifying glass for the running check, sitting on `plate`. Its lens
+/// follows the real progress when the total is known.
+fn check_art(state: &State, ctx: &Ctx, plate: Plate, ratio: f32) -> Magnifier {
+    Magnifier {
+        p: ctx.palette,
+        plate,
+        status: Status::Checking,
+        progress: (!ctx.catalog.available.is_empty()).then_some(ratio),
+        changed: state.scan.unwrap_or(state.now),
+        now: state.now,
+        labels: Labels::new(|s| ctx.t(s)),
+    }
+}
+
+/// The first check: the magnifying glass, title, bar and ticker centred in
+/// the page.
 fn first_check<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let (ratio, sub, elapsed) = check_status(state, ctx);
-    let screen = scan::checking_screen(
+    let (ratio, sub) = check_status(ctx);
+    scan::checking_screen(
         ctx.palette,
         ctx.t("Checking your PC"),
         sub,
         ratio,
+        check_art(state, ctx, Plate::Bg, ratio),
         &state.lines,
         state.now,
-        elapsed,
-    );
-    screen
+    )
 }
 
-/// Compact radar with the live status ticker, above the last results while
-/// a new check runs.
+/// Compact magnifying glass with the live status ticker, above the last
+/// results while a new check runs.
 fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
-    let (_, sub, elapsed) = check_status(state, ctx);
+    let (ratio, sub) = check_status(ctx);
     let live = anim::animating();
     let mut text = column![
         widgets::h2(p, ctx.t("Checking your PC")),
@@ -753,7 +765,7 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             .push(scan::status_ticker(p, &state.lines, state.now));
     }
     let content = row![
-        scan::check_hero(p, elapsed, scan::HERO),
+        check_art(state, ctx, Plate::Surface, ratio).view(magnifier::COMPACT),
         text,
     ]
     .spacing(theme::S6)
@@ -761,8 +773,8 @@ fn checking_region<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     widgets::region(p, content).into()
 }
 
-/// Frames while a check runs, for the radar and the ticker. Only asked for
-/// while the page is on screen.
+/// Frames while a check runs, for the ticker (the magnifying glass drives
+/// its own). Only asked for while the page is on screen.
 pub fn subscription(ctx: &Ctx) -> Subscription<Message> {
     if ctx.checking.is_some() && anim::animating() {
         iced::window::frames().map(|now| Message::Fixes(Msg::Frame(now)))
