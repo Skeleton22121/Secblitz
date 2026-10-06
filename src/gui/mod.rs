@@ -1128,7 +1128,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     application
         .window(iced::window::Settings {
             size: iced::Size::new(1100.0, 720.0),
-            min_size: Some(iced::Size::new(880.0, 600.0)),
+            min_size: Some(iced::Size::new(
+                theme::WINDOW_MIN_WIDTH,
+                theme::WINDOW_MIN_HEIGHT,
+            )),
             exit_on_close_request: false,
             icon: window_icon(),
             ..Default::default()

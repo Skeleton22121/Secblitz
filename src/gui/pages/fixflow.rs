@@ -5,10 +5,12 @@
 //! Only `Confirm` in the review sheet starts work; Esc / Cancel close it with
 //! no change. The working view cannot be dismissed.
 //!
-//! Motion (docs/MOTION.md): a spinner per running item, a check / cross / warn
-//! draw-in as each item finishes, the overall bar easing to each new value and
-//! one check draw on the result. Frames are requested by `subscription()` only
-//! while one of these runs; the shell must batch it into its subscriptions.
+//! Motion (docs/MOTION.md): a hairline drawing at the top of the sheet (the
+//! shield filling up for fixes, the rewind clock for undo) that carries on
+//! into the result, a spinner per running item, a check / cross / warn
+//! draw-in as each item finishes and the overall bar easing to each new
+//! value. The drawing asks for its own frames; `subscription()` runs only
+//! while work runs, for the row marks and the bar.
 use super::fixes::row_text;
 use super::history::day_title;
 use crate::app::flow::{self, Summary, SummaryKind};
@@ -18,6 +20,7 @@ use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim::{self, Clock, Tween};
 use crate::gui::widgets::controls::{scroll_style, scrollbar};
+use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
@@ -43,8 +46,8 @@ pub struct State {
     work: Clock,
     /// Overall progress bar value while applying or undoing.
     bar: Option<Tween>,
-    /// Starts when the result appears; cleared once the draw-in is over.
-    result: Option<Instant>,
+    /// When the working view or the result appeared (the drawing's clock).
+    since: Instant,
     /// Fixes applied during this session, newest last (ids), so Undo can
     /// list exactly what will be put back.
     batches: Vec<Vec<String>>,
@@ -65,7 +68,7 @@ impl Default for State {
             frames_seen: false,
             work: Clock::new(),
             bar: None,
-            result: None,
+            since: Instant::now(),
             batches: Vec::new(),
             plan: Vec::new(),
             undo_note: None,
@@ -146,18 +149,15 @@ impl State {
 
     /// Something on screen is moving and needs frames.
     fn live(&self) -> bool {
-        match self.stage {
-            Stage::Working { .. } => true,
-            Stage::Result { .. } => self.result.is_some(),
-            _ => false,
-        }
+        matches!(self.stage, Stage::Working { .. })
     }
 }
 
 // Batched into the shell's subscriptions (src/gui/mod.rs); until then it is
 // simply unused and every mark is drawn in its finished state.
-/// Frame subscription: on only while the working spinner or a result
-/// draw-in runs, and never when Windows animations are switched off.
+/// Frame subscription: on only while work runs (row spinners, marks and
+/// the bar), and never when Windows animations are switched off. The
+/// drawing asks for its own frames.
 pub fn subscription(state: &State) -> Subscription<Message> {
     if state.live() && anim::animating() {
         iced::window::frames().map(|at| Message::Fix(Msg::Frame(at)))
@@ -262,7 +262,6 @@ pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 
 fn close(state: &mut State) {
     state.stage = Stage::Closed;
-    state.result = None;
     state.bar = None;
 }
 
@@ -293,12 +292,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Frame(at) => {
             state.now = at;
             state.frames_seen = true;
-            if state
-                .result
-                .is_some_and(|start| Clock::at(start).done(anim::SLOW, at))
-            {
-                state.result = None;
-            }
             Task::none()
         }
         Msg::UndoInfo(found) => {
@@ -353,7 +346,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             };
             state.now = Instant::now();
             state.work = Clock::at(state.now);
-            state.result = None;
+            state.since = state.now;
             // Undo shows real progress too whenever we know what it restores.
             state.bar = (!undo || planned(state, true) > 0)
                 .then(|| Tween::new(0.0, 0.0, anim::NORMAL));
@@ -451,7 +444,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
 
 fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<String>) {
     state.now = Instant::now();
-    state.result = Some(state.now);
+    state.since = state.now;
     state.bar = None;
     state.stage = Stage::Result {
         undo,
@@ -538,6 +531,80 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
     )
     .max_height(LIST_MAX_HEIGHT)
     .into()
+}
+
+/// The list under the drawing: it takes whatever height the fixed-height
+/// sheet has left ([`widgets::SHEET_FIT_HEIGHT`]) and scrolls beyond it, so
+/// rows arriving never move the drawing.
+fn below_art<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
+    container(
+        scrollable(content)
+            .direction(scrollbar())
+            .style(scroll_style(p)),
+    )
+    .height(Length::Fill)
+    .into()
+}
+
+/// The drawing at the top of the working view and the result: the shield
+/// filling up for fixes, the rewind clock for undo. The same widget in the
+/// same place in both views, so it carries on from one into the other.
+fn art<'a>(
+    state: &State,
+    ctx: &Ctx,
+    undo: bool,
+    run: Run,
+    progress: Option<f32>,
+) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let (changed, now) = (state.since, state.now.max(state.since));
+    let drawing = if undo {
+        hairline::Rewind {
+            p,
+            plate: Plate::Surface,
+            run,
+            progress,
+            changed,
+            now,
+            label: ctx.t(rewind::label_key(rewind::Undo::Fixes, run)),
+        }
+        .view()
+    } else {
+        hairline::ShieldFill {
+            p,
+            plate: Plate::Surface,
+            run,
+            progress,
+            changed,
+            now,
+            label: ctx.t(shield_fill::label_key(run)),
+        }
+        .view()
+    };
+    container(drawing).center_x(Length::Fill).into()
+}
+
+/// Share of the work done while it runs: settings finished out of those
+/// planned (all of them once the check runs), when the plan is known.
+fn work_share(planned: usize, finished: usize, verifying: bool) -> Option<f32> {
+    (planned > 0).then(|| {
+        if verifying {
+            1.0
+        } else {
+            finished.min(planned) as f32 / planned as f32
+        }
+    })
+}
+
+/// The drawing's state for a result, and how much went through.
+fn result_art(s: &Summary) -> (Run, Option<f32>) {
+    let run = match s.kind {
+        SummaryKind::Success => Run::Done,
+        SummaryKind::Partial => Run::Partial,
+        SummaryKind::Failed => Run::Failed,
+    };
+    let total = s.done.len() + s.not_done.len();
+    (run, (total > 0).then(|| s.done.len() as f32 / total as f32))
 }
 
 /// Small muted line with a leading icon.
@@ -730,23 +797,24 @@ fn working_view<'a>(
     } else {
         ctx.t("Fixing your PC…")
     };
+    let verifying = phase == Some(Phase::Verifying);
+    let share = work_share(planned(state, undo), items.len(), verifying);
     let mut c = column![
-        row![spin(20.0), widgets::h2(p, title)]
-            .spacing(theme::S3)
-            .align_y(Alignment::Center),
-        widgets::muted(
+        art(state, ctx, undo, Run::Working, share),
+        widgets::h2_centred(p, title),
+        widgets::muted_centred(
             p,
             ctx.t("Please keep this window open. This can take a minute.")
         ),
     ]
-    .spacing(theme::S3);
+    .spacing(theme::S3)
+    .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT));
     if let Some(bar) = &state.bar {
         c = c.push(progress::bar(p, bar, Tone::Brand, state.now));
     } else if undo {
         c = c.push(progress::indeterminate(p, Tone::Brand));
     }
 
-    let verifying = phase == Some(Phase::Verifying);
     let mut list = column![].spacing(theme::S3);
     let finished = |d: &Done| done_mark(state, p, &d.status, d.at);
     if undo {
@@ -786,7 +854,7 @@ fn working_view<'a>(
         ctx.t("Checking the result"),
         verifying,
     ));
-    c.push(bounded(p, list.into())).into()
+    c.push(below_art(p, list.into())).into()
 }
 
 fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
@@ -816,22 +884,15 @@ fn result_view<'a>(
     show_technical: bool,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
-    let (tone, title) = match (undo, s.kind) {
-        (false, SummaryKind::Success) => (Tone::Good, "You're now more protected"),
-        (false, SummaryKind::Partial) => (Tone::Warn, "Some fixes are done"),
-        (false, SummaryKind::Failed) => (Tone::Bad, "We couldn't make these fixes"),
-        (true, SummaryKind::Success) => (Tone::Good, "Your fixes were undone"),
-        (true, SummaryKind::Partial) => (Tone::Warn, "Some fixes were undone"),
-        (true, SummaryKind::Failed) => (Tone::Bad, "We couldn't undo your fixes"),
+    let title = match (undo, s.kind) {
+        (false, SummaryKind::Success) => "You're now more protected",
+        (false, SummaryKind::Partial) => "Some fixes are done",
+        (false, SummaryKind::Failed) => "We couldn't make these fixes",
+        (true, SummaryKind::Success) => "Your fixes were undone",
+        (true, SummaryKind::Partial) => "Some fixes were undone",
+        (true, SummaryKind::Failed) => "We couldn't undo your fixes",
     };
-    // One draw-in, then a cached static mark (no more frames).
-    let t = state.result.map_or(1.0, |at| state.progress(at));
-    let hero_size = theme::CONTROL + theme::S6;
-    let hero = match s.kind {
-        SummaryKind::Success => anim::check_draw(hero_size, p.tone(tone), t),
-        SummaryKind::Partial => anim::warn_draw(hero_size, p.tone(tone), t),
-        SummaryKind::Failed => anim::cross_draw(hero_size, p.tone(tone), t),
-    };
+    let (run, share) = result_art(s);
 
     let mut body = column![].spacing(theme::S4);
     if !s.protected_now.is_empty() {
@@ -929,13 +990,15 @@ fn result_view<'a>(
         Some(Message::Fix(Msg::Done)),
     ));
     column![
-        container(hero).center_x(Length::Fill),
+        art(state, ctx, undo, run, share),
         container(widgets::h1(p, ctx.t(title))).center_x(Length::Fill),
-        bounded(p, body.into()),
+        below_art(p, body.into()),
         space::vertical().height(theme::S3),
         footer(buttons),
     ]
     .spacing(theme::S3)
+    // The working view's height: the drawing stays where it was.
+    .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
     .into()
 }
 
@@ -974,6 +1037,25 @@ mod tests {
         assert_eq!(last_fix(&log), Some((1, 2)));
         let log = [e(1, Kind::Fix, 2), e(3, Kind::Undo, 0)];
         assert_eq!(last_fix(&log), None);
+    }
+
+    #[test]
+    fn drawing_follows_the_real_work() {
+        // Working: settings finished out of those planned, full once the
+        // check runs; nothing known, nothing claimed.
+        assert_eq!(work_share(0, 0, false), None);
+        assert_eq!(work_share(4, 1, false), Some(0.25));
+        assert_eq!(work_share(4, 9, false), Some(1.0));
+        assert_eq!(work_share(4, 0, true), Some(1.0));
+        // Result: the summary's kind, and how much of it went through.
+        let mut s = Summary::default();
+        assert_eq!(result_art(&s), (Run::Done, None));
+        s.kind = SummaryKind::Partial;
+        s.done = vec!["a".into(), "b".into(), "c".into()];
+        s.not_done = vec![("d".into(), "why".into())];
+        assert_eq!(result_art(&s), (Run::Partial, Some(0.75)));
+        s.kind = SummaryKind::Failed;
+        assert_eq!(result_art(&s).0, Run::Failed);
     }
 
     #[test]
