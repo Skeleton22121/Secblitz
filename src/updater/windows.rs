@@ -820,12 +820,31 @@ fn read_only_output_until(
     limit: usize,
     deadline: Instant,
 ) -> Result<Vec<u8>> {
+    read_only_output_fed(command, None, limit, deadline)
+}
+/// `input`, when given, is written to the child's stdin and then closed.
+fn read_only_output_fed(
+    command: &mut Command,
+    input: Option<&'static str>,
+    limit: usize,
+    deadline: Instant,
+) -> Result<Vec<u8>> {
+    if input.is_some() {
+        command.stdin(Stdio::piped());
+    }
     let mut child = ReadOnlyChild(
         command
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?,
     );
+    if let Some(text) = input {
+        let mut stdin = child.0.stdin.take().context("Missing probe input")?;
+        // A stalled pipe must not hold up the deadline below.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(text.as_bytes());
+        });
+    }
     let mut stdout = child.0.stdout.take().context("Missing probe output")?;
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -947,25 +966,27 @@ fn installation_health(path: &Path, root: &Path, version: &str) -> Result<Update
     // Installed Secblitz, staged workers and all updater data retain single-link
     // requirements. Never pass a metadata/caller-supplied path to this exception.
     let _shell_pins = trusted_image(&powershell, true)?;
-    let encoded = STANDARD.encode(
-        include_str!("health.ps1")
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect::<Vec<_>>(),
-    );
     let mut command = child_command(&powershell, root)?;
     // Only inbox modules, even before the script pins this itself.
     if let Some(home) = powershell.parent() {
         command.env("PSModulePath", home.join("Modules"));
     }
+    // Only this fixed bootstrap is on the command line, in plain text. The
+    // compiled probe arrives over a private pipe, as for every other script.
+    let bootstrap = "[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
     command.args([
         "-NoLogo",
         "-NoProfile",
         "-NonInteractive",
-        "-EncodedCommand",
-        &encoded,
+        "-Command",
+        bootstrap,
     ]);
-    let bytes = read_only_output(command, 32)?;
+    let bytes = read_only_output_fed(
+        &mut command,
+        Some(include_str!("health.ps1")),
+        32,
+        Instant::now() + Duration::from_secs(30),
+    )?;
     let task = match std::str::from_utf8(&bytes)?.trim_end_matches(['\r', '\n']) {
         "absent" => TaskHealth::Absent,
         "ready" => TaskHealth::Ready,

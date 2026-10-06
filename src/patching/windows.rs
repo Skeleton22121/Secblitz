@@ -3,7 +3,6 @@ use super::{
     core::{Backend as _, Event, Phase},
     script::Action,
 };
-use base64::Engine as _;
 use std::{
     ffi::c_void,
     io::{Read, Write},
@@ -342,12 +341,6 @@ impl Backend {
             pins.extend(storage::pin_executable(&self.win.join(dll))?);
         }
         let bootstrap = "[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
-        let encoded = base64::engine::general_purpose::STANDARD.encode(
-            bootstrap
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        );
         let program_data = self
             .root
             .parent()
@@ -381,8 +374,8 @@ impl Backend {
                 "-NoLogo",
                 "-NoProfile",
                 "-NonInteractive",
-                "-EncodedCommand",
-                &encoded,
+                "-Command",
+                bootstrap,
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
