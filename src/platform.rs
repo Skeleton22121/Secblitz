@@ -275,6 +275,8 @@ pub const APP_BACKUPS: &str = "AppBackups";
 /// check makes sure it is a real folder owned by administrators and then
 /// leaves it alone: no journal is ever read from or written to it.
 pub const WEB_PROTECTION: &str = "Filter";
+/// The updater's folder inside the protected state directory.
+pub const UPDATES: &str = "Updates";
 
 pub fn app_dir() -> Result<PathBuf> {
     let dir = state_dir()?.join("App");
