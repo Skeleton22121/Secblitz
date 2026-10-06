@@ -7,6 +7,7 @@ pub mod controls;
 pub mod cursor;
 pub mod explain;
 pub mod hairline;
+pub mod handoff;
 pub mod menu;
 pub mod parts;
 pub mod press;
@@ -298,15 +299,12 @@ pub fn sheet_layer<'a>(
             text_color: Some(p.text),
             snap: true,
         });
-    opaque(
-        container(panel)
-            .center(Length::Fill)
-            .padding(theme::S6)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(p.scrim)),
-                ..container::Style::default()
-            }),
-    )
+    opaque(appear::pop(
+        container(panel).center(Length::Fill).padding(theme::S6),
+        p.scrim,
+        p.surface,
+        theme::R_LARGE,
+    ))
 }
 
 pub fn page_header<'a>(

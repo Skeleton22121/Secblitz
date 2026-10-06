@@ -198,7 +198,9 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
     }
     let n = seen.len();
     let total = ctx.catalog.available.len().max(n + 1);
-    let ratio = if ctx.catalog.available.is_empty() {
+    let ratio = if ctx.finishing {
+        1.0
+    } else if ctx.catalog.available.is_empty() {
         n as f32 / (n as f32 + 6.0)
     } else {
         (n as f32 / total as f32).min(0.96)
@@ -206,7 +208,11 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
     let art = Magnifier {
         p,
         plate: Plate::Bg,
-        status: Status::Checking,
+        status: if ctx.finishing {
+            Status::Done
+        } else {
+            Status::Checking
+        },
         progress: (!ctx.catalog.available.is_empty()).then_some(ratio),
         changed: state.scan.map_or(state.now, |c| c.start()),
         now: state.now,
@@ -218,8 +224,11 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
         ctx.t("This takes about a minute. Nothing is changed."),
         ratio,
         art,
-        &state.lines,
-        state.now,
+        scan::Feed {
+            lines: &state.lines,
+            now: state.now,
+            finished: ctx.finishing,
+        },
     )
 }
 
@@ -578,20 +587,23 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
             ctx.t("The last check didn't finish, so this may be out of date."),
         ));
     }
-    page = page.push(hero);
+    let later = |i: usize, card: Element<'a, Message>| {
+        widgets::appear::settle_after(card, p.bg, widgets::appear::stagger_delay(i))
+    };
+    page = page.push(later(0, hero.into()));
     for (tone, msg) in readiness_notices(ctx, report) {
         page = page.push(widgets::inline_notice(p, tone, msg));
     }
 
     if !items.is_empty() {
-        page = page.push(attention_group(ctx, report, &items));
+        page = page.push(later(1, attention_group(ctx, report, &items)));
     }
     if state.web_suggest {
-        page = page.push(web_card(ctx));
+        page = page.push(later(2, web_card(ctx)));
     }
     let (count, labels) = protected_labels(report);
     if count > 0 {
-        page = page.push(protected_group(state, ctx, count, &labels));
+        page = page.push(later(3, protected_group(state, ctx, count, &labels)));
     }
     page.into()
 }

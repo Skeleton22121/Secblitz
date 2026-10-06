@@ -5,7 +5,7 @@ use crate::gui::theme::{Palette, Tone};
 use crate::gui::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path};
 use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub const HEIGHT: f32 = 3.0;
 fn pixel_frame(r: &Renderer, b: Rectangle) -> Frame {
@@ -110,6 +110,7 @@ struct Eased {
     p: Palette,
     tone: Tone,
     value: f32,
+    dur: Duration,
 }
 
 #[derive(Default)]
@@ -143,7 +144,7 @@ impl canvas::Program<Message> for Eased {
             s.start = Some(*now);
         }
         let start = s.start?;
-        let t = now.saturating_duration_since(start).as_secs_f32() / anim::SLOW.as_secs_f32();
+        let t = now.saturating_duration_since(start).as_secs_f32() / self.dur.as_secs_f32();
         if anim::reduced() || t >= 1.0 {
             s.start = None;
             s.shown = target;
@@ -168,7 +169,25 @@ impl canvas::Program<Message> for Eased {
 
 /// Bar that eases to `value` by itself (400 ms decelerate). Idle cost is zero.
 pub fn bar_eased<'a>(p: Palette, value: f32, tone: Tone) -> Element<'a, Message> {
-    canvas_of(Eased { p, tone, value }, HEIGHT)
+    bar_eased_in(p, value, tone, anim::SLOW)
+}
+
+/// Like [`bar_eased`], reaching each new value in `dur`.
+pub fn bar_eased_in<'a>(
+    p: Palette,
+    value: f32,
+    tone: Tone,
+    dur: Duration,
+) -> Element<'a, Message> {
+    canvas_of(
+        Eased {
+            p,
+            tone,
+            value,
+            dur,
+        },
+        HEIGHT,
+    )
 }
 
 

@@ -836,7 +836,7 @@ impl Widget<Message, Theme, Renderer> for Marker {
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
             let busy = st
                 .slide
-                .step(*now, std::time::Duration::from_millis(260), |t| {
+                .step(*now, std::time::Duration::from_millis(220), |t| {
                     anim::POINT_TO_POINT.at(t)
                 });
             if busy || st.slide.running() {
