@@ -1072,8 +1072,8 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
     let ratio = state.finished_steps() as f32 / Item::ALL.len() as f32;
     column![
         rewind_art(ctx, p, Run::Working, Some(ratio), state.since, state.now),
-        widgets::h2(p, ctx.t(WORKING_TITLE)),
-        widgets::muted(p, ctx.t(WORKING_HELP)),
+        widgets::h2_centred(p, ctx.t(WORKING_TITLE)),
+        widgets::muted_centred(p, ctx.t(WORKING_HELP)),
         progress::bar_eased(p, ratio, Tone::Brand),
         container(list)
             .padding(theme::S3)
@@ -1087,6 +1087,9 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
             }),
     ]
     .spacing(theme::S3)
+    // Working and result are the same height, so the centred sheet never
+    // moves and the clock carries straight on.
+    .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
     .into()
 }
 
@@ -1095,16 +1098,16 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
         .spacing(theme::S3);
     if lines.is_empty() {
         col = col
-            .push(widgets::h2(p, ctx.t(RESULT_DONE_TITLE)))
-            .push(widgets::muted(p, ctx.t(DELETE_EXE)));
+            .push(widgets::h2_centred(p, ctx.t(RESULT_DONE_TITLE)))
+            .push(widgets::muted_centred(p, ctx.t(DELETE_EXE)));
     } else {
         let mut list = column![].spacing(theme::S2);
         for line in lines {
             list = list.push(widgets::body(p, line.clone()));
         }
         col = col
-            .push(widgets::h2(p, ctx.t(RESULT_LEFT_TITLE)))
-            .push(widgets::muted(
+            .push(widgets::h2_centred(p, ctx.t(RESULT_LEFT_TITLE)))
+            .push(widgets::muted_centred(
                 p,
                 ctx.t(if state.installed {
                     RESULT_LEFT_HELP
@@ -1156,8 +1159,10 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
             ),
         });
     }
-    col.push(space::vertical().height(theme::S1))
+    // The buttons sit at the bottom of the working view's height.
+    col.push(space::vertical().height(Length::Fill))
         .push(buttons)
+        .height(Length::Fixed(widgets::SHEET_FIT_HEIGHT))
         .into()
 }
 

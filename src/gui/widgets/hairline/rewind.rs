@@ -2,7 +2,7 @@
 //!
 //! The prototype's `UNDO.rewind` with its `resultBadge`. While working the
 //! hands spin backwards (minute 4.2 rad/s, hour a twelfth of that, with a
-//! ghost trail) inside a back arrow that turns the other way. When the
+//! ghost trail) inside a back arrow turning backwards too. When the
 //! work reports progress, the back arrow fills with it from its tail to
 //! its head. Done: the hands ease back to ten past ten (the time before)
 //! and a tick draws in on a small badge (good). Partly done: they stop
@@ -56,7 +56,7 @@ const START_H: f32 = H0 + TAU / 6.0 + 3.0 / 12.0;
 /// Partly done stops this far short (minute hand, radians).
 const SHORT: f32 = 0.9;
 /// Minute hand speed while working (rad/s); the hour hand turns 12 times
-/// slower. The back arrow turns the other way at 70 degrees a second.
+/// slower. The back arrow turns backwards too, at 70 degrees a second.
 const SPEED: f32 = 4.2;
 const RING_SPEED: f32 = 70.0 * PI / 180.0;
 /// Ambient second shown under reduced motion.
@@ -73,6 +73,9 @@ pub const BADGE_END: f32 = 1.4;
 const KICK: f32 = 14.0;
 /// The hover area round the face.
 const HOVER_R: f32 = 50.0;
+/// Near the centre the pointer's angle means nothing (a step across it
+/// swings it by up to half a turn), so a drag there leaves the hands be.
+const DEAD_R: f32 = 12.0;
 /// The badge: where and how big.
 const BADGE: Point = pt(C.x + 42.0, C.y + 42.0);
 const BADGE_R: f32 = 13.0;
@@ -95,7 +98,8 @@ pub enum Undo {
 /// The hover name (an English catalog key; the page translates it).
 pub fn label_key(undo: Undo, run: Run) -> &'static str {
     match (undo, run) {
-        (_, Run::Working) => "Putting your settings back",
+        (Undo::Fixes, Run::Working) => "Putting your settings back",
+        (Undo::Everything, Run::Working) => "Putting everything back",
         (Undo::Fixes, Run::Done) => "Back to how it was before your fixes",
         (Undo::Fixes, Run::Partial) => "Some fixes were undone",
         (Undo::Everything, Run::Done) => "Back to how it was before Secblitz",
@@ -215,10 +219,16 @@ pub struct State {
     /// Extra speed from clicks while working.
     spin: f32,
     ease: Option<Ease>,
-    /// While dragging: the pointer's last angle around the centre.
+    /// The hands are held by the pointer.
+    held: bool,
+    /// While held: the pointer's last angle around the centre (`None` until
+    /// it is clear of the centre).
     grab: Option<f32>,
     /// The back arrow's fill, following progress.
     fill: Spring,
+    /// This run reported progress, so the arrow is a track that fills (and
+    /// stays one through the result instead of snapping to a plain arrow).
+    tracked: bool,
     /// Seconds into a shake.
     shake: Option<f32>,
     /// Where a finished clock's hands come back to after a drag.
@@ -234,8 +244,10 @@ impl Default for State {
             ring: 0.0,
             spin: 0.0,
             ease: None,
+            held: false,
             grab: None,
             fill: Spring::with(0.0, 90.0, 16.0),
+            tracked: false,
             shake: None,
             home: None,
         }
@@ -274,7 +286,7 @@ impl State {
     }
 
     fn step(&mut self, run: Run, dt: f32) {
-        if self.grab.is_none() {
+        if !self.held {
             if run == Run::Working {
                 let w = SPEED + self.spin;
                 self.m -= dt * w;
@@ -304,9 +316,16 @@ impl State {
         }
     }
 
-    /// Turn the hands by how far the pointer went round the centre.
+    /// Turn the hands by how far the pointer went round the centre. Close
+    /// to the centre nothing turns; the next point clear of it carries on
+    /// from there, so a drag straight through the middle never jumps.
     fn turn_to(&mut self, at: Point) {
-        let a = (at.y - C.y).atan2(at.x - C.x);
+        let (dx, dy) = (at.x - C.x, at.y - C.y);
+        if dx * dx + dy * dy < DEAD_R * DEAD_R {
+            self.grab = None;
+            return;
+        }
+        let a = dy.atan2(dx);
         if let Some(prev) = self.grab {
             let d = wrap(a - prev);
             self.m += d;
@@ -341,15 +360,27 @@ impl<M> canvas::Program<M> for Rewind {
         cursor: mouse::Cursor,
     ) -> Option<Action<M>> {
         if st.live.fresh(self.changed) {
+            if self.run == Run::Working {
+                // A new run starts with an empty arrow.
+                st.fill = Spring::with(0.0, 90.0, 16.0);
+                st.tracked = false;
+            }
             st.enter(self.run);
+        }
+        if self.run == Run::Working && self.progress.is_some() {
+            st.tracked = true;
         }
         let stage = Stage::fit(UNITS, bounds.size());
         let step = st.live.update(event, bounds, cursor, &stage, &spots());
         let reduced = anim::reduced();
-        st.fill.aim(match self.run {
+        // Done runs the fill on to the head; partly done and failed leave
+        // it where the work stopped.
+        let aim = match self.run {
             Run::Working => self.progress.unwrap_or(0.0).clamp(0.0, 1.0),
-            _ => 1.0,
-        });
+            Run::Done => 1.0,
+            Run::Partial | Run::Failed => st.fill.target,
+        };
+        st.fill.aim(aim);
         if let Some(dt) = step.dt {
             st.fill.tick(dt);
             if reduced {
@@ -363,12 +394,14 @@ impl<M> canvas::Program<M> for Rewind {
         match step.gesture {
             Some(Gesture::Press(at)) if on_clock(at) => {
                 st.ease = None;
+                st.held = true;
                 st.grab = None;
                 st.turn_to(at);
             }
-            Some(Gesture::Drag { at, .. }) if st.grab.is_some() => st.turn_to(at),
+            Some(Gesture::Drag { at, .. }) if st.held => st.turn_to(at),
             Some(Gesture::Release { at, click }) => {
-                let held = st.grab.take().is_some();
+                let held = std::mem::take(&mut st.held);
+                st.grab = None;
                 if click && on_clock(at) {
                     match self.run {
                         Run::Working => st.spin += KICK,
@@ -388,13 +421,15 @@ impl<M> canvas::Program<M> for Rewind {
                         st.ease_to(to.0, to.1, st.ring, EASE_RETURN);
                     }
                 }
-                if click {
+                // Only on the clock: the canvas is wider than the drawing
+                // (room for the hover name) and the rest is plain sheet.
+                if click && on_clock(at) {
                     st.live.pulses.push(at, false);
                 }
             }
             _ => {}
         }
-        if reduced && st.grab.is_none() && self.run != Run::Working {
+        if reduced && !st.held && self.run != Run::Working {
             // Transitions jump to their end.
             if let Some((m, h)) = st.home {
                 (st.m, st.h) = (m, h);
@@ -418,7 +453,7 @@ impl<M> canvas::Program<M> for Rewind {
         let ink = Ink::new(&self.p, self.plate);
         let age = st.live.age(self.changed, self.now);
         let run = self.run;
-        let (m, h, ring) = if anim::reduced() && st.grab.is_none() {
+        let (m, h, ring) = if anim::reduced() && !st.held {
             still_pose(run, st)
         } else {
             (st.m, st.h, st.ring)
@@ -433,57 +468,69 @@ impl<M> canvas::Program<M> for Rewind {
             Run::Partial => ink.warn,
             Run::Failed => ink.line,
         };
-        let face = if working {
-            ink.accent
+        let shift = if working {
+            0.0
         } else {
-            mix(ink.accent, result, phase(age, 0.0, 0.45, STANDARD))
+            phase(age, 0.0, 0.45, STANDARD)
+        };
+        let face = mix(ink.accent, result, shift);
+        // The face's fill: a blue tint, then the result's tint; a failed
+        // (grey) clock goes back to the plate it sits on.
+        let disc_fill = match run {
+            Run::Failed => mix(ink.tint(ink.accent), ink.plate, shift),
+            _ => ink.tint(face),
         };
 
         // The back arrow, turned by `ring`.
         let arrow = arrow_shape(ring);
-        match (working, self.progress) {
-            (true, Some(_)) => {
-                let fill = if anim::reduced() {
-                    self.progress.unwrap_or(0.0).clamp(0.0, 1.0)
-                } else {
-                    st.fill.value.clamp(0.0, 1.0)
-                };
-                f.stroke(&stage.shape(&arrow), stroke(ink.faint, W_PART));
-                if fill > 0.001 {
-                    let span = A_TAIL - A_HEAD;
-                    let a1 = A_TAIL + ring;
-                    f.stroke(
-                        &stage.arc(C, RA, RA, a1 - span * fill, a1),
-                        stroke(ink.accent, W_ACCENT),
-                    );
-                }
-                let head = phase(fill, 0.97, 1.0, STANDARD);
-                if head > 0.0 {
-                    f.stroke(
-                        &stage.shape(&head_shape(ring)),
-                        stroke(ink.accent.scale_alpha(head), W_ACCENT),
-                    );
-                }
+        let track = if working {
+            self.progress.is_some()
+        } else {
+            st.tracked
+        };
+        if track {
+            // A grey track filling from tail to head; through the result
+            // it keeps going in the result's colour, so nothing snaps.
+            let fill = match (anim::reduced(), working) {
+                (true, true) => self.progress.unwrap_or(0.0).clamp(0.0, 1.0),
+                (true, false) => st.fill.target,
+                _ => st.fill.value,
             }
-            _ => {
-                f.stroke(&stage.shape(&arrow), stroke(face.scale_alpha(0.75), W_PART));
-                let done_in = if run == Run::Done {
-                    phase(age, 0.9, 1.2, STANDARD)
-                } else {
-                    0.0
-                };
-                if done_in > 0.0 {
-                    f.stroke(
-                        &stage.shape(&arrow),
-                        stroke(ink.good.scale_alpha(done_in), W_ACCENT),
-                    );
-                }
+            .clamp(0.0, 1.0);
+            f.stroke(&stage.shape(&arrow), stroke(ink.faint, W_PART));
+            if fill > 0.001 {
+                let span = A_TAIL - A_HEAD;
+                let a1 = A_TAIL + ring;
+                f.stroke(
+                    &stage.arc(C, RA, RA, a1 - span * fill, a1),
+                    stroke(face, W_ACCENT),
+                );
+            }
+            let head = phase(fill, 0.97, 1.0, STANDARD);
+            if head > 0.0 {
+                f.stroke(
+                    &stage.shape(&head_shape(ring)),
+                    stroke(face.scale_alpha(head), W_ACCENT),
+                );
+            }
+        } else {
+            f.stroke(&stage.shape(&arrow), stroke(face.scale_alpha(0.75), W_PART));
+            let done_in = if run == Run::Done {
+                phase(age, 0.9, 1.2, STANDARD)
+            } else {
+                0.0
+            };
+            if done_in > 0.0 {
+                f.stroke(
+                    &stage.shape(&arrow),
+                    stroke(ink.good.scale_alpha(done_in), W_ACCENT),
+                );
             }
         }
 
         // The face: tinted plate, inner ring and the twelve marks.
         let disc = stage.circle(C, R);
-        f.fill(&disc, ink.tint(face));
+        f.fill(&disc, disc_fill);
         f.stroke(&disc, stroke(face, W_PART));
         f.stroke(&stage.circle(C, R - 6.0), ink.lo());
         let marks = |major: bool| {
@@ -547,7 +594,7 @@ impl<M> canvas::Program<M> for Rewind {
 
         let pulse: Color = if working { ink.accent } else { face };
         st.live.pulses.draw(&mut f, &base, pulse);
-        if st.grab.is_none() {
+        if !st.held {
             st.live
                 .draw_tooltip(&mut f, &self.p, &base, &spots(), |_| self.label.clone());
         }
@@ -560,7 +607,7 @@ impl<M> canvas::Program<M> for Rewind {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        if st.grab.is_some() && st.live.pointer.pressed {
+        if st.held && st.live.pointer.pressed {
             mouse::Interaction::Grabbing
         } else if cursor.is_over(bounds) && st.live.pointer.inside && on_clock(st.live.pointer.at)
         {
@@ -815,7 +862,7 @@ mod tests {
             BOUNDS,
             at,
         );
-        assert!(close(st.m, M0) && st.grab.is_some());
+        assert!(close(st.m, M0) && st.held && st.grab.is_some());
         assert_eq!(
             Program::<()>::mouse_interaction(&done, &st, BOUNDS, at),
             mouse::Interaction::Grabbing
@@ -844,13 +891,101 @@ mod tests {
             BOUNDS,
             mouse::Cursor::Available(end),
         );
-        assert!(st.grab.is_none() && st.ease.is_some());
+        assert!(!st.held && st.grab.is_none() && st.ease.is_some());
         let mut clock = t0 + Duration::from_secs(5);
         for _ in 0..80 {
             clock += Duration::from_millis(16);
             Program::<()>::update(&done, &mut st, &frame(clock), BOUNDS, mouse::Cursor::Unavailable);
         }
         assert!(st.ease.is_none() && close(wrap(st.m - M0), 0.0));
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn a_drag_through_the_centre_does_not_swing_the_hands() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        let done = prog(Run::Done, None, t0);
+        let mut st = State::default();
+        st.live.fresh(t0);
+        (st.m, st.h, st.home) = (M0, H0, Some((M0, H0)));
+        let send = |st: &mut State, e: mouse::Event, at: Point| {
+            Program::<()>::update(&done, st, &mouse(e), BOUNDS, mouse::Cursor::Available(at));
+        };
+        // Press left of the centre and drag straight across it to the right
+        // in small steps: the pointer's angle flips by half a turn, the
+        // hands do not.
+        let from = px(pt(C.x - 30.0, C.y));
+        send(&mut st, mouse::Event::CursorMoved { position: from }, from);
+        send(&mut st, mouse::Event::ButtonPressed(mouse::Button::Left), from);
+        for i in 0..=60 {
+            let p = px(pt(C.x - 30.0 + i as f32, C.y));
+            send(&mut st, mouse::Event::CursorMoved { position: p }, p);
+            assert!(close(st.m, M0), "jumped at step {i}: {}", st.m - M0);
+        }
+        assert!(st.held && st.grab.is_some());
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn clicks_beside_the_clock_make_no_ring() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        let working = prog(Run::Working, Some(0.2), t0);
+        let mut st = State::default();
+        let click = |st: &mut State, at: Point| {
+            let c = mouse::Cursor::Available(at);
+            for e in [
+                mouse::Event::CursorMoved { position: at },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                Program::<()>::update(&working, st, &mouse(e), BOUNDS, c);
+            }
+        };
+        click(&mut st, Point::new(8.0, SIZE.height / 2.0));
+        assert!(!st.live.pulses.alive() && st.spin == 0.0);
+        click(&mut st, px(C));
+        assert!(st.live.pulses.alive() && st.spin > 0.0);
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn a_tracked_arrow_stays_a_track_through_the_result() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        let off = mouse::Cursor::Available(Point::new(-50.0, -50.0));
+        let mut st = State::default();
+        let mut clock = t0;
+        let working = prog(Run::Working, Some(0.6), t0);
+        for _ in 0..60 {
+            clock += Duration::from_millis(16);
+            Program::<()>::update(&working, &mut st, &frame(clock), BOUNDS, off);
+        }
+        assert!(st.tracked && (st.fill.value - 0.6).abs() < 0.05);
+        // Done: the fill runs on to the head.
+        let done = prog(Run::Done, None, clock);
+        let mut st_done = st.clone();
+        for _ in 0..90 {
+            clock += Duration::from_millis(16);
+            Program::<()>::update(&done, &mut st_done, &frame(clock), BOUNDS, off);
+        }
+        assert!(st_done.tracked && st_done.fill.value > 0.99);
+        // Partly done: it stays where the work stopped.
+        let partial = prog(Run::Partial, None, clock);
+        for _ in 0..90 {
+            clock += Duration::from_millis(16);
+            Program::<()>::update(&partial, &mut st, &frame(clock), BOUNDS, off);
+        }
+        assert!(st.tracked && (st.fill.value - 0.6).abs() < 0.05);
+        // A new run starts with an empty arrow.
+        let again = prog(Run::Working, None, clock);
+        clock += Duration::from_millis(16);
+        Program::<()>::update(&again, &mut st, &frame(clock), BOUNDS, off);
+        assert!(!st.tracked && st.fill.value == 0.0);
         anim::set_reduced_override(None);
     }
 
