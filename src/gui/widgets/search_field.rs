@@ -36,18 +36,17 @@ pub fn search_field<'a>(
         })
         .width(Length::Fill)
         .style(move |_, status| {
-            let (background, ring) = match status {
-                text_input::Status::Active => (p.surface_alt, 0.0),
-                text_input::Status::Hovered => (p.hover_strong, 0.0),
-                text_input::Status::Focused { .. } => (p.surface, 1.5),
-                text_input::Status::Disabled => (p.disabled_bg, 0.0),
+            let background = match status {
+                text_input::Status::Active => p.surface_alt,
+                text_input::Status::Hovered => p.hover_strong,
+                text_input::Status::Focused { .. } => p.surface,
+                text_input::Status::Disabled => p.disabled_bg,
             };
             text_input::Style {
                 background: Background::Color(background),
                 border: Border {
                     radius: theme::R.into(),
-                    width: ring,
-                    color: p.brand,
+                    ..Border::default()
                 },
                 icon: p.text_muted,
                 placeholder: p.text_muted,
