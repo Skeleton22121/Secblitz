@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F7F7F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E0E10" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="What Secblitz stores on your PC, when it uses the internet and who it talks to. Plain words, no account, no ads, no tracking.">
+  <title>Privacy – Secblitz</title>
+  <link rel="canonical" href="https://secblitz.lol/privacy.html">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=0704">
+  <script src="/theme.js?v=0703"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="wrap header-inner">
+      <a class="brand" href="/" aria-label="Secblitz home"><img class="brand-mark" src="/assets/favicon.svg" width="24" height="24" alt="">Secblitz</a>
+    </div>
+  </header>
+  <main class="wrap policy">
+    <h1>Privacy</h1>
+    <p class="lead">Secblitz checks your PC on your PC. It has no account, no ads, no tracking and no crash reports. This page says exactly when it uses the internet and what it keeps.</p>
+    <p class="meta">Last updated: 6 October 2026</p>
+
+    <h2>What Secblitz never does</h2>
+    <ul>
+      <li>It has no account and asks for no personal details.</li>
+      <li>It shows no ads and has no analytics, tracking or telemetry.</li>
+      <li>It sends no crash reports and never uploads your check results, settings, history or the list of apps on your PC.</li>
+      <li>Checks run on your PC. Nothing is sent away to be checked.</li>
+    </ul>
+
+    <h2>When Secblitz uses the internet</h2>
+
+    <h3>Automatic updates</h3>
+    <p>If you left automatic updates on when you installed Secblitz, it looks for a new version every hour. It asks secblitz.lol for a small signed file that says which version is newest. If there is one, it downloads the installer from secblitz.lol, checks the signature and installs it when Secblitz isn't being used.</p>
+    <p>These are ordinary web requests. They carry no account, no name and no information about your PC or what Secblitz found. Like any website, secblitz.lol can see your internet address and the time of the request. To turn updates off, run the installer again and clear the update option on the options page, or remove Secblitz.</p>
+
+    <h3>Web protection</h3>
+    <p>Web protection is off until you turn it on. When it's on, Secblitz downloads lists of ad, tracking and dangerous website names, once a day for some lists and once a week for others. They come from these sites, and each request tells the site that it comes from Secblitz and which version:</p>
+    <ul>
+      <li>AdGuard: adguardteam.github.io and filters.adtidy.org</li>
+      <li>EasyList: easylist.to</li>
+    </ul>
+    <p>Web protection also looks at the website names your PC asks for. It answers the ones on a list with "not found". It passes all the others on to the name servers your network already uses, such as the ones from your router or internet provider. If it can't find any, or they don't answer, it uses Quad9. Quad9 has its own <a href="https://quad9.net/privacy/policy/">privacy policy</a>. Secblitz doesn't save the names you visit. It only counts how many lookups it blocked today. When you turn web protection off, your PC goes back to its normal settings.</p>
+
+    <h3>Things you ask for</h3>
+    <ul>
+      <li>Installing Bitwarden or updating apps uses winget, which downloads from Microsoft and the app's maker. Secblitz only starts it when you say so.</li>
+      <li>Opening the Microsoft Store from Secblitz opens it in Windows, where Microsoft's terms apply.</li>
+      <li>Report a problem, Suggest a feature and the privacy link in Settings open a page in your web browser. The GitHub pages are run by GitHub.</li>
+      <li>Windows updates and virus definition updates are downloaded by Windows itself from Microsoft. Secblitz only opens the Windows page for them.</li>
+    </ul>
+
+    <h2>What Secblitz keeps on your PC</h2>
+    <ul>
+      <li>In C:\ProgramData\Secblitz, a folder only administrators can open: a record of every change Secblitz made and how to undo it, your latest check, your history, your language and light or dark choice, the web protection lists, and a saved copy of each app you removed so you can bring it back.</li>
+      <li>In your user profile: a small file that remembers the personal Windows settings Secblitz changed for you, so they can be undone.</li>
+    </ul>
+    <p>Nothing here is sent anywhere. When you remove Secblitz, it deletes both of these places. Windows updates, apps you installed with Secblitz and settings you chose to keep stay as they are.</p>
+
+    <h2>Questions</h2>
+    <p>Write to <a href="mailto:support@secblitz.lol">support@secblitz.lol</a>. If this page changes, the date at the top changes too.</p>
+    <p><a href="/">Back to Secblitz</a></p>
+  </main>
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <p>Open source under the MIT license · <a href="https://github.com/Skeleton22121/Secblitz">GitHub</a> · <a href="mailto:support@secblitz.lol">support@secblitz.lol</a> · © 2026 Secblitz</p>
+    </div>
+  </footer>
+</body>
+</html>

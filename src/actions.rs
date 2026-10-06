@@ -33,12 +33,14 @@ pub enum Action {
     OpenInstalledApps,
     OpenReportProblem,
     OpenSuggestFeature,
+    OpenPrivacyPolicy,
 }
 
 pub const REPORT_PROBLEM_URL: &str =
     "https://github.com/Skeleton22121/Secblitz/issues/new?template=bug_report.yml";
 pub const SUGGEST_FEATURE_URL: &str =
     "https://github.com/Skeleton22121/Secblitz/issues/new?template=feature_request.yml";
+pub const PRIVACY_POLICY_URL: &str = "https://secblitz.lol/privacy.html";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionResult {
@@ -115,6 +117,7 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenInstalledApps => Uri("ms-settings:appsfeatures"),
         Action::OpenReportProblem => Uri(REPORT_PROBLEM_URL),
         Action::OpenSuggestFeature => Uri(SUGGEST_FEATURE_URL),
+        Action::OpenPrivacyPolicy => Uri(PRIVACY_POLICY_URL),
         Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
         _ => return None,
     })
@@ -149,6 +152,7 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | "windowsdefender://devicesecurity"
                 | REPORT_PROBLEM_URL
                 | SUGGEST_FEATURE_URL
+                | PRIVACY_POLICY_URL
                 | "ms-settings:workplace"
                 | "ms-settings:recovery"
                 | "ms-settings:remotedesktop"
@@ -281,6 +285,7 @@ mod tests {
             (Action::OpenInstalledApps, "ms-settings:appsfeatures"),
             (Action::OpenReportProblem, REPORT_PROBLEM_URL),
             (Action::OpenSuggestFeature, SUGGEST_FEATURE_URL),
+            (Action::OpenPrivacyPolicy, PRIVACY_POLICY_URL),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
@@ -373,6 +378,7 @@ mod tests {
             Action::OpenInstalledApps,
             Action::OpenReportProblem,
             Action::OpenSuggestFeature,
+            Action::OpenPrivacyPolicy,
         ] {
             assert!(run(action).is_err());
         }
