@@ -1212,11 +1212,11 @@ pub fn spec(id: &str) -> Option<&'static Spec> {
     SPECS.iter().find(|s| s.id == id)
 }
 
-pub fn is_hardening(id: &str) -> bool {
+pub fn is_hardening_check_id(id: &str) -> bool {
     spec(id).is_some()
 }
 
-pub fn is_ask(id: &str) -> bool {
+pub fn is_ask_check_id(id: &str) -> bool {
     spec(id).is_some_and(|s| s.ask)
 }
 
@@ -2387,9 +2387,9 @@ mod tests {
             "privacy.clipboard_sync",
             "defender.exclusions_risky",
         ] {
-            assert!(is_ask(id), "{id} must be a choice");
+            assert!(is_ask_check_id(id), "{id} must be a choice");
         }
-        assert!(!is_ask("system.exploit_mitigations"));
+        assert!(!is_ask_check_id("system.exploit_mitigations"));
         assert!(spec("update.paused")
             .unwrap()
             .keys
@@ -2400,7 +2400,7 @@ mod tests {
     #[test]
     fn access_controls_are_choices_that_change_exactly_one_thing() {
         for id in ["accounts.autologon", "remote_desktop.disabled", "smb1.disabled"] {
-            assert!(is_ask(id), "{id} must be a choice");
+            assert!(is_ask_check_id(id), "{id} must be a choice");
         }
         let a = spec("accounts.autologon").unwrap();
         assert_eq!(a.source, Source::WinlogonAutoLogon);

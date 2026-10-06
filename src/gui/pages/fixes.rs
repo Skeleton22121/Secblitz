@@ -188,7 +188,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         };
         let a = advice::for_outcome(r);
         let impact = advice::control_impact(id);
-        let choice = advice::is_choice(id);
+        let choice = advice::is_choice_check_id(id);
         let line = if choice || impact.is_empty() {
             match items_line(ctx, r) {
                 Some(items) => format!("{}\n{}", ctx.t(a.next), items),
@@ -222,7 +222,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         }
         let class = score::classify_in(report, r);
         if class == Class::Excluded
-            && secblitz::vbs::is_vbs(&r.id)
+            && secblitz::vbs::is_vbs_check_id(&r.id)
             && score::classify(r) == Class::Protected
         {
             continue;

@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn every_network_control_has_a_calm_plain_explainer() {
         for id in IDS {
-            assert!(secblitz::hardening::is_hardening(id), "{id}");
+            assert!(secblitz::hardening::is_hardening_check_id(id), "{id}");
             let e = get(id).unwrap_or_else(|| panic!("missing explainer for {id}"));
             for line in [e.what, e.risk, e.change] {
                 assert!(line.len() <= 160, "{id}: too long: {line}");

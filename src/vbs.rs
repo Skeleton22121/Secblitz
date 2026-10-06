@@ -9,7 +9,7 @@ use serde::Deserialize;
 pub const MEMORY_INTEGRITY: &str = "vbs.memory_integrity";
 pub const STACK_PROTECTION: &str = "vbs.kernel_stack_protection";
 
-pub fn is_vbs(id: &str) -> bool {
+pub fn is_vbs_check_id(id: &str) -> bool {
     id == MEMORY_INTEGRITY || id == STACK_PROTECTION
 }
 
@@ -59,11 +59,11 @@ pub fn boot_from_detail(detail: &str) -> Option<i64> {
 
 pub fn split_batches(ids: &[String]) -> Vec<Vec<String>> {
     let mut batches = Vec::new();
-    let ordinary: Vec<String> = ids.iter().filter(|i| !is_vbs(i)).cloned().collect();
+    let ordinary: Vec<String> = ids.iter().filter(|i| !is_vbs_check_id(i)).cloned().collect();
     if !ordinary.is_empty() {
         batches.push(ordinary);
     }
-    for id in ids.iter().filter(|i| is_vbs(i)) {
+    for id in ids.iter().filter(|i| is_vbs_check_id(i)) {
         batches.push(vec![id.clone()]);
     }
     batches
@@ -1257,6 +1257,10 @@ mod tests {
             assert!(!r.contains('—'));
             assert!(r.len() < 90, "{r}");
         }
-        assert!(is_vbs(MEMORY_INTEGRITY) && is_vbs(STACK_PROTECTION) && !is_vbs("vbs.running"));
+        assert!(
+            is_vbs_check_id(MEMORY_INTEGRITY)
+                && is_vbs_check_id(STACK_PROTECTION)
+                && !is_vbs_check_id("vbs.running")
+        );
     }
 }

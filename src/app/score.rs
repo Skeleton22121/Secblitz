@@ -32,7 +32,7 @@ pub enum Class {
 pub fn classify(r: &Outcome) -> Class {
     let unavailable = r.authority == Some(Authority::Unknown)
         || (r.id.starts_with("firewall.")
-            && !secblitz::hardening::is_hardening(&r.id)
+            && !secblitz::hardening::is_hardening_check_id(&r.id)
             && (r.effective.is_none() || r.authority.is_none()));
     let known = matches!(
         r.status.as_str(),
@@ -125,7 +125,7 @@ pub fn core_not_running(report: &Report, id: &str) -> bool {
 pub fn classify_in(report: &Report, r: &Outcome) -> Class {
     match classify(r) {
         Class::Protected
-            if secblitz::vbs::is_vbs(&r.id) && core_not_running(report, &r.id) =>
+            if secblitz::vbs::is_vbs_check_id(&r.id) && core_not_running(report, &r.id) =>
         {
             Class::Excluded
         }

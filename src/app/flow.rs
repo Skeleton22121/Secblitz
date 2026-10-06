@@ -23,7 +23,7 @@ pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
 pub fn recommended(report: &Report, available: &[String]) -> Vec<String> {
     candidates(report, available)
         .into_iter()
-        .filter(|id| !advice::is_choice(id))
+        .filter(|id| !advice::is_choice_check_id(id))
         .collect()
 }
 
