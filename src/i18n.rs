@@ -4625,19 +4625,10 @@ mod tests {
 
     #[test]
     fn automatic_flow_and_readiness_copy_is_complete_and_preserves_placeholders() {
-        let mut text_block = false;
-        for key in include_str!("../docs/review-auto-flow.md").lines() {
-            if key == "```text" {
-                text_block = true;
-                continue;
-            }
-            if key == "```" {
-                text_block = false;
-                continue;
-            }
-            if !text_block || key.is_empty() {
-                continue;
-            }
+        for key in include_str!("../tests/fixtures/auto-flow-keys.txt")
+            .lines()
+            .filter(|key| !key.is_empty())
+        {
             assert!(
                 TEXT.iter().any(|row| row[0] == key),
                 "Missing automatic-flow key: {key}"
