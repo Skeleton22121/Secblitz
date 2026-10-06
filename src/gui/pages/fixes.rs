@@ -11,7 +11,8 @@
 use crate::advice::{self, Group, NextStep};
 use crate::app::flow;
 use crate::app::score::{self, Class};
-use crate::broker::{Reply, Request};
+use crate::broker::Reply;
+use crate::guide::{self, Guide, Page};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim;
@@ -101,8 +102,8 @@ pub enum Msg {
     ErrorDetails,
     /// Animation frame (only while a check runs).
     Frame(Instant),
-    /// Open a Windows Settings page through the launcher.
-    Open(Request),
+    /// Open a fixed Windows page through the launcher.
+    Open(Page),
 }
 
 // ---------------------------------------------------------------- row data
@@ -153,6 +154,10 @@ struct Other {
     bucket: Bucket,
     icon: Icon,
     tech: String,
+    /// Plain numbered steps for what only the person can do in Windows.
+    guide: Option<&'static Guide>,
+    /// The Windows page that helps, shown as a visible button.
+    page: Option<Page>,
 }
 
 #[derive(Debug)]
@@ -255,6 +260,9 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         ));
     }
     for f in &report.findings {
+        if score::superseded(report, f) {
+            continue;
+        }
         let a = advice::for_finding(&f.title, &f.status, &f.detail);
         if a.group == Group::Protected {
             continue;
@@ -291,6 +299,20 @@ fn other(
     tone: Tone,
     tech: String,
 ) -> Other {
+    // Settings the PC's owner controls are plain information: nothing to
+    // decide, nothing to open.
+    let managed = bucket == Bucket::Managed;
+    let guide = match bucket {
+        Bucket::Look | Bucket::GoodToKnow => guide::guide(explain.0),
+        _ => None,
+    };
+    let page = match bucket {
+        Bucket::Look => guide
+            .map(|g| g.page)
+            .or_else(|| Page::for_step(a.step)),
+        Bucket::GoodToKnow => guide.map(|g| g.page),
+        _ => None,
+    };
     let icon = match bucket {
         Bucket::Managed => Icon::Lock,
         Bucket::Unavailable => Icon::Info,
@@ -302,13 +324,23 @@ fn other(
         explain: explain.0.to_owned(),
         report_only: explain.1,
         name,
-        line: ctx.t(a.next),
-        status: ctx.t(a.status),
-        step: a.step,
+        line: if managed {
+            ctx.t("This PC's owner controls this setting, so we leave it as it is.")
+        } else {
+            ctx.t(a.next)
+        },
+        status: if managed {
+            ctx.t("For your information")
+        } else {
+            ctx.t(a.status)
+        },
+        step: if managed { NextStep::None } else { a.step },
         tone,
         bucket,
         icon,
         tech,
+        guide,
+        page,
     }
 }
 
@@ -395,7 +427,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::AllProtected => state.all_protected = !state.all_protected,
         Msg::Frame(now) => track_scan(state, ctx, now),
         Msg::ErrorDetails => state.show_error = !state.show_error,
-        Msg::Open(request) => return open_settings(ctx, request),
+        Msg::Open(page) => return open_page(ctx, page),
     }
     Task::none()
 }
@@ -434,18 +466,11 @@ fn flip(set: &mut HashSet<String>, id: String) {
     }
 }
 
-/// Ask the launcher to open a Windows Settings page and tell the person
-/// calmly how it went.
-pub fn open_settings(ctx: &Ctx, request: Request) -> Task<Message> {
-    let lang = ctx.lang;
-    ctx.broker_task(request, move |reply| match reply {
-        Ok(Reply::Done | Reply::OpenedStore) => {
-            Message::Toast(lang.t("Opened in a new window."), Tone::Good)
-        }
-        _ => Message::Toast(
-            lang.t("We couldn't open that. You can find it in the Windows Settings app."),
-            Tone::Warn,
-        ),
+/// Ask the launcher to open one fixed Windows page. The answer comes back as
+/// `Message::PageOpened`, which tells the person calmly how it went.
+pub fn open_page(ctx: &Ctx, page: Page) -> Task<Message> {
+    ctx.broker_task(page.request(), move |reply| {
+        Message::PageOpened(page, matches!(reply, Ok(Reply::Done | Reply::OpenedStore)))
     })
 }
 
@@ -515,14 +540,35 @@ fn expanded<'a>(
     row![space::horizontal().width(indent), well(p, c)].into()
 }
 
-fn settings_request(step: NextStep) -> Option<Request> {
-    match step {
-        NextStep::OpenWindowsSecurity => Some(Request::OpenWindowsSecurity),
-        NextStep::OpenWindowsUpdate => Some(Request::OpenWindowsUpdate),
-        NextStep::OpenEncryption => Some(Request::OpenEncryption),
-        NextStep::OpenAccounts => Some(Request::OpenSignIn),
-        _ => None,
+/// The numbered steps of a guide and the visible buttons that open its page.
+/// Shared by the Protection and Tools pages. `indent` lines the text up with
+/// the row's title.
+pub fn guide_block<'a>(ctx: &Ctx, g: &'static Guide, indent: f32) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let mut steps = column![].spacing(theme::S1);
+    for (i, step) in g.steps.iter().enumerate() {
+        steps = steps.push(widgets::small(p, format!("{}. {}", i + 1, ctx.t(step))));
     }
+    let open = |page: Page, kind: ButtonKind| {
+        widgets::action(
+            p,
+            kind,
+            ctx.t(page.button()),
+            Some(Icon::ExternalLink),
+            Some(Message::Fixes(Msg::Open(page))),
+        )
+    };
+    let mut buttons = row![open(g.page, ButtonKind::Secondary)]
+        .spacing(theme::S2)
+        .align_y(Alignment::Center);
+    if let Some(alt) = g.alt {
+        buttons = buttons.push(open(alt, ButtonKind::Ghost));
+    }
+    row![
+        space::horizontal().width(indent),
+        column![steps, buttons].spacing(theme::S3).width(Length::Fill)
+    ]
+    .into()
 }
 
 fn nothing<'a>() -> Element<'a, Message> {
@@ -605,32 +651,34 @@ fn attention_row<'a>(
 fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     let p = ctx.palette;
     let open = state.expanded.contains(&o.key);
-    let mut menu = Vec::new();
-    if let Some(request) = settings_request(o.step) {
-        menu.push((
-            Icon::ExternalLink,
-            ctx.t("Open settings"),
-            Message::Fixes(Msg::Open(request)),
-            false,
-        ));
-    }
-    if o.step == NextStep::CheckAgain && !ctx.busy && ctx.checking.is_none() {
-        menu.push((
-            Icon::Refresh,
-            ctx.t("Check again"),
-            Message::CheckNow,
-            false,
-        ));
-    }
-    menu.push((
+    let menu = vec![(
         Icon::Info,
         ctx.t(if open { "Hide details" } else { "Details" }),
         Message::Fixes(Msg::Expand(o.key.clone())),
         false,
-    ));
+    )];
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
     if let Some(t) = widgets::explain::toggle(ctx, "fixes", &o.explain) {
         tools = tools.push(t);
+    }
+    // A row we could not check says so and offers to look again, in plain sight.
+    if o.bucket == Bucket::Unavailable || o.step == NextStep::CheckAgain {
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Check again"),
+            Some(Icon::Refresh),
+            (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
+        ));
+    } else if let (Some(page), None) = (o.page, o.guide) {
+        // No steps to show: just the button named after the page.
+        tools = tools.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t(page.button()),
+            Some(Icon::ExternalLink),
+            Some(Message::Fixes(Msg::Open(page))),
+        ));
     }
     tools = tools.push(widgets::overflow_menu(p, menu));
     let head = line(
@@ -647,6 +695,9 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
         tools.into(),
     );
     let mut rows = column![head].spacing(theme::S1);
+    if let Some(g) = o.guide {
+        rows = rows.push(guide_block(ctx, g, INDENT_PLAIN));
+    }
     if let Some(inset) =
         widgets::explain::panel(ctx, "fixes", &o.explain, o.report_only, INDENT_PLAIN)
     {
@@ -1014,7 +1065,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         body = body.push(widgets::group(
             p,
             ctx.t("Worth a look"),
-            Some(ctx.t("These need a decision from you. We can't safely change them for you.")),
+            Some(ctx.t("Windows only lets you do these yourself. Each one shows the steps.")),
             None,
             look.iter().map(|o| other_row(state, ctx, o)).collect(),
         ));

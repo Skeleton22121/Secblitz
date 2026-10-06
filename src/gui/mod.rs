@@ -192,6 +192,50 @@ pub enum Message {
     Tools(tools::Msg),
     History(history::Msg),
     Settings(settings::Msg),
+    /// A fixed Windows page was asked for: did it open?
+    PageOpened(crate::guide::Page, bool),
+    /// The Secblitz window gained (true) or lost (false) focus.
+    WindowFocus(bool),
+}
+
+/// How long after opening a Windows page coming back may start one re-check.
+const RECHECK_WINDOW: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// One read-only re-check per opened Windows page: armed when the page opens,
+/// fired when the person comes back to the Secblitz window, never twice.
+#[derive(Debug, Default)]
+struct Recheck {
+    opened: Option<std::time::Instant>,
+    /// The window really lost focus since the page opened.
+    left: bool,
+}
+
+impl Recheck {
+    fn arm(&mut self, now: std::time::Instant) {
+        self.opened = Some(now);
+        self.left = false;
+    }
+
+    /// True when a check should start now. `idle` is false while a check or a
+    /// change is running; the re-check then waits for the next return.
+    fn focus(&mut self, focused: bool, now: std::time::Instant, idle: bool) -> bool {
+        let Some(at) = self.opened else {
+            return false;
+        };
+        if now.saturating_duration_since(at) > RECHECK_WINDOW {
+            *self = Self::default();
+            return false;
+        }
+        if !focused {
+            self.left = true;
+            return false;
+        }
+        if !self.left || !idle {
+            return false;
+        }
+        *self = Self::default();
+        true
+    }
 }
 
 pub struct App {
@@ -219,6 +263,8 @@ pub struct App {
     flight: [bool; 3],
     /// When each warmable page last started loading.
     warm_at: [Option<std::time::Instant>; 3],
+    /// Re-check once when the person returns from a Windows page we opened.
+    recheck: Recheck,
 }
 
 /// Write the history entry and the tray status off the UI thread: both fsync
@@ -346,6 +392,7 @@ impl App {
             warmed: [false; 3],
             flight: [false; 3],
             warm_at: [None; 3],
+            recheck: Recheck::default(),
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = Task::run(worker.run(worker::Job::Check), Message::Worker);
@@ -435,6 +482,26 @@ impl App {
                 Task::none()
             }
             Message::Noop => Task::none(),
+            Message::PageOpened(page, ok) => {
+                let text = if ok {
+                    self.recheck.arm(std::time::Instant::now());
+                    self.ctx.t("Opened in a new window.")
+                } else {
+                    crate::guide::failure_text(self.ctx.lang, page)
+                };
+                self.update(Message::Toast(text, if ok { Tone::Good } else { Tone::Warn }))
+            }
+            Message::WindowFocus(focused) => {
+                let idle = self.ctx.checking.is_none() && !self.ctx.busy;
+                if self
+                    .recheck
+                    .focus(focused, std::time::Instant::now(), idle)
+                {
+                    self.update(Message::CheckNow)
+                } else {
+                    Task::none()
+                }
+            }
             Message::DismissToast => self.begin_toast_exit(),
             Message::ToastGone => {
                 if self.toast_leaving {
@@ -996,8 +1063,16 @@ impl App {
         } else {
             Subscription::none()
         };
+        let focus = iced::event::listen_with(|event, _, _| match event {
+            iced::Event::Window(iced::window::Event::Focused) => Some(Message::WindowFocus(true)),
+            iced::Event::Window(iced::window::Event::Unfocused) => {
+                Some(Message::WindowFocus(false))
+            }
+            _ => None,
+        });
         Subscription::batch([
             escape,
+            focus,
             iced::window::close_requests().map(Message::CloseRequested),
             toast,
             entrance,
@@ -1156,5 +1231,41 @@ mod tests {
         assert_eq!(window_icon_rgba(64).len(), 64 * 64 * 4);
         assert!(window_icon_rgba(33).is_empty(), "no frame, no icon");
         assert!(window_icon().is_some());
+    }
+}
+
+#[cfg(test)]
+mod recheck_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn returning_to_the_window_rechecks_once() {
+        let t0 = Instant::now();
+        let mut r = Recheck::default();
+        assert!(!r.focus(true, t0, true), "nothing opened yet");
+        r.arm(t0);
+        assert!(!r.focus(true, t0, true), "focus before leaving does nothing");
+        assert!(!r.focus(false, t0, true));
+        assert!(r.focus(true, t0 + Duration::from_secs(60), true));
+        assert!(
+            !r.focus(false, t0 + Duration::from_secs(70), true)
+                && !r.focus(true, t0 + Duration::from_secs(80), true),
+            "at most once per open"
+        );
+    }
+
+    #[test]
+    fn busy_waits_and_late_returns_are_ignored() {
+        let t0 = Instant::now();
+        let mut r = Recheck::default();
+        r.arm(t0);
+        assert!(!r.focus(false, t0, true));
+        assert!(!r.focus(true, t0 + Duration::from_secs(5), false), "busy");
+        assert!(r.focus(true, t0 + Duration::from_secs(9), true), "still armed");
+        r.arm(t0);
+        assert!(!r.focus(false, t0, true));
+        assert!(!r.focus(true, t0 + RECHECK_WINDOW + Duration::from_secs(1), true));
+        assert!(!r.focus(true, t0 + Duration::from_secs(5), true), "disarmed");
     }
 }
