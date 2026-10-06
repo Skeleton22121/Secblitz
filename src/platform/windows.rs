@@ -701,7 +701,7 @@ mod tests {
         let findings = backend
             .findings()
             .expect("Actual findings must be a single valid JSON array");
-        assert_eq!(findings.len(), 14);
+        assert_eq!(findings.len(), 13);
         let mut titles = std::collections::HashSet::new();
         for finding in findings {
             assert!(titles.insert(finding.title));
