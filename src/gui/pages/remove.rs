@@ -1,4 +1,4 @@
-//! "Remove Secblitz": one sheet that asks what should happen to the changes
+//! Removes Secblitz itself, never any other app: one sheet that asks what should happen to the changes
 //! Secblitz made, optionally puts everything back (with progress), and then
 //! starts the uninstaller. Opened from the last group on the Settings page.
 use crate::broker::{Reply, Request};
@@ -397,7 +397,8 @@ fn trusted_owner(path: &std::path::Path) -> bool {
     };
     use windows_sys::Win32::Security::{OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    // SAFETY: `wide` is NUL-terminated and outlives the call.
+    // SAFETY: `wide` is NUL-terminated and outlives the call; the OS-allocated `sd` and SID
+    // text are freed with LocalFree on every path.
     unsafe {
         let mut owner: PSID = null_mut();
         let mut sd: PSECURITY_DESCRIPTOR = null_mut();
@@ -418,13 +419,18 @@ fn trusted_owner(path: &std::path::Path) -> bool {
             return false;
         }
         let mut text: *mut u16 = null_mut();
+        // A SID string is never longer than 184 characters; scanning no further keeps a
+        // missing terminator from running past the buffer.
         let trusted = ConvertSidToStringSidW(owner, &mut text) != 0 && !text.is_null() && {
+            const MAX_SID_CHARS: usize = 184;
             let mut len = 0;
-            while *text.add(len) != 0 {
+            while len < MAX_SID_CHARS && *text.add(len) != 0 {
                 len += 1;
             }
-            let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
-            matches!(sid.as_str(), "S-1-5-18" | "S-1-5-32-544")
+            len < MAX_SID_CHARS && {
+                let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+                matches!(sid.as_str(), "S-1-5-18" | "S-1-5-32-544")
+            }
         };
         if !text.is_null() {
             LocalFree(text.cast());
@@ -1006,7 +1012,7 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
                 anim::check_draw(
                     18.0,
                     p.good,
-                    anim::Clock::at(at).progress_at(anim::SLOW, state.now),
+                    anim::slow_progress(at, state.now),
                 ),
                 ctx.t(STEP_DONE),
             ),
@@ -1014,21 +1020,17 @@ fn working_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, steps: &[StepState; 5
                 anim::warn_draw(
                     18.0,
                     p.warn,
-                    anim::Clock::at(at).progress_at(anim::SLOW, state.now),
+                    anim::slow_progress(at, state.now),
                 ),
                 ctx.t(STEP_PARTLY),
             ),
         };
-        list = list.push(
-            row![
-                container(lead).center(theme::CHECK),
-                widgets::body(p, ctx.t(item.label())),
-                space::horizontal(),
-                widgets::small(p, note),
-            ]
-            .spacing(theme::S3)
-            .align_y(Alignment::Center),
-        );
+        list = list.push(widgets::step_row(
+            p,
+            lead,
+            vec![widgets::body(p, ctx.t(item.label()))],
+            note,
+        ));
     }
     let ratio = state.finished_steps() as f32 / Item::ALL.len() as f32;
     column![

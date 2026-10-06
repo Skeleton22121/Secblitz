@@ -1,12 +1,12 @@
 //! Reusable list, form and feedback pieces built on the core widgets.
 use super::appear::slide_in;
 use super::cursor::arrow;
-use super::{icon, ButtonKind};
+use super::{icon, small, ButtonKind};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Pixels, Shadow, Theme};
 
 pub fn section_label<'a>(p: Palette, s: impl Into<String>) -> Element<'a, Message> {
@@ -53,6 +53,24 @@ pub fn scroll_well<'a>(
     .max_height(max)
     .style(well_style(p))
     .into()
+}
+
+/// One line of a progress list: the state mark, what it is about and a short note.
+pub fn step_row<'a>(
+    p: Palette,
+    lead: Element<'a, Message>,
+    label: Vec<Element<'a, Message>>,
+    note: String,
+) -> Element<'a, Message> {
+    let mut line = row![container(lead).center(theme::CHECK)];
+    for part in label {
+        line = line.push(part);
+    }
+    line.push(space::horizontal())
+        .push(small(p, note))
+        .spacing(theme::S3)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// Items set under a row's title, lined up with its text rather than its icon.
