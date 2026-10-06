@@ -166,7 +166,7 @@ def stage(source, output, version, reference_dir):
     for name in FONT_LICENSES:
         if os.path.lexists(source / name):
             names.add(name)
-    if len(names) > 40:
+    if len(names) > 64:
         raise ValueError("staging file budget exceeded")
     origin = gate.origin_value((ROOT / "assets/update-origin.txt").read_text().strip())
     if output.exists():
