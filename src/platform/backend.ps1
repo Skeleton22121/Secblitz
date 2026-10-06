@@ -11,7 +11,6 @@ $null = Import-Module ([IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Man
 $null = Import-Module ([IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
 $value = if ($null -ne $inputJson) { ConvertFrom-Json -InputObject $inputJson } else { $null }
 function Load([string]$name) {
-    # The inbox LocalAccounts module uses a versioned directory on Windows.
     $relative = if ($name -ceq 'Microsoft.PowerShell.LocalAccounts') { 'Microsoft.PowerShell.LocalAccounts\1.0.0.0\Microsoft.PowerShell.LocalAccounts.psd1' } else { "$name\$name.psd1" }
     $null = Import-Module (Join-Path $moduleRoot $relative) -ErrorAction Stop
 }
@@ -101,8 +100,6 @@ function QueryMdmRegistration {
 }
 function MdmRegistered {
     $probe = QueryMdmRegistration
-    # The documented success is ERROR_SUCCESS, not any nonnegative status.
-    # DLL/API failures throw; malformed/missing results also fail closed.
     if ($probe.result -isnot [int] -or $probe.result -ne 0 -or $probe.registered -isnot [int] -or $probe.registered -notin @(0,1)) { throw "MDM registration state is unknown (API result=$($probe.result))" }
     return ($probe.registered -eq 1)
 }
@@ -213,7 +210,6 @@ function CheckRsop([string]$id) {
 }
 function Gate([string]$id) {
     $permissionService = PermissionService $id
-    # Any failed probe throws; no management query is treated as a negative result.
     Load 'CimCmdlets'
     $os = Get-CimInstance Win32_OperatingSystem
     if ($os.ProductType -ne 1 -or [int]$os.BuildNumber -lt 10240 -or ![Environment]::Is64BitProcess) { throw 'Unsupported Windows client capability' }
@@ -319,7 +315,6 @@ function ReadControl([string]$id) {
     if ($null -ne (PermissionService $id)) { throw 'Service permissions require the native wrapper' }
     $spec = PrivilegeRegistrySpec $id
     if ($null -ne $spec) {
-        # A missing key/value is an exact absence, never an invented default.
         if (!(Test-Path -LiteralPath $spec.path -ErrorAction Stop)) { return @{present=$false;value=$null} }
         $key = Get-Item -LiteralPath $spec.path -ErrorAction Stop
         if ($key.GetValueNames() -notcontains $spec.name) { return @{present=$false;value=$null} }
@@ -367,8 +362,6 @@ function ReadEffectiveFirewall([string]$id) {
     return @{kind='inbound';value=([string]$p.DefaultInboundAction).ToLowerInvariant()}
 }
 function ObserveControl([string]$id) {
-    # Capture the exact local preference first. Effective evidence never replaces
-    # it, including NotConfigured before-images used by existing schema-1 WALs.
     $v=ReadControl $id
     $observation=@{value=$v;eligible=$true;reason='Eligible unmanaged local preference'}
     $firewall=$id -cmatch '^firewall\.(domain|private|public)\.(enabled|inbound)$'
@@ -465,7 +458,6 @@ function WriteControl([string]$id, $value) {
         # enum-name tokens, not System.Boolean (including during restore).
         if ($enabled) { $p.Enabled = if ($value) { 'True' } else { 'False' } } else { $p.DefaultInboundAction = [string]$value }
         # Requery both stores and authority immediately before apply or restore.
-        # This is a fresh snapshot, not the engine's earlier observation.
         $current = ObserveControl $id
         if (!$current.eligible) { throw $current.reason }
         $null = Set-NetFirewallProfile @p
@@ -513,7 +505,6 @@ function FeatureState([string]$name) {
     $hit = @(Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='$name'" -OperationTimeoutSec 30)
     if ($hit.Count -gt 1) { throw 'The Windows feature list is ambiguous' }
     if ($hit.Count -eq 0) {
-        # Only believe "not present" when the full list is healthy.
         if (@(Get-CimInstance -ClassName Win32_OptionalFeature -OperationTimeoutSec 60).Count -lt 5) { throw 'The Windows feature list is not readable' }
         return 'Missing'
     }

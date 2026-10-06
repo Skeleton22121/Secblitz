@@ -1,9 +1,5 @@
-//! The `SecblitzFilter` service: listens on loopback, keeps the block lists
-//! fresh and writes its status for the app.
-//!
-//! `serve` is the whole main loop and is portable, so it is tested on any
-//! host; only the Windows service dispatcher around it is Windows-specific.
-//! Service control (install, start, stop, delete) lives in `scm.rs`.
+//! The `SecblitzFilter` service: loopback listener, list refresh, status for the app.
+//! `serve` is portable and tested on any host; service control lives in `scm.rs`.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -29,7 +25,6 @@ const BIND_RETRY: Duration = Duration::from_secs(30);
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
 const STATUS_EVERY: Duration = Duration::from_secs(10);
 
-/// Where the service reads and writes.
 pub struct Paths {
     pub config: PathBuf,
     pub status: PathBuf,
@@ -68,7 +63,6 @@ fn lock(meta: &SharedMeta) -> MutexGuard<'_, Meta> {
     meta.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Builds the filter from the stored lists and swaps it in.
 fn rebuild_from_disk(paths: &Paths, shared: &Shared, meta: &SharedMeta) {
     let lists = fetch::load_all(&paths.lists);
     let candidate = fetch::rebuild(&lists);
@@ -107,7 +101,6 @@ fn rebuild_from_disk(paths: &Paths, shared: &Shared, meta: &SharedMeta) {
     }
 }
 
-/// Downloads every list that is due and compiles the result.
 fn refresh(paths: &Paths, shared: &Shared, meta: &SharedMeta) {
     let Ok(client) = fetch::client() else {
         lock(meta).refresh_error = Some(ErrorCode::DownloadFailed);
@@ -150,7 +143,6 @@ fn refresh(paths: &Paths, shared: &Shared, meta: &SharedMeta) {
     }
 }
 
-/// Runs the list work on its own thread, one job at a time.
 struct Background {
     busy: Arc<AtomicBool>,
     paths: Arc<Paths>,
@@ -289,7 +281,6 @@ pub fn serve(
     let mut upstream_timer = Every::new(UPSTREAM_EVERY);
     let mut refresh_timer = Every::new(REFRESH_EVERY);
     let mut status_timer = Every::new(STATUS_EVERY);
-    // The first hourly check was the one started above.
     refresh_timer.reset();
     let mut last_status: Option<Status> = None;
     let mut upstream_checked = Instant::now();
@@ -376,8 +367,6 @@ pub fn serve(
     Ok(())
 }
 
-/// The service dispatcher (Windows). Started by the service manager through
-/// the hidden `filter run` command.
 pub fn run() -> Result<()> {
     #[cfg(windows)]
     {
@@ -389,7 +378,6 @@ pub fn run() -> Result<()> {
     }
 }
 
-/// Shared by the dispatcher and tests: the production paths and addresses.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn run_production(stop: &Arc<AtomicBool>) -> Result<()> {
     let paths = Paths::production().context("Cannot find the filter folder")?;
@@ -550,7 +538,6 @@ mod tests {
         rebuild_from_disk(&p, &shared, &meta);
         assert_eq!(lock(&meta).refresh_error, Some(ErrorCode::ListInvalid));
         assert!(shared.filter.read().unwrap().ads.blocks("ads.example"));
-        // A good list clears the error again.
         fetch::store(&p.lists, "adguard-dns", "||ads.example^\n||b.example^\n").unwrap();
         rebuild_from_disk(&p, &shared, &meta);
         assert_eq!(lock(&meta).refresh_error, None);

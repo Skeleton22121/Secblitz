@@ -14,7 +14,6 @@ pub enum Role {
 pub struct Source {
     pub id: &'static str,
     pub url: &'static str,
-    /// Cap on the size as downloaded and as unpacked.
     pub max_bytes: u64,
     pub refresh_days: u64,
     pub role: Role,
@@ -81,7 +80,6 @@ pub const SOURCES: [Source; 8] = [
     },
 ];
 
-/// Names that are never blocked, whatever the lists say.
 pub const NEVER_BLOCK: &[&str] = &[
     "windowsupdate.com",
     "update.microsoft.com",
@@ -168,8 +166,6 @@ fn parse_line(line: &str) -> Option<(bool, &str)> {
     Some((allow, host))
 }
 
-/// Only `||host^`, `||host^$important` and the `@@` forms of both.
-/// Everything else is ignored.
 pub fn parse_blocklist(text: &str) -> Parsed {
     let mut out = Parsed::default();
     for (allow, host) in text.lines().filter_map(parse_line) {
@@ -235,7 +231,6 @@ fn classifier_set(texts: &[&str]) -> HashSet64 {
     HashSet64::from_names(hosts.iter().map(String::as_str))
 }
 
-/// Builds the three switches from the downloaded lists.
 pub fn build(inputs: &Inputs) -> Filter {
     let have_classifier = !inputs.tracking_classifiers.is_empty();
     let t = classifier_set(&inputs.tracking_classifiers);
@@ -279,7 +274,6 @@ pub fn build(inputs: &Inputs) -> Filter {
     }
 }
 
-/// Domains per switch (ads, tracking, dangerous) for the status file.
 pub fn counts(filter: &Filter) -> [usize; 3] {
     [
         filter.ads.block.len(),
@@ -424,7 +418,6 @@ mod tests {
         assert_eq!(f.decide("x.telemetry.example", on), Some(Kind::Tracking));
         assert_eq!(f.decide("ok.telemetry.example", on), None);
         assert_eq!(f.decide("evil.example", on), Some(Kind::Dangerous));
-        // The compiled-in never-block names are part of every build.
         assert!(f.never.any_suffix("dl.delivery.mp.microsoft.com"));
     }
 

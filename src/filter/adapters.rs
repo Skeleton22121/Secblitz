@@ -1,6 +1,5 @@
-//! What the PC's network says about DNS: the servers the filter forwards to,
-//! and whether the connection is metered. Windows only; other hosts get an
-//! empty answer so the portable code and its tests still build.
+//! The servers the filter forwards to and whether the connection is metered.
+//! Other hosts get an empty answer so portable code still builds.
 
 use std::net::{IpAddr, Ipv6Addr};
 
@@ -38,8 +37,6 @@ pub fn usable_servers(found: impl IntoIterator<Item = IpAddr>) -> Vec<IpAddr> {
     out
 }
 
-/// The connection counts as metered when it has a data cost, a data limit
-/// was passed, or the PC is roaming.
 pub fn is_metered(cost: i32, over_data_limit: bool, roaming: bool) -> bool {
     // 2 = fixed, 3 = variable (NL_NETWORK_CONNECTIVITY_COST_HINT).
     matches!(cost, 2 | 3) || over_data_limit || roaming
@@ -87,7 +84,6 @@ mod imp {
         }
     }
 
-    /// The adapter list, in the order Windows gives it.
     fn adapter_buffer() -> Option<Vec<u64>> {
         let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST;
         let mut size: u32 = 16 * 1024;
@@ -184,12 +180,10 @@ mod imp {
     }
 }
 
-/// DNS servers of the active network adapters (at most four, in order).
 pub fn upstream_servers() -> Vec<IpAddr> {
     imp::upstream_servers()
 }
 
-/// True while Windows reports a metered or limited connection.
 pub fn metered() -> bool {
     imp::metered()
 }

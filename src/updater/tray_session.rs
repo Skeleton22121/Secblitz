@@ -1,9 +1,5 @@
-//! Windows plumbing that lets an update coexist with the per-user tray agent:
-//! read a process command line, signal the quiesce event the tray watches, wait
-//! for tray processes to exit, and relaunch the tray unelevated in the user
-//! sessions that had one. Nothing here weakens the installer path: the tray is
-//! never killed, only asked to leave, and a tray that stays makes the update
-//! `DeferredBusy`.
+//! Lets an update coexist with the per-user tray agent: signal the quiesce event, wait for tray
+//! processes to exit, relaunch the tray unelevated. The tray is only asked to leave, never killed.
 use anyhow::{ensure, Context, Result};
 use std::{
     ffi::c_void,
@@ -78,7 +74,6 @@ pub(super) fn command_line(process: HANDLE) -> Result<String> {
     const CLASS: u32 = 60;
     let mut size = 1024u32;
     for _ in 0..4 {
-        // u64 storage keeps the UNICODE_STRING header aligned.
         let mut buf = vec![0u64; (size as usize).div_ceil(8)];
         let mut needed = 0u32;
         let status = unsafe {
@@ -122,7 +117,6 @@ pub(super) fn command_line(process: HANDLE) -> Result<String> {
     anyhow::bail!("Command line changed while reading")
 }
 
-/// Session id of a process, if known.
 pub(super) fn session_of(pid: u32) -> Option<u32> {
     let mut session = 0;
     (unsafe { ProcessIdToSessionId(pid, &mut session) } != 0).then_some(session)
@@ -170,7 +164,6 @@ impl Quiesce {
     }
 }
 
-/// Wait until every pid has exited or the timeout passes. True when all exited.
 pub(super) fn wait_for_exit(pids: &[u32], timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     for pid in pids {
@@ -190,7 +183,6 @@ pub(super) fn wait_for_exit(pids: &[u32], timeout: Duration) -> bool {
     true
 }
 
-/// Ids of sessions with an interactive user (console or RDP) right now.
 fn active_sessions() -> Vec<u32> {
     let mut list: *mut WTS_SESSION_INFOW = null_mut();
     let mut count = 0;
@@ -208,7 +200,6 @@ fn active_sessions() -> Vec<u32> {
     sessions
 }
 
-/// The user's non-elevated primary token for a session, or None.
 fn user_token(session: u32) -> Option<Handle> {
     let mut raw = null_mut();
     if unsafe { WTSQueryUserToken(session, &mut raw) } == 0 {

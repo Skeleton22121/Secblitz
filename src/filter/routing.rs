@@ -1,9 +1,6 @@
-//! The one Windows lookup rule that sends every name to the filter: a Name
-//! Resolution Policy entry for `.`, written straight to the DNS client's
-//! local policy key under a fixed name of our own. The DNS client watches
-//! that key and applies a change within a second (checked on Windows 11,
-//! 2026-10-06), so no PowerShell or restart is involved. Only our own entry
-//! is ever written or deleted; network adapters are never touched.
+//! The Name Resolution Policy entry for `.` that sends every name to the filter,
+//! written to the DNS client policy key under a fixed name of our own. Only that
+//! entry is ever written or deleted; network adapters are never touched.
 
 use anyhow::{ensure, Result};
 use std::net::IpAddr;
@@ -87,7 +84,6 @@ impl Key {
         Ok(Key(key))
     }
 
-    /// A string value (`REG_SZ` or `REG_MULTI_SZ`, entries joined by `;`).
     fn string(&self, name: &str) -> Option<String> {
         let mut kind = 0u32;
         let mut buffer = vec![0u16; MAX_VALUE];
@@ -147,7 +143,6 @@ impl Key {
     }
 }
 
-/// Drops cached answers so a change shows at once. Best effort: the cache
 /// also empties on its own within a minute (blocked answers live 60 s).
 fn flush_cache() {
     unsafe {

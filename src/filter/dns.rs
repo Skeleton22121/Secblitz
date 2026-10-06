@@ -81,7 +81,6 @@ fn parse_question(packet: &[u8]) -> Option<(Question, usize)> {
     ))
 }
 
-/// A plain standard query with exactly one question, or `None`.
 pub fn parse_query(packet: &[u8]) -> Option<Query> {
     if packet.len() < 12 || packet.len() > MAX_QUERY {
         return None;
@@ -105,7 +104,6 @@ pub fn parse_query(packet: &[u8]) -> Option<Query> {
 fn reply(query: &[u8], q: &Query, rcode: u16, answers: u16) -> Vec<u8> {
     let mut out = Vec::with_capacity(q.question_end + 32);
     out.extend_from_slice(&q.id.to_be_bytes());
-    // QR, RD copied from the query, RA set.
     let flags = 0x8000 | (q.flags & 0x0100) | 0x0080 | rcode;
     out.extend_from_slice(&flags.to_be_bytes());
     out.extend_from_slice(&1u16.to_be_bytes());
@@ -141,7 +139,6 @@ pub fn servfail_reply(query: &[u8], q: &Query) -> Vec<u8> {
     reply(query, q, 2, 0)
 }
 
-/// Copy of `packet` with a different transaction id.
 pub fn with_id(packet: &[u8], id: u16) -> Vec<u8> {
     let mut out = packet.to_vec();
     if out.len() >= 2 {
@@ -150,7 +147,6 @@ pub fn with_id(packet: &[u8], id: u16) -> Vec<u8> {
     out
 }
 
-/// True when `reply` is a response with this id whose single question is `q`.
 pub fn reply_matches(reply: &[u8], id: u16, q: &Question) -> bool {
     if reply.len() < 12 || be16(reply, 0) != id || be16(reply, 2) & 0x8000 == 0 {
         return false;
@@ -164,7 +160,6 @@ pub fn reply_matches(reply: &[u8], id: u16, q: &Question) -> bool {
     }
 }
 
-/// The TC (truncated) bit: the sender wants the question repeated over TCP.
 pub fn truncated(reply: &[u8]) -> bool {
     reply.len() >= 4 && be16(reply, 2) & 0x0200 != 0
 }
@@ -355,7 +350,6 @@ mod tests {
         assert!(!reply_matches(&r, 0x1235, &q.question));
         let (_, other) = parsed("other.com", 1);
         assert!(!reply_matches(&r, 0x1234, &other.question));
-        // A query is not a reply.
         assert!(!reply_matches(&p, 0x1234, &q.question));
         let changed = with_id(&r, 7);
         assert!(reply_matches(&changed, 7, &q.question));
@@ -379,7 +373,6 @@ mod tests {
             let mut p = vec![0u8; len];
             rng.fill(&mut p[..]);
             if len >= 12 && rng.gen_bool(0.5) {
-                // Make the header plausible so the name parser gets exercised.
                 p[2] &= 0x07;
                 p[4] = 0;
                 p[5] = 1;

@@ -53,7 +53,6 @@ const REPORT_SD: &str = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x12019f;;;LS)";
 const SERVICE_SD: &str =
     "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWLOCRRC;;;LS)(A;;CCLCSWLOCRRC;;;BU)";
 
-// Small ABI declarations avoid changing the application's Cargo feature set.
 #[link(name = "ole32")]
 extern "system" {
     fn CoTaskMemFree(p: *const c_void);
@@ -229,7 +228,6 @@ fn inspect(
     }
 }
 
-// Kept separate from I/O so adversarial descriptors can be tested without admin.
 fn inspect_descriptor(
     sd: *mut c_void,
     directory: bool,
@@ -342,8 +340,6 @@ fn inspect_descriptor(
                     seen[slot] = true;
                 }
             } else if !privileged(trustee) {
-                // Generic write/all, DAC/owner, delete, delete-child, attributes,
-                // EA, MAXIMUM_ALLOWED and unknown bits are all refused.
                 let benign = FILE_GENERIC_READ
                     | FILE_GENERIC_EXECUTE
                     | FILE_ADD_FILE
@@ -361,9 +357,7 @@ fn inspect_descriptor(
     Ok(())
 }
 
-// Validate the Status directory: protected DACL, SYSTEM/Administrators full,
-// LocalService modify, Users read/execute, nothing else. This is a deliberate,
-// narrow exception to the Monitor-only LocalService write boundary.
+// Deliberate narrow exception to the Monitor-only LocalService write boundary.
 fn inspect_status_descriptor(sd: *mut c_void) -> Result<()> {
     unsafe {
         let mut owner = null_mut();
@@ -579,7 +573,6 @@ pub fn trusted_status_dir() -> Option<PathBuf> {
         .then(|| root.join("Status"))
 }
 
-/// Create (elevated) or validate the Status directory and return its path.
 pub fn ensure_status_dir() -> Result<PathBuf> {
     let mut layout = Layout::parents()?;
     let root = layout.root.clone();
@@ -652,7 +645,6 @@ pub fn install() -> Result<()> {
                 inspect(&output, false, true, false, true)?;
                 std::io::copy(&mut source, &mut output)?;
                 output.sync_all()?;
-                // Close write access before pinning the image for SCM execution.
                 drop(output);
             }
             Err(e)
@@ -742,7 +734,6 @@ pub fn install() -> Result<()> {
             "Cannot secure service configuration: {}",
             error()
         );
-        // Explicitly quote even a known-folder path that happens to lack spaces.
         let cmd = wide(command(&binary)?)?;
         ensure!(
             unsafe {
@@ -884,7 +875,6 @@ pub fn start() -> Result<()> {
         ServiceState::Running => return Ok(()),
         ServiceState::Stopped => {
             if let Err(e) = service.start::<&str>(&[]) {
-                // A concurrent explicit start is harmless; all other failures surface.
                 if !matches!(&e, windows_service::Error::Winapi(e) if e.raw_os_error() == Some(1056))
                 {
                     return Err(e.into());

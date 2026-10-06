@@ -1,41 +1,6 @@
-//! Optional, explicitly installed `SecblitzMonitor` Windows service.
-//!
-//! Wire these functions to `service install|start|uninstall|status|run` in the
-//! executable. Installation requires an already elevated caller; it does not
-//! elevate, overwrite an existing service/binary, or start the service. SCM can
-//! start it on demand, and it starts automatically on subsequent boots.
-//!
-//! LocalService has read/execute access to the binary and write access only to
-//! the pre-created `Program Files/Secblitz/Monitor/latest.json` report. It never
-//! opens the administrator journal, constructs Engine, or calls Backend::write.
-//! The report is capped at 64 KiB and replaced in place: a crash can leave a
-//! partial report. Reports are diagnostic snapshots, not authenticated evidence;
-//! other processes running as LocalService can also change the report. Probe
-//! access failures are reported as unknown, never as compliance. No IPC or
-//! automatic remediation is provided.
-//!
-//! Scans start every 15 minutes (missed ticks are skipped), with a five-minute
-//! budget checked between calls. The platform's 90-second per-probe timeout can
-//! extend that budget and stop latency by one probe. SCM receives StopPending
-//! checkpoints while the current probe drains; no worker is detached. Native
-//! filesystem/SCM calls still depend on Windows completing I/O. Local fixed
-//! drives only; unusual ACLs fail closed rather than being repaired. Elevated
-//! administrators, SYSTEM and TrustedInstaller are outside the trust boundary.
-//!
-//! Deliberate boundary change (0.7.0): a second pre-created directory,
-//! `Program Files/Secblitz/Status`, lets LocalService write a tiny `status.json`
-//! (counts and control ids only, at most 4 KiB, replaced atomically via
-//! temp+rename) so the unelevated tray can show protection state. Its DACL is
-//! protected: SYSTEM/Administrators full, LocalService modify, Users read and
-//! execute only, nothing else; it is validated before every use and the monitor
-//! simply skips writing it if validation fails. The protected Monitor directory
-//! and `latest.json` keep their stricter DACLs unchanged.
-//!
-//! Uninstall requires a stopped, matching service and removes its registration
-//! only. An installer may later remove the retained binary and monitor report.
-//! The shared app directory/binary permit Users read/execute only; the protected
-//! Monitor directory and report retain their stricter SYSTEM/Admin/LocalService
-//! DACLs. All protected objects require a SYSTEM or Administrators owner.
+//! Optional, explicitly installed `SecblitzMonitor` Windows service (elevated caller only).
+//! LocalService may write only `Monitor/latest.json` and `Status/status.json`; it never
+//! opens the journal or remediates. Reports are unauthenticated diagnostic snapshots.
 
 use anyhow::Result;
 
@@ -50,7 +15,6 @@ pub fn trusted_status_dir() -> Option<std::path::PathBuf> {
     windows::trusted_status_dir()
 }
 
-/// Create (elevated) or validate the Status directory and return its path.
 #[cfg(windows)]
 pub fn ensure_status_dir() -> Result<std::path::PathBuf> {
     windows::ensure_status_dir()
@@ -78,8 +42,6 @@ pub fn uninstall() -> Result<()> {
     }
 }
 
-/// Start only an already installed, validated monitor. Wait at most 30 seconds
-/// for SCM Running; this is not an assertion about report health or freshness.
 pub fn start() -> Result<()> {
     #[cfg(windows)]
     {
@@ -91,7 +53,6 @@ pub fn start() -> Result<()> {
     }
 }
 
-/// Stable, language-neutral SCM state for presentation by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MonitorState {
@@ -114,7 +75,6 @@ pub struct StatusDetails {
     pub wait_hint_ms: u64,
 }
 
-/// Query SCM without printing. The CLI owns localization and output formatting.
 pub fn query_status() -> Result<StatusDetails> {
     #[cfg(windows)]
     {
@@ -126,14 +86,10 @@ pub fn query_status() -> Result<StatusDetails> {
     }
 }
 
-/// Stable JSON diagnostic string for the existing CLI presentation interface.
-/// The caller supplies the localized heading; this function never prints.
 pub fn status_details() -> Result<String> {
     Ok(serde_json::to_string(&query_status()?)?)
 }
 
-/// Compatibility query for existing callers. Prints nothing; use
-/// `status_details` when displaying status to a user.
 pub fn status() -> Result<()> {
     query_status().map(|_| ())
 }
