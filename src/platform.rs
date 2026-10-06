@@ -850,6 +850,13 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
+    fn a_failed_elevation_check_never_counts_as_administrator() {
+        assert!(!is_admin());
+        let error = require_admin("Changing things needs administrator rights").unwrap_err();
+        assert_eq!(error.to_string(), "Changing things needs administrator rights");
+    }
+    #[cfg(not(windows))]
+    #[test]
     fn unsupported_platform_never_advertises_a_backend_or_state_directory() {
         assert!(backend().is_err());
         assert!(is_elevated().is_err());
