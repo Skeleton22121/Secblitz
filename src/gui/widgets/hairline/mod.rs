@@ -43,7 +43,16 @@
 //! * translated hover names, made with `ctx.t(...)` on the page.
 //!
 //! ```ignore
-//! hairline::check_radar(p, Plate::Surface, Status::Working, state.changed, state.now, labels)
+//! Magnifier {
+//!     p,
+//!     plate: Plate::Surface,
+//!     status: Status::Checking,
+//!     progress: Some(state.progress),
+//!     changed: state.changed,
+//!     now: state.now,
+//!     labels: Labels::new(|s| ctx.t(s)),
+//! }
+//! .view(magnifier::COMPACT)
 //! ```
 //!
 //! The program's `State` holds a [`Live`] (pointer, tilt, hovered part,

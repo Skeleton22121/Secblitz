@@ -231,20 +231,26 @@ glass looks them over. It is 256 by 188 units, one unit per logical pixel at
 after the title, bar and ticker) and `COMPACT` = 0.625 (160 px wide) in the
 Protection page's region while a new check runs. The Ready state replaces
 the shield icon on Home's "Let's check your PC". Lines are the theme's greys;
-blue (`accent`) only for what the lens is reading and switches turning on,
-green for ticks.
+blue (`accent`) only for what the lens is reading while checking (or after a
+click sends it to a row) and switches turning on, green for ticks and for a
+switch once its row is done. A switch strokes in its colour, fills its pill
+with 13 % of it in the plate and fills its knob with it; it turns from blue
+to green 0.45 to 0.85 s after its tick starts.
 
 | State | What moves |
 | --- | --- |
-| Ready | The glass rests beside the monitor and bobs (3 and 4 units on 1.3 and 1.7 rad/s). The bob runs 6 s after the drawing appears or the pointer was last over it, then fades out over 1.5 s on `EASE_IN_OUT`, so a resting page asks for no frames. Over the screen the lens drifts 55 % of the way to the pointer. |
+| Ready | The glass rests beside the monitor and bobs (3 and 4 units on 1.3 and 1.7 rad/s). The bob runs 6 s after the drawing appears or the pointer last moved over it (a resting cursor does not keep it going), then fades out over 1.5 s on `EASE_IN_OUT`, so a resting page asks for no frames. Over the screen the lens drifts 55 % of the way to the pointer; it highlights no row, since nothing is being checked. Under reduced motion the glass rests still at its place. |
 | Checking | The lens reads the row the check has reached: each fifth of the page's real progress finishes one row, whose tick draws in (0.35 s, `DECELERATE`, rows finished together 150 ms apart) while its switch knob springs on (k 160, c 20). The lens sweeps along that row (x on 0.9 rad/s, a 2.5 unit bob on 1.7 rad/s). Without a known total it falls back to the prototype's autopilot over all five rows. |
 
 The lens position is a spring (k 70, c 13), so it glides between the
 pointer, the check's row and a clicked row. Inside the lens the screen is
 drawn again at 1.55x about its centre and cut to the lens by hand (iced only
-clips to rectangles); magnified lines are 1.55x bolder, at most 2.5 px.
-Interaction: the lens follows the pointer over the screen while checking,
-hovering a row names it (above the lens when the lens is on it), clicking a
+clips to rectangles); magnified lines keep their width, as in the
+prototype. Interaction: the lens follows the pointer over the screen while
+checking, hovering a row names it (above the lens when the lens follows the
+pointer or was sent to that row, otherwise above the row; the label glides
+on a spring, k 320, c 34, instead of jumping, and is kept low enough to fit
+above its anchor at the compact size), clicking a
 row holds the lens there for 1.6 s and draws its tick again, clicking
 elsewhere sends a pulse. Reduced motion: still frame (ambient 0.9 s), ticks
 and switches jump to their end, the lens jumps to the pointer; names and
