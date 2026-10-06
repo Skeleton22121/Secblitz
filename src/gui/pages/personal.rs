@@ -5,7 +5,7 @@ use crate::gui::icons::Icon;
 use crate::gui::pages::tools;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, progress, ButtonKind};
-use crate::gui::{Ctx, Message};
+use crate::gui::{blocking, Ctx, Helper, Message};
 use crate::user_apps::APPS;
 use crate::user_settings::{Op, Setting};
 use iced::widget::{column, space};
@@ -25,6 +25,9 @@ pub enum Msg {
     AppQuery(usize, Result<Reply, String>),
     Update(usize),
     Updated(usize, Result<Reply, String>),
+    InstallerChecked(Result<Reply, String>),
+    ScanOnline(bool),
+    UpdateOnline(usize, bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,12 +49,14 @@ enum Why {
     Offline,
     Unavailable,
     Unreadable,
-    NoBroker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Apps {
+    Unchecked,
+    Probing,
     Idle,
+    Preparing,
     Scanning,
     Reading(usize),
     Ready,
@@ -62,6 +67,7 @@ enum Apps {
 enum AppCell {
     Hidden,
     Available,
+    Preparing,
     Updating,
     Updated,
     Unconfirmed,
@@ -80,7 +86,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             cells: [Cell::Idle; Setting::PERSONAL.len()],
-            apps: Apps::Idle,
+            apps: Apps::Unchecked,
             app_cells: [AppCell::Hidden; APPS.len()],
             open: Vec::new(),
         }
@@ -101,10 +107,20 @@ fn toast(text: String, tone: Tone) -> Task<Message> {
 
 
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    if ctx.broker.is_none() || state.cells.iter().any(|c| *c != Cell::Idle) {
+    if ctx.helper != Helper::Ready {
         return Task::none();
     }
-    update(state, Msg::Load, ctx)
+    let mut tasks = Vec::new();
+    if state.cells.iter().all(|c| *c == Cell::Idle) {
+        tasks.push(update(state, Msg::Load, ctx));
+    }
+    if state.apps == Apps::Unchecked {
+        state.apps = Apps::Probing;
+        tasks.push(ctx.broker_task(Request::AppInstallerStatus, |r| {
+            wrap(Msg::InstallerChecked(r))
+        }));
+    }
+    Task::batch(tasks)
 }
 
 fn query(ctx: &Ctx, setting: Setting) -> Task<Message> {
@@ -156,7 +172,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Ok(Reply::Done) => None,
                 Ok(Reply::Unavailable) => Some(ctx.t("This setting can't be changed on this PC. Your work or school may control it.")),
                 Ok(Reply::ChangedSince) => Some(ctx.t("This setting was changed again after Secblitz set it. Whatever you changed was left as it is.")),
-                _ => Some(ctx.t("We couldn't change that setting. It was left as it was. Please try again, or restart your PC first.")),
+                Err(e) if e == "unavailable" => Some(helper_text(ctx)),
+                _ => Some(ctx.t("We couldn't change that setting. It was left as it was. Please try again.")),
             };
             let reread = query(ctx, setting);
             match note {
@@ -173,11 +190,35 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::ScanApps => {
-            if matches!(state.apps, Apps::Scanning | Apps::Reading(_)) || updating(state) {
+            if ctx.helper != Helper::Ready
+                || matches!(
+                    state.apps,
+                    Apps::Unchecked | Apps::Probing | Apps::Preparing | Apps::Scanning | Apps::Reading(_)
+                )
+                || updating(state)
+            {
                 return Task::none();
             }
-            if ctx.broker.is_none() {
-                state.apps = Apps::Failed(Why::NoBroker);
+            state.apps = Apps::Preparing;
+            Task::perform(blocking(secblitz::tools::dns_offline), |offline| {
+                wrap(Msg::ScanOnline(!offline))
+            })
+        }
+        Msg::InstallerChecked(reply) => {
+            if state.apps == Apps::Probing {
+                state.apps = match reply {
+                    Ok(Reply::Unavailable) => Apps::Failed(Why::Unavailable),
+                    _ => Apps::Idle,
+                };
+            }
+            Task::none()
+        }
+        Msg::ScanOnline(online) => {
+            if state.apps != Apps::Preparing {
+                return Task::none();
+            }
+            if !online {
+                state.apps = Apps::Failed(Why::Offline);
                 return Task::none();
             }
             state.apps = Apps::Scanning;
@@ -225,6 +266,19 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             {
                 return Task::none();
             }
+            state.app_cells[index] = AppCell::Preparing;
+            Task::perform(blocking(secblitz::tools::dns_offline), move |offline| {
+                wrap(Msg::UpdateOnline(index, !offline))
+            })
+        }
+        Msg::UpdateOnline(index, online) => {
+            if state.app_cells[index] != AppCell::Preparing {
+                return Task::none();
+            }
+            if !online {
+                state.app_cells[index] = AppCell::Failed(Why::Offline);
+                return Task::none();
+            }
             state.app_cells[index] = AppCell::Updating;
             ctx.broker_task(Request::AppUpdate(index as u16), move |r| {
                 wrap(Msg::Updated(index, r))
@@ -244,7 +298,17 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 }
 
 fn updating(state: &State) -> bool {
-    state.app_cells.contains(&AppCell::Updating)
+    state
+        .app_cells
+        .iter()
+        .any(|c| matches!(c, AppCell::Updating | AppCell::Preparing))
+}
+
+fn helper_text(ctx: &Ctx) -> String {
+    match ctx.helper {
+        Helper::NotOnThisAccount => ctx.t("Windows doesn't let Secblitz do this from the built-in Administrator account or when account protection (UAC) is off. Sign in to your normal account and open Secblitz there."),
+        _ => ctx.t("Close Secblitz and open it again from its Start menu shortcut to do this."),
+    }
 }
 
 
@@ -317,11 +381,11 @@ fn is_on(reply: Reply) -> bool {
 fn account_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let mut rows: Vec<El<'a>> = Vec::new();
-    if ctx.broker.is_none() {
+    if ctx.helper != Helper::Ready {
         rows.push(widgets::row_item(
             p,
             Some(Icon::Info),
-            ctx.t("Close Secblitz and open it again from its Start menu shortcut to use this."),
+            helper_text(ctx),
             None,
             space::horizontal().width(0),
             None,
@@ -402,8 +466,7 @@ fn why_text(ctx: &Ctx, why: Why) -> String {
     match why {
         Why::Offline => ctx.t("You seem to be offline. Connect to the internet, then press Try again."),
         Why::Unavailable => ctx.t("App updates need App Installer from Microsoft, which this PC doesn't have. Install it from the Microsoft Store, then open Secblitz again."),
-        Why::Unreadable => ctx.t("We couldn't check for updates. Press Try again. If it keeps failing, restart your PC."),
-        Why::NoBroker => ctx.t("Close Secblitz and open it again from its Start menu shortcut to use this."),
+        Why::Unreadable => ctx.t("We couldn't check for updates. Press Try again. If it keeps failing, try again a little later."),
     }
 }
 
@@ -413,66 +476,93 @@ fn apps_group<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let scan_title = ctx.t("Look for app updates");
     let scan_help =
         ctx.t("Checks your browser, Java, PDF reader and a few other popular programs.");
-    match state.apps {
-        Apps::Idle => rows.push(widgets::row_item(
+    if ctx.helper != Helper::Ready {
+        rows.push(widgets::row_item(
             p,
-            Some(Icon::Download),
-            scan_title,
-            Some(scan_help),
-            secondary(p, ctx.t("Check"), Some(Msg::ScanApps)),
+            Some(Icon::Info),
+            helper_text(ctx),
             None,
-        )),
-        Apps::Scanning | Apps::Reading(_) => rows.push(block(
-            widgets::row_item(
+            space::horizontal().width(0),
+            None,
+        ));
+    } else {
+        match state.apps {
+            Apps::Unchecked | Apps::Probing => rows.push(widgets::row_item(
                 p,
                 Some(Icon::Download),
-                ctx.t("Looking for app updates…"),
-                Some(ctx.t("This can take a minute.")),
-                space::horizontal().width(0),
+                scan_title,
+                Some(ctx.t("Checking that this PC can do it…")),
+                secondary(p, ctx.t("Check"), None),
                 None,
-            ),
-            Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
-        )),
-        Apps::Failed(why) => rows.push(widgets::row_item_tinted(
-            p,
-            Some(Icon::AlertTriangle),
-            Some(Tone::Warn),
-            why_text(ctx, why),
-            None,
-            if why == Why::NoBroker || why == Why::Unavailable {
-                space::horizontal().width(0).into()
-            } else {
-                secondary(p, ctx.t("Try again"), Some(Msg::ScanApps))
-            },
-            None,
-        )),
-        Apps::Ready => {
-            let shown: Vec<usize> = (0..APPS.len())
-                .filter(|i| state.app_cells[*i] != AppCell::Hidden)
-                .collect();
-            let again = secondary(p, ctx.t("Check again"), Some(Msg::ScanApps));
-            if shown.is_empty() {
-                rows.push(widgets::row_item_tinted(
-                    p,
-                    Some(Icon::CheckCircle),
-                    Some(Tone::Good),
-                    ctx.t("Your popular programs are up to date."),
-                    None,
-                    again,
-                    None,
-                ));
-            } else {
-                rows.push(widgets::row_item(
+            )),
+            Apps::Preparing => rows.push(widgets::row_item(
+                p,
+                Some(Icon::Download),
+                scan_title,
+                Some(ctx.t("Checking your internet connection…")),
+                secondary(p, ctx.t("Check"), None),
+                None,
+            )),
+            Apps::Idle => rows.push(widgets::row_item(
+                p,
+                Some(Icon::Download),
+                scan_title,
+                Some(scan_help),
+                secondary(p, ctx.t("Check"), Some(Msg::ScanApps)),
+                None,
+            )),
+            Apps::Scanning | Apps::Reading(_) => rows.push(block(
+                widgets::row_item(
                     p,
                     Some(Icon::Download),
-                    ctx.t("Newer versions are available"),
-                    Some(ctx.t("Updates can't be undone. A program may close while it updates.")),
-                    again,
+                    ctx.t("Looking for app updates…"),
+                    Some(ctx.t("This can take a minute.")),
+                    space::horizontal().width(0),
                     None,
-                ));
-                let busy = updating(state);
-                for i in shown {
-                    rows.push(app_row(state, ctx, i, busy));
+                ),
+                Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
+            )),
+            Apps::Failed(why) => rows.push(widgets::row_item_tinted(
+                p,
+                Some(Icon::AlertTriangle),
+                Some(Tone::Warn),
+                why_text(ctx, why),
+                None,
+                if why == Why::Unavailable {
+                    space::horizontal().width(0).into()
+                } else {
+                    secondary(p, ctx.t("Try again"), Some(Msg::ScanApps))
+                },
+                None,
+            )),
+            Apps::Ready => {
+                let shown: Vec<usize> = (0..APPS.len())
+                    .filter(|i| state.app_cells[*i] != AppCell::Hidden)
+                    .collect();
+                let again = secondary(p, ctx.t("Check again"), Some(Msg::ScanApps));
+                if shown.is_empty() {
+                    rows.push(widgets::row_item_tinted(
+                        p,
+                        Some(Icon::CheckCircle),
+                        Some(Tone::Good),
+                        ctx.t("Your popular programs are up to date."),
+                        None,
+                        again,
+                        None,
+                    ));
+                } else {
+                    rows.push(widgets::row_item(
+                        p,
+                        Some(Icon::Download),
+                        ctx.t("Newer versions are available"),
+                        Some(ctx.t("Updates can't be undone. A program may close while it updates.")),
+                        again,
+                        None,
+                    ));
+                    let busy = updating(state);
+                    for i in shown {
+                        rows.push(app_row(state, ctx, i, busy));
+                    }
                 }
             }
         }
@@ -503,6 +593,14 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
                 None,
             ),
             Some(widgets::under_row(vec![progress::indeterminate(p, Tone::Brand)])),
+        ),
+        AppCell::Preparing => widgets::row_item(
+            p,
+            Some(Icon::Package),
+            name,
+            Some(ctx.t("Checking your internet connection…")),
+            secondary(p, ctx.t("Update"), None),
+            None,
         ),
         AppCell::Updated => widgets::row_item_tinted(
             p,
@@ -570,5 +668,12 @@ mod tests {
         assert!(updating(&state));
         state.app_cells[1] = AppCell::Updated;
         assert!(!updating(&state));
+    }
+
+    #[test]
+    fn a_preparing_app_blocks_other_updates() {
+        let mut state = State::default();
+        state.app_cells[0] = AppCell::Preparing;
+        assert!(updating(&state));
     }
 }
