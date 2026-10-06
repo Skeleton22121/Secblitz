@@ -1039,7 +1039,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 raw: None,
             },
         ),
-        Run::Done(Err(raw)) if state.bitwarden_why == Some(broker::Reply::Unavailable) => finished(
+        Run::Done(Err(_)) if state.bitwarden_why == Some(broker::Reply::Unavailable) => finished(
             state,
             ctx,
             Outcome {
@@ -1049,10 +1049,10 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("Bitwarden can't be installed from this account"),
                 sub: Some(ctx.t("You can get it from bitwarden.com instead.")),
                 menu: vec![entry(Icon::Check, ctx.t("Done"), Msg::ClearBitwarden)],
-                raw: Some((Detail::Bitwarden, logic::friendly_why(raw).to_owned())),
+                raw: Some((Detail::Bitwarden, logic::WHY_BITWARDEN_UNAVAILABLE.to_owned())),
             },
         ),
-        Run::Done(Err(raw)) if state.bitwarden_why == Some(broker::Reply::Offline) => finished_with(
+        Run::Done(Err(_)) if state.bitwarden_why == Some(broker::Reply::Offline) => finished_with(
             state,
             ctx,
             Outcome {
@@ -1062,7 +1062,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("We couldn't install Bitwarden"),
                 sub: Some(ctx.t("You're offline. Connect to the internet and try again.")),
                 menu: vec![entry(Icon::X, ctx.t("Done"), Msg::ClearBitwarden)],
-                raw: Some((Detail::Bitwarden, logic::friendly_why(raw).to_owned())),
+                raw: Some((Detail::Bitwarden, logic::WHY_BITWARDEN_OFFLINE.to_owned())),
             },
             Some((ctx.t("Retry"), Icon::Refresh, Msg::Ask(Sheet::Bitwarden))),
         ),
@@ -1080,7 +1080,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     ctx.t("Try again"),
                     Msg::ClearBitwarden,
                 )],
-                raw: Some((Detail::Bitwarden, logic::friendly_why(raw).to_owned())),
+                raw: Some((Detail::Bitwarden, logic::bitwarden_why(raw).to_owned())),
             },
         ),
     }
