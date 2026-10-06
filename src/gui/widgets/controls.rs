@@ -970,6 +970,42 @@ pub fn scroll_style(
     }
 }
 
+/// Whether a scroll list has more below what is shown.
+pub fn more_below(view: Option<&iced::widget::scrollable::Viewport>) -> bool {
+    view.is_some_and(|v| {
+        let hidden = v.content_bounds().height - v.bounds().height;
+        hidden > 0.5 && v.absolute_offset().y < hidden - 0.5
+    })
+}
+
+/// Softens the bottom edge of a scroll list into the sheet while more is below,
+/// so a row cut by the edge reads as "more to scroll", not as broken.
+pub fn fade_below<'a, M: 'a>(
+    list: impl Into<Element<'a, M>>,
+    surface: Color,
+    more: bool,
+) -> Element<'a, M> {
+    // The list stays in the same place in the tree either way: swapping it in
+    // and out of the stack would reset its scroll position.
+    let fade = container(iced::widget::space::vertical())
+        .width(Length::Fill)
+        .height(FADE)
+        .style(move |_| container::Style {
+            background: more.then(|| {
+                Background::Gradient(iced::Gradient::Linear(
+                    iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
+                        .add_stop(0.0, Color { a: 0.0, ..surface })
+                        .add_stop(1.0, surface),
+                ))
+            }),
+            ..container::Style::default()
+        });
+    let list: Element<'a, M> = list.into();
+    stack![list, container(fade).height(Length::Fill).align_bottom(Length::Fill)].into()
+}
+
+const FADE: f32 = 32.0;
+
 pub fn scrollbar() -> iced::widget::scrollable::Direction {
     iced::widget::scrollable::Direction::Vertical(
         iced::widget::scrollable::Scrollbar::new()

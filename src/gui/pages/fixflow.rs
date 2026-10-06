@@ -9,7 +9,7 @@ use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim::{self, Clock, Tween};
 use crate::gui::widgets::handoff;
-use crate::gui::widgets::controls::{scroll_style, scrollbar};
+use crate::gui::widgets::controls::{fade_below, more_below, scroll_style, scrollbar};
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
@@ -21,6 +21,7 @@ const LIST_MAX_HEIGHT: f32 = 300.0;
 const MARK: f32 = theme::ICON_ROW;
 const WAIT_DOT: f32 = 6.0;
 const STEP_LIST: &str = "fix-steps";
+const STEP_LIST_WIDTH: f32 = 400.0;
 
 #[derive(Debug)]
 pub struct State {
@@ -38,6 +39,9 @@ pub struct State {
     held: Option<Held>,
     steps_view: Option<scrollable::Viewport>,
     follow: Option<Follow>,
+    /// The person scrolled the step list themselves, so it stops following.
+    steps_held: bool,
+    result_view: Option<scrollable::Viewport>,
 }
 
 /// The step list gliding to keep the running step in its middle.
@@ -64,6 +68,8 @@ impl Default for State {
             held: None,
             steps_view: None,
             follow: None,
+            steps_held: false,
+            result_view: None,
         }
     }
 }
@@ -130,6 +136,7 @@ pub enum Msg {
     Technical,
     Frame(Instant),
     Steps(scrollable::Viewport),
+    ResultList(scrollable::Viewport),
     UndoInfo(Option<(u64, usize)>),
 }
 
@@ -308,6 +315,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             glide(state, at)
         }
+        Msg::ResultList(view) => {
+            state.result_view = Some(view);
+            Task::none()
+        }
         Msg::Steps(view) => {
             // A new row is measured only after the event that added it, so a
             // change in size is the moment to follow again.
@@ -315,6 +326,17 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 v.bounds().height != view.bounds().height
                     || v.content_bounds().height != view.content_bounds().height
             });
+            let y = view.absolute_offset().y;
+            // The offset reported can trail a glide by a frame, so anything on
+            // the glide's path counts as ours.
+            let ours = |f: &Follow| {
+                let (lo, hi) = (f.glide.from.min(f.glide.to), f.glide.from.max(f.glide.to));
+                (lo - 2.0..=hi + 2.0).contains(&y)
+            };
+            if !resized && !state.follow.as_ref().is_some_and(ours) {
+                state.steps_held = true;
+                state.follow = None;
+            }
             state.steps_view = Some(view);
             if resized {
                 follow(state, Instant::now())
@@ -358,6 +380,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::Technical => {
             if let Stage::Result { show_technical, .. } = &mut state.stage {
                 *show_technical = !*show_technical;
+                state.result_view = None;
             }
             Task::none()
         }
@@ -395,6 +418,8 @@ fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task
     state.bar = (!undo || planned(state, true) > 0).then(|| Tween::new(0.0, 0.0, anim::NORMAL));
     state.steps_view = None;
     state.follow = None;
+    state.steps_held = false;
+    state.result_view = None;
     state.stage = Stage::Working {
         undo,
         phase: None,
@@ -549,9 +574,20 @@ fn follow(state: &mut State, now: Instant) -> Task<Message> {
         return Task::none();
     };
     let (shown, whole) = (view.bounds().height, view.content_bounds().height);
-    let Some(to) = running_step(state).and_then(|(r, n)| centred_offset(shown, whole, r, n)) else {
+    let Some((running, rows)) = running_step(state) else {
         return Task::none();
     };
+    let Some(to) = centred_offset(shown, whole, running, rows) else {
+        return Task::none();
+    };
+    if state.steps_held {
+        // Following picks up again once the person scrolls back near the step running.
+        let row = (whole + theme::S3) / rows as f32;
+        if (view.absolute_offset().y - to).abs() > row * 2.0 {
+            return Task::none();
+        }
+        state.steps_held = false;
+    }
     if !anim::animating() {
         state.follow = None;
         return scroll_steps(to);
@@ -611,6 +647,7 @@ fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<S
     state.since = state.now;
     state.bar = None;
     state.held = None;
+    state.result_view = None;
     state.stage = Stage::Result {
         undo,
         summary,
@@ -695,28 +732,39 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
     .into()
 }
 
-fn below_art<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
-    scrollable(content)
+fn below_art<'a>(
+    state: &State,
+    p: Palette,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    fade_below(
+        scrollable(content)
+            .on_scroll(|v| Message::Fix(Msg::ResultList(v)))
+            .direction(scrollbar())
+            .style(scroll_style(p))
+            .width(Length::Fill)
+            .height(Length::Fill),
+        p.surface,
+        more_below(state.result_view.as_ref()),
+    )
+}
+
+fn step_list<'a>(state: &State, p: Palette, list: Element<'a, Message>) -> Element<'a, Message> {
+    fade_below(
+        scrollable(
+            container(container(list).width(Length::Fill).max_width(STEP_LIST_WIDTH))
+                .center_x(Length::Fill)
+                .padding([0.0, theme::S3]),
+        )
+        .id(STEP_LIST)
+        .on_scroll(|v| Message::Fix(Msg::Steps(v)))
         .direction(scrollbar())
         .style(scroll_style(p))
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
-
-fn step_list<'a>(p: Palette, list: Element<'a, Message>) -> Element<'a, Message> {
-    scrollable(
-        container(list)
-            .center_x(Length::Fill)
-            .padding([0.0, theme::S3]),
+        .height(Length::Fill),
+        p.surface,
+        more_below(state.steps_view.as_ref()),
     )
-    .id(STEP_LIST)
-    .on_scroll(|v| Message::Fix(Msg::Steps(v)))
-    .direction(scrollbar())
-    .style(scroll_style(p))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
 }
 
 fn art<'a>(
@@ -1057,7 +1105,7 @@ fn working_view<'a>(
         ctx.t("Checking the result"),
         verifying && !settled,
     ));
-    c.push(step_list(p, list.into())).into()
+    c.push(step_list(state, p, list.into())).into()
 }
 
 fn bullet<'a>(p: Palette, tone: Tone, s: String) -> Element<'a, Message> {
@@ -1197,7 +1245,7 @@ fn result_view<'a>(
     column![
         art(state, ctx, undo, run, share),
         container(widgets::h1(p, ctx.t(title))).center_x(Length::Fill),
-        below_art(p, body.into()),
+        below_art(state, p, body.into()),
         space::vertical().height(theme::S3),
         footer(buttons),
     ]
