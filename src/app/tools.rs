@@ -1232,7 +1232,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "os.feature_release_support" => "Your version of Windows is running out of safety updates. Install the newest version in Windows Update.",
         "boot.secure_boot_certs" => "Your PC's startup security needs a renewal. Install all Windows updates, then check your PC maker's website.",
         "defender.tamper_protection" => "Turn on Tamper Protection so malware can't switch off your virus protection.",
-        "defender.threats" => "Windows found something harmful. Open Windows Security and follow the steps.",
+        "defender.threats" => "Windows found something harmful. Secblitz can remove it, and Windows Security usually keeps a copy you can restore.",
         "defender.exclusions_risky" => "Your virus protection skips some risky places. Look at the list in Windows Security.",
         "defender.scan_age" => "Your PC hasn't been scanned for a while. Run a quick scan in Windows Security.",
         "smartscreen.apps" => "Turn on warnings for unknown downloads in Windows Security.",
@@ -1304,6 +1304,9 @@ pub fn rule_fix_advice(rule_id: &str) -> &'static str {
         "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. We can fix this for you.",
         "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. We can fix this for you.",
         "persistence.run_and_tasks" => "A risky program starts by itself with Windows. We can switch it off for you.",
+        "accounts.stale_enabled" => "Some old accounts are still switched on. Secblitz can switch them off, and you can undo it.",
+        "smb.shares_exposed" => "Some folders are shared with everyone on your network. Secblitz can limit them, and you can undo it.",
+        "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Secblitz can remove it, and you can undo it.",
         _ => "Secblitz can fix this for you, and you can undo it. Look it over first.",
     }
 }
@@ -1361,7 +1364,36 @@ pub fn rule_restart(rule_id: &str) -> bool {
 /// Checks where the Tools page can offer its existing "scan for viruses" job
 /// right in the tip. Nothing new is started: the person confirms the usual sheet.
 pub fn rule_scan(rule_id: &str) -> bool {
-    matches!(rule_id, "defender.scan_age" | "defender.threats")
+    rule_id == "defender.scan_age"
+}
+
+/// Checks where the Tools page can ask Windows Security to remove the threats
+/// it found, after the person confirms a sheet that says what happens.
+pub fn rule_remove_threats(rule_id: &str) -> bool {
+    rule_id == "defender.threats"
+}
+
+/// How a threat removal ended, in the person's terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatsResult {
+    /// Windows Security reported nothing active.
+    Nothing,
+    /// Everything it reported is gone.
+    Removed,
+    /// Some are gone and some are still active.
+    Partly,
+    /// None could be removed.
+    Stuck,
+}
+
+/// Judge the removal only by the counts Windows Security itself reported.
+pub fn threats_result(r: &secblitz::actions::ThreatRemoval) -> ThreatsResult {
+    match (r.found, r.removed, r.left) {
+        (0, _, 0) => ThreatsResult::Nothing,
+        (_, removed, 0) if removed > 0 => ThreatsResult::Removed,
+        (_, removed, _) if removed > 0 => ThreatsResult::Partly,
+        _ => ThreatsResult::Stuck,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1391,6 +1423,8 @@ pub struct Tip {
     pub fix_advice: &'static str,
     /// A `Look` tip that a restart finishes: "Restart now" asks first.
     pub restart: bool,
+    /// A `Look` tip whose found threats the Tools page can remove (after a sheet).
+    pub remove_threats: bool,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1398,7 +1432,6 @@ pub struct Tip {
 
 #[derive(Debug, Clone)]
 pub struct TipsReport {
-    #[allow(dead_code)] // kept for the technical view
     pub profile: TipProfile,
     pub tips: Vec<Tip>,
     #[allow(dead_code)] // raw evidence, never shown on screen
@@ -1461,6 +1494,10 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .find(|id| rule_fix(id).is_some())
             .or_else(|| attention.iter().copied().find(|id| rule_restart(id)))
             .or_else(|| attention.first().copied());
+        let remove_threats = probe
+            .assessments
+            .iter()
+            .any(|a| a.status == diag::Status::Attention && rule_remove_threats(&a.rule.id));
         let scan = probe
             .assessments
             .iter()
@@ -1504,6 +1541,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             fix: lead.and_then(rule_fix),
             fix_advice: lead.map_or("", rule_fix_advice),
             restart,
+            remove_threats: look && remove_threats,
         });
     }
     let rank = |s: TipState| match s {
@@ -2009,6 +2047,125 @@ mod tests {
         }
     }
 
+    /// A report whose one probe needs a look for exactly these checks.
+    fn report_with(probe_id: diag::ProbeId, rules: &[&str]) -> diag::Report {
+        let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == probe_id)
+            .expect("probe is part of the profile");
+        probe.status = diag::Status::Attention;
+        probe.assessments = rules
+            .iter()
+            .map(|id| diag::Assessment {
+                status: diag::Status::Attention,
+                detail: String::new(),
+                rule: diag::RuleReference {
+                    id: (*id).into(),
+                    revision: 1,
+                    mapping_version: String::new(),
+                    documentation: vec![],
+                },
+            })
+            .collect();
+        report
+    }
+
+    fn tip_in(report: &diag::Report, probe_id: diag::ProbeId) -> Tip {
+        summarize_tips(TipProfile::Extra, report)
+            .tips
+            .into_iter()
+            .find(|t| t.title == tip_title(probe_id))
+            .expect("tip for the probe")
+    }
+
+    #[test]
+    fn checks_with_a_protection_fix_point_to_it_instead_of_manual_steps() {
+        // A check and its fix share one id; checks without a fix have none.
+        for id in [
+            "accounts.stale_enabled",
+            "smb.shares_exposed",
+            "smartscreen.browser_policy",
+            "smartscreen.apps",
+            "update.paused",
+            "ps.v2_engine",
+        ] {
+            assert_eq!(rule_fix(id), Some(id), "{id}");
+            assert_no_dev_terms(rule_fix_advice(id));
+            assert!(rule_fix_advice(id).len() <= 130, "{id}: one short line");
+        }
+        for id in [
+            "defender.threats",
+            "defender.scan_age",
+            "persistence.wmi_subscriptions",
+            "unknown.rule",
+        ] {
+            assert_eq!(rule_fix(id), None, "{id}");
+        }
+        for (probe, rule) in [
+            (diag::ProbeId::AccountHygiene, "accounts.stale_enabled"),
+            (diag::ProbeId::Sharing, "smb.shares_exposed"),
+        ] {
+            let tip = tip_in(&report_with(probe, &[rule]), probe);
+            assert_eq!(tip.state, TipState::Look, "{rule}");
+            assert_eq!(tip.fix, Some(rule), "{rule}");
+            assert_eq!(tip.fix_advice, rule_fix_advice(rule), "{rule}");
+            // When the latest check does not offer the fix, the manual way remains.
+            assert_eq!(tip.advice, rule_advice(rule).unwrap(), "{rule}");
+            assert_eq!(tip.open, rule_open(rule), "{rule}");
+            assert!(!tip.scan && !tip.remove_threats, "{rule}");
+        }
+        // A tip with nothing to look at never offers a fix.
+        let mut report = report_with(diag::ProbeId::AccountHygiene, &["accounts.stale_enabled"]);
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::AccountHygiene)
+            .unwrap();
+        probe.status = diag::Status::Healthy;
+        for a in &mut probe.assessments {
+            a.status = diag::Status::Healthy;
+        }
+        let tip = tip_in(&report, diag::ProbeId::AccountHygiene);
+        assert_eq!((tip.fix, tip.remove_threats, tip.open), (None, false, None));
+        // A check without a fix keeps its manual step.
+        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
+        assert_eq!(tip.fix, None);
+        assert_eq!(tip.advice, rule_advice("persistence.wmi_subscriptions").unwrap());
+    }
+
+    #[test]
+    fn found_threats_offer_removal_and_a_scan_stays_for_the_scan_check() {
+        assert!(rule_remove_threats("defender.threats"));
+        assert!(!rule_remove_threats("defender.scan_age"));
+        assert!(rule_scan("defender.scan_age") && !rule_scan("defender.threats"));
+        let tip = tip_in(
+            &report_with(diag::ProbeId::DefenderProtection, &["defender.threats"]),
+            diag::ProbeId::DefenderProtection,
+        );
+        assert!(tip.remove_threats && !tip.scan && tip.fix.is_none());
+        assert_eq!(tip.advice, rule_advice("defender.threats").unwrap());
+        let tip = tip_in(
+            &report_with(diag::ProbeId::DefenderProtection, &["defender.scan_age"]),
+            diag::ProbeId::DefenderProtection,
+        );
+        assert!(tip.scan && !tip.remove_threats);
+    }
+
+    #[test]
+    fn threat_removal_is_judged_only_by_what_defender_reports() {
+        use secblitz::actions::ThreatRemoval as R;
+        let judge = |found, removed, left| threats_result(&R { found, removed, left });
+        assert_eq!(judge(0, 0, 0), ThreatsResult::Nothing);
+        assert_eq!(judge(2, 2, 0), ThreatsResult::Removed);
+        assert_eq!(judge(3, 1, 2), ThreatsResult::Partly);
+        assert_eq!(judge(2, 0, 2), ThreatsResult::Stuck);
+        // Never a success without a removed item or with something left over.
+        assert_eq!(judge(1, 0, 0), ThreatsResult::Stuck);
+        assert_eq!(judge(0, 0, 1), ThreatsResult::Stuck);
+    }
+
     #[test]
     fn a_tip_for_something_secblitz_can_fix_goes_to_the_fix() {
         let mut report = diag::collect(TipProfile::Extra.profile(), &diag::Context::default());
@@ -2055,6 +2212,7 @@ mod tests {
             fix: rule_fix(rule),
             fix_advice: rule_fix_advice(rule),
             restart: false,
+            remove_threats: false,
             explain: None,
         }
     }
@@ -2261,6 +2419,53 @@ mod tests {
         }
         let tips = summarize_tips(TipProfile::Everyday, &report);
         assert!(tips.tips.iter().all(|t| t.fix.is_none() && !t.restart));
+    }
+
+    /// A tip that still needs the person never ends at a bare sentence: it
+    /// has a Protection fix, an in-app action, or a guide with real steps.
+    #[test]
+    fn every_tip_that_needs_the_person_has_a_fix_an_action_or_steps() {
+        for rule in [
+            "os.feature_release_support",
+            "boot.secure_boot_certs",
+            "defender.tamper_protection",
+            "defender.threats",
+            "defender.exclusions_risky",
+            "defender.scan_age",
+            "smartscreen.apps",
+            "smartscreen.browser_policy",
+            "update.paused",
+            "update.reboot_overdue",
+            "ps.v2_engine",
+            "net.hosts_file",
+            "persistence.wmi_subscriptions",
+            "services.unquoted_paths",
+            "accounts.stale_enabled",
+            "smb.shares_exposed",
+            "firewall.user_dir_inbound_allow",
+            "accounts.daily_admin",
+            "accounts.hello_configured",
+            "accounts.find_my_device",
+            "vbs.memory_integrity",
+            "vbs.kernel_stack_protection",
+            "net.dns_encryption",
+            "net.wifi_security",
+            "persistence.run_and_tasks",
+            "remote.rdp",
+            "smb.v1",
+        ] {
+            let fix = rule_fix(rule).is_some();
+            let action = rule_scan(rule) || rule_remove_threats(rule) || rule_restart(rule);
+            let steps = crate::guide::guide(rule).is_some();
+            assert!(fix || action || steps, "{rule}: needs a fix, an action or a guide");
+        }
+        // Hidden background tasks stay with the person: steps, never a fix.
+        let wmi = "persistence.wmi_subscriptions";
+        assert!(rule_fix(wmi).is_none());
+        let guide = crate::guide::guide(wmi).expect("hidden tasks have steps");
+        assert!(guide.steps[0].contains("Don't remove anything yourself"));
+        let tip = tip_for(diag::ProbeId::Persistence, &[wmi]);
+        assert_eq!(tip.guide, Some(guide));
     }
 
     #[test]

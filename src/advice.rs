@@ -187,6 +187,9 @@ pub fn control_impact(id: &str) -> &'static str {
         "persistence.run_and_tasks" => {
             "A harmful program starting again every time you turn on your PC"
         }
+        "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
+        "smb.shares_exposed" => "Strangers on your network opening or changing your shared files",
+        "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
         _ => "",
     }
 }
@@ -290,6 +293,9 @@ pub fn control_label(id: &str) -> &'static str {
         "firewall.user_dir_inbound_allow" => "Firewall allowances for downloads",
         "net.hosts_file" => "Redirected trusted websites",
         "persistence.run_and_tasks" => "Risky start-up programs",
+        "accounts.stale_enabled" => "Old accounts still switched on",
+        "smb.shares_exposed" => "Folders shared with everyone",
+        "smartscreen.browser_policy" => "Browser warnings about dangerous sites",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -405,7 +411,10 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "services.unquoted_paths"
         | "firewall.user_dir_inbound_allow"
         | "net.hosts_file"
-        | "persistence.run_and_tasks" => (
+        | "persistence.run_and_tasks"
+        | "accounts.stale_enabled"
+        | "smb.shares_exposed"
+        | "smartscreen.browser_policy" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -543,6 +552,15 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "persistence.run_and_tasks" => {
             "Risky programs stop starting with Windows. Nothing is deleted, and you can undo this."
         }
+        "accounts.stale_enabled" => {
+            "Old accounts are switched off, not deleted. Undo switches them back on."
+        }
+        "smb.shares_exposed" => {
+            "Only the people listed on these folders can open them from other devices. Others may lose access."
+        }
+        "smartscreen.browser_policy" => {
+            "Edge and Chrome will warn you about dangerous websites again."
+        }
         _ => "",
     }
 }
@@ -669,6 +687,15 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: too many items to switch off safely at once" => {
             "There are too many to switch off safely at once, so we leave this alone."
+        }
+        "Not offered: a shared folder would be left with no one who can open it" => {
+            "A shared folder would be left that nobody can open, so we leave this alone."
+        }
+        "Not offered: a shared folder would be left that only administrators can open" => {
+            "A shared folder would be left that only administrators can open, so we leave this alone."
+        }
+        "Not offered: a shared folder has permissions that could not be put back exactly" => {
+            "A shared folder has permissions we could not put back exactly, so we leave this alone."
         }
         _ => return None,
     })
@@ -1155,6 +1182,9 @@ mod tests {
             "Not offered: the hosts file is too large to change safely",
             "Not offered: the hosts file uses a format we cannot keep exactly",
             "Not offered: too many items to switch off safely at once",
+            "Not offered: a shared folder would be left with no one who can open it",
+            "Not offered: a shared folder would be left that only administrators can open",
+            "Not offered: a shared folder has permissions that could not be put back exactly",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");

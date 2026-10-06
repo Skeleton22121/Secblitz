@@ -195,6 +195,30 @@ fn tech_line(status: &str, a: &advice::Advice, lang: Lang) -> String {
     format!("{} · {}", lang.t(st), lang.t(next))
 }
 
+/// "Accounts: bob, amy" or "Folders: Photos": the names a fix would change, so
+/// the person knows before approving. None for controls without a list.
+pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
+    let (key, names) = item_names(r)?;
+    Some(ctx.t(key).replace("{names}", &names.join(", ")))
+}
+
+/// The line template and the names for `items_line`. One folder can be shared
+/// with several groups, so each name is listed once.
+fn item_names(r: &secblitz::engine::Outcome) -> Option<(&'static str, Vec<&str>)> {
+    let (key, kind) = match r.id.as_str() {
+        "accounts.stale_enabled" => ("Accounts: {names}", "account"),
+        "smb.shares_exposed" => ("Folders: {names}", "share"),
+        _ => return None,
+    };
+    let mut names: Vec<&str> = Vec::new();
+    for item in r.items.iter().filter(|i| i.kind == kind) {
+        if !names.contains(&item.name.as_str()) {
+            names.push(&item.name);
+        }
+    }
+    (!names.is_empty()).then_some((key, names))
+}
+
 fn build(ctx: &Ctx, report: &Report) -> Rows {
     let lang = ctx.lang;
     let mut rows = Rows::default();
@@ -209,7 +233,10 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         let choice = advice::is_choice(id);
         // A choice always shows its one-line consequence, never a generic impact.
         let line = if choice || impact.is_empty() {
-            ctx.t(a.next)
+            match items_line(ctx, r) {
+                Some(items) => format!("{}\n{}", ctx.t(a.next), items),
+                None => ctx.t(a.next),
+            }
         } else {
             format!("{} {}", ctx.t(a.impact_prefix()), ctx.t(impact))
         };
@@ -412,6 +439,8 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
 fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
     items
         .iter()
+        // Accounts and folders are already named on the row (`items_line`).
+        .filter(|item| !matches!(item.kind.as_str(), "account" | "share"))
         .map(|item| match item.kind.as_str() {
             // Items a fix leaves alone say why and what to do instead.
             "skip_missing" => format!(
@@ -1273,6 +1302,34 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accounts_and_folders_are_named_once_and_only_on_their_rows() {
+        use secblitz::model::ItemLabel;
+        let label = |kind: &str, name: &str| ItemLabel {
+            kind: kind.into(),
+            name: name.into(),
+        };
+        let outcome = |id: &str, items: Vec<ItemLabel>| secblitz::engine::Outcome {
+            id: id.into(),
+            status: "attention".into(),
+            items,
+            ..secblitz::engine::Outcome::default()
+        };
+        let r = outcome(
+            "accounts.stale_enabled",
+            vec![label("account", "bob"), label("account", "amy"), label("more", "3")],
+        );
+        assert_eq!(item_names(&r), Some(("Accounts: {names}", vec!["bob", "amy"])));
+        let r = outcome(
+            "smb.shares_exposed",
+            vec![label("share", "Photos"), label("share", "Photos"), label("share", "Work")],
+        );
+        assert_eq!(item_names(&r), Some(("Folders: {names}", vec!["Photos", "Work"])));
+        assert_eq!(item_names(&outcome("smb.shares_exposed", vec![])), None);
+        let r = outcome("services.unquoted_paths", vec![label("service", "Updater")]);
+        assert_eq!(item_names(&r), None);
+    }
 
     #[test]
     fn flip_toggles_membership() {

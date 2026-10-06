@@ -375,6 +375,17 @@ static THREATS: Guide = g(
         "Choose Remove or Quarantine, then run a quick scan.",
     ],
 );
+/// Hidden background tasks (WMI): nothing is removed by hand, since some work
+/// and hardware tools use them. A deep scan cleans what is really harmful.
+static HIDDEN_TASKS: Guide = g(
+    Page::ProtectionHistory,
+    &[
+        "Don't remove anything yourself. Some work or hardware tools set these up on purpose.",
+        "Save your work. Choose Scan options, then Microsoft Defender Offline scan, then Scan now.",
+        "Your PC restarts and scans for about 15 minutes. Windows removes what it finds.",
+        "Still listed after that? Ask someone you trust who knows PCs to look at it with you.",
+    ],
+);
 
 /// The guide for a control id, a finding title or a diagnostics rule id.
 pub fn guide(key: &str) -> Option<&'static Guide> {
@@ -399,6 +410,7 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
         "net.wifi_security" => &WIFI,
         "net.dns_encryption" => &DNS,
         "defender.threats" => &THREATS,
+        "persistence.wmi_subscriptions" => &HIDDEN_TASKS,
         _ => return None,
     })
 }
@@ -444,8 +456,10 @@ mod tests {
         "Automatic logon",
         "remote_desktop.disabled",
         "Remote Desktop",
+        "remote.rdp",
         "smb1.disabled",
         "SMB1",
+        "smb.v1",
         "os.feature_release_support",
         "Windows lifecycle",
         "boot.secure_boot_certs",
@@ -459,6 +473,7 @@ mod tests {
         "net.wifi_security",
         "net.dns_encryption",
         "defender.threats",
+        "persistence.wmi_subscriptions",
     ];
 
     #[test]

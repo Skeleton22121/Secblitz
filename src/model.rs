@@ -62,12 +62,15 @@ pub struct ItemLabel {
 }
 
 impl ItemLabel {
-    pub const KINDS: [&'static str; 8] = [
+    pub const KINDS: [&'static str; 10] = [
         "service",
         "rule",
         "startup",
         "task",
         "hosts",
+        // Old accounts by name, and shared folders by name.
+        "account",
+        "share",
         // Items a fix leaves alone (named in the details), and how many more
         // items exist than are listed.
         "skip_missing",

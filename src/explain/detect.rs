@@ -22,7 +22,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "defender.threats" => Explainer {
             what: "This looks for harmful files that Windows Security found and has not finished dealing with.",
             risk: "A harmful file left in place can steal passwords or damage your files.",
-            change: "Open Windows Security and follow the steps for each item, or run a quick scan. Nothing is deleted for you.",
+            change: "On the Tools page, choose Remove on the Virus protection safeguards tip. Windows Security usually keeps what it removes, so you can restore it.",
         },
         "defender.exclusions_risky" => Explainer {
             what: "Windows Security can be told to skip some places or programs. This checks that the skipped list is not risky.",
@@ -42,7 +42,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "smartscreen.browser_policy" => Explainer {
             what: "This checks that Edge and Chrome can still warn you about dangerous websites.",
             risk: "A browser that doesn't warn you may let you walk into a fake bank or shopping page.",
-            change: "Ask whoever set up this PC, since a setting turned the warnings off. Once on, risky sites get a warning page.",
+            change: "Secblitz removes the setting that turned the warnings off, so risky sites get a warning page again. Undo puts it back.",
         },
         "smart_app_control.state" => Explainer {
             what: "Smart App Control blocks apps that Microsoft doesn't trust. This just shows whether it is on.",
@@ -87,12 +87,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "accounts.stale_enabled" => Explainer {
             what: "This counts accounts on your PC that are switched on but haven't been used in months.",
             risk: "Nobody notices a forgotten account, so someone could sign in to it and use your PC unseen.",
-            change: "Turn off or remove accounts nobody uses, in Settings. Check first that no family member still needs one.",
+            change: "Secblitz switches them off and never deletes them. Your own account stays on, and Undo switches them back on.",
         },
         "smb.shares_exposed" => Explainer {
             what: "This looks for folders on your PC that other people on your network can open.",
             risk: "On a shared or café network, strangers could read or change files in a folder shared with everyone.",
-            change: "Stop sharing folders you don't need. Devices at home or work that use a shared folder will stop seeing it.",
+            change: "Secblitz takes away the open access for everyone, so only the people listed on each folder can open it from other devices. Undo gives it back.",
         },
         "smb.server_encryption" => Explainer {
             what: "This shows whether file sharing on your PC scrambles its traffic so others can't read it.",

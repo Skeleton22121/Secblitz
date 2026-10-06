@@ -65,6 +65,8 @@ function HLabelKind([string]$name) {
         'UserDirFirewall' { return 'rule' }
         'HostsFile' { return 'hosts' }
         'StartupItems' { if ($name.StartsWith('task:')) { return 'task' } else { return 'startup' } }
+        'StaleAccounts' { return 'account' }
+        'ShareGrants' { return 'share' }
     }
     return ''
 }

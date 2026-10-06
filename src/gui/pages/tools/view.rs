@@ -48,7 +48,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             ctx.t("Virus protection"),
             None,
             None,
-            vec![scan_row(state, ctx), defender_row(state, ctx)],
+            virus_rows(state, ctx),
         ),
         widgets::group(
             p,
@@ -273,6 +273,91 @@ fn busy_hint(ctx: &Ctx) -> String {
 // ---------------------------------------------------------------------------
 // Virus protection
 // ---------------------------------------------------------------------------
+
+/// Scan and update, plus the result of removing found threats while there is one.
+fn virus_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
+    let mut rows = vec![scan_row(state, ctx), defender_row(state, ctx)];
+    if !matches!(state.threats, Run::Idle) {
+        rows.insert(0, threats_row(state, ctx));
+    }
+    rows
+}
+
+/// Removing found threats: shown only after the person chose it from a tip.
+fn threats_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    let p = ctx.palette;
+    let title = ctx.t("Remove found threats");
+    let again = |label: String| entry(Icon::Refresh, label, Msg::ClearThreats);
+    match &state.threats {
+        Run::Idle => space::horizontal().width(0).into(),
+        Run::Working => busy_row(
+            state,
+            p,
+            Icon::Bug,
+            title,
+            ctx.t("Removing what Windows Security found…"),
+        ),
+        Run::Done(Ok(result)) => {
+            let (tone, headline, sub) = match logic::threats_result(result) {
+                logic::ThreatsResult::Nothing => (
+                    Tone::Good,
+                    ctx.t("Nothing to remove"),
+                    ctx.t("Windows Security reports no active threats right now."),
+                ),
+                logic::ThreatsResult::Removed => (
+                    Tone::Good,
+                    ctx.t("Harmful files removed"),
+                    ctx.t("{n} removed. Windows Security usually keeps them in quarantine, where you can restore one if you need to.")
+                        .replace("{n}", &result.removed.to_string()),
+                ),
+                logic::ThreatsResult::Partly => (
+                    Tone::Warn,
+                    ctx.t("Some are still there"),
+                    ctx.t("{removed} removed, {left} still need you. Open Windows Security to finish.")
+                        .replace("{removed}", &result.removed.to_string())
+                        .replace("{left}", &result.left.to_string()),
+                ),
+                logic::ThreatsResult::Stuck => (
+                    Tone::Warn,
+                    ctx.t("We couldn't remove them"),
+                    ctx.t("Open Windows Security and follow the steps there."),
+                ),
+            };
+            finished(
+                state,
+                ctx,
+                Outcome {
+                    slot: Slot::Threats,
+                    icon: Icon::Bug,
+                    tone,
+                    title: headline,
+                    sub: Some(sub),
+                    menu: open_security_entry(ctx)
+                        .into_iter()
+                        .chain([entry(Icon::Check, ctx.t("Done"), Msg::ClearThreats)])
+                        .collect(),
+                    raw: None,
+                },
+            )
+        }
+        Run::Done(Err(raw)) => finished(
+            state,
+            ctx,
+            Outcome {
+                slot: Slot::Threats,
+                icon: Icon::Bug,
+                tone: Tone::Warn,
+                title: ctx.t("We couldn't remove them"),
+                sub: Some(ctx.t("Open Windows Security and follow the steps there.")),
+                menu: open_security_entry(ctx)
+                    .into_iter()
+                    .chain([again(ctx.t("Done"))])
+                    .collect(),
+                raw: Some((Detail::Threats, logic::friendly_why(raw).to_owned())),
+            },
+        ),
+    }
+}
 
 fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
@@ -809,12 +894,13 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     )];
     if let Tips::Done(report) = &state.tips {
         let scanning = matches!(state.scan, Run::Working);
+        let threats_busy = matches!(state.threats, Run::Working);
         let (needs, fine): (Vec<&logic::Tip>, Vec<&logic::Tip>) = report
             .tips
             .iter()
             .partition(|tip| tip.state != TipState::Good);
         let rows = |tips: &[&logic::Tip]| -> El<'a> {
-            column(tips.iter().map(|tip| tip_row(ctx, tip, scanning)))
+            column(tips.iter().map(|tip| tip_row(ctx, tip, scanning, threats_busy)))
                 .spacing(theme::S1)
                 .width(Length::Fill)
                 .into()
@@ -850,7 +936,7 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
     out
 }
 
-fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
+fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) -> El<'a> {
     let p = ctx.palette;
     // A fix is only promised when the latest Protection check offers it. A
     // Not offered control says why on Protection; otherwise the manual steps.
@@ -892,6 +978,12 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
         // A restart that finishes updates, after its own confirmation.
         _ if tip.restart => secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart))),
         // The in-app scan stays reachable even when steps are shown below.
+        // Found threats go after their own confirmation sheet.
+        _ if tip.remove_threats => secondary(
+            p,
+            ctx.t("Remove"),
+            (!threats_busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
+        ),
         _ if tip.scan => secondary(
             p,
             ctx.t("Scan now"),
@@ -1206,6 +1298,16 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                 ctx.t("You can keep using your PC."),
             ],
             ctx.t("Start scan"),
+        ),
+        Sheet::RemoveThreats => (
+            Icon::Bug,
+            ctx.t("Remove the harmful files?"),
+            vec![
+                ctx.t("Windows Security will remove the harmful files it has found on this PC."),
+                ctx.t("It usually keeps what it removes in quarantine. If it was a mistake, you can restore an item in Windows Security."),
+                ctx.t("You can keep using your PC while it works."),
+            ],
+            ctx.t("Remove them"),
         ),
         Sheet::DefenderUpdate => (
             Icon::Download,

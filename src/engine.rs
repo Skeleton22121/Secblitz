@@ -1859,8 +1859,8 @@ impl Engine {
             let c = self.control(&id)?.clone();
             let expected = target_for(&id, &before)?;
             let observation = self.observe(&id)?;
-            let before_eff = scope(&id, &before, Some(&observation.value));
-            let expected_eff = scope(&id, &expected, Some(&observation.value));
+            let before_eff = recorded_scope(&id, &before, &observation.value);
+            let expected_eff = recorded_scope(&id, &expected, &observation.value);
             let seen = scope(&id, &observation.value, Some(&before_eff));
             let result = if seen == before_eff {
                 // Includes a prepared apply that never wrote, and a restore
@@ -1973,8 +1973,8 @@ impl Engine {
             let c = self.control(&entry.id)?.clone();
             let expected = target_for(&entry.id, &entry.before)?;
             let observation = self.observe(&entry.id)?;
-            let before_eff = scope(&entry.id, &entry.before, Some(&observation.value));
-            let expected_eff = scope(&entry.id, &expected, Some(&observation.value));
+            let before_eff = recorded_scope(&entry.id, &entry.before, &observation.value);
+            let expected_eff = recorded_scope(&entry.id, &expected, &observation.value);
             let seen = scope(&entry.id, &observation.value, Some(&before_eff));
             if seen == before_eff {
                 continue;
@@ -2056,6 +2056,17 @@ fn scope(id: &str, observed: &Value, template: Option<&Value>) -> Value {
     match (crate::hardening::spec(id), template) {
         (Some(spec), Some(template)) => spec.view(observed, template),
         _ => observed.clone(),
+    }
+}
+
+/// A recorded (journaled or derived) state, seen through what exists now.
+/// Controls that compare their recorded items exactly keep every one of them,
+/// including items that are no longer listed (switched-off accounts, removed
+/// share entries); the others only keep what still exists.
+fn recorded_scope(id: &str, recorded: &Value, observed: &Value) -> Value {
+    match crate::hardening::spec(id) {
+        Some(spec) if spec.exact_recorded() => recorded.clone(),
+        _ => scope(id, recorded, Some(observed)),
     }
 }
 

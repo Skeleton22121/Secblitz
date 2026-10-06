@@ -44,6 +44,20 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "task:\\Vendor\\Sync": 1,
         }});
     }
+    if spec.source == Source::StaleAccounts {
+        // Two old accounts still on, one already switched off.
+        return json!({"items": {
+            "S-1-5-21-1111111111-2222222222-3333333333-1001": 1,
+            "S-1-5-21-1111111111-2222222222-3333333333-1002": 1,
+            "S-1-5-21-1111111111-2222222222-3333333333-1003": 0,
+        }});
+    }
+    if spec.source == Source::ShareGrants {
+        return json!({"items": {
+            "Photos|S-1-1-0|Change": 1,
+            "Work files|S-1-5-32-546|Full": 1,
+        }});
+    }
     let mut items = serde_json::Map::new();
     for (i, k) in spec.keys.iter().enumerate() {
         let Rule::Set {
@@ -328,6 +342,57 @@ fn risky_exclusion_removal_is_recorded_and_undo_re_adds_it() {
     assert_eq!(e.audit().unwrap().results[0].status, "compliant");
     assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
     assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn old_accounts_are_switched_off_never_deleted_and_undo_switches_them_back_on() {
+    let id = "accounts.stale_enabled";
+    let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+    let b = "S-1-5-21-1111111111-2222222222-3333333333-1002";
+    let before = json!({"items": {a: 1, b: 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, "attention");
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
+    // Switched-off accounts are no longer listed: still the recorded safe state.
+    state.borrow_mut().values.insert(id.into(), json!({"items": {}}));
+    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn an_old_account_switched_on_again_by_hand_is_not_written_by_undo() {
+    let id = "accounts.stale_enabled";
+    let a = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+    let (_dir, state, mut e) = fixture(id, json!({"items": {a: 1}}));
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    // The person switched it on again by hand: the recorded original is
+    // already in place, so undo has nothing to write.
+    state.borrow_mut().values.insert(id.into(), json!({"items": {a: 1}}));
+    let writes = state.borrow().writes.len();
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "unchanged");
+    assert_eq!(state.borrow().writes.len(), writes);
+}
+
+#[test]
+fn broad_share_entries_are_removed_one_by_one_and_undo_adds_back_exactly_those() {
+    let id = "smb.shares_exposed";
+    let a = "Photos|S-1-1-0|Change";
+    let b = "Work files|S-1-5-32-546|Full";
+    let before = json!({"items": {a: 1, b: 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+    assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
+    // A new broad entry appeared on another share meanwhile: undo restores the
+    // recorded entries only and never touches the new one.
+    state.borrow_mut().values.insert(
+        id.into(),
+        json!({"items": {"Games|S-1-1-0|Full": 1}}),
+    );
+    let undone = e.revert(|_, _| {}).unwrap();
+    assert_eq!(undone.results[0].status, "restored");
+    assert_eq!(state.borrow().writes.last().unwrap().1, before);
 }
 
 #[test]
