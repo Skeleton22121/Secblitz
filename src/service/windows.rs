@@ -1183,7 +1183,7 @@ fn scan(stop: &AtomicBool) -> Result<(Vec<u8>, crate::status::Status)> {
                     Ok(items) => {
                         incomplete |= items.len() > 64;
                         for f in items.into_iter().take(64) {
-                            findings.push(json!({"title":short(&f.title), "status":short(&f.status), "detail":short(&f.detail)}));
+                            findings.push(json!({"title":short(&f.title), "status":short(f.status.as_str()), "detail":short(&f.detail)}));
                         }
                     }
                     Err(e) => {

@@ -14,8 +14,8 @@ mod store;
 mod tests;
 
 use crate::model::{
-    validate_observation, Authority, Backend, Control, EffectiveFirewall, Finding, Observation,
-    Readiness,
+    validate_observation, Authority, Backend, CheckStatus, Control, EffectiveFirewall, Finding,
+    Observation, Readiness,
 };
 use anyhow::{ensure, Context, Result};
 use catalog::{target, validate_value};
@@ -51,7 +51,7 @@ pub struct Report {
 
 impl Report {
     fn push(&mut self, result: Outcome, callback: &mut impl FnMut(&str, &str)) {
-        callback(&result.id, &result.status);
+        callback(&result.id, result.status.as_str());
         self.results.push(result);
     }
 
@@ -66,7 +66,7 @@ impl Report {
         for c in controls {
             let result = match owned.iter().position(|r| r.id == c.id) {
                 Some(i) => owned.remove(i),
-                None => Engine::outcome(c, "skipped", reason),
+                None => Engine::outcome(c, CheckStatus::Skipped, reason),
             };
             self.push(result, callback);
         }
@@ -77,7 +77,7 @@ impl Report {
 pub struct Outcome {
     pub id: String,
     pub title: String,
-    pub status: String,
+    pub status: CheckStatus,
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective: Option<EffectiveFirewall>,

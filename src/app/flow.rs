@@ -1,15 +1,16 @@
 use crate::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
+use secblitz::model::CheckStatus;
 
 pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
-    if report.findings.iter().any(|f| f.status == "pending")
-        || report.results.iter().any(|r| r.status == "pending")
+    if report.findings.iter().any(|f| f.status == CheckStatus::Pending)
+        || report.results.iter().any(|r| r.status == CheckStatus::Pending)
     {
         return Vec::new();
     }
     let mut ids = Vec::new();
     for r in &report.results {
-        if r.status == "attention"
+        if r.status == CheckStatus::Attention
             && available.contains(&r.id)
             && advice::for_outcome(r).step == NextStep::Repair
             && !ids.contains(&r.id)
@@ -39,7 +40,7 @@ pub fn payoff(
         let Some(change) = applied
             .results
             .iter()
-            .find(|r| r.id == *id && r.status == "applied")
+            .find(|r| r.id == *id && r.status == CheckStatus::Applied)
         else {
             continue;
         };
@@ -158,29 +159,37 @@ pub fn repairs_blocked(report: &Report) -> Option<&'static str> {
     })
 }
 
-pub fn plain_detail(status: &str, a: &advice::Advice) -> (&'static str, &'static str) {
+pub fn plain_detail(status: &CheckStatus, a: &advice::Advice) -> (&'static str, &'static str) {
     match status {
-        "unknown" | "error" => ("Couldn't check", COULDNT_READ),
-        "skipped" if a.status == "Needs your choice" => ("Left as it is", REASON_KEPT),
-        "applied" | "unchanged" | "restored" | "skipped" | "conflict" | "pending"
-        | "attention" | "compliant" | "ok" | "info" => (a.status, a.next),
+        CheckStatus::Unknown | CheckStatus::Error => ("Couldn't check", COULDNT_READ),
+        CheckStatus::Skipped if a.status == "Needs your choice" => ("Left as it is", REASON_KEPT),
+        CheckStatus::Applied
+        | CheckStatus::Unchanged
+        | CheckStatus::Restored
+        | CheckStatus::Skipped
+        | CheckStatus::Conflict
+        | CheckStatus::Pending
+        | CheckStatus::Attention
+        | CheckStatus::Compliant
+        | CheckStatus::Ok
+        | CheckStatus::Info => (a.status, a.next),
         _ => ("Not done", NOT_DONE),
     }
 }
 
-fn reason(status: &str, detail: &str, id: &str) -> &'static str {
+fn reason(status: &CheckStatus, detail: &str, id: &str) -> &'static str {
     let advice = advice::for_control(id, status, detail);
     if advice.status == "Managed elsewhere" {
         REASON_MANAGED
-    } else if status == "conflict" {
+    } else if *status == CheckStatus::Conflict {
         REASON_CHANGED
-    } else if status == "pending" || detail.starts_with("Revert the active transaction") {
+    } else if *status == CheckStatus::Pending || detail.starts_with("Revert the active transaction") {
         REASON_UNDO_FIRST
     } else if detail.to_ascii_lowercase().contains("restart") {
         REASON_RESTART
-    } else if status == "skipped" && detail.contains("readiness blocks") {
+    } else if *status == CheckStatus::Skipped && detail.contains("readiness blocks") {
         REASON_DISK
-    } else if status == "skipped" {
+    } else if *status == CheckStatus::Skipped {
         REASON_KEPT
     } else {
         REASON_BLOCKED
@@ -213,8 +222,8 @@ pub fn summarize(
             for id in ids {
                 match report.results.iter().find(|r| r.id == *id) {
                     Some(r)
-                        if r.status == "applied"
-                            || (r.status == "unchanged"
+                        if r.status == CheckStatus::Applied
+                            || (r.status == CheckStatus::Unchanged
                                 && advice::for_control(&r.id, &r.status, &r.detail).group
                                     == Group::Protected) =>
                     {
@@ -224,7 +233,7 @@ pub fn summarize(
                             })
                         });
                         if confirmed {
-                            s.restart |= r.status == "applied" && restart_needed(r);
+                            s.restart |= r.status == CheckStatus::Applied && restart_needed(r);
                             s.done.push(id.clone());
                         } else {
                             s.not_done.push((id.clone(), REASON_STILL_OPEN.to_owned()));
@@ -249,12 +258,12 @@ pub fn summarize(
         }
         (None, Ok(report)) => {
             for r in &report.results {
-                match r.status.as_str() {
-                    "restored" => {
+                match r.status {
+                    CheckStatus::Restored => {
                         s.restart |= restart_needed(r);
                         s.done.push(r.id.clone());
                     }
-                    "unchanged" | "ok" | "compliant" => {}
+                    CheckStatus::Unchanged | CheckStatus::Ok | CheckStatus::Compliant => {}
                     _ => s
                         .not_done
                         .push((r.id.clone(), reason(&r.status, &r.detail, &r.id).to_owned())),
@@ -405,7 +414,7 @@ mod tests {
         let mut report = rep(vec![out("uac.enabled", "attention", "")]);
         report.findings.push(secblitz::model::Finding {
             title: "Journal recovery".into(),
-            status: "pending".into(),
+            status: CheckStatus::Pending,
             detail: String::new(),
         });
         assert!(candidates(&report, &available).is_empty());
@@ -568,11 +577,11 @@ mod tests {
 
     #[test]
     fn detail_lines_never_use_raw_detail() {
-        let a = advice::for_control("uac.enabled", "error", "boom 0xdead");
-        let (st, next) = plain_detail("error", &a);
+        let a = advice::for_control("uac.enabled", &CheckStatus::Error, "boom 0xdead");
+        let (st, next) = plain_detail(&CheckStatus::Error, &a);
         assert_eq!(st, "Couldn't check");
         assert!(!next.contains("0xdead"));
-        let (st, next) = plain_detail("weird", &a);
+        let (st, next) = plain_detail(&CheckStatus::Other("weird".into()), &a);
         assert_eq!((st, next), ("Not done", NOT_DONE));
     }
 

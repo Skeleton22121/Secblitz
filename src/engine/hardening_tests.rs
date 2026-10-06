@@ -102,11 +102,11 @@ fn every_hardening_control_audits_applies_and_undoes_exactly() {
         let id = spec.id;
         let before = hardening_unsafe_state(spec);
         let (dir, state, mut e) = fixture(id, before.clone());
-        assert_eq!(e.audit().unwrap().results[0].status, "attention", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
         assert_eq!(e.audit().unwrap().results[0].detail, "Eligible", "{id}");
 
         let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-        assert_eq!(report.results[0].status, "applied", "{id}");
+        assert_eq!(report.results[0].status, CheckStatus::Applied, "{id}");
         let target = spec.derive_target(&before).unwrap();
         assert_eq!(state.borrow().values[id], target, "{id}");
         assert_eq!(
@@ -118,15 +118,15 @@ fn every_hardening_control_audits_applies_and_undoes_exactly() {
         assert_eq!(tx.entries[0].before, before, "{id}");
         assert!(!tx.entries[0].before.to_string().contains("effective"));
         drop(tx);
-        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         let again = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-        assert_eq!(again.results[0].status, "unchanged", "{id}");
+        assert_eq!(again.results[0].status, CheckStatus::Unchanged, "{id}");
         assert_eq!(state.borrow().writes.len(), 1);
 
         drop(e);
         let mut e = reopen(&dir, &state, &[id]);
         let undone = e.revert(|_, _| {}).unwrap();
-        assert_eq!(undone.results[0].status, "restored", "{id}");
+        assert_eq!(undone.results[0].status, CheckStatus::Restored, "{id}");
         assert_eq!(state.borrow().values[id], before, "{id}");
         assert_eq!(state.borrow().writes.len(), 2);
         assert!(e.history().unwrap()[0].ends_with("reverted"));
@@ -139,7 +139,7 @@ fn hardening_safe_and_default_states_are_protected_and_never_written() {
         let id = spec.id;
         let safe = hardening_safe_state(spec);
         let (_dir, state, mut e) = fixture(id, safe);
-        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
         assert!(
             matches!(report.results[0].status.as_str(), "unchanged" | "skipped"),
@@ -157,15 +157,15 @@ fn managed_hardening_controls_are_left_alone_but_safe_ones_stay_protected() {
         let id = spec.id;
         let (_dir, state, mut e) = fixture(id, hardening_unsafe_state(spec));
         state.borrow_mut().blocked = true;
-        assert_eq!(e.audit().unwrap().results[0].status, "skipped", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped, "{id}");
         let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-        assert_eq!(report.results[0].status, "skipped", "{id}");
+        assert_eq!(report.results[0].status, CheckStatus::Skipped, "{id}");
         assert_eq!(report.results[0].detail, "Managed device");
         assert!(state.borrow().writes.is_empty() && e.history().unwrap().is_empty());
 
         let (_dir, state, mut e) = fixture(id, hardening_safe_state(spec));
         state.borrow_mut().blocked = true;
-        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         assert!(state.borrow().writes.is_empty());
     }
 }
@@ -202,13 +202,13 @@ fn hardening_undo_never_overwrites_a_setting_changed_after_the_fix() {
         .borrow_mut()
         .values
         .insert(id.into(), json!({"items": {"RunAsPPL": 1}}));
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "conflict");
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict);
     assert_eq!(state.borrow().writes.len(), 1);
     state
         .borrow_mut()
         .values
         .insert(id.into(), json!({"items": {"RunAsPPL": 2}}));
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
     assert_eq!(
         state.borrow().values[id],
         json!({"items": {"RunAsPPL": null}})
@@ -230,7 +230,7 @@ fn dynamic_hardening_undo_ignores_items_that_appeared_or_vanished() {
         json!({"items": {"FPS-A": 11, "FPS-C": 3, "NETDIS-NEW": 15}}),
     );
     let undone = e.revert(|_, _| {}).unwrap();
-    assert_eq!(undone.results[0].status, "restored");
+    assert_eq!(undone.results[0].status, CheckStatus::Restored);
     assert_eq!(
         state.borrow().writes.last().unwrap().1,
         json!({"items": {"FPS-A": 15, "FPS-C": 3}})
@@ -302,13 +302,13 @@ fn legacy_services_stop_and_disable_only_what_is_unsafe_and_undo_restores_each()
     let id = "services.legacy_remote";
     let before = json!({"items": {"RemoteRegistry": 10, "WinRM": 3, "sshd": 13, "SNMP": 4}});
     let (_dir, state, mut e) = fixture(id, before.clone());
-    assert_eq!(e.audit().unwrap().results[0].status, "attention");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
     assert_eq!(
         state.borrow().values[id],
         json!({"items": {"RemoteRegistry": 4, "WinRM": 3, "sshd": 4, "SNMP": 4}})
     );
-    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
     e.revert(|_, _| {}).unwrap();
     assert_eq!(state.borrow().values[id], before);
 }
@@ -326,8 +326,8 @@ fn risky_exclusion_removal_is_recorded_and_undo_re_adds_it() {
     // After removal the real backend no longer lists the entries at all: that
     // still counts as the recorded safe state, so undo is not seen as drift.
     state.borrow_mut().values.insert(id.into(), json!({"items": {}}));
-    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
     assert_eq!(state.borrow().values[id], before);
 }
 
@@ -338,12 +338,12 @@ fn old_accounts_are_switched_off_never_deleted_and_undo_switches_them_back_on() 
     let b = "S-1-5-21-1111111111-2222222222-3333333333-1002";
     let before = json!({"items": {a: 1, b: 1}});
     let (_dir, state, mut e) = fixture(id, before.clone());
-    assert_eq!(e.audit().unwrap().results[0].status, "attention");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
     assert_eq!(state.borrow().values[id], json!({"items": {a: 0, b: 0}}));
     state.borrow_mut().values.insert(id.into(), json!({"items": {}}));
-    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored);
     assert_eq!(state.borrow().values[id], before);
 }
 
@@ -355,7 +355,7 @@ fn an_old_account_switched_on_again_by_hand_is_not_written_by_undo() {
     e.apply_selected(&[id.into()], |_, _| {}).unwrap();
     state.borrow_mut().values.insert(id.into(), json!({"items": {a: 1}}));
     let writes = state.borrow().writes.len();
-    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "unchanged");
+    assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Unchanged);
     assert_eq!(state.borrow().writes.len(), writes);
 }
 
@@ -373,7 +373,7 @@ fn broad_share_entries_are_removed_one_by_one_and_undo_adds_back_exactly_those()
         json!({"items": {"Games|S-1-1-0|Full": 1}}),
     );
     let undone = e.revert(|_, _| {}).unwrap();
-    assert_eq!(undone.results[0].status, "restored");
+    assert_eq!(undone.results[0].status, CheckStatus::Restored);
     assert_eq!(state.borrow().writes.last().unwrap().1, before);
 }
 
@@ -410,7 +410,7 @@ fn exploit_mitigations_only_move_switched_off_protections() {
     assert_eq!(state.borrow().values[id], before);
     let stock = json!({"items": {"DEP": 1, "SEHOP": 1, "BottomUp": 2, "HighEntropy": 1, "CFG": 1}});
     let (_dir, state, mut e) = fixture(id, stock);
-    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
     assert!(state.borrow().writes.is_empty());
 }
 
@@ -423,7 +423,7 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("smartscreen.apps", json!({"SmartScreenEnabled": null, "EnableSmartScreen": null})),
     ] {
         let (_dir, state, mut e) = fixture(id, json!({ "items": items }));
-        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         assert!(state.borrow().writes.is_empty(), "{id}");
     }
     // Absent is NOT protected where Windows' default leaves the exposure.
@@ -435,7 +435,7 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
     ] {
         let (_dir, _state, mut e) = fixture(id, json!({ "items": items }));
-        assert_eq!(e.audit().unwrap().results[0].status, "attention", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
     }
 }
 
@@ -448,7 +448,7 @@ fn diagnostic_data_is_never_lowered_to_zero_and_zero_is_left_alone() {
         assert_eq!(state.borrow().values[id], json!({"items": {"AllowTelemetry": 1}}));
     }
     let (_dir, state, mut e) = fixture(id, json!({"items": {"AllowTelemetry": 0}}));
-    assert_eq!(e.audit().unwrap().results[0].status, "compliant");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
     assert!(state.borrow().writes.is_empty());
 }
 
@@ -478,15 +478,15 @@ fn handled_item_controls_switch_off_only_flagged_items_and_never_touch_changed_o
         for (k, v) in after["items"].as_object().unwrap() {
             assert_eq!(v, 0, "{id} {k} is switched off");
         }
-        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         let mut changed = after.clone();
         changed["items"][a] = json!(2);
         state.borrow_mut().values.insert(id.into(), changed);
         let writes = state.borrow().writes.len();
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "conflict", "{id}");
+        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Conflict, "{id}");
         assert_eq!(state.borrow().writes.len(), writes, "{id} nothing was written");
         state.borrow_mut().values.insert(id.into(), after);
-        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored", "{id}");
+        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, CheckStatus::Restored, "{id}");
         assert_eq!(state.borrow().values[id], before, "{id}");
     }
 }
@@ -501,9 +501,9 @@ fn handled_item_controls_do_not_offer_a_fix_for_items_already_changed_or_handled
     ] {
         for value in [0, 2] {
             let (_dir, state, mut e) = fixture(id, json!({"items": {key: value}}));
-            assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id} {value}");
+            assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id} {value}");
             let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
-            assert_ne!(report.results[0].status, "applied", "{id} {value}");
+            assert_ne!(report.results[0].status, CheckStatus::Applied, "{id} {value}");
             assert!(state.borrow().writes.is_empty(), "{id} {value}");
         }
     }

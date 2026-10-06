@@ -1,7 +1,7 @@
 //! Protection score: protected checks over all checks (findings excluded).
 use crate::advice::{self, Group};
 use secblitz::engine::{Outcome, Report};
-use secblitz::model::Authority;
+use secblitz::model::{Authority, CheckStatus};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Score {
@@ -48,7 +48,7 @@ pub fn classify(r: &Outcome) -> Class {
             | "info"
             | "review"
     );
-    if r.status == "error"
+    if r.status == CheckStatus::Error
         || unavailable
         || matches!(r.status.as_str(), "unknown" | "unsupported")
         || !known
@@ -111,7 +111,7 @@ pub fn core_not_running(report: &Report, id: &str) -> bool {
     report.findings.iter().any(|f| {
         (secblitz::vbs::finding_control(&f.title) == Some(id)
             && f.title != secblitz::vbs::DEVICE_BLOCKED)
-            || (advice::control_for_finding(&f.title) == Some(id) && f.status == "attention")
+            || (advice::control_for_finding(&f.title) == Some(id) && f.status == CheckStatus::Attention)
     })
 }
 
@@ -167,8 +167,8 @@ pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
     let mut rows = report.results.iter().filter(|r| r.id == id);
     match id {
         "vbs.memory_integrity" => rows.any(|r| {
-            let set_but_not_running = r.status == "compliant"
-                && f.status == "attention"
+            let set_but_not_running = r.status == CheckStatus::Compliant
+                && f.status == CheckStatus::Attention
                 && !report
                     .findings
                     .iter()
@@ -187,7 +187,7 @@ pub fn finding_has_fix(report: &Report, f: &secblitz::model::Finding) -> bool {
 
 pub fn waits_for_restart(report: &Report, f: &secblitz::model::Finding) -> bool {
     f.title == "Memory integrity"
-        && f.status == "attention"
+        && f.status == CheckStatus::Attention
         && !finding_has_fix(report, f)
         && report
             .results
@@ -309,7 +309,7 @@ mod tests {
     fn a_finding_is_replaced_by_its_own_fix_row() {
         let finding = secblitz::model::Finding {
             title: "SMB1".into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: String::new(),
         };
         let mut report = rep(vec![]);
@@ -330,7 +330,7 @@ mod tests {
     fn a_finding_stays_when_its_control_could_not_be_checked_or_is_managed() {
         let finding = secblitz::model::Finding {
             title: "SMB1".into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: String::new(),
         };
         let mut report = rep(vec![out("smb1.disabled", "unknown")]);
@@ -460,7 +460,7 @@ mod tests {
     fn a_fix_row_replaces_the_manual_tip_for_the_same_thing() {
         let tip = |title: &str| secblitz::model::Finding {
             title: title.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: String::new(),
         };
         let eligible = |id: &str| Outcome {
@@ -495,7 +495,7 @@ mod tests {
         let mut r = rep(vec![out("accounts.autologon", "compliant")]);
         r.findings.push(secblitz::model::Finding {
             title: "Automatic logon".into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: "AutoAdminLogon enabled=False; Winlogon DefaultPassword value present=True.".into(),
         });
         assert!(!finding_has_fix(&r, &r.findings[0]));
@@ -516,7 +516,7 @@ mod tests {
     fn memory_integrity_and_the_other_mapped_controls_follow_their_own_rules() {
         let tip = |title: &str| secblitz::model::Finding {
             title: title.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: String::new(),
         };
         let row = |id: &str, status: &str, detail: &str| Outcome {
@@ -568,7 +568,7 @@ mod tests {
         assert!(!finding_has_fix(&r, &r.findings[0]));
         r.findings.push(secblitz::model::Finding {
             title: "Automatic logon".into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: "AutoAdminLogon enabled=False; Winlogon DefaultPassword value present=True."
                 .into(),
         });
@@ -579,7 +579,7 @@ mod tests {
     fn a_fix_row_replaces_the_old_tip_for_the_same_thing() {
         let find = |title: &str| secblitz::model::Finding {
             title: title.into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: String::new(),
         };
         let mut r = rep(vec![out("vbs.memory_integrity", "attention")]);
@@ -605,7 +605,7 @@ mod tests {
         r.findings.push(find("Memory integrity", "ok"));
         assert_eq!(classify_in(&r, &r.results[0]), Class::Protected);
         assert_eq!(Score::of(&r).protected, 1);
-        assert!(finding_has_fix(&r, &r.findings[0]) || r.findings[0].status == "ok");
+        assert!(finding_has_fix(&r, &r.findings[0]) || r.findings[0].status == CheckStatus::Ok);
         let mut r = rep(vec![out("vbs.memory_integrity", "compliant")]);
         r.findings.push(find("Memory integrity", "attention"));
         assert!(!finding_has_fix(&r, &r.findings[0]));
@@ -649,7 +649,7 @@ mod tests {
         let mut r = rep(vec![out("uac.enabled", "compliant")]);
         r.findings.push(secblitz::model::Finding {
             title: "SMB1".into(),
-            status: "attention".into(),
+            status: CheckStatus::Attention,
             detail: String::new(),
         });
         assert_eq!(Score::of(&r).total, 1);
