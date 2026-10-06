@@ -1,7 +1,6 @@
-//! Running blocking work and timers off the interface thread.
+//! Running blocking work off the interface thread.
 use iced::futures::channel::{mpsc, oneshot};
 use iced::futures::{Future, Stream};
-use iced::Subscription;
 
 pub fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
@@ -31,19 +30,4 @@ pub fn blocking_stream<T: Send + 'static>(
         f(&emit);
     });
     rx
-}
-
-fn ticker(period: std::time::Duration) -> impl Stream<Item = std::time::Instant> + Send + 'static {
-    let (tx, rx) = mpsc::unbounded();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(period);
-        if tx.unbounded_send(std::time::Instant::now()).is_err() {
-            break;
-        }
-    });
-    rx
-}
-
-pub fn ticks_100ms() -> Subscription<std::time::Instant> {
-    Subscription::run(|| ticker(std::time::Duration::from_millis(100)))
 }

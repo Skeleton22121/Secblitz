@@ -355,16 +355,16 @@ impl canvas::Program<Message> for Trend<'_> {
                 if anim::reduced() {
                     st.reveal = 1.0;
                     st.entered = true;
-                    return Some(canvas::Action::request_redraw());
+                    return None;
                 }
                 let start = *st.start.get_or_insert(*now);
                 let t = now.saturating_duration_since(start).as_secs_f32() / ENTRANCE.as_secs_f32();
                 if t >= 1.0 {
                     st.reveal = 1.0;
                     st.entered = true;
-                } else {
-                    st.reveal = DECELERATE.at(t);
+                    return None;
                 }
+                st.reveal = DECELERATE.at(t);
                 Some(canvas::Action::request_redraw())
             }
             iced::Event::Mouse(_) => {

@@ -147,9 +147,9 @@ impl canvas::Program<Message> for Eased {
         if anim::reduced() || t >= 1.0 {
             s.start = None;
             s.shown = target;
-        } else {
-            s.shown = s.from + (target - s.from) * DECELERATE.at(t);
+            return None;
         }
+        s.shown = s.from + (target - s.from) * DECELERATE.at(t);
         Some(canvas::Action::request_redraw())
     }
     fn draw(
