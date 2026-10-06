@@ -30,7 +30,7 @@ pub fn control_label(id: &str) -> &'static str {
         "lsa.run_as_ppl" => "Sign-in process shield",
         "net.public_sharing_exposure" => "Hide your PC on public Wi-Fi",
         "printer.point_and_print" => "Printer driver safety",
-        "net.llmnr" => "Fake name-lookup blocking",
+        "net.llmnr" => "Name-lookup reply blocking",
         "accounts.lockout_policy" => "Password guessing lockout",
         "autorun.disabled" => "USB stick auto-start",
         "wifi.risky_profiles" => "Wi-Fi networks that join by themselves",

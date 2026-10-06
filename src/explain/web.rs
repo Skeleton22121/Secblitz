@@ -14,7 +14,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "web.dangerous" => Explainer {
             what: "Secblitz keeps a list of known scam and virus websites and updates it often.",
-            risk: "A link in an email or message could take you to a fake bank page or a site that infects your PC.",
+            risk: "A link in an email or message could take you to a look-alike bank page or a site that infects your PC.",
             change: "Your PC can't open websites on that list. If a safe site is blocked by mistake, pause web protection for an hour.",
         },
         _ => return None,

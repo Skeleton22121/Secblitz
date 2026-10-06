@@ -40,12 +40,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         ),
         "system.exploit_mitigations" => e(
             "Windows has built-in protections that make it harder for a flaw in a program to be used to take over your PC.",
-            "With one of them switched off, an attacker has an easier time turning a small program bug into a full break-in.",
+            "With one of them switched off, a small program bug is easier to use for taking control of your PC.",
             "Nothing you'll notice. A very old, badly written program may close unexpectedly. Needs a restart.",
         ),
         "ps.v2_engine" => e(
             "An old version of a Windows scripting tool is still installed, kept only so very old programs keep working.",
-            "Attackers can start the old version to run harmful scripts while slipping past the checks of the newer one.",
+            "Harmful scripts can start the old version to slip past the checks of the newer one.",
             "Nothing you'll notice. Very old scripts that need that version will stop working. Removing it can take a minute.",
         ),
         "printer.spooler_remote" => e(
@@ -65,7 +65,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         ),
         "update.store_autoupdate_policy" => e(
             "A setting on this PC is stopping Microsoft Store apps from updating themselves.",
-            "Apps stay on old versions that have known flaws attackers can use.",
+            "Apps stay on old versions that have known flaws.",
             "Store apps update by themselves again, usually quietly in the background.",
         ),
         "update.paused" => e(
@@ -75,7 +75,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         ),
         "smartscreen.apps" => e(
             "Windows can check downloads and apps and warn you before you run something unknown or risky.",
-            "Without the warning, a fake installer or harmful download can start with a single click.",
+            "Without the warning, an unrecognized installer or harmful download can start with a single click.",
             "You will sometimes see a warning for unknown programs. You can still choose to run them.",
         ),
         "privacy.recall" => e(

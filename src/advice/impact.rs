@@ -22,30 +22,30 @@ pub fn control_impact(id: &str) -> &'static str {
             "Any app installer quietly getting full control of your PC"
         }
         "lsa.restrict_anonymous_sam" => {
-            "Strangers on the network listing your account names to guess passwords"
+            "Someone on the network listing your account names to guess passwords"
         }
         "lsa.limit_blank_password_use" => {
             "Someone signing in over the network to an account with no password"
         }
-        "wdigest.use_logon_credential" => "Attackers stealing your Windows password",
+        "wdigest.use_logon_credential" => "Harmful programs reading your Windows password",
         "permissions.service.bits" | "permissions.service.wuauserv" => {
-            "Tampered or fake Windows updates reaching your PC"
+            "Altered Windows updates reaching your PC"
         }
         "defender.cloud_protection" => "New threats that only cloud checks can spot",
         "defender.pua" => "Junk and adware bundled with free downloads",
         "defender.script_nis" => "Harmful scripts and network attacks reaching your PC",
-        "defender.asr.standard" => "Attackers stealing passwords or hiding inside Windows",
+        "defender.asr.standard" => "Harmful programs reading passwords or hiding inside Windows",
         "defender.asr.web_script_email" => {
-            "Booby-trapped scripts and email attachments starting programs"
+            "Harmful scripts and email attachments starting programs"
         }
-        "lsa.run_as_ppl" => "Password-stealing programs reading your sign-in details",
-        "net.public_sharing_exposure" => "Strangers on public Wi-Fi seeing your shared files",
-        "printer.point_and_print" => "Fake printer drivers giving attackers full control",
-        "net.llmnr" => "Strangers on your network answering lookups with fake replies",
+        "lsa.run_as_ppl" => "Harmful programs reading your sign-in details",
+        "net.public_sharing_exposure" => "Someone on public Wi-Fi seeing your shared files",
+        "printer.point_and_print" => "Harmful printer drivers getting full control of your PC",
+        "net.llmnr" => "Someone on your network answering name lookups with wrong replies",
         "accounts.lockout_policy" => "Someone guessing your password again and again",
         "autorun.disabled" => "Harmful programs starting from a USB stick or disc",
-        "wifi.risky_profiles" => "Rogue Wi-Fi hotspots connecting your PC without asking",
-        "lsa.restrict_anonymous" => "Strangers on the network listing your accounts and shares",
+        "wifi.risky_profiles" => "Unknown Wi-Fi hotspots connecting your PC without asking",
+        "lsa.restrict_anonymous" => "Someone on the network listing your accounts and shares",
         "remote_assistance.disabled" => "Someone taking over your PC through a help invitation",
         "wsh.disabled" => "Harmful script files starting with a double-click",
         "update.auto_policy_disabled" => "Security fixes never being installed",
@@ -53,9 +53,9 @@ pub fn control_impact(id: &str) -> &'static str {
         "accounts.builtin_administrator" => "An unused powerful account being guessed or abused",
         "privacy.activity_history" => "A record of what you did on this PC being kept and shared",
         "privacy.advertising_id" => "Apps tracking you across other apps for ads",
-        "defender.asr.office" => "Booby-trapped Office files starting harmful programs",
+        "defender.asr.office" => "Harmful Office files starting programs",
         "defender.asr.ransomware_usb" => {
-            "Ransomware or a harmful USB stick locking or stealing your files"
+            "Ransomware or a harmful USB stick locking or copying your files"
         }
         "defender.network_protection" => {
             "Programs connecting to known harmful websites and servers"
@@ -63,38 +63,38 @@ pub fn control_impact(id: &str) -> &'static str {
         "defender.cloud_block_level" => {
             "Brand-new harmful files slipping through before anyone has judged them"
         }
-        "net.stack_hardening" => "Strangers on your network steering or spoofing your PC's traffic",
-        "net.netbios" => "Strangers on your network learning your PC's name and tricking it",
-        "net.mdns" => "Devices on your network answering lookups with fake replies",
-        "net.wpad" => "A stranger on your network pointing your PC at a rogue proxy",
+        "net.stack_hardening" => "Someone on your network redirecting your PC's traffic",
+        "net.netbios" => "Someone on your network learning your PC's name and misleading it",
+        "net.mdns" => "Devices on your network answering name lookups with wrong replies",
+        "net.wpad" => "Someone on your network pointing your PC at an unwanted proxy",
         "firewall.outbound_smb_internet" => {
             "Your PC sending sign-in details to a file server on the internet"
         }
         "tls.legacy_protocols" => "Old, breakable secure connections being forced on your PC",
         "ntlm.extras" => "Weak stored copies of your password being cracked",
         "driver.vulnerable_blocklist" => {
-            "Attackers using a flawed driver to switch off your security"
+            "A flawed driver being used to switch off your security"
         }
-        "system.exploit_mitigations" => "A program bug being turned into a full break-in",
-        "ps.v2_engine" => "Attackers running harmful scripts through an old back door",
+        "system.exploit_mitigations" => "A program bug being used to take full control of your PC",
+        "ps.v2_engine" => "Harmful scripts running through an old version of a Windows tool",
         "printer.spooler_remote" => {
             "Someone on your network using printing flaws to take over your PC"
         }
         "services.legacy_remote" => {
-            "Strangers reaching your PC through forgotten remote-access tools"
+            "Someone reaching your PC through forgotten remote-access tools"
         }
         "session.lock_on_wake" => "Anyone nearby opening your PC while you are away",
         "update.store_autoupdate_policy" => {
             "Store apps staying out of date and open to known flaws"
         }
         "update.paused" => "Security fixes waiting while known flaws stay open",
-        "smartscreen.apps" => "Fake installers and harmful downloads starting with one click",
+        "smartscreen.apps" => "Unrecognized installers and harmful downloads starting with one click",
         "privacy.recall" => "Pictures of your screen, passwords included, being kept on this PC",
         "privacy.diagnostic_data_level" => {
             "More details about how you use your PC leaving it than needed"
         }
         "privacy.delivery_optimization" => {
-            "Your PC sending files to strangers over your connection"
+            "Your PC sending files to unknown computers over your connection"
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
@@ -103,15 +103,15 @@ pub fn control_impact(id: &str) -> &'static str {
         "smb1.disabled" => "Old file-sharing flaws that let malware spread between PCs",
         "vbs.memory_integrity" => "Harmful drivers taking over the core of Windows",
         "vbs.kernel_stack_protection" => {
-            "Attackers hijacking the core of Windows through a driver bug"
+            "A driver bug being used to take over the core of Windows"
         }
         "services.unquoted_paths" => {
             "A planted program being started with full power instead of the real one"
         }
         "firewall.user_dir_inbound_allow" => {
-            "A harmful download letting strangers connect straight to your PC"
+            "A harmful download letting others connect straight to your PC"
         }
-        "net.hosts_file" => "Trusted websites quietly sending you to fake ones",
+        "net.hosts_file" => "Trusted websites quietly sending you to different ones",
         "persistence.run_and_tasks" => {
             "A harmful program starting again every time you turn on your PC"
         }
@@ -126,7 +126,7 @@ pub fn control_impact(id: &str) -> &'static str {
 pub fn finding_impact(title: &str) -> &'static str {
     match title {
         "Windows lifecycle" => "Running Windows that no longer gets security fixes",
-        "Device encryption" => "Strangers reading your files if your PC is lost or stolen",
+        "Device encryption" => "Someone who finds your PC reading your files if it is lost or stolen",
         "Secure Boot" => "Hidden malware starting before Windows does",
         "Windows updates" => "Known security holes staying open on your PC",
         "Remote Desktop" => "Someone signing in to your PC from another place",
@@ -136,7 +136,7 @@ pub fn finding_impact(title: &str) -> &'static str {
             "Harmful drivers taking over the core of Windows"
         }
         "Kernel stack protection not running" => {
-            "Attackers hijacking the core of Windows through a driver bug"
+            "A driver bug being used to take over the core of Windows"
         }
         "Automatic logon" => "Anyone who turns on your PC getting straight into your account",
         _ => "",
