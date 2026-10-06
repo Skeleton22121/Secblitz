@@ -460,6 +460,7 @@ mod tests {
             "Not offered: Notepad was not found on this PC",
             "Not offered: this version of Windows does not have it",
             "Not offered: this setting is not available on Windows Home",
+            "Not offered: Windows keeps this setting for you to change yourself",
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: printing is busy right now",
             "Not offered: your account has no password",

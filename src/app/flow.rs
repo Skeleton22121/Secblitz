@@ -109,7 +109,7 @@ pub const REASON_EARLIER: &str = "An earlier update or repair didn't finish clea
 pub const NOTICE_DISK_READ_ONLY: &str = "Your disk can't be written to right now, so fixes will wait.";
 pub const NOTICE_DISK_FULL: &str = "Your disk is full, so fixes will wait. Free up some space, then check again.";
 
-pub const FAILURE_GENERAL: &str = "Something went wrong and nothing was changed. Close Secblitz and open it again. If it keeps happening, restart your PC or check for a Secblitz update.";
+pub const FAILURE_GENERAL: &str = "Something went wrong, so Secblitz stopped. Close Secblitz and open it again. If it keeps happening, restart your PC or check for a Secblitz update.";
 pub const COULDNT_READ: &str = "We couldn't read this from Windows. Check again in a moment. If it keeps happening, restart your PC.";
 pub const NOT_DONE: &str = "This change did not go through. Restart your PC, then try again.";
 
