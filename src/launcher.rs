@@ -631,28 +631,28 @@ mod imp {
             Err(_) => Reply::Failed,
         };
         match request {
-            Request::InstallBitwarden => match secblitz::tools::install_bitwarden() {
+            Request::InstallBitwarden => match secblitz::software_install::install_bitwarden() {
                 Ok(()) => Reply::Done,
-                Err(e) if secblitz::tools::is_offline_error(&e) => Reply::Offline,
-                Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                Err(e) if secblitz::software_install::is_offline_error(&e) => Reply::Offline,
+                Err(e) if secblitz::software_install::is_not_here_error(&e) => Reply::Unavailable,
                 Err(_) => Reply::Failed,
             },
             Request::BitwardenStatus => {
-                match secblitz::tools::bitwarden_installed() {
+                match secblitz::software_install::bitwarden_installed() {
                     Ok(true) => Reply::Done,
                     Err(_) => Reply::Unknown,
                     Ok(false) => {
-                        match secblitz::tools::bitwarden_installable() {
+                        match secblitz::software_install::bitwarden_installable() {
                             Ok(()) => Reply::NotApplicable,
-                            Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                            Err(e) if secblitz::software_install::is_not_here_error(&e) => Reply::Unavailable,
                             Err(_) => Reply::Unknown,
                         }
                     }
                 }
             }
-            Request::AppInstallerStatus => match secblitz::tools::bitwarden_installable() {
+            Request::AppInstallerStatus => match secblitz::software_install::bitwarden_installable() {
                 Ok(()) => Reply::Done,
-                Err(e) if secblitz::tools::is_not_here_error(&e) => Reply::Unavailable,
+                Err(e) if secblitz::software_install::is_not_here_error(&e) => Reply::Unavailable,
                 Err(_) => Reply::Unknown,
             },
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
@@ -694,7 +694,7 @@ mod imp {
 
     fn scan_apps() -> Result<[AppState; user_apps::APPS.len()], Reply> {
         let run = user_apps::run_winget(&user_apps::list_args(), Duration::from_secs(150));
-        if run.code.is_some_and(secblitz::tools::is_offline_code) {
+        if run.code.is_some_and(secblitz::software_install::is_offline_code) {
             return Err(Reply::Offline);
         }
         if run.code.is_none() && run.output.trim().is_empty() {
@@ -702,7 +702,7 @@ mod imp {
         }
         match user_apps::parse_upgrades(&run.output, run.code) {
             user_apps::Scan::Apps(states) => Ok(states),
-            user_apps::Scan::Unreadable if secblitz::tools::dns_offline() => Err(Reply::Offline),
+            user_apps::Scan::Unreadable if secblitz::software_install::dns_offline() => Err(Reply::Offline),
             user_apps::Scan::Unreadable => Err(Reply::Unknown),
         }
     }
@@ -712,7 +712,7 @@ mod imp {
             return Reply::Unavailable;
         };
         let run = user_apps::run_winget(&args, Duration::from_secs(13 * 60));
-        if run.code.is_some_and(secblitz::tools::is_offline_code) {
+        if run.code.is_some_and(secblitz::software_install::is_offline_code) {
             return Reply::Offline;
         }
         if run.code.is_none() {
@@ -723,7 +723,7 @@ mod imp {
                 let reply = match states[index] {
                     AppState::NothingToDo => Reply::Done,
                     AppState::Available => {
-                        if run.code != Some(0) && secblitz::tools::dns_offline() {
+                        if run.code != Some(0) && secblitz::software_install::dns_offline() {
                             Reply::Offline
                         } else {
                             Reply::Failed
@@ -760,7 +760,7 @@ mod imp {
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let winget = secblitz::tools::winget_path().ok()?;
+        let winget = secblitz::software_install::winget_path().ok()?;
         Command::new(winget)
             .args([
                 "install",
@@ -824,7 +824,7 @@ mod imp {
         jobs.remove(&index);
         if code == Some(0) {
             Reply::Done
-        } else if code.is_some_and(secblitz::tools::is_offline_code) || secblitz::tools::dns_offline()
+        } else if code.is_some_and(secblitz::software_install::is_offline_code) || secblitz::software_install::dns_offline()
         {
             Reply::Offline
         } else {
@@ -857,7 +857,7 @@ mod imp {
             return Reply::Done;
         }
         let code = exit.flatten();
-        if code.is_some_and(secblitz::tools::is_offline_code) || secblitz::tools::dns_offline() {
+        if code.is_some_and(secblitz::software_install::is_offline_code) || secblitz::software_install::dns_offline() {
             return Reply::Offline;
         }
         let uri = wide(&format!("ms-windows-store://pdp/?ProductId={store_id}"));

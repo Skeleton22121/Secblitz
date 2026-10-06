@@ -724,7 +724,7 @@ fn store_restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> 
     }
     state.probing = true;
     state.offline = None;
-    Task::perform(blocking(secblitz::tools::dns_offline), move |offline| {
+    Task::perform(blocking(secblitz::software_install::dns_offline), move |offline| {
         wrap(Msg::StoreProbed(index, offline))
     })
 }

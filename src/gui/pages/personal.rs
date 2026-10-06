@@ -200,7 +200,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.apps = Apps::Preparing;
-            Task::perform(blocking(secblitz::tools::dns_offline), |offline| {
+            Task::perform(blocking(secblitz::software_install::dns_offline), |offline| {
                 wrap(Msg::ScanOnline(!offline))
             })
         }
@@ -267,7 +267,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.app_cells[index] = AppCell::Preparing;
-            Task::perform(blocking(secblitz::tools::dns_offline), move |offline| {
+            Task::perform(blocking(secblitz::software_install::dns_offline), move |offline| {
                 wrap(Msg::UpdateOnline(index, !offline))
             })
         }
