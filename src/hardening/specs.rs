@@ -288,7 +288,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "net.llmnr",
         title: "Turn off LLMNR name lookups",
-        description: "Set the DNS Client EnableMulticast policy to 0 so a stranger on the network cannot answer name lookups. Undo removes the value again. Restart recommended.",
+        description: "Set the DNS Client EnableMulticast policy to 0 so other devices on the network cannot answer name lookups. Undo removes the value again. Restart recommended.",
         source: Source::Registry,
         reboot: true,
         ask: false,
@@ -998,7 +998,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "services.unquoted_paths",
         title: "Background programs with unquoted paths",
-        description: "Put quotes around the program path of each background program that has spaces in an unquoted path a standard user could hijack. Only the path text changes, and only when the program file exists and nothing else in the path could be started first. The exact original is kept and put back on undo.",
+        description: "Put quotes around the program path of each background program that has spaces in an unquoted path a standard user could change. Only the path text changes, and only when the program file exists and nothing else in the path could be started first. The exact original is kept and put back on undo.",
         source: Source::UnquotedServices,
         reboot: false,
         ask: true,
