@@ -58,14 +58,14 @@ pub enum Step {
 // ---- translation sources (rows live in i18n-pending/a4.tsv until merged) ----
 
 const SETTING_CHANGED: &str = "{title}: you changed this yourself since, so it was left as it is";
-const SETTING_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is";
-const APP_FAILED: &str = "{name} could not be brought back.";
+const SETTING_NOT_POSSIBLE: &str = "{title}: this could not be put back, so it was left as it is. You can change it yourself in Windows Settings.";
+const APP_FAILED: &str = "{name} could not be brought back. Check your internet connection, then get it again from the Microsoft Store.";
 const APP_NEEDS_STORE: &str =
     "{name} could not be brought back. You can get it again from the Microsoft Store.";
 const SUGGESTED_OLDER: &str =
-    "Suggested apps were blocked by an older version of Secblitz, so they were left as they are.";
+    "Suggested apps were blocked by an older version of Secblitz, so they were left as they are. You can allow them again yourself in Windows Settings, under Personalization, then Start.";
 const SUGGESTED_CHANGED: &str =
-    "Suggested apps: you changed this yourself since, so it was left as it is";
+    "Suggested apps were left as they are, because they changed since Secblitz set them or could not be checked. You can change them yourself in Windows Settings.";
 const WINDOWS_SETTINGS: &str = "Windows settings";
 
 /// The plain name of a personal setting (never a registry or technical word).
@@ -415,8 +415,31 @@ mod tests {
         );
         assert_eq!(
             left_line(&Left::SuggestedOlderVersion, Lang::En),
-            "Suggested apps were blocked by an older version of Secblitz, so they were left as they are."
+            "Suggested apps were blocked by an older version of Secblitz, so they were left as they are. You can allow them again yourself in Windows Settings, under Personalization, then Start."
         );
+    }
+
+    #[test]
+    fn lines_that_could_not_be_put_back_say_what_to_do_next() {
+        let lines = [
+            Left::Setting {
+                title: "Firewall at home".into(),
+                reason: LeftReason::NotPossible,
+            },
+            Left::Personal { id: "x.unknown" },
+            Left::SuggestedChangedSince,
+            Left::SuggestedOlderVersion,
+        ];
+        for left in lines {
+            let line = left_line(&left, Lang::En);
+            assert!(line.contains("Windows Settings"), "{line}");
+        }
+        let app = left_line(&Left::App { name: "Clipchamp".into() }, Lang::En);
+        assert!(app.contains("Microsoft Store"), "{app}");
+        // An unknown personal setting gets the general name, never raw text.
+        let unknown = left_line(&Left::Personal { id: "x.unknown" }, Lang::En);
+        assert!(unknown.starts_with("Windows settings:"), "{unknown}");
+        assert!(!unknown.contains("x.unknown"), "{unknown}");
     }
 
     #[test]
