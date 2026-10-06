@@ -17,6 +17,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - **Put everything back.** One step undoes every change in a single pass, including the apps you removed. Store apps are downloaded again when needed, and the progress bar keeps moving.
 - **Windows file details.** The app and its Setup now show their name, version and copyright in Properties, Task Manager and security prompts.
 - A build pipeline on GitHub that builds the app from source, publishes checksums and can attach a proof of where each file was built.
+- **Four more fixes you can approve.** Risky background program locations, firewall allowances for programs in Downloads or Desktop, redirected trusted websites in the hosts file, and risky start-up programs now appear under "Needs your attention". Each lists exactly what will change, switches things off instead of deleting them, and can be undone exactly. If anything changed again since, Secblitz leaves it alone and says so.
+- **Restart now.** When Windows has been waiting for a restart, the Tools page offers "Restart now" with a confirmation. Programs with unsaved work still ask you first.
 
 ### Changed
 - **Clearer messages when something goes wrong.** Every error now says in plain words what happened and what you can do about it, such as signing in with an administrator account, restarting, or checking your internet. "More details" explains the cause instead of showing technical text.

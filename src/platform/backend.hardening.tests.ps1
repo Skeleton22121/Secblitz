@@ -7,11 +7,12 @@
 # PowerShell rules equal the compiled catalog for every spec and candidate value.
 param(
     [string]$BackendPath = (Join-Path $PSScriptRoot 'backend.ps1'),
-    [string]$HardeningPath = (Join-Path $PSScriptRoot 'hardening.ps1')
+    [string]$HardeningPath = (Join-Path $PSScriptRoot 'hardening.ps1'),
+    [string]$HandledPath = (Join-Path $PSScriptRoot 'hardening.handled.ps1')
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
-foreach ($path in @($BackendPath, $HardeningPath)) {
+foreach ($path in @($BackendPath, $HandledPath, $HardeningPath)) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
     if ($errors.Count) { throw ($errors | Out-String) }
@@ -19,7 +20,7 @@ foreach ($path in @($BackendPath, $HardeningPath)) {
         if ($node -is [Management.Automation.Language.FunctionDefinitionAst]) { . ([scriptblock]::Create($node.Extent.Text)) }
         # Module-level constants of hardening.ps1 ($hName = literal), so new
         # constants never need copying into this file by hand.
-        elseif ($path -eq $HardeningPath -and $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        elseif ($path -ne $BackendPath -and $node -is [Management.Automation.Language.AssignmentStatementAst] -and
                 $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
                 $node.Left.VariablePath.UserPath -cmatch '^h[A-Z]' -and
                 $node.Right.Extent.Text -notmatch '\$(?!true|false|null)') { . ([scriptblock]::Create($node.Extent.Text)) }
@@ -38,12 +39,12 @@ $backendText = [IO.File]::ReadAllText($BackendPath)
 $delimiter = "`ntry {`n    switch -CaseSensitive (`$action) {"
 $cut = $backendText.IndexOf($delimiter)
 if ($cut -lt 0) { throw 'Backend dispatcher boundary changed' }
-$combined = $backendText.Substring(0, $cut) + "`n" + [IO.File]::ReadAllText($HardeningPath)
+$combined = $backendText.Substring(0, $cut) + "`n" + [IO.File]::ReadAllText($HandledPath) + "`n" + [IO.File]::ReadAllText($HardeningPath)
 $tokens = $null; $errors = $null
 $combinedAst = [Management.Automation.Language.Parser]::ParseInput($combined, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
 $names = @($combinedAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) | ForEach-Object { $_.Name.ToLowerInvariant() })
-if (@($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { throw 'Duplicate function definition across backend.ps1 and hardening.ps1' }
+if (@($names | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) { throw 'Duplicate function definition across backend.ps1, hardening.handled.ps1 and hardening.ps1' }
 $realHRead = ${function:HRead}
 $realHPreflight = ${function:HPreflight}
 function Assert($ok, [string]$message) { if (!$ok) { throw $message }; $script:checks++ }
@@ -843,5 +844,90 @@ Reject { HSetSmartScreen (HDef 'SmartScreenEnabled') 7 } 'Invalid SmartScreen se
 $script:calls = @()
 HSetSmartScreen (HDef 'EnableSmartScreen') $null
 Assert ((CallLog) -ceq 'remove:EnableSmartScreen') "policy value removed: $(CallLog)"
+
+# ---- handled-item controls (hardening.handled.ps1)
+$gateJson = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
+function HandledJson([string]$id, [string]$source) { return ('{"id":"' + $id + '","source":"' + $source + '","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[0,2],"absentSafe":false,"fix":0,"max":2}],' + $gateJson + '}') }
+MakeSpec (HandledJson 'services.unquoted_paths' 'UnquotedServices')
+foreach ($ok in @('Spooler','My Service','svc.name$1')) { Assert (HNameOk $ok) "service name $ok" }
+foreach ($bad in @('','a"b',' lead','trail ','x/y',('s' * 65))) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }
+MakeSpec (HandledJson 'firewall.user_dir_inbound_allow' 'UserDirFirewall')
+Assert (HNameOk 'My app (inbound)') 'firewall rule name'
+foreach ($bad in @('','a"b','wild*card','x[1]',' pad',("t`tab"),('r' * 201))) { Assert (!(HNameOk $bad)) "firewall name accepted: $bad" }
+MakeSpec (HandledJson 'net.hosts_file' 'HostsFile')
+Assert ((HNameOk 'hosts') -and !(HNameOk 'Hosts') -and !(HNameOk 'hosts2') -and !(HNameOk '')) 'hosts name is exactly hosts'
+MakeSpec (HandledJson 'persistence.run_and_tasks' 'StartupItems')
+foreach ($ok in @('run-machine:Updater','run-user:My App','folder-user:a.lnk','task:\Vendor\Sync')) { Assert (HNameOk $ok) "startup name $ok" }
+foreach ($bad in @('Updater','run-other:x','run-user:','task:Vendor\x','task:\Vendor\','run-user:a*b','run-user:a"b','run-user: x',('run-user:' + ('n' * 260)))) { Assert (!(HNameOk $bad)) "startup name accepted: $bad" }
+
+# hosts lines: the same flags as the Tools security check
+foreach ($flagged in @('0.0.0.0 windowsupdate.com','127.0.0.1 update.microsoft.com','1.2.3.4 www.paypal.com','10.0.0.9   login.microsoft.com # note')) { Assert (HHostsLineFlag $flagged) "hosts line should be flagged: $flagged" }
+foreach ($fine in @('127.0.0.1 localhost','::1 localhost','# 1.2.3.4 paypal.com','','   ','1.2.3.4','not-an-ip paypal.com','192.168.1.5 printer.lan')) { Assert (!(HHostsLineFlag $fine)) "hosts line should be left alone: $fine" }
+
+# HHostsFix touches only flagged lines and keeps every other byte, line ending and BOM
+$latin = [Text.Encoding]::GetEncoding(28591)
+$original = $latin.GetBytes("# my notes`r`n127.0.0.1 localhost`r`n1.2.3.4 www.paypal.com`r`n`r`n192.168.1.5 printer.lan   # keep`r`n0.0.0.0 windowsupdate.com")
+$fixedBytes = HHostsFix $original
+$fixedText = $latin.GetString($fixedBytes)
+Assert ($fixedText -ceq "# my notes`r`n127.0.0.1 localhost`r`n# turned off by Secblitz 1.2.3.4 www.paypal.com`r`n`r`n192.168.1.5 printer.lan   # keep`r`n# turned off by Secblitz 0.0.0.0 windowsupdate.com") "hosts fix text: $fixedText"
+Assert (@(HHostsFlaggedLines $fixedBytes).Count -eq 0) 'a fixed hosts file has nothing flagged'
+Assert (@(HHostsFlaggedLines $original).Count -eq 2) 'two flagged lines found'
+$unmarked = $fixedText.Replace('# turned off by Secblitz ', '')
+Assert ($unmarked -ceq $latin.GetString($original)) 'removing the note gives back the original text'
+$bomBytes = [byte[]](@(0xEF, 0xBB, 0xBF) + @($latin.GetBytes("1.2.3.4 www.paypal.com`n")))
+$bomFixed = HHostsFix $bomBytes
+Assert ($bomFixed[0] -eq 0xEF -and $bomFixed[1] -eq 0xBB -and $bomFixed[2] -eq 0xBF -and $latin.GetString($bomFixed, 3, $bomFixed.Length - 3) -ceq "# turned off by Secblitz 1.2.3.4 www.paypal.com`n") 'BOM kept in front of the note'
+Assert (HHostsPlain $original) 'plain text accepted'
+Assert (!(HHostsPlain ([byte[]]@(0xFF, 0xFE, 0x31, 0x00)))) 'UTF-16 refused'
+Assert (!(HHostsPlain ([byte[]]@(0x31, 0x00, 0x32)))) 'NUL bytes refused'
+
+# hosts: read, fix, undo, and a change in between (state and file are doubles)
+function HHostsBytes { if ($null -eq $script:hostsFile) { return $null }; return [byte[]]$script:hostsFile }
+function HHostsWrite([byte[]]$bytes) { $script:hostsWrites++; if ($script:hostsFail) { throw 'fixture write failure' }; $script:hostsFile = [byte[]]$bytes }
+function HFlushDns { $script:dnsFlushes++ }
+function HStateGet([string]$name) { if ($script:undoState.ContainsKey($name)) { return $script:undoState[$name] }; return $null }
+function HStateSet([string]$name, $data) { $script:undoState[$name] = $data }
+function HStateRemove([string]$name) { $script:undoState.Remove($name) }
+$script:undoState = @{}; $script:hostsWrites = 0; $script:dnsFlushes = 0; $script:hostsFail = $false
+$script:hostsFile = $original
+$r = HReadHosts
+Assert ($r['hosts'] -eq 1) 'flagged hosts file reads 1'
+Assert ($script:hLabels.Count -gt 0) 'the flagged hosts lines are named'
+HSetHosts 'hosts' 0
+Assert ($latin.GetString($script:hostsFile) -ceq $fixedText) 'fix writes the commented file'
+Assert ($script:dnsFlushes -eq 1) 'DNS cache flushed after the fix'
+Assert ((HReadHosts)['hosts'] -eq 0) 'fixed and unchanged reads 0'
+HSetHosts 'hosts' 1
+Assert ([Convert]::ToBase64String($script:hostsFile) -ceq [Convert]::ToBase64String($original)) 'undo restores the exact original bytes'
+Assert ($script:undoState.Count -eq 0 -and $script:dnsFlushes -eq 2) 'undo clears the saved state and flushes DNS'
+Assert ((HReadHosts)['hosts'] -eq 1) 'after undo it is flagged again'
+HSetHosts 'hosts' 0
+$script:hostsFile = [byte[]](@($script:hostsFile) + @($latin.GetBytes("`r`n# someone else was here")))
+Assert ((HReadHosts)['hosts'] -eq 2) 'a file changed since reads 2'
+$before = [Convert]::ToBase64String($script:hostsFile)
+Reject { HSetHosts 'hosts' 1 } 'changed again'
+Assert ([Convert]::ToBase64String($script:hostsFile) -ceq $before) 'a changed hosts file is left alone on undo'
+# a failed write is rolled back and leaves no saved state
+$script:undoState = @{}; $script:hostsFile = $original; $script:hostsFail = $true
+Reject { HSetHosts 'hosts' 0 } 'fixture write failure'
+$script:hostsFail = $false
+Assert ($script:undoState.Count -eq 0) 'a failed fix leaves no saved state'
+$script:hostsFile = $latin.GetBytes("127.0.0.1 localhost`r`n")
+Reject { HSetHosts 'hosts' 0 } 'no longer needs a change'
+Reject { HSetHosts 'other' 0 } 'Invalid hosts file state'
+Reject { HSetHosts 'hosts' 2 } 'Invalid hosts file state'
+# preflight reasons
+$script:hostsFile = $null
+Reject { HHostsPreflight } 'Not offered: the hosts file could not be found'
+$script:hostsFile = [byte[]](New-Object byte[] ($hHostsMaxBytes + 1))
+Reject { HHostsPreflight } 'Not offered: the hosts file is too large'
+$script:hostsFile = [byte[]]@(0xFF, 0xFE, 0x31, 0x00)
+Reject { HHostsPreflight } 'Not offered: the hosts file uses a format we cannot keep exactly'
+
+# start-up items: Task Manager's on/off record
+Assert (HApprovedEnabled $null) 'no record means on'
+Assert (HApprovedEnabled ([byte[]]@(2,0,0,0,0,0,0,0,0,0,0,0))) 'even first byte means on'
+Assert (!(HApprovedEnabled ([byte[]]@(3,0,0,0,0,0,0,0,0,0,0,0)))) 'odd first byte means off'
+Assert (!(HApprovedEnabled ([byte[]]@(2,0)))) 'a short record is treated as off, never overwritten'
 
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

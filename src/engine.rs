@@ -64,6 +64,9 @@ pub struct Outcome {
     pub effective: Option<EffectiveFirewall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authority: Option<Authority>,
+    /// The exact items a fix would change (plain names, display only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<crate::model::ItemLabel>,
 }
 
 /// Downcast an Engine::open/operation error to this type to offer diagnostics.
@@ -1368,6 +1371,7 @@ impl Engine {
         Outcome {
             effective: observation.effective,
             authority: observation.authority,
+            items: crate::model::ItemLabel::clean(&observation.labels),
             ..Self::outcome(c, status, detail)
         }
     }
@@ -3011,6 +3015,7 @@ mod tests {
                 reason: reason.into(),
                 effective,
                 authority,
+                ..Observation::default()
             })
         }
         fn write(&mut self, id: &str, value: &Value) -> Result<()> {

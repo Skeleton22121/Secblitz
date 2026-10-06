@@ -61,8 +61,8 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "update.reboot_overdue" => Explainer {
             what: "This checks whether your PC has been waiting a long time for a restart to finish an update.",
-            risk: "Until you restart, the update isn't fully in place, so the hole it fixes may still be open.",
-            change: "Restart when it suits you. Save your work first. This app never restarts your PC for you.",
+            risk: "Until you restart, the fixes are only half installed and the holes may stay open.",
+            change: "Choose Restart now when it suits you. Save your work first. Secblitz only restarts when you ask.",
         },
         "ps.v2_engine" => Explainer {
             what: "This is a very old part of Windows' command tool that almost nobody needs anymore.",
@@ -71,8 +71,8 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "net.hosts_file" => Explainer {
             what: "This is a small file on your PC that can send website names to other places.",
-            risk: "A bad entry can send you to a fake bank site, or block your antivirus from updating.",
-            change: "Have someone you trust look at it. Resetting it to the Windows default fixes bad entries. This app doesn't edit it.",
+            risk: "Malware can use it to send you to a fake bank website or to block your antivirus updates.",
+            change: "Only the lines that redirect trusted websites are turned into notes. The rest stays as it is. You can undo this.",
         },
         "persistence.wmi_subscriptions" => Explainer {
             what: "This counts hidden triggers that can start programs on your PC without showing up in the usual start-up lists.",
@@ -80,9 +80,9 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             change: "Ask someone who knows PCs to review them. Some hardware and management tools use them on purpose, so nothing is removed for you.",
         },
         "services.unquoted_paths" => Explainer {
-            what: "This looks for background programs that are set up in a way an attacker could trick.",
+            what: "This looks for background programs whose location has spaces and no quotes, which Windows can misread.",
             risk: "Someone without admin rights could plant a program that Windows then starts with full power.",
-            change: "The software maker or a helper can correct it. This app never edits these settings.",
+            change: "Quotes are added around the location and nothing else changes. The program works as before. You can undo this.",
         },
         "accounts.stale_enabled" => Explainer {
             what: "This counts accounts on your PC that are switched on but haven't been used in months.",
@@ -100,9 +100,9 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             change: "Shown for information only. Turning it on can stop very old devices, such as old scanners, from connecting.",
         },
         "firewall.user_dir_inbound_allow" => Explainer {
-            what: "This looks for apps in your Downloads, Desktop or Temp folders that are allowed to receive connections from the internet.",
+            what: "This looks for apps in your Downloads, Desktop or Temp folders that the firewall lets receive connections.",
             risk: "A harmful app in one of those folders could let attackers connect straight to your PC.",
-            change: "Remove rules you don't recognise in Windows Firewall. Online games may need some, and may ask again.",
+            change: "Those allowances are switched off, not deleted. A game or app may ask again. You can undo this.",
         },
         "accounts.daily_admin" => Explainer {
             what: "This checks whether the account you use every day is an administrator account.",
@@ -135,9 +135,9 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             change: "Switch your router to the newest security option, with a strong password. Very old devices may need to reconnect.",
         },
         "persistence.run_and_tasks" => Explainer {
-            what: "This counts programs that start by themselves with Windows from risky places and aren't signed by a known maker.",
+            what: "This finds programs that start by themselves with Windows from risky places and aren't signed by a known maker.",
             risk: "Malware often hides in a folder like Temp or Downloads and starts again every time you turn your PC on.",
-            change: "Ask a helper to look at what starts with your PC. Nothing is removed for you, since some tools start this way on purpose.",
+            change: "They stop starting with Windows. Nothing is deleted, and you can turn them back on by undoing this.",
         },
         _ => return None,
     })

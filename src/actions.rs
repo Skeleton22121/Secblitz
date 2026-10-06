@@ -29,6 +29,28 @@ pub struct ActionResult {
 #[path = "actions/windows.rs"]
 mod windows;
 
+/// SHUTDOWN_RESTART: restart, do not power off. No force flags: programs with
+/// unsaved work can still ask to stay open.
+#[cfg(any(windows, test))]
+const RESTART_FLAGS: u32 = 0x0000_0004;
+/// SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_SECURITYFIX |
+/// SHTDN_REASON_FLAG_PLANNED: a planned restart for a security update.
+#[cfg(any(windows, test))]
+const RESTART_REASON: u32 = 0x0002_0000 | 0x0000_0012 | 0x8000_0000;
+
+/// Restart the PC to finish installing updates. Only ever called after the
+/// person confirmed, with a reminder to save their work first.
+pub fn restart_for_updates() -> Result<()> {
+    #[cfg(windows)]
+    {
+        windows::restart_for_updates()
+    }
+    #[cfg(not(windows))]
+    {
+        anyhow::bail!("Restarting needs Windows")
+    }
+}
+
 // No user-supplied URI, arguments, executable, or PowerShell is accepted.
 fn settings_uri(action: Action) -> Option<&'static str> {
     match action {
@@ -115,6 +137,18 @@ pub fn run(action: Action) -> Result<ActionResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_is_a_planned_security_fix_restart_that_forces_nothing() {
+        // SHUTDOWN_RESTART only: no SHUTDOWN_FORCE_OTHERS (0x1), FORCE_SELF (0x2)
+        // or power-off flags, so unsaved work can still stop the restart.
+        assert_eq!(RESTART_FLAGS, 0x4);
+        assert_eq!(RESTART_REASON & 0x8000_0000, 0x8000_0000, "planned");
+        assert_eq!(RESTART_REASON & 0x00FF_0000, 0x0002_0000, "operating system");
+        assert_eq!(RESTART_REASON & 0xFFFF, 0x12, "security fix");
+        #[cfg(not(windows))]
+        assert!(restart_for_updates().is_err());
+    }
 
     #[test]
     fn settings_allowlist_is_closed() {

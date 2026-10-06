@@ -1238,21 +1238,21 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "smartscreen.apps" => "Turn on warnings for unknown downloads in Windows Security.",
         "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Ask whoever set up this PC.",
         "update.paused" => "Updates are paused. Resume them in Windows Update.",
-        "update.reboot_overdue" => "Restart your PC to finish installing updates.",
+        "update.reboot_overdue" => "Restart your PC to finish installing updates. Save your work first.",
         "ps.v2_engine" => "An old Windows tool that attackers like to use is still installed. Remove it in Windows Features.",
-        "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. Ask someone you trust to check it.",
+        "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. We can fix this for you.",
         "persistence.wmi_subscriptions" => "Something is set to run quietly in the background. Ask someone you trust to look at it.",
-        "services.unquoted_paths" => "A background program has a risky setup. Ask someone you trust to look at it.",
+        "services.unquoted_paths" => "A background program has a risky setup. We can fix this for you.",
         "accounts.stale_enabled" => "Some old accounts are still switched on. Remove the ones nobody uses.",
         "smb.shares_exposed" => "Some folders are shared with everyone on your network. Stop sharing what you don't need.",
-        "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. Remove ones you don't know.",
+        "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. We can fix this for you.",
         "accounts.daily_admin" => "You use an administrator account every day. Make a normal account for daily use.",
         "accounts.hello_configured" => "No PIN or Windows Hello is set up. Add one in Sign-in options.",
         "accounts.find_my_device" => "Find my device is off. Turn it on in Settings so you can find a lost laptop.",
         "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Look in Core isolation in Windows Security.",
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
-        "persistence.run_and_tasks" => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
+        "persistence.run_and_tasks" => "A risky program starts by itself with Windows. We can switch it off for you.",
         _ => return None,
     })
 }
@@ -1263,8 +1263,7 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     match rule_id {
         "os.feature_release_support"
         | "boot.secure_boot_certs"
-        | "update.paused"
-        | "update.reboot_overdue" => Some(Action::OpenWindowsUpdate),
+        | "update.paused" => Some(Action::OpenWindowsUpdate),
         "defender.tamper_protection" => Some(Action::OpenTamperProtection),
         "defender.threats" | "defender.scan_age" => Some(Action::OpenProtectionHistory),
         "defender.exclusions_risky" | "vbs.kernel_stack_protection" => {
@@ -1276,6 +1275,23 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         "accounts.hello_configured" => Some(Action::OpenSignInSettings),
         _ => None,
     }
+}
+
+/// Checks Secblitz fixes itself. The tip points to the Protection page, where
+/// the person reads what changes and agrees before anything is touched.
+pub fn rule_fix(rule_id: &str) -> bool {
+    matches!(
+        rule_id,
+        "services.unquoted_paths"
+            | "firewall.user_dir_inbound_allow"
+            | "net.hosts_file"
+            | "persistence.run_and_tasks"
+    )
+}
+
+/// The one check whose tip offers "Restart now" (after its own confirmation).
+pub fn rule_restart(rule_id: &str) -> bool {
+    rule_id == "update.reboot_overdue"
 }
 
 /// Checks where the Tools page can offer its existing "scan for viruses" job
@@ -1300,6 +1316,10 @@ pub struct Tip {
     pub open: Option<secblitz::actions::Action>,
     /// A `Look` tip that the Tools page's own quick scan can help with.
     pub scan: bool,
+    /// A `Look` tip Secblitz can fix: "Review fix" opens the Protection page.
+    pub fix: bool,
+    /// A `Look` tip that a restart finishes: "Restart now" asks first.
+    pub restart: bool,
     /// Check id whose plain-language explanation the row can open: the first
     /// check that needs a look, else the first check with an explanation.
     pub explain: Option<String>,
@@ -1355,23 +1375,34 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
         for a in &probe.assessments {
             technical.push_str(&format!("  {:?}: {}\n", a.status, a.detail));
         }
-        // The first check that needs a look decides the exact next step.
-        let first = probe
+        // A check Secblitz can fix or finish comes first; otherwise the first
+        // check that needs a look decides the exact next step.
+        let attention: Vec<&str> = probe
             .assessments
             .iter()
             .filter(|a| a.status == diag::Status::Attention)
-            .find_map(|a| rule_advice(&a.rule.id).map(|text| (text, rule_open(&a.rule.id))));
+            .map(|a| a.rule.id.as_str())
+            .collect();
+        let lead = attention
+            .iter()
+            .copied()
+            .find(|id| rule_fix(id))
+            .or_else(|| attention.iter().copied().find(|id| rule_restart(id)));
+        let first = lead
+            .into_iter()
+            .chain(attention.iter().copied())
+            .find_map(|id| rule_advice(id).map(|text| (text, rule_open(id))));
+        let fix = lead.is_some_and(rule_fix);
+        let restart = lead.is_some_and(rule_restart);
         let scan = probe
             .assessments
             .iter()
             .any(|a| a.status == diag::Status::Attention && rule_scan(&a.rule.id));
         let look = state == TipState::Look;
-        let explain = probe
-            .assessments
-            .iter()
-            .filter(|a| a.status == diag::Status::Attention)
-            .chain(probe.assessments.iter())
-            .map(|a| a.rule.id.as_str())
+        let explain = lead
+            .into_iter()
+            .chain(attention.iter().copied())
+            .chain(probe.assessments.iter().map(|a| a.rule.id.as_str()))
             .find(|rule| crate::explain::for_check(rule).is_some())
             .map(str::to_owned);
         tips.push(Tip {
@@ -1392,6 +1423,8 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, None, _) => None,
             },
             scan: look && scan,
+            fix: look && fix,
+            restart: look && restart,
         });
     }
     let rank = |s: TipState| match s {
@@ -1906,6 +1939,85 @@ mod tests {
                 assert!(!ids[..i].contains(id));
             }
         }
+    }
+
+    fn tip_for(probe_id: diag::ProbeId, rules: &[&str]) -> Tip {
+        let profile = TipProfile::ALL
+            .into_iter()
+            .find(|p| p.probes().contains(&probe_id))
+            .expect("a profile lists the probe");
+        let mut report = diag::collect(profile.profile(), &diag::Context::default());
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == probe_id)
+            .unwrap();
+        probe.status = diag::Status::Attention;
+        probe.assessments = rules
+            .iter()
+            .map(|id| diag::Assessment {
+                status: diag::Status::Attention,
+                detail: String::new(),
+                rule: diag::RuleReference {
+                    id: (*id).into(),
+                    revision: 1,
+                    mapping_version: String::new(),
+                    documentation: vec![],
+                },
+            })
+            .collect();
+        summarize_tips(profile, &report)
+            .tips
+            .into_iter()
+            .find(|t| t.title == tip_title(probe_id))
+            .unwrap()
+    }
+
+    #[test]
+    fn tips_for_checks_we_can_fix_point_to_the_fix_and_never_to_manual_advice() {
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            assert!(rule_fix(id), "{id}");
+            assert!(
+                secblitz::hardening::is_hardening(id),
+                "{id} must be a real fix on the Protection page"
+            );
+            let advice = rule_advice(id).unwrap();
+            assert!(advice.contains("We can"), "{id}: {advice}");
+            assert!(!advice.contains("Ask someone"), "{id}: {advice}");
+            assert_eq!(rule_open(id), None, "{id}");
+        }
+        // With a manual-only problem listed first, the fixable one still leads.
+        let tip = tip_for(
+            diag::ProbeId::Persistence,
+            &["persistence.wmi_subscriptions", "services.unquoted_paths"],
+        );
+        assert!(tip.fix && !tip.restart && tip.open.is_none() && !tip.scan);
+        assert_eq!(tip.advice, rule_advice("services.unquoted_paths").unwrap());
+        assert_eq!(tip.explain.as_deref(), Some("services.unquoted_paths"));
+        // A manual-only problem keeps its manual advice and offers no fix.
+        let tip = tip_for(diag::ProbeId::Persistence, &["persistence.wmi_subscriptions"]);
+        assert!(!tip.fix && !tip.restart);
+    }
+
+    #[test]
+    fn overdue_restart_offers_restart_now_instead_of_opening_windows_update() {
+        assert!(rule_restart("update.reboot_overdue") && !rule_restart("update.paused"));
+        assert_eq!(rule_open("update.reboot_overdue"), None);
+        let tip = tip_for(diag::ProbeId::UpdatePolicy, &["update.reboot_overdue"]);
+        assert!(tip.restart && !tip.fix && tip.open.is_none());
+        assert!(tip.advice.contains("Save your work"));
+        // Healthy tips never show either button.
+        let mut report = diag::collect(diag::Profile::Everyday, &diag::Context::default());
+        for probe in &mut report.probes {
+            probe.status = diag::Status::Healthy;
+        }
+        let tips = summarize_tips(TipProfile::Everyday, &report);
+        assert!(tips.tips.iter().all(|t| !t.fix && !t.restart));
     }
 
     #[test]

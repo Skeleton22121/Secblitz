@@ -24,6 +24,14 @@ function HNameOk([string]$name) {
     if ($spec.source -ceq 'NetbiosAdapters') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
     if ($spec.source -ceq 'LegacyServices') { return ((HServiceNames) -ccontains $name) }
     if ($spec.source -ceq 'DefenderExclusions') { return (HExclusionNameOk $name) }
+    if ($spec.source -ceq 'UnquotedServices') { return ($name -cmatch '^[A-Za-z0-9_.$ -]{1,64}$' -and $name.Trim() -ceq $name) }
+    if ($spec.source -ceq 'UserDirFirewall') { return ($name.Length -ge 1 -and $name.Length -le 200 -and $name -cnotmatch '[\x00-\x1f\x7f"*?\[\]]' -and $name.Trim() -ceq $name) }
+    if ($spec.source -ceq 'HostsFile') { return ($name -ceq 'hosts') }
+    if ($spec.source -ceq 'StartupItems') {
+        if ($name.Length -gt 260 -or $name -cnotmatch '^(run-machine|run-machine32|run-user|folder-machine|folder-user|task):[^\x00-\x1f\x7f"*?\[\]]+$' -or $name.Trim() -cne $name) { return $false }
+        if ($name.StartsWith('task:') -and !$name.StartsWith('task:\')) { return $false }
+        return !$name.EndsWith('\')
+    }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -298,6 +306,10 @@ function HRead() {
         'UpdatePause' { return (HReadPause) }
         'SmartScreen' { return (HReadSmartScreen) }
         'DefenderExclusions' { return (HReadExclusions) }
+        'UnquotedServices' { return (HReadUnquoted) }
+        'UserDirFirewall' { return (HReadUserDirFirewall) }
+        'HostsFile' { return (HReadHosts) }
+        'StartupItems' { return (HReadStartup) }
     }
     throw 'Unknown hardening source'
 }
@@ -395,7 +407,7 @@ function HGate() {
     HGateCommon
     HGatePolicy
     HRsop
-    if ($spec.source -ceq 'FirewallExposure' -or $spec.source -ceq 'FirewallOutbound') { HGateFirewall }
+    if ($spec.source -ceq 'FirewallExposure' -or $spec.source -ceq 'FirewallOutbound' -or $spec.source -ceq 'UserDirFirewall') { HGateFirewall }
     if ($spec.source -ceq 'WifiProfiles') { HGateWifi }
 }
 
@@ -472,6 +484,9 @@ function HPreflight() {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
             if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
         }
+        'services.unquoted_paths' { HUnquotedPreflight }
+        'net.hosts_file' { HHostsPreflight }
+        'persistence.run_and_tasks' { HStartupPreflight }
         'session.lock_on_wake' {
             Load 'CimCmdlets'; Load 'Microsoft.PowerShell.LocalAccounts'
             $who = [string](Get-CimInstance Win32_ComputerSystem).UserName
@@ -548,11 +563,17 @@ function HNetbiosPreflight() {
 
 # --------------------------------------------------------------- observe
 function HObserve() {
+    $script:hLabels = @{}
     $slice = HRead
     $o = @{ value = @{ items = $slice }; eligible = $true; reason = 'Eligible unmanaged local preference' }
     try {
         HGate
-        if (HAnyUnsafe $slice) { HPreflight }
+        if (HAnyUnsafe $slice) {
+            HPreflight
+            # The exact items a fix would change, for the details of the row.
+            $labels = @(HLabelList $slice)
+            if ($labels.Count -gt 0) { $o.labels = $labels }
+        }
     } catch {
         $o.eligible = $false
         $o.reason = $_.Exception.Message
@@ -690,6 +711,10 @@ function HSet([string]$name, $v) {
         'UpdatePause' { HSetPause $def $v }
         'SmartScreen' { HSetSmartScreen $def $v }
         'DefenderExclusions' { HSetExclusion $name $v }
+        'UnquotedServices' { HSetUnquoted $name $v }
+        'UserDirFirewall' { HSetUserDirFirewall $name $v }
+        'HostsFile' { HSetHosts $name $v }
+        'StartupItems' { HSetStartup $name $v }
         default { throw 'Unknown hardening source' }
     }
 }

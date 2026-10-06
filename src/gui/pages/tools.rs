@@ -33,6 +33,8 @@ pub enum Sheet {
     Repair(RepairKind),
     InstallUpdates,
     Bitwarden,
+    /// Restart the PC to finish installing updates.
+    Restart,
 }
 
 /// Windows Settings pages reachable from the shortcut list.
@@ -131,6 +133,8 @@ pub enum Msg {
     OpenAction(actions::Action),
     OpenSecurity,
     Opened(Result<broker::Reply, String>),
+    /// The restart request was answered: an error means nothing was restarted.
+    RestartDone(Result<(), String>),
     ToggleDetail(Detail),
     Personal(personal::Msg),
 }
@@ -339,7 +343,11 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Ask(sheet) => {
-            let changes_pc = matches!(sheet, Sheet::Repair(_) | Sheet::InstallUpdates);
+            // A restart would cut a running fix, repair or update short.
+            let changes_pc = matches!(
+                sheet,
+                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart
+            );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
             if !blocked {
                 state.sheet = Some(sheet);
@@ -594,6 +602,16 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Tone::Warn,
             )),
         },
+        Msg::RestartDone(result) => match result {
+            Ok(()) => Task::done(Message::Toast(
+                ctx.t("Restarting now. Programs with unsaved work will ask you first."),
+                Tone::Good,
+            )),
+            Err(_) => Task::done(Message::Toast(
+                ctx.t("We couldn't restart your PC. Restart it from the Start menu instead."),
+                Tone::Warn,
+            )),
+        },
         Msg::Personal(msg) => personal::update(&mut state.personal, msg, ctx),
         Msg::ToggleDetail(detail) => {
             if state.open_details.contains(&detail) {
@@ -671,6 +689,10 @@ impl State {
 
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
     match sheet {
+        Sheet::Restart => Task::perform(
+            blocking(|| actions::restart_for_updates().map_err(plain)),
+            |r| tools(Msg::RestartDone(r)),
+        ),
         Sheet::Scan => {
             state.scan = Run::Working;
             Task::perform(
