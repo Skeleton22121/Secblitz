@@ -60,7 +60,7 @@ pub enum Item {
 
 /// Firewall controls also need local authority and matching effective evidence.
 pub fn classify(id: &str, target: &serde_json::Value, o: &Observation) -> Item {
-    if id.starts_with("firewall.") && !crate::hardening::is_hardening(id) {
+    if id.starts_with("firewall.") && !crate::hardening::is_hardening_check_id(id) {
         if o.authority != Some(Authority::Local) || !o.eligible {
             return Item::Attention;
         }

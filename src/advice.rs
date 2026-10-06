@@ -413,8 +413,8 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
     }
 }
 
-pub fn is_choice(id: &str) -> bool {
-    secblitz::hardening::is_ask(id)
+pub fn is_choice_check_id(id: &str) -> bool {
+    secblitz::hardening::is_ask_check_id(id)
 }
 
 pub fn choice_consequence(id: &str) -> &'static str {
@@ -792,7 +792,7 @@ pub fn for_control(id: &str, status: &str, detail: &str) -> Advice {
             a.next = repair_help(id);
             a.step = NextStep::Repair;
             a.group = Group::Recommended;
-            if is_choice(id) {
+            if is_choice_check_id(id) {
                 a.status = "Your choice";
                 a.next = choice_consequence(id);
                 a.ask = true;
@@ -1075,7 +1075,7 @@ mod tests {
             let id = spec.id;
             assert_ne!(control_label(id), "Protection check", "{id}");
             assert!(!control_impact(id).is_empty(), "{id}");
-            assert_eq!(is_choice(id), spec.ask, "{id}");
+            assert_eq!(is_choice_check_id(id), spec.ask, "{id}");
             let ok = for_control(id, "compliant", "");
             assert_eq!(ok.group, Group::Protected, "{id}");
             assert!(!ok.ask);
@@ -1113,7 +1113,7 @@ mod tests {
             let applied = for_control(id, "applied", "Preference applied; restart required");
             assert_eq!(applied.status, "Restart needed", "{id}");
         }
-        assert!(!is_choice("uac.enabled") && !is_choice("unknown.id"));
+        assert!(!is_choice_check_id("uac.enabled") && !is_choice_check_id("unknown.id"));
     }
 
     #[test]
@@ -1184,7 +1184,7 @@ mod tests {
             ("SMB1", "smb1.disabled"),
         ] {
             assert_eq!(control_for_finding(title), Some(id));
-            assert!(secblitz::hardening::is_hardening(id));
+            assert!(secblitz::hardening::is_hardening_check_id(id));
             assert_eq!(for_finding(title, "attention", "").label, control_label(id));
             assert_eq!(for_finding(title, "attention", "").impact, control_impact(id));
         }
@@ -1308,7 +1308,7 @@ mod tests {
             "net.hosts_file",
             "persistence.run_and_tasks",
         ] {
-            assert!(is_choice(id), "{id}");
+            assert!(is_choice_check_id(id), "{id}");
             let a = for_control(id, "attention", "Eligible");
             assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
             assert!(!a.impact.is_empty() && a.next == choice_consequence(id));

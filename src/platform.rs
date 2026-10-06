@@ -772,7 +772,7 @@ mod tests {
                     control.id
                 );
             }
-            if crate::hardening::is_hardening(&control.id) {
+            if crate::hardening::is_hardening_check_id(&control.id) {
                 continue;
             }
             if control.id.starts_with("defender.")

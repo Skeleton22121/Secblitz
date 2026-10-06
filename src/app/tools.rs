@@ -1323,7 +1323,7 @@ pub fn tip_fix<'r>(
         }
     } else if a.step == crate::advice::NextStep::Restart {
         TipFix::Restart(a.next)
-    } else if secblitz::vbs::is_vbs(control) && row.status == "compliant" {
+    } else if secblitz::vbs::is_vbs_check_id(control) && row.status == "compliant" {
         TipFix::Restart(core_restart_advice(control))
     } else {
         TipFix::Manual
