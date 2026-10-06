@@ -15,6 +15,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [0.8.0] - Unreleased
 
 ### Added
+- **Core system protection, fixed for you.** Secblitz can now turn on Memory integrity and, once that runs, the extra kernel stack protection. It only offers this when your PC supports it, nothing manages it, nothing is locked, and none of your drivers look like they would stop working. You choose it, restart once, and can undo it. It is never offered inside a virtual machine. If it is not offered, Protection says why in plain words and names any driver it was unsure about. After the restart, Secblitz tells you if it is not running and offers the undo.
 - **Web protection.** Secblitz can block ads, trackers and known dangerous websites for the whole PC. It runs as a small background service, keeps today's blocked counts, and offers "Try again" if it stops working.
 - **Remove Secblitz.** Settings now has a clear way to remove the app. You choose whether to keep the changes Secblitz made or put everything back the way it was, and the uninstaller cleans up after itself.
 - **Put everything back.** One step undoes every change in a single pass, including the apps you removed. Store apps are downloaded again when needed, and the progress bar keeps moving.

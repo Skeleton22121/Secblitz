@@ -119,6 +119,20 @@ const NO_GATE: Gate = Gate {
     policy_values: &[],
 };
 
+/// Any policy for virtualization-based security, in the policy store or in
+/// Mobile Device Management, means somebody else decides: assessment only.
+const VBS_GATE: Gate = Gate {
+    areas: &["DeviceGuard", "VirtualizationBasedTechnology"],
+    own_policy_key: DEVICE_GUARD_POLICY,
+    policy_values: &[
+        (DEVICE_GUARD_POLICY, "EnableVirtualizationBasedSecurity"),
+        (DEVICE_GUARD_POLICY, "HypervisorEnforcedCodeIntegrity"),
+        (DEVICE_GUARD_POLICY, "RequirePlatformSecurityFeatures"),
+        (DEVICE_GUARD_POLICY, "ConfigureKernelShadowStacksLaunch"),
+    ],
+    ..NO_GATE
+};
+
 #[derive(Clone, Copy, Debug)]
 pub struct Spec {
     pub id: &'static str,
@@ -172,6 +186,10 @@ const DATA_COLLECTION_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows
 const DELIVERY_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization";
 const POWER_CONSOLELOCK_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\0e796bdb-100d-47d6-a2d5-f7d2daa51f51";
+const DEVICE_GUARD_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard";
+const HVCI_SCENARIO: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
+const STACK_SCENARIO: &str =
+    r"HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks";
 /// Exploit protection states: 0 off, 1 on, 2 not set (Windows default).
 const MITIGATION_STATES: &[u32] = &[0, 1, 2];
 /// Pause markers are minutes since 1970; the cap keeps them inside a PowerShell int.
@@ -952,6 +970,38 @@ static SPECS: &[Spec] = &[
             areas: &["SmartScreen"],
             ..NO_GATE
         },
+    },
+    Spec {
+        id: "vbs.memory_integrity",
+        title: "Memory integrity",
+        description: "Turn on Memory integrity (Core isolation in Windows Security) by setting Enabled=1, and WasEnabledBy=2 so Windows Security shows the switch as normal, under the HypervisorEnforcedCodeIntegrity scenario. Locked is never written, so there is no firmware lock. Offered only when the hardware supports it, nothing manages it, nothing is locked and every driver passes the static compatibility scan. Needs a restart; undo restores the exact earlier values.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1],
+                ..set("Enabled", HVCI_SCENARIO, &[1], false, Some(1), 1)
+            },
+            set("WasEnabledBy", HVCI_SCENARIO, &[2], false, Some(2), 255),
+        ],
+        gate: VBS_GATE,
+    },
+    Spec {
+        id: "vbs.kernel_stack_protection",
+        title: "Kernel-mode hardware-enforced stack protection",
+        description: "Turn on Kernel-mode Hardware-enforced Stack Protection by setting Enabled=1 and WasEnabledBy=2 under the KernelShadowStacks scenario. Locked is never written. Offered only when Memory integrity is running and the processor supports shadow stacks. Needs a restart; undo restores the exact earlier values.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1],
+                ..set("Enabled", STACK_SCENARIO, &[1], false, Some(1), 1)
+            },
+            set("WasEnabledBy", STACK_SCENARIO, &[2], false, Some(2), 255),
+        ],
+        gate: VBS_GATE,
     },
     Spec {
         id: "privacy.recall",
@@ -1744,6 +1794,57 @@ mod tests {
         // The research [K] values: ASK, readable in the descriptions.
         assert!(spec("net.mdns").unwrap().keys[0].name == "EnableMDNS");
         assert!(spec("net.wpad").unwrap().keys[0].name == "DisableWpad");
+    }
+
+    #[test]
+    fn core_protections_write_only_the_documented_values_and_never_a_lock() {
+        for (id, scenario) in [
+            ("vbs.memory_integrity", "HypervisorEnforcedCodeIntegrity"),
+            ("vbs.kernel_stack_protection", "KernelShadowStacks"),
+        ] {
+            let s = spec(id).unwrap();
+            assert!(s.reboot && s.ask && !s.dynamic(), "{id}");
+            let names: Vec<&str> = s.keys.iter().map(|k| k.name).collect();
+            assert_eq!(names, ["Enabled", "WasEnabledBy"], "{id}");
+            for k in s.keys {
+                assert!(k.path.ends_with(&format!("Scenarios\\{scenario}")), "{id}");
+                assert!(!k.name.contains("Lock") && !k.value.contains("Lock"));
+            }
+            // Absent is unsafe and becomes Enabled=1, WasEnabledBy=2.
+            let absent = items(s, &[None, None]);
+            assert!(s.any_unsafe(&absent));
+            assert_eq!(
+                s.derive_target(&absent).unwrap(),
+                items(s, &[Some(1), Some(2)])
+            );
+            // Explicitly off keeps whatever marker Windows left.
+            let off = items(s, &[Some(0), Some(2)]);
+            assert_eq!(
+                s.derive_target(&off).unwrap(),
+                items(s, &[Some(1), Some(2)])
+            );
+            let marker = items(s, &[Some(0), Some(1)]);
+            assert_eq!(
+                s.derive_target(&marker).unwrap(),
+                items(s, &[Some(1), Some(2)])
+            );
+            // Already on: nothing to fix and nothing rewritten.
+            let on = items(s, &[Some(1), Some(2)]);
+            assert!(!s.any_unsafe(&on));
+            assert_eq!(s.derive_target(&on).unwrap(), on);
+            // Enabled can only ever be 0 or 1.
+            assert!(s
+                .validate(&json!({"items": {"Enabled": 2, "WasEnabledBy": 2}}))
+                .is_err());
+            assert!(s.validate(&json!({"items": {"Enabled": 1}})).is_err());
+            // Anyone else's policy for this area means assessment only.
+            let gate = serde_json::from_str::<Value>(&s.script_json()).unwrap()["gate"].clone();
+            assert!(gate["ownPolicyKey"]
+                .as_str()
+                .unwrap()
+                .ends_with("Windows\\DeviceGuard"));
+            assert!(gate["areas"].as_array().unwrap().len() >= 2);
+        }
     }
 
     /// When SECBLITZ_PARITY_OUT names a file, write every spec with the Rust

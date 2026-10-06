@@ -412,9 +412,10 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                     .filter(|r| r.status == "applied" && attempted.contains(&r.id))
                     .map(|r| r.id.clone())
                     .collect();
-                if !applied.is_empty() {
-                    state.batches.push(applied);
-                }
+                // The engine applied core protections as batches of their own.
+                state
+                    .batches
+                    .extend(secblitz::vbs::split_batches(&applied));
             }
             show_result(state, false, summary, technical);
             ctx.busy = false;

@@ -852,19 +852,40 @@ fn tips_block<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
 
 fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
     let p = ctx.palette;
+    // A fix is only promised when the latest Protection check offers it. A
+    // Not offered control says why on Protection; otherwise the manual steps.
+    let fix = logic::tip_fix(tip, ctx.report.as_deref(), &ctx.catalog.available);
+    let (advice, guide) = match fix {
+        logic::TipFix::Offered(_) => (tip.fix_advice, None),
+        logic::TipFix::NotOffered { control, reason } => (
+            tip.advice,
+            crate::guide::guide_not_offered(control, reason),
+        ),
+        logic::TipFix::Manual => (tip.advice, tip.guide),
+    };
     let (tone, icon, words) = match tip.state {
         TipState::Good => (Tone::Good, Icon::CheckCircle, ctx.t("Looks good")),
-        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(tip.advice)),
+        TipState::Look => (Tone::Warn, Icon::AlertTriangle, ctx.t(advice)),
         TipState::Unknown => (Tone::Neutral, Icon::Info, ctx.t("We couldn't check this")),
     };
-    // One compact action: the usual scan (after its own confirmation), or the
-    // Windows page that helps. Nothing starts without the person's say-so.
-    let action: El<'a> = match tip.open {
+    // One compact action: the fix review, the usual scan (after its own
+    // confirmation), or the Windows page that helps. Nothing starts without
+    // the person's say-so.
+    let action: El<'a> = match (fix, tip.open) {
         _ if tip.state != TipState::Look => space::horizontal().width(0).into(),
-        _ if tip.fix => widgets::action(
+        // Opens the same review sheet as Protection; nothing changes until
+        // the person agrees there.
+        (logic::TipFix::Offered(id), _) => widgets::action(
             p,
             ButtonKind::Secondary,
-            ctx.t("Go to Protection"),
+            ctx.t("Review fix"),
+            Some(Icon::ShieldCheck),
+            (!ctx.busy).then_some(Message::ReviewFixes(vec![id.to_owned()])),
+        ),
+        (logic::TipFix::NotOffered { .. }, _) => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("See why"),
             None,
             Some(Message::Navigate(crate::gui::Page::Fixes)),
         ),
@@ -875,8 +896,8 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
         // A guide shows its own button under the steps.
-        _ if tip.guide.is_some() => space::horizontal().width(0).into(),
-        Some(open) if ctx.broker.is_some() => {
+        _ if guide.is_some() => space::horizontal().width(0).into(),
+        (_, Some(open)) if ctx.broker.is_some() => {
             // The button is named after the page it opens.
             let label = crate::guide::Page::from_action(open)
                 .map_or("Open", crate::guide::Page::button);
@@ -900,7 +921,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
         None,
     );
     // The steps need no launcher; only the buttons that open pages do.
-    let head = match (tip.guide, tip.state) {
+    let head = match (guide, tip.state) {
         (Some(g), TipState::Look) => column![
             head,
             crate::gui::pages::fixes::guide_block(
