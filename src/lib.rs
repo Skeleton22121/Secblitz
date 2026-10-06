@@ -14,6 +14,6 @@ pub mod readiness;
 pub mod service;
 pub mod status;
 pub mod text;
-pub mod tools;
+pub mod software_install;
 pub mod updater;
 pub mod vbs;

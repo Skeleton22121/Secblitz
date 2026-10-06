@@ -32,7 +32,7 @@ user says yes. The users are not technical. Everything follows from that:
 | Path | What lives there |
 | --- | --- |
 | `src/main.rs`, `src/launcher.rs` | Entry point, command line, elevation and single instance |
-| `src/gui/` | The iced app: `mod.rs` (state, messages), `pages/`, `widgets/`, `theme.rs`, `icons.rs` |
+| `src/gui/` | The iced app: `gui.rs` (state, messages), `pages/`, `widgets/`, `theme.rs`, `icons.rs` |
 | `src/app/` | App-side state that is not drawing: settings, last check, history |
 | `src/engine.rs`, `src/hardening.rs`, `src/model.rs` | Checks, the report, applying and reverting changes |
 | `src/explain/` | Plain-language text for every check |

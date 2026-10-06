@@ -3,7 +3,7 @@ mod view;
 
 use super::personal;
 
-use crate::app::tools::{
+use crate::app::maintenance::{
     self as logic, Found, InstallEvent, InstallResult, InstallStage, RepairEvent, RepairKind,
     RepairProgress, RepairResult, Secret, TipProfile, TipsReport,
 };
@@ -410,7 +410,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             ctx.busy = false;
             let changed = r
                 .as_ref()
-                .is_ok_and(|t| crate::app::tools::threats_result(t) != crate::app::tools::ThreatsResult::Stuck);
+                .is_ok_and(|t| crate::app::maintenance::threats_result(t) != crate::app::maintenance::ThreatsResult::Stuck);
             state.threats = Run::Done(r);
             state.finish(Slot::Threats);
             match (&state.tips, changed) {

@@ -3,7 +3,7 @@ use super::{
     repair_ratio, stage_ratio, tools, Account, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot, State, Tips,
     Updates,
 };
-use crate::app::tools::{
+use crate::app::maintenance::{
     self as logic, InstallResult, RepairKind, RepairResult, TipProfile, TipState,
 };
 use crate::broker;

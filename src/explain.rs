@@ -56,7 +56,7 @@ mod tests {
     }
 
     fn script_finding_titles() -> Vec<String> {
-        include_str!("../platform/backend.ps1")
+        include_str!("platform/backend.ps1")
             .lines()
             .filter_map(|line| {
                 let rest = line.trim_start().strip_prefix("Finding '")?;
@@ -72,8 +72,8 @@ mod tests {
     }
 
     fn rule_ids() -> Vec<String> {
-        let mut ids = dotted_literals(include_str!("../diagnostics/rules.rs"));
-        for id in dotted_literals(include_str!("../diagnostics/checks.rs")) {
+        let mut ids = dotted_literals(include_str!("diagnostics/rules.rs"));
+        for id in dotted_literals(include_str!("diagnostics/checks.rs")) {
             if !ids.contains(&id) {
                 ids.push(id);
             }

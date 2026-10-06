@@ -393,7 +393,7 @@ mod tests {
             "advice",
             "actions.rs",
             "actions",
-            "tools.rs",
+            "software_install.rs",
             "engine.rs",
             "engine",
             "model.rs",

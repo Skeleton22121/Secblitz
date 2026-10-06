@@ -127,7 +127,7 @@ per redraw.
   150 ms). Common press scales are 0.97 to 0.98. We take the Fluent tints
   from the palette (`hover`, `pressed`), 0.97 scale and 83 ms down, 220 ms up.
 
-### Page entrance (`gui/mod.rs`, `appear::{enter_progress, fade_palette, lift}`)
+### Page entrance (`gui.rs`, `appear::{enter_progress, fade_palette, lift}`)
 
 On `Navigate(page)` the new page is swapped in at once (no outgoing animation)
 and enters over 220 ms (`appear::ENTER`) on `DECELERATE`:
