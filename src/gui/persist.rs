@@ -1,5 +1,6 @@
 //! Background file writes: history, the status file and the saved check.
 use crate::app;
+use iced::futures;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -95,6 +96,15 @@ fn write_in_order(job: impl FnOnce() + Send + 'static) {
     if sent.is_err() {
         PENDING.finish();
     }
+}
+
+/// Saves the preferences after any earlier queued write; resolves to whether it worked.
+pub fn save_prefs(prefs: app::settings::Prefs) -> impl std::future::Future<Output = bool> {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    write_in_order(move || {
+        let _ = tx.send(app::settings::save(&prefs).is_ok());
+    });
+    async move { rx.await.unwrap_or(true) }
 }
 
 /// Block until every queued write has landed (used before reading it back).

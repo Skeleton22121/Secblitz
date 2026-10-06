@@ -1,6 +1,8 @@
 //! The Secblitz window (iced, CPU renderer).
 pub mod icons;
 pub mod pages;
+#[cfg(test)]
+mod bench;
 mod persist;
 pub mod render;
 mod tasks;
@@ -19,8 +21,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use theme::{Palette, Tone};
 
-pub use persist::wait_persisted;
-pub use tasks::{blocking, blocking_stream, ticks_100ms};
+pub use persist::{save_prefs, wait_persisted};
+pub use tasks::{blocking, blocking_stream};
 use persist::{forget_check, persist, Cache};
 use window::window_icon;
 
@@ -211,7 +213,7 @@ pub enum Message {
     Toast(String, Tone),
     Explain(String),
     DismissToast,
-    ToastTick(std::time::Instant),
+    ToastExpire(u32),
     ToastGone,
     PageFrame(std::time::Instant),
     Tab(bool),
@@ -272,7 +274,7 @@ pub struct App {
     pub tools: tools::State,
     pub history: history::State,
     pub settings: settings::State,
-    toast_seen: Option<(String, std::time::Instant)>,
+    toast_gen: u32,
     toast_leaving: bool,
     entered: Option<std::time::Instant>,
     enter_t: f32,
@@ -353,7 +355,7 @@ impl App {
             tools: Default::default(),
             history: Default::default(),
             settings: Default::default(),
-            toast_seen: None,
+            toast_gen: 0,
             toast_leaving: false,
             entered: None,
             enter_t: 1.0,
@@ -460,7 +462,12 @@ impl App {
             Message::Toast(text, tone) => {
                 self.ctx.toast = Some((text, tone));
                 self.toast_leaving = false;
-                Task::none()
+                self.toast_gen = self.toast_gen.wrapping_add(1);
+                let generation = self.toast_gen;
+                Task::perform(
+                    blocking(|| std::thread::sleep(std::time::Duration::from_secs(TOAST_SECONDS))),
+                    move |_| Message::ToastExpire(generation),
+                )
             }
             Message::Noop => Task::none(),
             Message::PageOpened(page, ok) => {
@@ -488,27 +495,16 @@ impl App {
             Message::ToastGone => {
                 if self.toast_leaving {
                     self.ctx.toast = None;
-                    self.toast_seen = None;
                     self.toast_leaving = false;
                 }
                 Task::none()
             }
-            Message::ToastTick(now) => {
-                let current = self.ctx.toast.as_ref().map(|(text, _)| text.clone());
-                match (current, &self.toast_seen) {
-                    (None, _) => self.toast_seen = None,
-                    (Some(text), Some((seen, _))) if *seen == text => {}
-                    (Some(text), _) => self.toast_seen = Some((text, now)),
+            Message::ToastExpire(generation) => {
+                if generation == self.toast_gen {
+                    self.begin_toast_exit()
+                } else {
+                    Task::none()
                 }
-                if self.toast_leaving {
-                    return Task::none();
-                }
-                if let Some((_, since)) = &self.toast_seen {
-                    if now.duration_since(*since).as_secs() >= TOAST_SECONDS {
-                        return self.begin_toast_exit();
-                    }
-                }
-                Task::none()
             }
             Message::Home(m) => home::update(&mut self.home, m, &mut self.ctx),
             Message::Fixes(m) => fixes::update(&mut self.fixes, m, &mut self.ctx),
@@ -763,7 +759,6 @@ impl App {
         }
         if widgets::anim::reduced() {
             self.ctx.toast = None;
-            self.toast_seen = None;
             return Task::none();
         }
         self.toast_leaving = true;
@@ -1007,11 +1002,6 @@ impl App {
         } else {
             Subscription::none()
         };
-        let toast = if self.ctx.toast.is_some() && !self.toast_leaving {
-            ticks_100ms().map(Message::ToastTick)
-        } else {
-            Subscription::none()
-        };
         let focus = iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(iced::window::Event::Focused) => Some(Message::WindowFocus(true)),
             iced::Event::Window(iced::window::Event::Unfocused) => {
@@ -1023,7 +1013,6 @@ impl App {
             escape,
             focus,
             iced::window::close_requests().map(Message::CloseRequested),
-            toast,
             entrance,
             // Frame clocks run only for the page on screen: a job started on
             // Tools must not keep the whole window redrawing from another page.
@@ -1094,7 +1083,9 @@ pub fn run(options: Options) -> anyhow::Result<()> {
             ..Default::default()
         })
         .run()
-        .map_err(|e| anyhow::anyhow!("{e}"))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    wait_persisted();
+    Ok(())
 }
 #[cfg(test)]
 mod recheck_tests {

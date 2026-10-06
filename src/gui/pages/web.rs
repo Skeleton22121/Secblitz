@@ -84,7 +84,7 @@ pub struct State {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    Tick,
+    Seen(Box<Snapshot>),
     Polled(u32, Box<Snapshot>),
     Toggle(Switch, bool),
     Pause,
@@ -290,32 +290,66 @@ pub fn on_enter(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
     poll(state)
 }
 
+/// Whether two readings would draw the same page, whatever the clock says.
+fn same_look(a: &Snapshot, b: &Snapshot) -> bool {
+    let fresh = |s: &Snapshot| s.status.as_ref().is_some_and(|st| config::fresh(st, s.now));
+    a.config == b.config
+        && a.status == b.status
+        && a.service == b.service
+        && a.installed == b.installed
+        && current_line(a) == current_line(b)
+        && blocked_today(a) == blocked_today(b)
+        && fresh(a) == fresh(b)
+}
+
+/// Rereads every two seconds on its own thread and speaks up only when the
+/// page would look different, so an unchanged page never redraws.
 pub fn subscription() -> Subscription<Message> {
     Subscription::run(|| {
         let (tx, rx) = iced::futures::channel::mpsc::unbounded();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(2));
-            if tx.unbounded_send(()).is_err() {
-                break;
+        std::thread::spawn(move || {
+            let mut last: Option<Snapshot> = None;
+            loop {
+                std::thread::sleep(Duration::from_secs(2));
+                if tx.is_closed() {
+                    break;
+                }
+                let now = read_snapshot();
+                if last.as_ref().is_some_and(|l| same_look(l, &now)) {
+                    continue;
+                }
+                last = Some(now.clone());
+                if tx.unbounded_send(now).is_err() {
+                    break;
+                }
             }
         });
         rx
     })
-    .map(|()| Message::Web(Msg::Tick))
+    .map(|snapshot| Message::Web(Msg::Seen(Box::new(snapshot))))
+}
+
+fn take_snapshot(state: &mut State, snapshot: Snapshot) -> Task<Message> {
+    let suggest = suggests(&snapshot);
+    note_look(state, &snapshot, Instant::now());
+    state.snapshot = Some(snapshot);
+    Task::done(Message::Home(home::Msg::WebSuggest(suggest)))
 }
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
-        Msg::Tick => poll(state),
+        Msg::Seen(snapshot) => {
+            if state.busy.is_some() {
+                return Task::none();
+            }
+            take_snapshot(state, *snapshot)
+        }
         Msg::Polled(generation, snapshot) => {
             state.polling = false;
             if generation != state.generation {
                 return Task::none();
             }
-            let suggest = suggests(&snapshot);
-            note_look(state, &snapshot, Instant::now());
-            state.snapshot = Some(*snapshot);
-            Task::done(Message::Home(home::Msg::WebSuggest(suggest)))
+            take_snapshot(state, *snapshot)
         }
         Msg::Toggle(switch, on) => {
             let Some(snapshot) = state.snapshot.as_ref() else {
@@ -728,6 +762,24 @@ mod tests {
             installed,
             now: NOW,
         }
+    }
+
+    #[test]
+    fn a_reading_that_only_moved_the_clock_looks_the_same() {
+        let a = snapshot(config(true), Some(healthy()), true);
+        let later = Snapshot {
+            now: NOW + 2,
+            ..a.clone()
+        };
+        assert!(same_look(&a, &later));
+        let stale = Snapshot {
+            now: NOW + 3600,
+            ..a.clone()
+        };
+        assert!(!same_look(&a, &stale));
+        let mut more = healthy();
+        more.blocked[0] += 1;
+        assert!(!same_look(&a, &snapshot(config(true), Some(more), true)));
     }
 
     #[test]
