@@ -2,7 +2,7 @@
 //! its own time, in one value.
 use super::motion::{Pulses, MAX_DT};
 use super::parallax::Parallax;
-use super::pointer::{interaction, tooltip, Gesture, Hotspots, Layer, Pointer};
+use super::pointer::{interaction, tooltip_around, Gesture, Hotspots, Layer, Pointer};
 use super::stage::Stage;
 use crate::gui::theme::Palette;
 use crate::gui::widgets::anim;
@@ -201,8 +201,10 @@ impl<Id: Copy + PartialEq> Live<Id> {
         label: impl Fn(Id) -> String,
     ) {
         let Some(id) = self.hover else { return };
-        if let Some(anchor) = spots.anchor(id, &self.tilt) {
-            tooltip(frame, p, stage, anchor, &label(id));
+        let above = spots.anchor(id, &self.tilt);
+        let below = spots.below(id, &self.tilt);
+        if let (Some(above), Some(below)) = (above, below) {
+            tooltip_around(frame, p, stage, above, below, &label(id));
         }
     }
 

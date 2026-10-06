@@ -6,14 +6,18 @@
 //! lifts out and vanishes the moment that app is really removed, and the
 //! tiles after it glide in to close the gap; apps waiting beyond the grid
 //! slide in at the end, and the "+N" in the corner counts the ones still
-//! out of sight. An app that could not be removed lifts, drops back and
-//! shakes, and keeps a flag. When the run is over a small mark on the
-//! menu's corner says how it went (tick, exclamation or cross).
+//! out of sight (in the accent colour, with a line sweeping under it, while
+//! one of those is the app being removed). An app that could not be removed
+//! lifts, drops back and shakes, and keeps a flag; one that was no longer
+//! installed turns grey and shrinks away quietly. When the run is over a
+//! small mark on the menu's corner says how it went (tick, exclamation or
+//! cross).
 //!
 //! Interaction: hover a tile to see the app's name (and what is happening
 //! to it), click a tile to nudge it, hover the "+N" to see how many more
-//! apps there are, click anywhere else for a pulse. Hovering the app being
-//! removed makes it wobble a little more.
+//! apps there are (or which one is being removed out of sight), click
+//! anywhere else for a pulse. Hovering the app being removed makes it
+//! wobble a little more.
 //!
 //! Everything is driven by real data: the page passes each app's [`Fate`]
 //! with the moment it changed, so a tile vanishes when its app is removed,
@@ -41,13 +45,12 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 /// The drawing's box in units: the prototype's 320 wide, its height cropped
-/// to what the menu uses (prototype y 12 to 230), so the sheet keeps its
-/// room for text.
-pub const UNITS: Size = Size::new(320.0, 218.0);
-/// Prototype y shown at the top of the box.
-const TOP: f32 = 12.0;
+/// to what the menu uses (prototype y 0 to 230), so the sheet keeps its
+/// room for text. The 16 units above the corner mark are its tooltip's
+/// headroom.
+pub const UNITS: Size = Size::new(320.0, 230.0);
 /// Canvas height in pixels: the prototype's 0.75 scale (240 px wide).
-pub const HEIGHT: f32 = 164.0;
+pub const HEIGHT: f32 = 173.0;
 /// Tiles in the grid (3 by 3).
 pub const SLOTS: usize = 9;
 /// Most highlighted tiles in the grid at the start; the rest wait beyond it.
@@ -67,17 +70,29 @@ const VANISH_END: f32 = 1.05;
 const REFUSE_END: f32 = 2.4;
 /// When a tile Windows protects has settled back.
 const STAY_END: f32 = 0.8;
+/// When a tile for an app that was no longer installed has shrunk away.
+const ABSENT_END: f32 = 0.7;
 /// How long a click nudge lasts.
 const BUMP_END: f32 = 0.8;
 /// The result mark on the menu's top right corner.
 const MARK_C: Point = pt(256.0, 30.0);
 const MARK_R: f32 = 14.0;
-/// The "+N" count where the prototype has its "All apps" rule.
-const MORE_C: Point = pt(229.0, 74.0);
+/// The "+N" count, just before the prototype's "All apps" rule: the hover
+/// area covers both.
+const MORE_C: Point = pt(218.0, 74.0);
+/// Right edge of the "+N" text.
+const MORE_X: f32 = 212.0;
 /// Hover radius of a tile.
 const TILE_HIT: f32 = 16.0;
-/// Count text size, px.
-const COUNT_SIZE: f32 = 11.0;
+/// Count text size, px: the app's smallest text.
+const COUNT_SIZE: f32 = theme::SMALL;
+/// The "All apps" rule, which sweeps while an app out of sight is being
+/// removed: its ends and the sweeping part's length, units.
+const RULE_X: (f32, f32) = (218.0, 240.0);
+const RULE_Y: f32 = 74.0;
+const SWEEP_LEN: f32 = 8.0;
+/// Seconds for one sweep there and back.
+const SWEEP_PERIOD: f32 = 1.6;
 
 /// What is happening to one app being removed. The instants are when that
 /// step finished, so each tile moves on its own clock.
@@ -98,12 +113,19 @@ pub enum Fate {
     Kept(Instant),
     /// Windows protects it: drops back quietly and turns grey.
     Stays(Instant),
+    /// It was no longer installed, so there was nothing to remove: turns
+    /// grey and shrinks away quietly, without sparks.
+    Absent(Instant),
 }
 
 impl Fate {
     fn at(self) -> Option<Instant> {
         match self {
-            Fate::Removed(t) | Fate::Refused(t) | Fate::Kept(t) | Fate::Stays(t) => Some(t),
+            Fate::Removed(t)
+            | Fate::Refused(t)
+            | Fate::Kept(t)
+            | Fate::Stays(t)
+            | Fate::Absent(t) => Some(t),
             _ => None,
         }
     }
@@ -111,19 +133,28 @@ impl Fate {
     pub fn lit(self) -> bool {
         matches!(self, Fate::Waiting | Fate::Saving | Fate::Busy)
     }
+    /// Being worked on now (saving a copy or removing).
+    fn active(self) -> bool {
+        matches!(self, Fate::Saving | Fate::Busy)
+    }
+    /// Leaves the menu: the tiles after it close the gap once it has gone.
+    fn leaves(self) -> bool {
+        matches!(self, Fate::Removed(_) | Fate::Absent(_))
+    }
     /// How long its own transition runs.
     fn end(self) -> f32 {
         match self {
             Fate::Removed(_) => VANISH_END,
             Fate::Refused(_) | Fate::Kept(_) => REFUSE_END,
             Fate::Stays(_) => STAY_END,
+            Fate::Absent(_) => ABSENT_END,
             _ => 0.0,
         }
     }
     /// When, after its instant, the result mark may come in.
     fn settled(self) -> f32 {
         match self {
-            Fate::Removed(_) => REFLOW,
+            Fate::Removed(_) | Fate::Absent(_) => REFLOW,
             Fate::Refused(_) | Fate::Kept(_) => 1.0,
             Fate::Stays(_) => STAY_END,
             _ => 0.0,
@@ -413,6 +444,15 @@ pub fn pose(fate: Option<Fate>, age: f32, t: f32, i: usize, wobble: f32) -> Pose
             tone: phase(age, 0.5, 0.8, STANDARD),
             ..Pose::REST
         },
+        // It was waiting (faint outline): the outline goes, it greys and
+        // shrinks away where it stands. No lift, no sparks: nothing happened.
+        Some(Fate::Absent(_)) => Pose {
+            scale: 1.0 - phase(age, 0.25, ABSENT_END, ACCELERATE),
+            ring: 0.55 * (1.0 - phase(age, 0.0, 0.25, STANDARD)),
+            dashed: true,
+            tone: phase(age, 0.0, 0.3, STANDARD),
+            ..Pose::REST
+        },
     }
 }
 
@@ -501,16 +541,19 @@ pub struct State {
 }
 
 /// Everything derived from the inputs and the clock for one event.
-struct Scene {
-    seq: Vec<Who>,
-    places: Vec<Place>,
-    hidden: usize,
+pub(crate) struct Scene {
+    pub(crate) seq: Vec<Who>,
+    pub(crate) places: Vec<Place>,
+    pub(crate) hidden: usize,
+    /// The app (`apps` index) being worked on while it waits out of sight
+    /// beyond the grid: the "+N" shows the work instead.
+    pub(crate) active_hidden: Option<usize>,
     clock: Instant,
 }
 
 impl StartMenu {
     fn stage(bounds: Size) -> Stage {
-        Stage::fit(UNITS, bounds).shifted(Vector::new(0.0, -TOP))
+        Stage::fit(UNITS, bounds)
     }
 
     fn fate(&self, who: Who) -> Option<Fate> {
@@ -520,17 +563,27 @@ impl StartMenu {
         }
     }
 
-    fn scene(&self, clock: Instant) -> Scene {
+    /// Where every tile is at `clock`.
+    pub(crate) fn scene(&self, clock: Instant) -> Scene {
         let seq = sequence(self.apps.len(), self.fillers.len());
         let gone: Vec<bool> = seq
             .iter()
-            .map(|w| matches!(self.fate(*w), Some(Fate::Removed(at)) if since(at, clock) > REFLOW))
+            .map(|w| {
+                self.fate(*w).is_some_and(|f| {
+                    f.leaves() && f.at().is_some_and(|at| since(at, clock) > REFLOW)
+                })
+            })
             .collect();
         let (places, hidden) = places(&gone);
+        let active_hidden = seq.iter().zip(&places).find_map(|(w, p)| match (w, p) {
+            (Who::App(j), Place::Hidden) if self.apps[*j].fate.active() => Some(*j),
+            _ => None,
+        });
         Scene {
             seq,
             places,
             hidden,
+            active_hidden,
             clock,
         }
     }
@@ -555,13 +608,14 @@ impl StartMenu {
         let mut h = Hotspots::new();
         for (i, place) in sc.places.iter().enumerate() {
             let Place::Slot(k) = place else { continue };
-            if matches!(self.fate(sc.seq[i]), Some(Fate::Removed(_))) {
+            // A tile on its way out is no longer something to point at.
+            if self.fate(sc.seq[i]).is_some_and(Fate::leaves) {
                 continue;
             }
             h = h.circle(Part::Tile(i), slot_centre(*k), TILE_HIT, Layer::Front);
         }
         if sc.hidden > 0 {
-            h = h.rect(Part::More, MORE_C, 34.0, 18.0, Layer::Mid);
+            h = h.rect(Part::More, MORE_C, 52.0, 18.0, Layer::Mid);
         }
         if mark {
             h = h.circle(Part::Mark, MARK_C, MARK_R + 3.0, Layer::Mid);
@@ -569,36 +623,46 @@ impl StartMenu {
         h
     }
 
-    /// The hover text for a part.
-    pub fn label(&self, part: Part, seq: &[Who], hidden: usize) -> String {
+    /// The hover text for a part. The "+N" names the app being worked on
+    /// out of sight, when there is one, and otherwise how many wait.
+    pub(crate) fn label(&self, part: Part, sc: &Scene) -> String {
         let l = &self.labels;
         match part {
-            Part::More if hidden == 1 => l.more_one.clone(),
-            Part::More => l.more_many.replace("{n}", &hidden.to_string()),
+            Part::More => match sc.active_hidden {
+                Some(j) => self.app_label(j),
+                None if sc.hidden == 1 => l.more_one.clone(),
+                None => l.more_many.replace("{n}", &sc.hidden.to_string()),
+            },
             Part::Mark => l.result.clone(),
-            Part::Tile(i) => match seq.get(i) {
+            Part::Tile(i) => match sc.seq.get(i) {
                 Some(Who::Filler(j)) => self
                     .fillers
                     .get(*j)
                     .map(|f| f.name.clone())
                     .unwrap_or_default(),
-                Some(Who::App(j)) => {
-                    let Some(app) = self.apps.get(*j) else {
-                        return String::new();
-                    };
-                    let template = match app.fate {
-                        Fate::Waiting => &l.waiting,
-                        Fate::Saving => &l.saving,
-                        Fate::Busy | Fate::Removed(_) => &l.removing,
-                        Fate::Refused(_) => &l.refused,
-                        Fate::Kept(_) => &l.kept,
-                        Fate::Stays(_) => &l.protected,
-                    };
-                    template.replace("{name}", &app.name)
-                }
+                Some(Who::App(j)) => self.app_label(*j),
                 None => String::new(),
             },
         }
+    }
+
+    /// An app's name with what is happening to it.
+    fn app_label(&self, j: usize) -> String {
+        let l = &self.labels;
+        let Some(app) = self.apps.get(j) else {
+            return String::new();
+        };
+        let template = match app.fate {
+            Fate::Waiting => &l.waiting,
+            Fate::Saving => &l.saving,
+            Fate::Busy | Fate::Removed(_) => &l.removing,
+            Fate::Refused(_) => &l.refused,
+            Fate::Kept(_) => &l.kept,
+            Fate::Stays(_) => &l.protected,
+            // Nothing happened to it: just its name.
+            Fate::Absent(_) => return app.name.clone(),
+        };
+        template.replace("{name}", &app.name)
     }
 
     /// Something still moves by itself (false under reduced motion).
@@ -606,10 +670,12 @@ impl StartMenu {
         if anim::reduced() {
             return false;
         }
+        // Lit tiles wobble; an app removed out of sight sweeps under the "+N".
         let looping = self.outcome == Outcome::Working
-            && sc.seq.iter().zip(&sc.places).any(|(w, p)| {
-                matches!(p, Place::Slot(_)) && self.fate(*w).is_some_and(Fate::lit)
-            });
+            && (sc.active_hidden.is_some()
+                || sc.seq.iter().zip(&sc.places).any(|(w, p)| {
+                    matches!(p, Place::Slot(_)) && self.fate(*w).is_some_and(Fate::lit)
+                }));
         let settling = self.apps.iter().any(|a| {
             a.fate
                 .at()
@@ -730,12 +796,16 @@ impl<M> canvas::Program<M> for StartMenu {
         let mid = st.live.layer(&stage, Layer::Mid);
         let front = st.live.layer(&stage, Layer::Front);
 
-        panel(&mut f, &mid, &ink, sc.hidden);
+        let working_hidden = self.outcome == Outcome::Working && sc.active_hidden.is_some();
+        panel(&mut f, &mid, &ink, !working_hidden);
+        if working_hidden {
+            sweep(&mut f, &mid, &ink, t);
+        }
         if sc.hidden > 0 {
             f.fill_text(Text {
                 content: format!("+{}", sc.hidden),
-                position: mid.point(pt(240.0, 74.0)),
-                color: ink.line,
+                position: mid.point(pt(MORE_X, RULE_Y)),
+                color: if working_hidden { ink.accent } else { ink.line },
                 size: Pixels(COUNT_SIZE),
                 line_height: LineHeight::Absolute(Pixels(COUNT_SIZE)),
                 font: theme::MEDIUM,
@@ -783,7 +853,7 @@ impl<M> canvas::Program<M> for StartMenu {
             let color = match fate {
                 None => ink.line,
                 Some(Fate::Refused(_) | Fate::Kept(_)) => mix(ink.accent, flag, p.tone),
-                Some(Fate::Stays(_)) => mix(ink.accent, ink.line, p.tone),
+                Some(Fate::Stays(_) | Fate::Absent(_)) => mix(ink.accent, ink.line, p.tone),
                 Some(_) => ink.accent,
             };
             let bump = s.bump.map_or(0.0, |b| {
@@ -842,9 +912,10 @@ impl<M> canvas::Program<M> for StartMenu {
         st.live.pulses.draw(&mut f, &stage, ink.accent);
         let mark = self.mark_shown(age);
         let spots = self.spots(&sc, mark);
-        st.live.draw_tooltip(&mut f, &self.palette, &stage, &spots, |part| {
-            self.label(part, &sc.seq, sc.hidden)
-        });
+        st.live
+            .draw_tooltip(&mut f, &self.palette, &stage, &spots, |part| {
+                self.label(part, &sc)
+            });
         vec![f.into_geometry()]
     }
 
@@ -862,9 +933,10 @@ impl<M> canvas::Program<M> for StartMenu {
 // Drawing pieces
 // ---------------------------------------------------------------------------
 
-/// The menu itself: plate, search box, "Pinned" and "All apps" rules,
-/// footer with the account and power buttons. 11 strokes and fills.
-fn panel(f: &mut Frame, s: &Stage, ink: &Ink, hidden: usize) {
+/// The menu itself: plate, search box, "Pinned" and "All apps" rules (the
+/// second left to [`sweep`] when `rule` is false), footer with the account
+/// and power buttons. 11 strokes and fills.
+fn panel(f: &mut Frame, s: &Stage, ink: &Ink, rule: bool) {
     let plate = s.rounded_rect(62.0, 28.0, 196.0, 196.0, 12.0);
     f.fill(&plate, ink.plate);
     f.stroke(&plate, ink.ln());
@@ -872,8 +944,8 @@ fn panel(f: &mut Frame, s: &Stage, ink: &Ink, hidden: usize) {
     f.stroke(&s.icon(Glyph::Search, pt(92.0, 51.0), 11.0), ink.ln2());
     f.stroke(&s.line(pt(102.0, 51.0), pt(146.0, 51.0)), ink.lo());
     f.stroke(&s.line(pt(80.0, 74.0), pt(106.0, 74.0)), ink.ln2());
-    if hidden == 0 {
-        f.stroke(&s.line(pt(218.0, 74.0), pt(240.0, 74.0)), ink.lo());
+    if rule {
+        f.stroke(&s.line(pt(RULE_X.0, RULE_Y), pt(RULE_X.1, RULE_Y)), ink.lo());
     }
     f.stroke(&s.line(pt(62.0, 198.0), pt(258.0, 198.0)), ink.lo());
     f.stroke(&s.icon(Glyph::Person, pt(86.0, 211.0), 14.0), ink.ln2());
@@ -988,6 +1060,20 @@ fn tile(f: &mut Frame, stage: &Stage, ink: &Ink, look: TileLook) {
             f.stroke(&mark, stroke(col, W_ACCENT));
         }
     });
+}
+
+/// The "All apps" rule while an app out of sight is being removed: the
+/// grey rule with a short accent stretch sweeping along it, there and back
+/// (still under reduced motion, where `t` is fixed). Two strokes.
+fn sweep(f: &mut Frame, s: &Stage, ink: &Ink, t: f32) {
+    let (x0, x1) = RULE_X;
+    f.stroke(&s.line(pt(x0, RULE_Y), pt(x1, RULE_Y)), ink.lo());
+    let u = 0.5 - 0.5 * (t * TAU / SWEEP_PERIOD).cos();
+    let a = x0 + u * (x1 - x0 - SWEEP_LEN);
+    f.stroke(
+        &s.line(pt(a, RULE_Y), pt(a + SWEEP_LEN, RULE_Y)),
+        stroke(ink.accent, W_ACCENT),
+    );
 }
 
 /// Six short lines flying out of a vanished tile (`e` 0..1). One stroke.
@@ -1190,16 +1276,16 @@ mod tests {
         let still = super::super::Parallax::off();
         // Six apps spread over the grid; slot 0 holds the one being removed.
         assert_eq!(spots.hit(slot_centre(0), &still), Some(Part::Tile(0)));
-        assert_eq!(m.label(Part::Tile(0), &sc.seq, sc.hidden), "Suppression de App 0");
-        assert_eq!(m.label(Part::Tile(1), &sc.seq, sc.hidden), "En attente : App 1");
-        assert_eq!(m.label(Part::Tile(2), &sc.seq, sc.hidden), "Stay 0");
+        assert_eq!(m.label(Part::Tile(0), &sc), "Suppression de App 0");
+        assert_eq!(m.label(Part::Tile(1), &sc), "En attente : App 1");
+        assert_eq!(m.label(Part::Tile(2), &sc), "Stay 0");
         // Near a slot's edge, still that tile; between rows, nothing.
         assert_eq!(spots.hit(pt(104.0 + 10.0, 100.0), &still), Some(Part::Tile(0)));
         assert_eq!(spots.hit(pt(132.0, 117.0), &still), None);
         // The count names how many wait, in the page's words.
         assert_eq!(spots.hit(MORE_C, &still), Some(Part::More));
-        assert_eq!(m.label(Part::More, &sc.seq, sc.hidden), "5 apps de plus");
-        assert_eq!(m.label(Part::More, &sc.seq, 1), "1 app de plus");
+        assert_eq!(m.label(Part::More, &sc), "5 apps de plus");
+        assert_eq!(m.label(Part::More, &Scene { hidden: 1, ..m.scene(t0) }), "1 app de plus");
         // No mark while working.
         assert_eq!(spots.hit(MARK_C, &still), None);
         // The result: refused and protected apps say so; the mark names it.
@@ -1212,10 +1298,10 @@ mod tests {
         let sc = m.scene(t0);
         let spots = m.spots(&sc, true);
         assert_eq!(spots.hit(MARK_C, &still), Some(Part::Mark));
-        assert_eq!(m.label(Part::Mark, &sc.seq, 0), "2 apps supprimées");
-        assert_eq!(m.label(Part::Tile(1), &sc.seq, 0), "Impossible de supprimer App 0");
-        assert_eq!(m.label(Part::Tile(5), &sc.seq, 0), "Windows protège App 1");
-        assert_eq!(m.label(Part::Tile(6), &sc.seq, 0), "App 2 reste");
+        assert_eq!(m.label(Part::Mark, &sc), "2 apps supprimées");
+        assert_eq!(m.label(Part::Tile(1), &sc), "Impossible de supprimer App 0");
+        assert_eq!(m.label(Part::Tile(5), &sc), "Windows protège App 1");
+        assert_eq!(m.label(Part::Tile(6), &sc), "App 2 reste");
         anim::set_reduced_override(None);
     }
 
@@ -1229,6 +1315,101 @@ mod tests {
         assert_eq!(sc.places[1], Place::Slot(1));
         let spots = m.spots(&sc, false);
         assert_eq!(spots.hit(slot_centre(1), &super::super::Parallax::off()), None);
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn apps_no_longer_installed_shrink_away_quietly() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        let m = menu(vec![Fate::Absent(t0), Fate::Removed(t0)], 9, Outcome::Removed, t0);
+        // No lift and no sparks while it goes; grey, not "Windows protects".
+        let p = pose(Some(Fate::Absent(t0)), 0.5, 0.0, 1, 1.0);
+        assert_eq!((p.lift, p.spark), (0.0, None));
+        assert!(p.scale < 1.0 && p.tone == 1.0);
+        let gone = pose(Some(Fate::Absent(t0)), SETTLED_AGE, 0.0, 1, 1.0);
+        assert_eq!((gone.scale, gone.ring), (0.0, 0.0));
+        let sc = m.scene(t0 + Duration::from_millis(300));
+        assert_eq!(m.label(Part::Tile(1), &sc), "App 0");
+        let still = super::super::Parallax::off();
+        assert_eq!(m.spots(&sc, false).hit(slot_centre(1), &still), None);
+        // Then it leaves the menu like a removed app and the others close up.
+        let sc = m.scene(t0 + Duration::from_secs(1));
+        assert_eq!(sc.places[1], Place::Gone);
+        assert_eq!(sc.places[5], Place::Gone);
+        assert_eq!(sc.places[2], Place::Slot(1));
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn work_out_of_sight_shows_on_the_count_and_keeps_frames() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        // The first six could not be removed and stay in the grid; the
+        // seventh is being removed behind the "+N".
+        let mut fates = vec![Fate::Refused(t0); 6];
+        fates.extend([Fate::Busy, Fate::Waiting]);
+        let m = menu(fates.clone(), 9, Outcome::Working, t0);
+        let sc = m.scene(t0);
+        assert_eq!((sc.hidden, sc.active_hidden), (2, Some(6)));
+        assert_eq!(m.label(Part::More, &sc), "Suppression de App 6");
+        let mut st = State::default();
+        let off = mouse::Cursor::Available(Point::new(2.0, 2.0));
+        let mut clock = t0 + Duration::from_secs(10);
+        for _ in 0..10 {
+            assert!(tick(&mut st, &m, off, &mut clock));
+        }
+        // Nothing being worked on: the drawing goes quiet.
+        fates[6] = Fate::Waiting;
+        let m = menu(fates, 9, Outcome::Working, t0);
+        let sc = m.scene(clock);
+        assert_eq!(sc.active_hidden, None);
+        assert_eq!(m.label(Part::More, &sc), "2 apps de plus");
+        let mut frames = 0;
+        while tick(&mut st, &m, off, &mut clock) {
+            frames += 1;
+            assert!(frames < 600, "never settled");
+        }
+        anim::set_reduced_override(None);
+    }
+
+    #[test]
+    fn the_marks_name_goes_below_it_without_covering_it() {
+        let t0 = Instant::now();
+        let m = menu(vec![Fate::Removed(t0)], 9, Outcome::Removed, t0);
+        let spots = m.spots(&m.scene(t0), true);
+        let still = super::super::Parallax::off();
+        let stage = StartMenu::stage(BOUNDS.size());
+        let r = super::super::pointer::tooltip_rect_around(
+            stage.point(spots.anchor(Part::Mark, &still).unwrap()),
+            stage.point(spots.below(Part::Mark, &still).unwrap()),
+            80.0,
+            BOUNDS.size(),
+        );
+        let disc_bottom = px(MARK_C).y + stage.len(MARK_R);
+        assert!(r.y >= disc_bottom, "{r:?} over the disc ending at {disc_bottom}");
+        assert!(r.y + r.height <= BOUNDS.height);
+    }
+
+    #[test]
+    fn the_tilt_is_level_with_the_pointer_in_the_middle() {
+        let _g = MOTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        anim::set_reduced_override(Some(false));
+        let t0 = Instant::now();
+        let m = menu(vec![Fate::Waiting], 9, Outcome::Working, t0);
+        let mut st = State::default();
+        let mid = Point::new(BOUNDS.width / 2.0, BOUNDS.height / 2.0);
+        canvas::Program::<()>::update(
+            &m,
+            &mut st,
+            &Event::Mouse(mouse::Event::CursorMoved { position: mid }),
+            BOUNDS,
+            mouse::Cursor::Available(mid),
+        );
+        assert!(st.live.tilt.x.target.abs() < 0.01);
+        assert!(st.live.tilt.y.target.abs() < 0.01, "{}", st.live.tilt.y.target);
         anim::set_reduced_override(None);
     }
 
