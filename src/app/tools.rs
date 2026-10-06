@@ -80,9 +80,25 @@ impl std::fmt::Debug for Secret {
 /// checked before busy/network because a message such as "blocked by policy"
 /// will never succeed on a retry.
 pub const ERR_USE_WINDOWS_UPDATE: &str =
-    "Updates can't be installed from this account. Open Windows Update to install them.";
-pub const ERR_UNAVAILABLE: &str = "This isn't available on this PC.";
-pub const ERR_SETTINGS_BLOCK: &str = "Your PC's settings don't allow this.";
+    "Updates can't be installed from this account. Sign in to Windows with a different administrator account, or ask the person who manages this PC, then open Secblitz again. You can also install them in Windows Update.";
+pub const ERR_UNAVAILABLE: &str =
+    "This isn't available on this PC. Check for a newer version of Secblitz, or use Windows Settings instead.";
+pub const ERR_SETTINGS_BLOCK: &str =
+    "Your PC's settings don't allow this. If someone else manages this PC, ask them to allow it, then try again.";
+pub const ERR_CHANGED: &str =
+    "The list of updates changed. Press Check again, look over the updates, then install them.";
+pub const ERR_RESTART: &str = "Restart your PC, then try again.";
+pub const ERR_BUSY: &str = "Windows is busy with another task. Try again in a few minutes.";
+pub const ERR_POWER: &str = "Plug your PC in, then try again.";
+pub const ERR_DISK: &str = "Free up at least 5 GB on your system drive, then try again.";
+pub const ERR_METERED: &str =
+    "You're on a connection with a data limit. Connect to a network without one, then try again.";
+pub const ERR_NOT_READY: &str = "Your PC isn't ready for this right now. Plug it in, save your work, restart if Windows is waiting, then try again.";
+pub const ERR_EARLIER: &str =
+    "An earlier repair or update still needs to be checked. Restart Secblitz and try again.";
+pub const ERR_NETWORK: &str =
+    "We couldn't reach Windows Update. Check your internet connection and try again.";
+pub const ERR_GENERAL: &str = "We couldn't finish this. Try again in a few minutes. If it keeps happening, restart your PC and check for a Secblitz update.";
 /// This copy of Secblitz can't do it (wrong account or started by another
 /// program); a fresh start from the shortcut can.
 pub const ERR_REOPEN: &str = "Reopen Secblitz from its shortcut and try again.";
@@ -116,28 +132,30 @@ pub fn friendly_error(raw: &str) -> &'static str {
     // administrator may install updates (the built-in Administrator may not).
     if has(&["split-token"]) {
         ERR_USE_WINDOWS_UPDATE
+    } else if has(&["changed since they were reviewed"]) {
+        ERR_CHANGED
     } else if has(&["requires windows", "not implemented", "unsupported"]) {
         ERR_UNAVAILABLE
     } else if has(&["reboot", "restart"]) {
-        "Restart your PC, then try again."
+        ERR_RESTART
     } else if has(&[
         "servicing is busy",
         "servicing process is active",
         "engine.lock is busy",
     ]) {
-        "Windows is busy with another task. Try again in a few minutes."
+        ERR_BUSY
     } else if has(&["not plugged in", "ac power"]) {
-        "Plug your PC in, then try again."
+        ERR_POWER
     } else if has(&["low disk space", "insufficient system storage"]) {
-        "Free up at least 5 GB on your system drive, then try again."
+        ERR_DISK
     } else if has(&["metered"]) {
-        "You're on a connection with a data limit. Connect to a network without one, then try again."
+        ERR_METERED
     } else if has(&["update source", "user update policy"]) {
         ERR_SETTINGS_BLOCK
     } else if has(&["deferred", "readiness", "not ready", "stale", "ac/storage"]) {
-        "Your PC isn't ready for this right now. Plug it in, save your work, restart if Windows is waiting, then try again."
+        ERR_NOT_READY
     } else if has(&["unresolved", "independent verification", "interrupted"]) {
-        "An earlier repair or update still needs to be checked. Restart Secblitz and try again."
+        ERR_EARLIER
     } else if word(&["policy", "opt-in", "managed", "ownership"]) || has(&["not enabled"]) {
         ERR_SETTINGS_BLOCK
     } else if word(&["busy", "lock", "locked", "contention"])
@@ -150,18 +168,89 @@ pub fn friendly_error(raw: &str) -> &'static str {
             "already running",
         ])
     {
-        "Windows is busy with another task. Try again in a few minutes."
+        ERR_BUSY
     } else if word(&["network", "offline", "internet", "source"])
         || words
             .iter()
             .any(|w| w.starts_with("0x8024") || w.starts_with("0x8007"))
         || has(&["timed out"])
     {
-        "We couldn't reach Windows Update. Check your internet connection and try again."
+        ERR_NETWORK
     } else if has(&["elevation", "elevated", "administrator", "interactive"]) {
         ERR_REOPEN
     } else {
-        "We couldn't finish this. Try again in a few minutes."
+        ERR_GENERAL
+    }
+}
+
+/// A longer, plain explanation for the "More details" pane, keyed by the
+/// friendly note. Never contains raw engine text.
+pub fn why_for_note(note: &str) -> &'static str {
+    match note {
+        ERR_USE_WINDOWS_UPDATE => "Windows only lets Secblitz install updates from a standard administrator account, and this account can't. Sign in with a different administrator account, or ask the person who manages this PC, then open Secblitz again.",
+        ERR_UNAVAILABLE => "This version of Windows doesn't support this feature, so Secblitz can't do it here.",
+        ERR_SETTINGS_BLOCK => "A setting on this PC, often set by a workplace or school, stops Secblitz from doing this.",
+        ERR_CHANGED => "Windows found different updates from the ones you looked at, so nothing was installed.",
+        ERR_REOPEN => "Secblitz was started in a way that doesn't allow this. Opening it from its shortcut fixes that.",
+        ERR_RESTART => "Windows has changes waiting that need a restart before it can carry on.",
+        ERR_BUSY => "Windows is running its own update or maintenance work. This usually ends within a few minutes.",
+        ERR_POWER => "Updates need your PC to be plugged in, so it can't switch off part way through.",
+        ERR_DISK => "Windows needs room on your system drive to download and set up updates.",
+        ERR_METERED => "Windows treats this connection as one with a data limit, so large downloads are held back.",
+        ERR_NOT_READY => "Windows isn't in a state where it can safely make changes yet.",
+        ERR_EARLIER => "A job that was running earlier didn't finish cleanly, and Secblitz wants to check it first.",
+        ERR_NETWORK => "Secblitz couldn't connect to the internet. Your connection may be off or very slow.",
+        _ => "Something unexpected stopped this. Nothing was damaged. Restart your PC and try again, and check for a Secblitz update if it keeps happening.",
+    }
+}
+
+/// "More details" for Bitwarden when the account can't install apps.
+pub const WHY_BITWARDEN_UNAVAILABLE: &str = "Windows only lets Secblitz install apps from a standard administrator account, and this account can't. Get Bitwarden from bitwarden.com instead.";
+/// "More details" for Bitwarden when there is no internet.
+pub const WHY_BITWARDEN_OFFLINE: &str =
+    "Secblitz couldn't connect to the internet. Check your connection, then press Retry.";
+
+/// "More details" for an unexpected Bitwarden failure. Connection problems get
+/// Bitwarden wording (not the Windows Update wording).
+pub fn bitwarden_why(raw: &str) -> &'static str {
+    if friendly_error(raw) == ERR_NETWORK {
+        WHY_BITWARDEN_OFFLINE
+    } else {
+        friendly_why(raw)
+    }
+}
+
+/// Plain explanation for a failure whose only evidence is raw text.
+pub fn friendly_why(raw: &str) -> &'static str {
+    why_for_note(friendly_error(raw))
+}
+
+/// Plain "More details" text for a finished repair.
+pub fn repair_why(result: RepairResult, note: Option<&'static str>) -> &'static str {
+    if let Some(n) = note {
+        return why_for_note(n);
+    }
+    match result {
+        RepairResult::NoProblems => "Windows checked itself and found nothing wrong.",
+        RepairResult::ProblemsFound => "Windows found files that need repairing. Choose Repair system files to fix them.",
+        RepairResult::Repaired => "Windows repaired the problems it found. You don't need to do anything else.",
+        RepairResult::NeedsRestart => "Restart your PC to finish the repair.",
+        RepairResult::Stopped => "You stopped the repair. Nothing else was started.",
+        RepairResult::CouldNotFinish => "The repair didn't finish. Restart your PC and try again.",
+    }
+}
+
+/// Plain "More details" text for a finished update install.
+pub fn install_why(result: InstallResult, note: Option<&'static str>) -> &'static str {
+    if let Some(n) = note {
+        return why_for_note(n);
+    }
+    match result {
+        InstallResult::Installed => "Windows confirmed that every update you chose is installed.",
+        InstallResult::NeedsRestart => "The updates are installed. Restart your PC to finish.",
+        InstallResult::NotConfirmed => "Windows didn't confirm every update. Open Windows Update to see what is left.",
+        InstallResult::Stopped => "You stopped the update. Nothing else was started.",
+        InstallResult::CouldNotFinish => "The update didn't finish. Restart your PC and try again.",
     }
 }
 
@@ -607,6 +696,7 @@ pub struct UpdateInfo {
 #[derive(Debug, Clone, Default)]
 pub struct Found {
     pub updates: Vec<UpdateInfo>,
+    #[allow(dead_code)] // raw evidence, never shown on screen
     pub technical: String,
 }
 
@@ -1217,6 +1307,7 @@ pub struct TipsReport {
     #[allow(dead_code)] // kept for the technical view
     pub profile: TipProfile,
     pub tips: Vec<Tip>,
+    #[allow(dead_code)] // raw evidence, never shown on screen
     pub technical: String,
 }
 
@@ -1608,12 +1699,12 @@ mod tests {
             format!("Patching subprocess failed; verification only (exit 0x1): Exact patching stopped (0x80131501): {why}; inspect protected record and verify, never replay")
         };
         for (why, want) in [
-            ("Another servicing worker is active", "Windows is busy with another task. Try again in a few minutes."),
-            ("AC power not confirmed", "Plug your PC in, then try again."),
-            ("Insufficient system storage", "Free up at least 5 GB on your system drive, then try again."),
-            ("Metered/unknown network", "You're on a connection with a data limit. Connect to a network without one, then try again."),
+            ("Another servicing worker is active", ERR_BUSY),
+            ("AC power not confirmed", ERR_POWER),
+            ("Insufficient system storage", ERR_DISK),
+            ("Metered/unknown network", ERR_METERED),
             ("Default update source is not unmanaged Windows Update", ERR_SETTINGS_BLOCK),
-            ("Pending reboot; owner action required", "Restart your PC, then try again."),
+            ("Pending reboot; owner action required", ERR_RESTART),
         ] {
             assert_eq!(friendly_error(&wrap(why)), want, "{why}");
         }
@@ -1642,7 +1733,7 @@ mod tests {
         }
         assert_eq!(
             friendly_error("Owner-initiated reboot has not occurred"),
-            "Restart your PC, then try again."
+            ERR_RESTART
         );
         // Whole-word matching and policy first: no busy or network advice.
         // Built-in Administrator: explain, and do not offer a useless Retry.
@@ -1656,16 +1747,16 @@ mod tests {
         )));
         assert_eq!(
             friendly_error("Request blocked by policy"),
-            "Your PC's settings don't allow this."
+            ERR_SETTINGS_BLOCK
         );
         // Each readiness deferral names the step that actually helps.
         for (raw, text) in [
-            ("Deferred: Windows is waiting for a restart", "Restart your PC, then try again."),
-            ("Deferred: Windows servicing is busy", "Windows is busy with another task. Try again in a few minutes."),
-            ("Deferred: a Windows servicing process is active", "Windows is busy with another task. Try again in a few minutes."),
-            ("Deferred: shared engine.lock is busy", "Windows is busy with another task. Try again in a few minutes."),
-            ("Deferred: not plugged in", "Plug your PC in, then try again."),
-            ("Deferred: low disk space", "Free up at least 5 GB on your system drive, then try again."),
+            ("Deferred: Windows is waiting for a restart", ERR_RESTART),
+            ("Deferred: Windows servicing is busy", ERR_BUSY),
+            ("Deferred: a Windows servicing process is active", ERR_BUSY),
+            ("Deferred: shared engine.lock is busy", ERR_BUSY),
+            ("Deferred: not plugged in", ERR_POWER),
+            ("Deferred: low disk space", ERR_DISK),
         ] {
             assert_eq!(friendly_error(raw), text);
         }
@@ -1675,12 +1766,60 @@ mod tests {
         assert!(!is_retryable(ERR_REOPEN));
         assert_eq!(
             friendly_error("Not enough resource on the clock"),
-            "We couldn't finish this. Try again in a few minutes."
+            ERR_GENERAL
         );
         assert_eq!(
             friendly_error("The file is locked by another operation"),
-            "Windows is busy with another task. Try again in a few minutes."
+            ERR_BUSY
         );
+    }
+
+    #[test]
+    fn split_token_text_tells_the_person_what_to_do() {
+        let raw = "Interactive split-token administrator required; service/over-the-shoulder elevation unsupported";
+        let note = friendly_error(raw);
+        assert!(note.contains("administrator account"));
+        assert!(note.contains("open Secblitz again"));
+        assert_no_dev_terms(note);
+        assert_no_dev_terms(friendly_why(raw));
+        assert!(!friendly_why(raw).to_ascii_lowercase().contains("token"));
+    }
+
+    #[test]
+    fn more_details_never_echo_raw_text() {
+        for raw in [
+            "Interactive split-token administrator required; service/over-the-shoulder elevation unsupported",
+            "HRESULT 0x80131501 from C:\\ProgramData\\x.json",
+            "something unexpected",
+            "The updates changed since they were reviewed; look again",
+        ] {
+            let why = friendly_why(raw);
+            assert!(why.len() > 20);
+            assert!(!why.contains("0x") && !why.contains("HRESULT") && !why.contains("C:\\"));
+        }
+        assert_eq!(
+            friendly_why("something unexpected"),
+            why_for_note(ERR_GENERAL)
+        );
+        assert_eq!(friendly_error("The updates changed since they were reviewed; look again"), ERR_CHANGED);
+        // Per call site: Bitwarden reasons get Bitwarden text, never the
+        // Windows Update or "unexpected" wording.
+        // The Offline and Unavailable replies use fixed sentences in the view.
+        for why in [bitwarden_why("Offline"), WHY_BITWARDEN_OFFLINE, WHY_BITWARDEN_UNAVAILABLE] {
+            assert!(!why.contains("Windows Update"));
+            assert!(!why.contains("unexpected"));
+        }
+        assert_eq!(bitwarden_why("Offline"), WHY_BITWARDEN_OFFLINE);
+        assert_eq!(bitwarden_why("WinGet timed out"), WHY_BITWARDEN_OFFLINE);
+        assert_eq!(bitwarden_why("something odd"), why_for_note(ERR_GENERAL));
+        assert!(WHY_BITWARDEN_UNAVAILABLE.contains("bitwarden.com"));
+        // Scan and Defender errors map to cause-specific text.
+        assert_eq!(friendly_why("Scan failed: network unreachable"), why_for_note(ERR_NETWORK));
+        assert_eq!(friendly_why("scan blocked by policy"), why_for_note(ERR_SETTINGS_BLOCK));
+        assert_eq!(friendly_why("Defender update: restart required"), why_for_note(ERR_RESTART));
+        assert!(why_for_note(ERR_USE_WINDOWS_UPDATE).contains("different administrator"));
+        assert!(repair_why(RepairResult::CouldNotFinish, Some(ERR_BUSY)).contains("maintenance"));
+        assert!(install_why(InstallResult::NeedsRestart, None).contains("Restart"));
     }
 
     fn assert_no_dev_terms(text: &str) {
