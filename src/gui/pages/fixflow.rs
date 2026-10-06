@@ -174,17 +174,18 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         .as_deref()
         .and_then(|r| r.results.iter().find(|o| o.id == id))
         .and_then(|o| super::fixes::items_line(ctx, o));
-    let impact_line = (with_impact && !impact.is_empty())
+    let impact_line = (!impact.is_empty())
         .then(|| format!("{} {}", ctx.t("Protects you from:"), ctx.t(impact)));
+    // A choice also says what the person will notice, as its row did.
+    let consequence = crate::advice::is_choice(id)
+        .then(|| crate::advice::choice_consequence(id))
+        .filter(|c| !c.is_empty())
+        .map(|c| ctx.t(c));
+    let lines: Vec<String> = [impact_line, consequence, items].into_iter().flatten().collect();
     PlanRow {
         id: id.to_owned(),
         name: ctx.lang.control(id),
-        line: match (with_impact, impact_line, items) {
-            (true, Some(l), Some(i)) => Some(format!("{l}\n{i}")),
-            (true, Some(l), None) => Some(l),
-            (true, None, Some(i)) => Some(i),
-            _ => None,
-        },
+        line: (with_impact && !lines.is_empty()).then(|| lines.join("\n")),
         restart: ctx.catalog.restart.iter().any(|x| x == id),
     }
 }
