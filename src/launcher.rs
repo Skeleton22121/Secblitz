@@ -26,12 +26,38 @@ pub fn message_box(title: &str, text: &str) {
     eprintln!("{title}: {text}");
 }
 
-/// Show a start-up problem in calm words, with the cause under a label.
+/// Plain words and a next step for a start-up or check problem. The raw
+/// reason never reaches the screen; unknown reasons get the general message.
+pub fn friendly_problem(raw: &str) -> &'static str {
+    let r = raw.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
+    if has(&["requires windows", "only supported on windows", "windows 10/11"]) {
+        "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
+    } else if has(&["declined", "cancel"]) {
+        "Secblitz needs your permission to open. Open it again and choose Yes when Windows asks."
+    } else if has(&["access is denied", "os error 5", "permission", "administrator", "elevat"]) {
+        "Windows wouldn't let Secblitz open its files. Sign in with an account that can make changes to this PC, then open Secblitz again."
+    } else if has(&["journal lock", "another secblitz", "already running", "lock"]) {
+        "Secblitz is already busy with another task. Wait a minute, then open it again."
+    } else if has(&["no space", "os error 112", "disk full"]) {
+        "Your PC is almost out of space. Free up some space, then open Secblitz again."
+    } else if has(&["journal", "invalid", "corrupt", "missing header", "schema", "utf8"]) {
+        "Secblitz couldn't read its saved information. Restart your PC and open Secblitz again. If it keeps happening, install the latest Secblitz."
+    } else if has(&["timed out", "did not answer", "broker", "powershell", "script", "backend"]) {
+        "Windows didn't answer in time. Restart your PC, then open Secblitz again."
+    } else {
+        "Something unexpected got in the way. Restart your PC and open Secblitz again. If it keeps happening, check for a Secblitz update."
+    }
+}
+
+/// Show a start-up problem in calm words with a next step. The technical
+/// reason goes to stderr (for support), never into the dialog.
 pub fn show_failure(lang: Lang, error: &anyhow::Error) {
+    eprintln!("{error:#}");
     let text = format!(
-        "{}\n\n{}: {error:#}",
-        lang.t("Secblitz couldn't open. Please try again."),
-        lang.t("Technical details")
+        "{}\n\n{}",
+        lang.t("Secblitz couldn't open."),
+        lang.t(friendly_problem(&format!("{error:#}")))
     );
     message_box("Secblitz", &text);
 }
@@ -947,6 +973,18 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_start_problems_get_a_fix_and_unknown_ones_get_the_general_text() {
+        assert!(friendly_problem("The administrator prompt was declined").contains("choose Yes"));
+        assert!(friendly_problem("Secblitz requires Windows").contains("Windows 10"));
+        assert!(friendly_problem("Another Secblitz operation holds the journal lock")
+            .contains("busy"));
+        let raw = "zxq 0x80004005 src/engine.rs:42 panicked";
+        let text = friendly_problem(raw);
+        assert!(text.starts_with("Something unexpected"));
+        assert!(!text.contains("0x8") && !text.contains("engine.rs"));
+    }
 
     #[test]
     fn elevation_arguments_are_plain_words_only() {

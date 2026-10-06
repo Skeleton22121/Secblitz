@@ -200,7 +200,7 @@ fn toast(text: &str, tone: Tone, ctx: &Ctx) -> Task<Message> {
 fn save_prefs(ctx: &Ctx) -> Task<Message> {
     match prefs_store::save(&ctx.prefs) {
         Ok(()) => Task::none(),
-        Err(_) => toast("We couldn't save that choice.", Tone::Warn, ctx),
+        Err(_) => toast("We couldn't save that choice. Please try again. If it keeps happening, restart your PC.", Tone::Warn, ctx),
     }
 }
 
@@ -306,7 +306,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     )
                 }
                 Err(_) => toast(
-                    "We couldn't change that. Nothing was changed on your PC.",
+                    "We couldn't change that. Nothing was changed on your PC. Please try again, or restart your PC first.",
                     Tone::Warn,
                     ctx,
                 ),
@@ -329,7 +329,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     )
                 }
                 Err(_) => toast(
-                    "We couldn't change that. Nothing was changed on your PC.",
+                    "We couldn't change that. Nothing was changed on your PC. Please try again, or restart your PC first.",
                     Tone::Warn,
                     ctx,
                 ),
@@ -530,7 +530,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         }
         Remote::Failed | Remote::Ready(UpdateView::Unknown) => (
             widgets::pill(p, t("Couldn't check"), Tone::Warn),
-            t("We couldn't check for updates. We'll try again later."),
+            t("We couldn't check for updates. Connect to the internet and we'll try again later."),
         ),
         Remote::Ready(UpdateView::UpToDate) => (
             widgets::pill(p, t("Up to date"), Tone::Good),
