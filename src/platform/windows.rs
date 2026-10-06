@@ -337,6 +337,22 @@ pub fn support_action(id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn remove_threats() -> Result<super::ThreatRemoval> {
+    let script = super::threats_script()?;
+    ensure!(
+        cfg!(target_arch = "x86_64"),
+        "Secblitz supports Windows x64 only"
+    );
+    ensure!(
+        is_elevated()?,
+        "Defender support actions require Administrator elevation"
+    );
+    let reply: Value = run_script(script, Duration::from_secs(10 * 60)).context(
+        "Windows Security could not finish removing them. Nothing else was changed",
+    )?;
+    super::parse_threat_reply(&reply)
+}
+
 /// PowerShell plus the DISM helper processes a feature change may start.
 const DISM_PROCESSES: u32 = 4;
 

@@ -28,6 +28,7 @@ pub use view::{modal, view};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
     Scan,
+    RemoveThreats,
     DefenderUpdate,
     Repair(RepairKind),
     InstallUpdates,
@@ -67,6 +68,7 @@ impl Shortcut {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
     Scan,
+    Threats,
     Defender,
     Repair,
     Updates,
@@ -85,6 +87,9 @@ pub enum Msg {
     CloseSheet,
     Confirm,
     ScanDone(Result<(), String>),
+    ThreatsDone(Result<actions::ThreatRemoval, String>),
+    ClearThreats,
+    /// Look over the Protection fix that solves a health tip.
     DefenderDone(Result<(), String>),
     ClearScan,
     ClearDefender,
@@ -98,6 +103,9 @@ pub enum Msg {
     ClearUpdates,
     PickTips(TipProfile),
     Tips(Box<TipsReport>),
+    /// The tips list read again quietly after a removal, so it stops
+    /// reporting what was just removed.
+    TipsRefreshed(Box<TipsReport>),
     TipChoice(TipProfile),
     NewPassword,
     CopyPassword,
@@ -197,6 +205,7 @@ pub struct Password {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
     Scan,
+    Threats,
     Defender,
     Repair,
     Updates,
@@ -210,6 +219,7 @@ const COPIED_SHOWN: Duration = Duration::from_millis(1600);
 pub struct State {
     sheet: Option<Sheet>,
     scan: Run<Result<(), String>>,
+    threats: Run<Result<actions::ThreatRemoval, String>>,
     defender: Run<Result<(), String>>,
     repair: Repair,
     updates: Updates,
@@ -257,6 +267,7 @@ impl Default for State {
         Self {
             sheet: None,
             scan: Run::Idle,
+            threats: Run::Idle,
             defender: Run::Idle,
             repair: Repair::Idle,
             updates: Updates::Idle,
@@ -350,6 +361,35 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::ScanDone(r) => {
             state.scan = Run::Done(r);
             state.finish(Slot::Scan);
+            Task::none()
+        }
+        Msg::ThreatsDone(r) => {
+            let changed = r
+                .as_ref()
+                .is_ok_and(|t| crate::app::tools::threats_result(t) != crate::app::tools::ThreatsResult::Stuck);
+            state.threats = Run::Done(r);
+            state.finish(Slot::Threats);
+            // Look again so the tip no longer says "something harmful" for
+            // what was just removed.
+            match (&state.tips, changed) {
+                (Tips::Done(shown), true) => {
+                    let profile = shown.profile;
+                    Task::perform(blocking(move || logic::run_tips(profile)), |r| {
+                        tools(Msg::TipsRefreshed(Box::new(r)))
+                    })
+                }
+                _ => Task::none(),
+            }
+        }
+        Msg::TipsRefreshed(report) => {
+            if matches!(state.tips, Tips::Done(_)) {
+                state.tips = Tips::Done(report);
+            }
+            Task::none()
+        }
+        Msg::ClearThreats => {
+            state.threats = Run::Idle;
+            state.close_detail(Detail::Threats);
             Task::none()
         }
         Msg::DefenderDone(r) => {
@@ -636,6 +676,7 @@ impl State {
     /// A row shows the working spinner: a job of unknown length is running.
     fn spinning(&self) -> bool {
         matches!(self.scan, Run::Working)
+            || matches!(self.threats, Run::Working)
             || matches!(self.defender, Run::Working)
             || matches!(self.bitwarden, Run::Working)
             || matches!(self.updates, Updates::Looking)
@@ -674,6 +715,13 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                         .map_err(plain)
                 }),
                 |r| tools(Msg::ScanDone(r)),
+            )
+        }
+        Sheet::RemoveThreats => {
+            state.threats = Run::Working;
+            Task::perform(
+                blocking(|| actions::remove_threats().map_err(plain)),
+                |r| tools(Msg::ThreatsDone(r)),
             )
         }
         Sheet::DefenderUpdate => {
