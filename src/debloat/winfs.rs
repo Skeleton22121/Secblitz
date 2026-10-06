@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::ffi::{c_void, OsString};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::mem::{size_of, zeroed};
+use std::mem::size_of;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
@@ -27,11 +27,13 @@ fn wide(s: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 struct Local(*mut c_void);
 impl Drop for Local {
     fn drop(&mut self) {
+        // SAFETY: the pointer came from a Windows allocation owned by this wrapper and is freed once.
         unsafe { LocalFree(self.0) };
     }
 }
 
 pub fn enable_privileges() -> Result<()> {
+    // SAFETY: all calls use valid out-pointers and handles that this block owns.
     unsafe {
         let mut token: HANDLE = null_mut();
         ensure!(
@@ -44,7 +46,10 @@ pub fn enable_privileges() -> Result<()> {
         );
         let token = OwnedHandle(token);
         for name in ["SeBackupPrivilege", "SeRestorePrivilege"] {
-            let mut luid: LUID = zeroed();
+            let mut luid = LUID {
+                LowPart: 0,
+                HighPart: 0,
+            };
             ensure!(
                 LookupPrivilegeValueW(null(), wide(name).as_ptr(), &mut luid) != 0,
                 "Unknown privilege"
@@ -72,18 +77,23 @@ pub fn enable_privileges() -> Result<()> {
 struct OwnedHandle(HANDLE);
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
+        // SAFETY: the handle is owned by this wrapper and closed once.
         unsafe { CloseHandle(self.0) };
     }
 }
 
 pub fn windows_apps() -> Result<PathBuf> {
     let mut raw: windows_sys::core::PWSTR = null_mut();
+    // SAFETY: `raw` is a valid out-pointer.
     let hr = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramFiles, 0, null_mut(), &mut raw) };
     ensure!(hr == 0 && !raw.is_null(), "Program Files not found");
+    // SAFETY: `raw` is non-null and NUL-terminated, as returned by SHGetKnownFolderPath.
     let len = (0..).take_while(|&i| unsafe { *raw.add(i) } != 0).count();
+    // SAFETY: the slice covers exactly the `len` units counted above.
     let path = PathBuf::from(OsString::from_wide(unsafe {
         std::slice::from_raw_parts(raw, len)
     }));
+    // SAFETY: `raw` was allocated by the shell and is not used afterwards.
     unsafe { windows_sys::Win32::System::Com::CoTaskMemFree(raw.cast()) };
     ensure!(path.is_absolute(), "Program Files not found");
     Ok(path.join("WindowsApps"))
@@ -92,6 +102,7 @@ pub fn windows_apps() -> Result<PathBuf> {
 pub fn free_bytes(path: &Path) -> Result<u64> {
     let mut free = 0u64;
     ensure!(
+        // SAFETY: the path buffer is NUL-terminated and the out-pointer is valid.
         unsafe { GetDiskFreeSpaceExW(wide(path).as_ptr(), &mut free, null_mut(), null_mut()) } != 0,
         "Couldn't read free space"
     );
@@ -118,6 +129,7 @@ fn open_io(
     sa: *const SECURITY_ATTRIBUTES,
     extra: u32,
 ) -> std::io::Result<File> {
+    // SAFETY: the path buffer is NUL-terminated and `sa` is null or points at a live SECURITY_ATTRIBUTES.
     let h = unsafe {
         CreateFileW(
             wide(path).as_ptr(),
@@ -132,12 +144,14 @@ fn open_io(
     if h == INVALID_HANDLE_VALUE {
         return Err(std::io::Error::last_os_error());
     }
+    // SAFETY: `h` is a valid handle that nothing else owns.
     Ok(unsafe { File::from_raw_handle(h) })
 }
 
 fn mark_delete(f: &File) -> Result<()> {
     let d = FILE_DISPOSITION_INFO { DeleteFile: 1 };
     ensure!(
+        // SAFETY: the handle is live and the struct size matches the information class.
         unsafe {
             SetFileInformationByHandle(
                 f.as_raw_handle(),
@@ -153,8 +167,24 @@ fn mark_delete(f: &File) -> Result<()> {
 }
 
 fn info(f: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
-    let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut i = BY_HANDLE_FILE_INFORMATION {
+        dwFileAttributes: 0,
+        ftCreationTime: zero,
+        ftLastAccessTime: zero,
+        ftLastWriteTime: zero,
+        dwVolumeSerialNumber: 0,
+        nFileSizeHigh: 0,
+        nFileSizeLow: 0,
+        nNumberOfLinks: 0,
+        nFileIndexHigh: 0,
+        nFileIndexLow: 0,
+    };
     ensure!(
+        // SAFETY: the handle is live and `i` is a valid out-structure.
         unsafe { GetFileInformationByHandle(f.as_raw_handle(), &mut i) } != 0,
         "File information unavailable"
     );
@@ -171,6 +201,7 @@ fn is_dir(i: &BY_HANDLE_FILE_INFORMATION) -> bool {
 
 fn final_path(f: &File) -> Result<String> {
     let mut buf = vec![0u16; 32768];
+    // SAFETY: `buf` is writable for its full length.
     let n = unsafe {
         GetFinalPathNameByHandleW(f.as_raw_handle(), buf.as_mut_ptr(), buf.len() as u32, 0)
     } as usize;
@@ -298,6 +329,7 @@ pub fn copy_out(src: &Path, dst: &Path) -> Result<Vec<FileEntry>> {
 fn descriptor(sddl: &str) -> Result<Local> {
     let mut p = null_mut();
     ensure!(
+        // SAFETY: the SDDL string is NUL-terminated and `p` is a valid out-pointer.
         unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
                 wide(sddl).as_ptr(),
@@ -334,8 +366,10 @@ pub fn copy_in(
             bInheritHandle: 0,
         };
         let mkdir = |p: &Path, strict: bool| -> Result<()> {
+            // SAFETY: the path is NUL-terminated and `dsa` outlives the call.
             if unsafe { CreateDirectoryW(wide(p).as_ptr(), &dsa) } == 0 {
                 ensure!(
+                    // SAFETY: GetLastError has no preconditions.
                     !strict && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS,
                     "Couldn't create {}",
                     p.display()
@@ -426,6 +460,7 @@ pub fn security_sddl(path: &Path) -> Result<String> {
     let (mut sd, mut out) = (null_mut(), null_mut());
     let what = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
     ensure!(
+        // SAFETY: the path is NUL-terminated and every out-pointer is valid.
         unsafe {
             GetNamedSecurityInfoW(
                 wide(path).as_ptr(),
@@ -443,12 +478,15 @@ pub fn security_sddl(path: &Path) -> Result<String> {
     let _sd = Local(sd);
     let mut len = 0u32;
     ensure!(
+        // SAFETY: `sd` came from GetNamedSecurityInfoW and the out-pointers are valid.
         unsafe {
             ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, what, &mut out, &mut len)
         } != 0,
         "Couldn't read folder permissions"
     );
     let _out = Local(out.cast());
+    ensure!(!out.is_null(), "Couldn't read folder permissions");
+    // SAFETY: `out` is non-null and holds `len` UTF-16 units from the conversion call.
     let text = unsafe { std::slice::from_raw_parts(out, len as usize) };
     Ok(String::from_utf16_lossy(text)
         .trim_end_matches('\0')
@@ -456,6 +494,7 @@ pub fn security_sddl(path: &Path) -> Result<String> {
 }
 
 pub fn current_sid() -> Result<String> {
+    // SAFETY: every call uses valid out-pointers, and the token and strings are freed by their guards.
     unsafe {
         let mut token: HANDLE = null_mut();
         ensure!(
@@ -500,6 +539,7 @@ pub fn profile_dir(sid: &str) -> Result<PathBuf> {
     let key = format!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\{sid}");
     let mut buf = vec![0u16; 1024];
     let mut size = (buf.len() * 2) as u32;
+    // SAFETY: both strings are NUL-terminated and `buf` and `size` describe the same writable buffer.
     let status = unsafe {
         RegGetValueW(
             HKEY_LOCAL_MACHINE,
@@ -638,6 +678,7 @@ impl DataSink {
         let root_final = final_path(pins.last().expect("pinned"))?;
         let mut owner = null_mut();
         ensure!(
+            // SAFETY: the SID string is NUL-terminated and `owner` is a valid out-pointer.
             unsafe { ConvertStringSidToSidW(wide(sid).as_ptr(), &mut owner) } != 0,
             "Unexpected account"
         );
@@ -674,6 +715,7 @@ impl DataSink {
     }
 
     fn give_to_owner(&self, f: &File) -> Result<()> {
+        // SAFETY: the handle is live and `owner` is a valid SID kept by `self`.
         let status = unsafe {
             SetSecurityInfo(
                 f.as_raw_handle(),
@@ -696,8 +738,10 @@ impl Sink for DataSink {
         // Hold the parent (no delete/rename sharing, so it cannot be swapped
         // for a junction) and prove it is inside before creating anything.
         let _parent = self.pin_parent(&path)?;
+        // SAFETY: the path is NUL-terminated and a null descriptor is allowed.
         if unsafe { CreateDirectoryW(wide(&path).as_ptr(), null()) } == 0 {
             ensure!(
+                // SAFETY: GetLastError has no preconditions.
                 unsafe { GetLastError() } == ERROR_ALREADY_EXISTS,
                 "Couldn't create a folder"
             );
