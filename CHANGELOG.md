@@ -11,6 +11,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ### Added
 - **Help and feedback in Settings.** You can report a problem or suggest a feature from Settings. Each one opens a short form on GitHub. Security problems have their own private email address: support@secblitz.lol.
+- **Privacy policy.** A plain privacy page says exactly when Secblitz uses the internet and what it keeps on your PC. The installer shows a short summary, and Settings links to the full page.
+- Web protection credits the block lists it uses, from AdGuard, EasyList and HaGeZi.
 
 ### Changed
 - **Checks before it starts.** Fixes, app clean-up, repairs, updates and per-account settings now check what they need before showing any progress. If something is missing, you see why and what to do instead of a progress bar that fails at the end.
@@ -18,6 +20,12 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Fix details show only what the row above does not already say.
 - The Web protection page no longer repeats its on or off state in a second section.
 - Secblitz is open source under the MIT license. The website and README link to the source code.
+- Items to fix now say what turning them on protects you from, and their explanations use calmer words.
+- Clean up apps no longer ticks any app for you. You choose what to remove.
+- When Windows Update is busy, fixes say so and offer to try again, instead of asking you to restart.
+
+### Removed
+- Three notes that only reported something another check already fixes: Remote Desktop waiting for connections, file sharing waiting for connections, and accounts without a password.
 
 ## [0.8.1] - 2026-10-06
 
