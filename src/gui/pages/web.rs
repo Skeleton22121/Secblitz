@@ -561,10 +561,9 @@ fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
             ctx.t("Web protection is off"),
             Some(ctx.t("Ads, trackers and dangerous websites can load.")),
         ),
-        Line::NotWorking => (
-            ctx.t("Not working right now"),
-            Some(ctx.t("Your internet still works, but nothing is being blocked.")),
-        ),
+        // The status row below already says the internet still works; the
+        // region shows the reason and what to do instead (see `hero`).
+        Line::NotWorking => (ctx.t("Not working right now"), None),
     }
 }
 
@@ -676,11 +675,9 @@ fn status_rows<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
         space::horizontal().width(0),
         None,
     );
-    let mut rows: Vec<El<'a>> = vec![head];
-    if let Some(hint) = problem_hint(snapshot, line) {
-        rows.push(under(vec![widgets::small(p, ctx.t(hint))]));
-    }
-    rows
+    // The problem hint sits in the region at the top, next to the button
+    // that answers it.
+    vec![head]
 }
 
 /// The pause, resume or try again button for the status, with a bar under
@@ -735,6 +732,13 @@ fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
     let mut words = column![widgets::h2(p, title)].spacing(theme::S1);
     if let Some(sub) = sub {
         words = words.push(widgets::muted(p, sub));
+    }
+    // What went wrong and what to do, right above "Try again" (installed
+    // copies only, like the button).
+    if snapshot.installed {
+        if let Some(hint) = problem_hint(snapshot, line) {
+            words = words.push(widgets::muted(p, ctx.t(hint)));
+        }
     }
     if let Some(counts) = counts {
         words = words.push(widgets::small(p, blocked_text(ctx, counts)));

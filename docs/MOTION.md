@@ -274,7 +274,9 @@ requests its own redraws; `steps` is a row of 4 px segments for flows.
 
 The hairline drawing at the top of the Web protection page, 250 by 200 px
 in a region, beside the status in words, today's counts and the pause,
-resume or try again button. It keeps the prototype's 320 by 256 unit box.
+resume or try again button. It draws from the part of the prototype's 320
+by 256 unit box the picture fills (x 32 to 322, y 28 to 252, with 8 units
+of room for the tilt), so it sits centred in its 250 by 200 px.
 
 | State | What it shows |
 | --- | --- |
@@ -301,8 +303,14 @@ Other changes cross-fade the old dome out and the new one in over 0.4 s on
   three layers (1.5, 3 and 5 units).
 - Real data: when the page's blocked counts go up while protection is on,
   that many ads, trackers or scam sites (two per kind per poll, five
-  waiting at most) fly in and get stopped, even while the drawing rests.
-  The rest of the traffic is illustrative.
+  waiting at most) fly in and get stopped. While the drawing rests only one
+  gets in every 10 s at most (the most serious kind that went up, older
+  ones dropped), so steady browsing does not keep the page drawing. The
+  rest of the traffic is illustrative.
+- Layers: the dome's tint lies under the lanes, so the lanes stay visible
+  all the way to the screen. Grey parts (web pages, the paused shield) are
+  filled with the plate. Ripples from the shield or a clicked dot start
+  where the tilted front layer shows them.
 - Frames: it asks for frames itself (no page subscription) while awake,
   while dots are still on their way, while the globe coasts to a stop and
   during transitions; then nothing until the pointer comes back, the state
