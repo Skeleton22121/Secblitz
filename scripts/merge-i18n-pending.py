@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge i18n-pending/*.tsv into the six-locale catalog in src/i18n.rs.
+"""Merge i18n-pending/*.tsv into the six-locale catalog in src/i18n/guided.rs.
 
 Run: python3 scripts/merge-i18n-pending.py [--dry-run]
 
@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-I18N = ROOT / "src/i18n.rs"
+I18N = ROOT / "src/i18n/guided.rs"
+CATALOG = sorted((ROOT / "src/i18n").glob("*.rs"))
 PENDING = ROOT / "i18n-pending"
 KEY = re.compile(r'^\s*\["((?:[^"\\]|\\.)*)"')
 
@@ -41,9 +42,14 @@ def main():
 
     src = I18N.read_text(encoding="utf-8")
     lines = src.split("\n")
-    existing = {unescape(m[1]) for line in lines if (m := KEY.match(line))}
+    existing = {
+        unescape(m[1])
+        for path in CATALOG
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if (m := KEY.match(line))
+    }
 
-    start = next(i for i, l in enumerate(lines) if l.startswith("const MAINTENANCE_TEXT"))
+    start = next(i for i, l in enumerate(lines) if l.startswith("pub(super) const ROWS"))
     end = next(i for i in range(start, len(lines)) if lines[i] == "];")
 
     added, rows, problems = set(), [], {}
