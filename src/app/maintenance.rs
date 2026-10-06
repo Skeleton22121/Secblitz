@@ -1,13 +1,11 @@
-//! The app-side jobs behind the Tools page: repair, Windows updates, PC health tips and the password generator.
+//! The app-side jobs behind the Tools page: repair, Windows updates, PC health tips.
 mod errors;
-mod password;
 mod repair;
 mod rules;
 mod tips;
 mod updates;
 
 pub use errors::*;
-pub use password::*;
 pub use repair::*;
 pub use rules::*;
 pub use tips::*;
