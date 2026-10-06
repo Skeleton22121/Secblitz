@@ -600,6 +600,16 @@ mod imp {
     }
 
     pub fn run(lang: Lang) -> Result<i32> {
+        if split_token_elevated()? {
+            if reopen_normally(lang).is_ok() {
+                return Ok(0);
+            }
+            super::message_box(
+                "Secblitz",
+                &lang.t("Please open Secblitz the usual way, not with “Run as administrator”. It asks for permission by itself when it needs it."),
+            );
+            return Ok(1);
+        }
         let id = broker::new_id();
         let pipe = create_pipe(&id)?;
         let args: Vec<String> = ["gui", "--broker", &id, "--lang", lang.code()]
