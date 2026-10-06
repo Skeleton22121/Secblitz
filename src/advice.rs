@@ -156,6 +156,16 @@ pub fn control_impact(id: &str) -> &'static str {
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
         "defender.exclusions_risky" => "Malware hiding in places your antivirus skips",
+        "services.unquoted_paths" => {
+            "A planted program being started with full power instead of the real one"
+        }
+        "firewall.user_dir_inbound_allow" => {
+            "A harmful download letting strangers connect straight to your PC"
+        }
+        "net.hosts_file" => "Trusted websites quietly sending you to fake ones",
+        "persistence.run_and_tasks" => {
+            "A harmful program starting again every time you turn on your PC"
+        }
         _ => "",
     }
 }
@@ -245,6 +255,10 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.delivery_optimization" => "Update sharing",
         "privacy.clipboard_sync" => "Clipboard sync",
         "defender.exclusions_risky" => "Antivirus skip list",
+        "services.unquoted_paths" => "Risky background program setup",
+        "firewall.user_dir_inbound_allow" => "Firewall allowances for downloads",
+        "net.hosts_file" => "Redirected trusted websites",
+        "persistence.run_and_tasks" => "Risky start-up programs",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -349,7 +363,11 @@ fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.recall"
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
-        | "privacy.clipboard_sync" => (
+        | "privacy.clipboard_sync"
+        | "services.unquoted_paths"
+        | "firewall.user_dir_inbound_allow"
+        | "net.hosts_file"
+        | "persistence.run_and_tasks" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,
         ),
@@ -460,6 +478,18 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "defender.exclusions_risky" => {
             "Skipped places are scanned again, so some games or work tools may scan slower."
         }
+        "services.unquoted_paths" => {
+            "Only the way the program's location is written changes. The program keeps running as before."
+        }
+        "firewall.user_dir_inbound_allow" => {
+            "Programs in your Downloads or Desktop folders lose their firewall allowance and may ask again."
+        }
+        "net.hosts_file" => {
+            "Redirected websites go to their real address again. Your other entries stay as they are."
+        }
+        "persistence.run_and_tasks" => {
+            "Risky programs stop starting with Windows. Nothing is deleted, and you can undo this."
+        }
         _ => "",
     }
 }
@@ -525,6 +555,27 @@ fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: Secblitz cannot tell who is signed in" => {
             "We could not tell which account is signed in, so we leave this alone."
+        }
+        "Not offered: a background program file could not be found" => {
+            "A background program's file is missing, so we leave this alone."
+        }
+        "Not offered: another program could be started first" => {
+            "Another program could be started first, so we leave this alone."
+        }
+        "Not offered: the hosts file could not be found" => {
+            "The hosts file is missing, so there is nothing for us to change."
+        }
+        "Not offered: the hosts file is too large to change safely" => {
+            "The hosts file is too big to change safely, so we leave it alone."
+        }
+        "Not offered: the hosts file uses a format we cannot keep exactly" => {
+            "The hosts file is saved in a format we can't keep exactly, so we leave it alone."
+        }
+        "Not offered: the hosts file is locked against changes" => {
+            "Windows has locked the hosts file against changes, so we leave it alone."
+        }
+        "Not offered: too many items to switch off safely at once" => {
+            "There are too many to switch off safely at once, so we leave this alone."
         }
         _ => return None,
     })
@@ -972,6 +1023,13 @@ mod tests {
             "Not offered: a printer on this PC is shared with other computers",
             "Not offered: your account has no password",
             "Not offered: Secblitz cannot tell who is signed in",
+            "Not offered: a background program file could not be found",
+            "Not offered: another program could be started first",
+            "Not offered: the hosts file could not be found",
+            "Not offered: the hosts file is too large to change safely",
+            "Not offered: the hosts file uses a format we cannot keep exactly",
+            "Not offered: the hosts file is locked against changes",
+            "Not offered: too many items to switch off safely at once",
         ] {
             let a = for_control("lsa.run_as_ppl", "skipped", reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -983,6 +1041,40 @@ mod tests {
             for_control("lsa.run_as_ppl", "skipped", "Not offered: anything").status,
             "Not offered"
         );
+    }
+
+    #[test]
+    fn every_reason_the_handled_item_scripts_give_has_a_calm_plain_sentence() {
+        let script = include_str!("platform/hardening.handled.ps1");
+        let mut found = 0;
+        for piece in script.split('\'') {
+            if piece.starts_with("Not offered: ") {
+                found += 1;
+                let line = not_offered(piece).unwrap_or_else(|| panic!("no sentence for {piece}"));
+                assert!(line.ends_with('.') && line.len() < 100, "{piece}");
+            }
+        }
+        assert!(found >= 7, "{found}");
+    }
+
+    #[test]
+    fn handled_item_controls_are_choices_with_a_plain_consequence() {
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            assert!(is_choice(id), "{id}");
+            let a = for_control(id, "attention", "Eligible");
+            assert_eq!((a.status, a.step, a.ask), ("Your choice", NextStep::Repair, true));
+            assert!(!a.impact.is_empty() && a.next == choice_consequence(id));
+            // Never offered when somebody else manages the setting.
+            let managed = for_control(id, "skipped", "Domain-managed machine: assessment only");
+            assert_eq!(managed.status, "Managed elsewhere", "{id}");
+            // A change made after our fix is a conflict, never a silent overwrite.
+            assert_eq!(for_control(id, "conflict", "").step, NextStep::ReviewUndo);
+        }
     }
 
     #[test]

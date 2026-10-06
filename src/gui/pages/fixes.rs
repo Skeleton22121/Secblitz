@@ -135,6 +135,8 @@ struct Att {
     restart: bool,
     /// A choice the person makes: shown unticked with its consequence.
     choice: bool,
+    /// The exact items a fix would change, one plain line each.
+    items: Vec<String>,
 }
 
 /// A row of the "worth a look / can't check / managed" groups.
@@ -211,6 +213,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             tech: tech_line(&r.status, &a, lang),
             restart,
             choice,
+            items: item_lines(ctx, &r.items),
         });
     }
 
@@ -330,6 +333,24 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
 }
 
 // ------------------------------------------------------------------ update
+
+/// "Firewall rule: name" lines for the items a fix would change. The names come
+/// from this PC; only the kind is translated.
+fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| {
+            let kind = match item.kind.as_str() {
+                "service" => "Background program",
+                "rule" => "Firewall rule",
+                "startup" => "Start-up entry",
+                "task" => "Scheduled task",
+                _ => "Hosts file line",
+            };
+            format!("{}: {}", ctx.t(kind), item.name)
+        })
+        .collect()
+}
 
 fn candidates(ctx: &Ctx) -> Vec<String> {
     ctx.report
@@ -502,12 +523,20 @@ fn expanded<'a>(
     p: Palette,
     indent: f32,
     why: Option<String>,
+    items: Option<(String, &[String])>,
     label: String,
     tech: String,
 ) -> Element<'a, Message> {
     let mut c = column![].spacing(theme::S2);
     if let Some(w) = why {
         c = c.push(widgets::body(p, w));
+    }
+    // The exact things a fix would change, so nothing is a surprise.
+    if let Some((heading, lines)) = items.filter(|(_, lines)| !lines.is_empty()) {
+        c = c.push(widgets::section_label(p, heading));
+        for line in lines {
+            c = c.push(widgets::small(p, line.clone()));
+        }
     }
     c = c
         .push(widgets::section_label(p, label))
@@ -595,6 +624,7 @@ fn attention_row<'a>(
             p,
             INDENT,
             Some(a.why.clone()),
+            Some((ctx.t("What will change"), a.items.as_slice())),
             ctx.t("More details"),
             a.tech.clone(),
         ));
@@ -656,6 +686,7 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
         rows = rows.push(expanded(
             p,
             INDENT_PLAIN,
+            None,
             None,
             ctx.t("More details"),
             o.tech.clone(),

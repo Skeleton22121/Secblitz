@@ -82,7 +82,38 @@ pub enum Source {
     SmartScreen,
     /// Dynamic: risky Microsoft Defender exclusions (1 present, 0 removed).
     DefenderExclusions,
+    /// Dynamic: services whose program path is unquoted (1), quoted by us (0),
+    /// or quoted by us and changed since (2). The exact original is kept in
+    /// Secblitz-owned state.
+    UnquotedServices,
+    /// Dynamic: inbound allow rules for programs in Downloads, Desktop or Temp
+    /// (1 enabled, 0 switched off by us, 2 switched off by us and changed since).
+    UserDirFirewall,
+    /// One key, `hosts`: redirects of trusted names (1), commented out by us
+    /// (0), commented out by us and changed since (2).
+    HostsFile,
+    /// Dynamic: risky start-up entries and scheduled tasks (1 enabled, 0 switched
+    /// off by us, 2 switched off by us and changed since).
+    StartupItems,
 }
+
+/// Value of an item a fix switched off: the state Secblitz left behind.
+pub const ITEM_FIXED: u32 = 0;
+/// Value of an item that is flagged and still in its original state.
+pub const ITEM_FLAGGED: u32 = 1;
+/// Value of an item Secblitz fixed that someone changed again afterwards.
+pub const ITEM_CHANGED: u32 = 2;
+/// Safe values of the four "handled" sources: ours (0) or changed since (2).
+const HANDLED_SAFE: &[u32] = &[ITEM_FIXED, ITEM_CHANGED];
+/// Start-up item key prefixes (the rest is the entry or task name).
+pub const STARTUP_PREFIXES: [&str; 6] = [
+    "run-machine:",
+    "run-machine32:",
+    "run-user:",
+    "folder-machine:",
+    "folder-user:",
+    "task:",
+];
 
 /// Management and capability evidence the backend must find clean.
 #[derive(Clone, Copy, Debug)]
@@ -1012,6 +1043,46 @@ static SPECS: &[Spec] = &[
         keys: &[set("*", "", &[0], false, Some(0), 1)],
         gate: NO_GATE,
     },
+    Spec {
+        id: "services.unquoted_paths",
+        title: "Background programs with unquoted paths",
+        description: "Put quotes around the program path of each background program that has spaces in an unquoted path a standard user could hijack. Only the path text changes, and only when the program file exists and nothing else in the path could be started first. The exact original is kept and put back on undo.",
+        source: Source::UnquotedServices,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "firewall.user_dir_inbound_allow",
+        title: "Firewall allowances for downloaded programs",
+        description: "Switch off (never delete) the inbound allow rules of programs that sit in Downloads, Desktop or Temp folders. Undo switches exactly those rules back on.",
+        source: Source::UserDirFirewall,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "net.hosts_file",
+        title: "Redirected trusted websites",
+        description: "Comment out only the lines of the hosts file that send a trusted website, bank or security product somewhere else or block its updates. Each line is marked with a note. The original file is kept and put back byte for byte on undo.",
+        source: Source::HostsFile,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "persistence.run_and_tasks",
+        title: "Risky programs that start by themselves",
+        description: "Switch off, the way Task Manager does, start-up entries and scheduled tasks that start unsigned programs from Temp, Downloads or similar places. Nothing is deleted. Undo switches exactly those items back on.",
+        source: Source::StartupItems,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: NO_GATE,
+    },
 ];
 
 pub fn all() -> &'static [Spec] {
@@ -1087,6 +1158,36 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                 && !name.chars().any(|c| c.is_control() || c == '"')
                 && name.trim() == name
         }
+        Source::UnquotedServices => {
+            !name.is_empty()
+                && name.len() <= 64
+                && name.trim() == name
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '$' | ' '))
+        }
+        Source::UserDirFirewall => {
+            !name.is_empty()
+                && name.chars().count() <= 200
+                && name.trim() == name
+                // Wildcards would let one name match many rules.
+                && !name
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '"' | '*' | '?' | '[' | ']'))
+        }
+        Source::HostsFile => name == "hosts",
+        Source::StartupItems => {
+            let rest = STARTUP_PREFIXES.iter().find_map(|p| name.strip_prefix(p));
+            rest.is_some_and(|r| {
+                !r.is_empty()
+                    && (!name.starts_with("task:") || r.starts_with('\\'))
+                    && !r.ends_with('\\')
+            }) && name.chars().count() <= 260
+                && name.trim() == name
+                && !name
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '"' | '*' | '?' | '[' | ']'))
+        }
         _ => false,
     }
 }
@@ -1111,6 +1212,10 @@ impl Spec {
                 | Source::NetbiosAdapters
                 | Source::LegacyServices
                 | Source::DefenderExclusions
+                | Source::UnquotedServices
+                | Source::UserDirFirewall
+                | Source::HostsFile
+                | Source::StartupItems
         )
     }
 
@@ -1783,6 +1888,115 @@ mod tests {
         assert_eq!(
             fw.view(&json!({"items": {}}), &json!({"items": {"FPS-A": 15}})),
             json!({"items": {}})
+        );
+    }
+
+    #[test]
+    fn handled_item_controls_accept_only_their_own_names_and_values() {
+        let svc = spec("services.unquoted_paths").unwrap();
+        svc.validate(&json!({"items": {"Acme Updater": 1, "MSSQL$SQLEXPRESS": 0, "a.b-c_d": 2}}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"": 1}}),
+            json!({"items": {" Acme": 1}}),
+            json!({"items": {"Acme\\Run": 1}}),
+            json!({"items": {"Acme\"x": 1}}),
+            json!({"items": {"Acme;calc": 1}}),
+            json!({"items": {"Acme": 3}}),
+            json!({"items": {"x".repeat(65): 1}}),
+        ] {
+            assert!(svc.validate(&bad).is_err(), "accepted {bad}");
+        }
+        let fw = spec("firewall.user_dir_inbound_allow").unwrap();
+        fw.validate(&json!({"items": {"{8C1D4B7E-0000-4000-8000-000000000000}": 1, "uTorrent (TCP-In)": 0}}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"*": 1}}),
+            json!({"items": {"Any*": 1}}),
+            json!({"items": {"a?b": 1}}),
+            json!({"items": {"[x]": 1}}),
+            json!({"items": {"a\"b": 1}}),
+            json!({"items": {"a\nb": 1}}),
+            json!({"items": {"x".repeat(201): 1}}),
+        ] {
+            assert!(fw.validate(&bad).is_err(), "accepted {bad}");
+        }
+        let hosts = spec("net.hosts_file").unwrap();
+        hosts.validate(&json!({"items": {"hosts": 1}})).unwrap();
+        assert!(hosts.validate(&json!({"items": {"hosts2": 1}})).is_err());
+        assert!(hosts.validate(&json!({"items": {"hosts": 3}})).is_err());
+        let startup = spec("persistence.run_and_tasks").unwrap();
+        startup
+            .validate(&json!({"items": {
+                "run-machine:Updater": 1, "run-machine32:Old": 0, "run-user:My App": 1,
+                "folder-user:Helper.lnk": 2, "folder-machine:x.bat": 1, "task:\\Vendor\\Sync": 1,
+                "task:\\Top": 0,
+            }}))
+            .unwrap();
+        for bad in [
+            json!({"items": {"run-user:": 1}}),
+            json!({"items": {"run:Updater": 1}}),
+            json!({"items": {"task:Vendor\\Sync": 1}}),
+            json!({"items": {"task:\\Vendor\\": 1}}),
+            json!({"items": {"run-user:a*": 1}}),
+            json!({"items": {"run-user:a\"b": 1}}),
+            json!({"items": {" run-user:a": 1}}),
+            json!({"items": {"run-user:a": 4}}),
+        ] {
+            assert!(startup.validate(&bad).is_err(), "accepted {bad}");
+        }
+        // A fix only ever moves a flagged item (1) to handled (0).
+        for id in [
+            "services.unquoted_paths",
+            "firewall.user_dir_inbound_allow",
+            "net.hosts_file",
+            "persistence.run_and_tasks",
+        ] {
+            let s = spec(id).unwrap();
+            assert!(s.ask && s.dynamic() && !s.reboot, "{id}");
+            let key = match id {
+                "net.hosts_file" => "hosts",
+                "persistence.run_and_tasks" => "run-user:A",
+                _ => "A",
+            };
+            let before = json!({"items": {key: 1}});
+            assert!(s.any_unsafe(&before));
+            assert_eq!(s.derive_target(&before).unwrap(), json!({"items": {key: 0}}));
+            for safe in [0, 2] {
+                let state = json!({"items": {key: safe}});
+                assert!(!s.any_unsafe(&state), "{id} {safe}");
+                assert_eq!(s.derive_target(&state).unwrap(), state);
+            }
+            // Items that were fixed and changed since stay in the view for the conflict check.
+            let template = json!({"items": {key: 1}});
+            assert_eq!(s.view(&json!({"items": {key: 2, "other": 1}}), &template), json!({"items": {key: 2}}));
+        }
+    }
+
+    #[test]
+    fn hosts_rules_match_the_security_check_probe() {
+        // The fix and the Tools check must flag exactly the same lines: both
+        // scripts carry the same two patterns (\z in the fix is $ in the probe).
+        let probe = include_str!("diagnostics/probes.ps1");
+        let handled = include_str!("platform/hardening.handled.ps1");
+        for var in ["$hHostsBroad", "$hHostsUpdate"] {
+            let line = handled
+                .lines()
+                .find(|l| l.starts_with(&format!("{var} = '")))
+                .unwrap_or_else(|| panic!("{var}"));
+            let pattern = line.split('\'').nth(1).unwrap().replace("\\z", "$");
+            assert!(probe.contains(&pattern), "{var} drifted from the probe");
+        }
+        let risky = handled
+            .lines()
+            .find(|l| l.starts_with("$hUserDirPattern = '"))
+            .unwrap();
+        let pattern = risky.split('\'').nth(1).unwrap();
+        let rules = include_str!("diagnostics/probes.ps1");
+        // The firewall probe writes the same alternatives inside a -match test.
+        assert!(
+            rules.contains(pattern),
+            "the firewall pattern drifted from the probe"
         );
     }
 

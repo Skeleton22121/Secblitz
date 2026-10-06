@@ -16,7 +16,7 @@ use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
-use crate::gui::{Ctx, Message};
+use crate::gui::{Ctx, Message, Page};
 use iced::widget::{column, container, row, space, text};
 use iced::{Alignment, Element, Font, Length};
 
@@ -866,6 +866,14 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool) -> El<'a> {
             ctx.t("Scan now"),
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
+        _ if tip.restart => secondary(p, ctx.t("Restart now"), Some(Msg::Ask(Sheet::Restart))),
+        _ if tip.fix => widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Review fix"),
+            None,
+            Some(Message::Navigate(Page::Fixes)),
+        ),
         Some(open) if ctx.broker.is_some() => widgets::action(
             p,
             ButtonKind::Secondary,
@@ -1199,6 +1207,15 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
                 ctx.t("Install now"),
             )
         }
+        Sheet::Restart => (
+            Icon::Restart,
+            ctx.t("Restart your PC now?"),
+            vec![
+                ctx.t("Your PC restarts to finish installing updates."),
+                ctx.t("Save your work first. Programs with unsaved work will ask you before they close."),
+            ],
+            ctx.t("Restart now"),
+        ),
         Sheet::Bitwarden => (
             Icon::Lock,
             ctx.t("Install Bitwarden?"),

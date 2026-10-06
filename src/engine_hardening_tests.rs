@@ -28,6 +28,22 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "proc:powershell.exe": 1,
         }});
     }
+    if spec.source == Source::UnquotedServices {
+        return json!({"items": {"Acme Updater": 1, "VendorSvc": 1, "OldFixed": 0}});
+    }
+    if spec.source == Source::UserDirFirewall {
+        return json!({"items": {"{11111111-2222-3333-4444-555555555555}": 1, "torrent-in": 1}});
+    }
+    if spec.source == Source::HostsFile {
+        return json!({"items": {"hosts": 1}});
+    }
+    if spec.source == Source::StartupItems {
+        return json!({"items": {
+            "run-user:Updater": 1,
+            "folder-user:Helper.lnk": 1,
+            "task:\\Vendor\\Sync": 1,
+        }});
+    }
     let mut items = serde_json::Map::new();
     for (i, k) in spec.keys.iter().enumerate() {
         let Rule::Set {
@@ -389,4 +405,63 @@ fn diagnostic_data_is_never_lowered_to_zero_and_zero_is_left_alone() {
     let (_dir, state, mut e) = fixture(id, json!({"items": {"AllowTelemetry": 0}}));
     assert_eq!(e.audit().unwrap().results[0].status, "compliant");
     assert!(state.borrow().writes.is_empty());
+}
+
+#[test]
+fn handled_item_controls_switch_off_only_flagged_items_and_never_touch_changed_ones() {
+    for (id, before, a) in [
+        (
+            "services.unquoted_paths",
+            json!({"items": {"Acme Updater": 1, "VendorSvc": 1, "OldHandled": 0}}),
+            "Acme Updater",
+        ),
+        (
+            "firewall.user_dir_inbound_allow",
+            json!({"items": {"torrent-in": 1, "game-in": 1, "OldHandled": 0}}),
+            "torrent-in",
+        ),
+        (
+            "persistence.run_and_tasks",
+            json!({"items": {"run-user:Updater": 1, "task:\\Vendor\\Sync": 1, "run-user:Old": 0}}),
+            "run-user:Updater",
+        ),
+        ("net.hosts_file", json!({"items": {"hosts": 1}}), "hosts"),
+    ] {
+        let (_dir, state, mut e) = fixture(id, before.clone());
+        e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+        let after = state.borrow().values[id].clone();
+        for (k, v) in after["items"].as_object().unwrap() {
+            assert_eq!(v, 0, "{id} {k} is switched off");
+        }
+        assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id}");
+        // Somebody changed one of the fixed items again: undo leaves it alone.
+        let mut changed = after.clone();
+        changed["items"][a] = json!(2);
+        state.borrow_mut().values.insert(id.into(), changed);
+        let writes = state.borrow().writes.len();
+        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "conflict", "{id}");
+        assert_eq!(state.borrow().writes.len(), writes, "{id} nothing was written");
+        // Back as we left it: undo restores the original flags exactly.
+        state.borrow_mut().values.insert(id.into(), after);
+        assert_eq!(e.revert(|_, _| {}).unwrap().results[0].status, "restored", "{id}");
+        assert_eq!(state.borrow().values[id], before, "{id}");
+    }
+}
+
+#[test]
+fn handled_item_controls_do_not_offer_a_fix_for_items_already_changed_or_handled() {
+    for (id, key) in [
+        ("services.unquoted_paths", "Acme Updater"),
+        ("firewall.user_dir_inbound_allow", "torrent-in"),
+        ("persistence.run_and_tasks", "run-user:Updater"),
+        ("net.hosts_file", "hosts"),
+    ] {
+        for value in [0, 2] {
+            let (_dir, state, mut e) = fixture(id, json!({"items": {key: value}}));
+            assert_eq!(e.audit().unwrap().results[0].status, "compliant", "{id} {value}");
+            let report = e.apply_selected(&[id.into()], |_, _| {}).unwrap();
+            assert_ne!(report.results[0].status, "applied", "{id} {value}");
+            assert!(state.borrow().writes.is_empty(), "{id} {value}");
+        }
+    }
 }
