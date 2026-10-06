@@ -322,7 +322,8 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         if score::finding_has_fix(report, f) {
             continue;
         }
-        let a = advice::for_finding(&f.title, &f.status, &f.detail);
+        // Same words as Home (a core protection waiting for a restart says so).
+        let a = score::finding_advice(report, f);
         if a.group == Group::Protected {
             continue;
         }
@@ -333,7 +334,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             Class::Unknown => (Bucket::Unavailable, Tone::Neutral),
             Class::Protected | Class::Fixable | Class::Review => (Bucket::Look, Tone::Warn),
         };
-        rows.others.push(other(
+        let mut row = other(
             ctx,
             rows.others.len(),
             (f.title.as_str(), true),
@@ -348,7 +349,15 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 secblitz::vbs::blocked_names(&f.detail),
             ),
             None,
-        ));
+        );
+        if a.step == NextStep::Restart {
+            // A restart is the one thing to do: no steps or page compete with it.
+            row.guide = None;
+            row.page = None;
+            row.line = ctx.t(a.next);
+            row.status = ctx.t(a.status);
+        }
+        rows.others.push(row);
     }
     rows
 }
@@ -395,13 +404,9 @@ fn other(
         explain: explain.0.to_owned(),
         report_only: explain.1,
         name,
-        line: if managed {
-            ctx.t("This PC's owner controls this setting, so we leave it as it is.")
-        } else if guide.is_some() && !a.impact.is_empty() {
-            // The steps below say what to do; this line says why it matters.
-            format!("{} {}", ctx.t("Leaves you open to:"), ctx.t(a.impact))
-        } else {
-            ctx.t(a.next)
+        line: match other_line(bucket, guide.is_some(), a) {
+            (Some(prefix), text) => format!("{} {}", ctx.t(prefix), ctx.t(text)),
+            (None, text) => ctx.t(text),
         },
         status: if managed {
             ctx.t("For your information")
@@ -417,6 +422,24 @@ fn other(
         tech,
         guide,
         page,
+    }
+}
+
+/// The words under an "other" row's name: (prefix, text), as catalog keys.
+/// A to-do with steps says why it matters (the steps say what to do). Any
+/// other row, a Not offered one with steps included, says its own next words,
+/// so the reason is never hidden.
+fn other_line(
+    bucket: Bucket,
+    has_guide: bool,
+    a: &advice::Advice,
+) -> (Option<&'static str>, &'static str) {
+    if bucket == Bucket::Managed {
+        (None, "This PC's owner controls this setting, so we leave it as it is.")
+    } else if has_guide && bucket == Bucket::Look && !a.impact.is_empty() {
+        (Some("Leaves you open to:"), a.impact)
+    } else {
+        (None, a.next)
     }
 }
 
@@ -1334,6 +1357,34 @@ mod tests {
         assert_eq!(item_names(&outcome("smb.shares_exposed", vec![])), None);
         let r = outcome("services.unquoted_paths", vec![label("service", "Updater")]);
         assert_eq!(item_names(&r), None);
+    }
+
+    #[test]
+    fn a_not_offered_row_with_steps_keeps_its_reason() {
+        use secblitz::vbs::{DRIVER, MEMORY_INTEGRITY, NEEDS_MEMORY_INTEGRITY, STACK_PROTECTION};
+        for (id, detail) in [
+            (MEMORY_INTEGRITY, DRIVER.to_owned()),
+            (MEMORY_INTEGRITY, format!("{DRIVER}: x.sys")),
+            (STACK_PROTECTION, NEEDS_MEMORY_INTEGRITY.to_owned()),
+        ] {
+            let r = secblitz::engine::Outcome {
+                id: id.into(),
+                status: "skipped".into(),
+                detail: detail.clone(),
+                ..secblitz::engine::Outcome::default()
+            };
+            let a = advice::for_outcome(&r);
+            assert_eq!(a.status, "Not offered", "{detail}");
+            assert!(!a.impact.is_empty(), "{detail}");
+            assert!(guide::guide_not_offered(id, &detail).is_some(), "{detail}");
+            assert_eq!(other_line(Bucket::GoodToKnow, true, &a), (None, a.next), "{detail}");
+        }
+        // A to-do with steps still says why it matters.
+        let a = advice::for_finding("SMB1", "attention", "");
+        assert_eq!(
+            other_line(Bucket::Look, true, &a),
+            (Some("Leaves you open to:"), a.impact)
+        );
     }
 
     #[test]

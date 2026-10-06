@@ -634,7 +634,7 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     }
 
     if !items.is_empty() {
-        page = page.push(attention_group(ctx, &items));
+        page = page.push(attention_group(ctx, report, &items));
     }
     // An optional suggestion: never part of the score or the headline.
     if state.web_suggest {
@@ -665,7 +665,7 @@ fn web_card<'a>(ctx: &'a Ctx) -> Element<'a, Message> {
     )
 }
 
-fn attention_group<'a>(ctx: &'a Ctx, items: &[ToCheck]) -> Element<'a, Message> {
+fn attention_group<'a>(ctx: &'a Ctx, report: &Report, items: &[ToCheck]) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut rows: Vec<Element<'a, Message>> = items
         .iter()
@@ -689,7 +689,7 @@ fn attention_group<'a>(ctx: &'a Ctx, items: &[ToCheck]) -> Element<'a, Message> 
                     )
                 }
                 ToCheck::Finding(f) => {
-                    let a = advice::for_finding(&f.title, &f.status, &f.detail);
+                    let a = score::finding_advice(report, f);
                     (f.title.as_str(), true, ctx.t(a.label), ctx.t(a.next))
                 }
             };

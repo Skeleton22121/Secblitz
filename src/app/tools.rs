@@ -1194,7 +1194,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::SecureBoot => "Turn on Secure Boot (startup protection) in your PC's start-up settings.",
         P::Tpm => "Your security chip is off or not ready. Check your PC's start-up settings.",
         P::BitLocker => "Turn on disk encryption so your files stay private if the PC is lost.",
-        P::Vbs => "Memory integrity is off. Protection shows whether this PC can turn it on safely.",
+        P::Vbs => "Core system protection (Memory integrity) is off. Protection shows whether this PC can turn it on safely.",
         P::WinRe => "Recovery tools are off. They help if Windows ever stops starting.",
         P::Accounts => "Use a normal account every day, and switch off the guest account.",
         P::RemoteAccess => "Switch off remote access if you don't use it.",
@@ -1251,7 +1251,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "accounts.daily_admin" => "You use an administrator account every day. Make a normal account for daily use.",
         "accounts.hello_configured" => "No PIN or Windows Hello is set up. Add one in Sign-in options.",
         "accounts.find_my_device" => "Find my device is off. Turn it on in Settings so you can find a lost laptop.",
-        "vbs.memory_integrity" => "Memory integrity is off. Protection shows whether this PC can turn it on safely.",
+        "vbs.memory_integrity" => "Core system protection (Memory integrity) is off. Protection shows whether this PC can turn it on safely.",
         "vbs.kernel_stack_protection" => "An extra shield for the core of Windows is off. Protection shows whether this PC can turn it on safely.",
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
@@ -1278,6 +1278,7 @@ pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
         "ps.v2_engine" => Some(Action::OpenOptionalFeatures),
         "accounts.stale_enabled" => Some(Action::OpenAccounts),
         "accounts.hello_configured" => Some(Action::OpenSignInSettings),
+        "firewall.user_dir_inbound_allow" => Some(Action::OpenFirewall),
         _ => None,
     }
 }
@@ -1298,8 +1299,8 @@ pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
 /// offers that fix. Only ever shown then: `rule_advice` stays the manual text.
 pub fn rule_fix_advice(rule_id: &str) -> &'static str {
     match rule_id {
-        "remote.rdp" => "Remote access is on. If you don't use it, Secblitz can turn it off for you on the Protection page.",
-        "smb.v1" => "An old way of sharing files is still on. Secblitz can turn it off for you on the Protection page, unless an old device needs it.",
+        "remote.rdp" => "Remote access is on. If you don't use it, Secblitz can turn it off for you.",
+        "smb.v1" => "An old way of sharing files is still on. Secblitz can turn it off for you, unless an old device needs it.",
         "services.unquoted_paths" => "A background program has a risky setup. We can fix this for you.",
         "firewall.user_dir_inbound_allow" => "Apps in your Downloads or Desktop folders are allowed through the firewall. We can fix this for you.",
         "net.hosts_file" => "A hidden file is sending trusted websites somewhere else. We can fix this for you.",
@@ -1323,7 +1324,15 @@ pub enum TipFix<'r> {
         control: &'static str,
         reason: &'r str,
     },
-    /// No check yet, managed elsewhere, unchecked, already set or not a fix:
+    /// The control is set but waits for a restart to start working: this
+    /// line says so, and nothing else competes with it.
+    Restart(&'static str),
+    /// No Protection check has looked at this control yet: "Check now", so
+    /// the tip can then say whether a fix is offered.
+    Unchecked,
+    /// This PC has no such fix at all: the manual steps only.
+    NoFix,
+    /// Managed elsewhere, could not be checked, already set or not a fix:
     /// the manual steps (guide and page button) or the manual advice.
     Manual,
 }
@@ -1334,8 +1343,20 @@ pub fn tip_fix<'r>(
     report: Option<&'r secblitz::engine::Report>,
     available: &[String],
 ) -> TipFix<'r> {
-    let (Some(control), Some(report)) = (tip.fix, report) else {
+    let Some(control) = tip.fix else {
         return TipFix::Manual;
+    };
+    let Some(report) = report else {
+        return TipFix::Unchecked;
+    };
+    let Some(row) = report.results.iter().find(|r| r.id == control) else {
+        // A check older than this fix looks again; a fix this PC doesn't
+        // have stays manual.
+        return if available.iter().any(|id| id == control) {
+            TipFix::Unchecked
+        } else {
+            TipFix::NoFix
+        };
     };
     if crate::app::flow::candidates(report, available)
         .iter()
@@ -1343,16 +1364,94 @@ pub fn tip_fix<'r>(
     {
         return TipFix::Offered(control);
     }
-    match report
-        .results
-        .iter()
-        .find(|r| r.id == control && crate::advice::for_outcome(r).status == "Not offered")
-    {
-        Some(r) => TipFix::NotOffered {
+    let a = crate::advice::for_outcome(row);
+    if a.status == "Not offered" {
+        TipFix::NotOffered {
             control,
-            reason: &r.detail,
-        },
-        None => TipFix::Manual,
+            reason: &row.detail,
+        }
+    } else if a.step == crate::advice::NextStep::Restart {
+        TipFix::Restart(a.next)
+    } else if secblitz::vbs::is_vbs(control) && row.status == "compliant" {
+        // Set, while this check says it is not running: only a restart helps.
+        TipFix::Restart(core_restart_advice(control))
+    } else {
+        TipFix::Manual
+    }
+}
+
+/// The line for a core protection that is on but not running yet.
+pub fn core_restart_advice(control: &str) -> &'static str {
+    if control == secblitz::vbs::STACK_PROTECTION {
+        "Extra core protection is on but is not running. Restart your PC (choose Restart, not Shut down)."
+    } else {
+        crate::app::score::RESTART_TO_START
+    }
+}
+
+/// The words and the steps a tip shows for this [`TipFix`]: the fix line only
+/// while the fix is offered, the steps for a Not offered reason only when the
+/// person can act on it, nothing extra while a restart is the one thing to do,
+/// and otherwise the manual line and steps.
+pub fn tip_words(tip: &Tip, fix: TipFix<'_>) -> (&'static str, Option<&'static crate::guide::Guide>) {
+    // Steps for another check on the same tip (not the manual way to do this
+    // fix) stay whatever the fix says.
+    let other = tip
+        .guide
+        .filter(|g| tip.fix.and_then(crate::guide::guide) != Some(*g));
+    match fix {
+        TipFix::Offered(_) => (tip.fix_advice, other),
+        TipFix::NotOffered { control, reason } => (
+            tip.advice,
+            crate::guide::guide_not_offered(control, reason).or(other),
+        ),
+        TipFix::Restart(line) => (line, None),
+        TipFix::Unchecked | TipFix::NoFix | TipFix::Manual => (tip.advice, tip.guide),
+    }
+}
+
+/// The one compact button a tip that needs a look shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipAction {
+    /// Open the same review sheet as Protection for this fix.
+    ReviewFix(&'static str),
+    /// Go to the Protection row that says why (Not offered, managed, ...).
+    SeeWhy,
+    /// Run a Protection check so the tip can say whether a fix is offered.
+    CheckNow,
+    /// "Restart now", after its own confirmation.
+    RestartNow,
+    /// Remove found threats, after their own confirmation.
+    RemoveThreats,
+    /// The usual quick scan, after its own confirmation.
+    Scan,
+    /// The steps below carry their own button.
+    Steps,
+    /// The Windows page that helps, named after the page.
+    Open(secblitz::actions::Action),
+    /// The words say it all (a restart to finish turning something on).
+    None,
+}
+
+/// Pick a tip's button. `can_open` is false when Windows pages can't be
+/// opened from here (no helper), so the page button is left out.
+pub fn tip_action(tip: &Tip, fix: TipFix<'_>, can_open: bool) -> TipAction {
+    let (_, guide) = tip_words(tip, fix);
+    match (fix, tip.open) {
+        _ if tip.state != TipState::Look => TipAction::None,
+        (TipFix::Offered(id), _) => TipAction::ReviewFix(id),
+        (TipFix::NotOffered { .. }, _) => TipAction::SeeWhy,
+        (TipFix::Restart(_), _) => TipAction::None,
+        _ if tip.restart => TipAction::RestartNow,
+        _ if tip.remove_threats => TipAction::RemoveThreats,
+        _ if tip.scan => TipAction::Scan,
+        _ if guide.is_some() => TipAction::Steps,
+        (_, Some(open)) if can_open => TipAction::Open(open),
+        (TipFix::Unchecked, _) => TipAction::CheckNow,
+        // A fix that is not offered for another reason (managed elsewhere,
+        // couldn't check, ...): its Protection row says why.
+        (TipFix::Manual, _) if tip.fix.is_some() => TipAction::SeeWhy,
+        _ => TipAction::None,
     }
 }
 
@@ -1537,7 +1636,12 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
                 (true, None, _) => None,
             },
             scan: look && scan,
-            guide: lead.filter(|_| !restart).and_then(crate::guide::guide),
+            // The lead's own steps, else the first check that needs a look
+            // and has steps (a fix that is not offered must not hide them).
+            guide: lead.filter(|_| !restart).and_then(|lead| {
+                crate::guide::guide(lead)
+                    .or_else(|| attention.iter().copied().find_map(crate::guide::guide))
+            }),
             fix: lead.and_then(rule_fix),
             fix_advice: lead.map_or("", rule_fix_advice),
             restart,
@@ -2258,14 +2362,31 @@ mod tests {
         let r = protection(mi, "skipped", secblitz::vbs::NOT_SUPPORTED);
         assert!(matches!(tip_fix(&tip, Some(&r), &all), TipFix::NotOffered { .. }));
         assert!(crate::guide::guide_not_offered(mi, secblitz::vbs::NOT_SUPPORTED).is_none());
-        // No check yet, managed, unchecked, already on or applied: manual.
-        assert_eq!(tip_fix(&tip, None, &all), TipFix::Manual);
+        // No check yet: check now. A check from before this fix existed
+        // looks again; a PC without this fix stays manual.
+        assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
+        let other = protection("uac.enabled", "attention", "");
+        assert_eq!(tip_fix(&tip, Some(&other), &all), TipFix::Unchecked);
+        assert_eq!(tip_fix(&tip, Some(&other), &[]), TipFix::NoFix);
+        // Set (or just applied) but waiting for a restart: only the restart.
+        let r = protection(mi, "compliant", "");
+        assert_eq!(
+            tip_fix(&tip, Some(&r), &all),
+            TipFix::Restart(crate::app::score::RESTART_TO_START)
+        );
+        let r = protection(mi, "applied", "Preference applied; restart required");
+        assert!(matches!(tip_fix(&tip, Some(&r), &all), TipFix::Restart(_)));
+        let stack = look_tip("vbs.kernel_stack_protection");
+        let r = protection("vbs.kernel_stack_protection", "compliant", "");
+        assert_eq!(
+            tip_fix(&stack, Some(&r), &["vbs.kernel_stack_protection".to_owned()]),
+            TipFix::Restart(core_restart_advice("vbs.kernel_stack_protection"))
+        );
+        // Managed, unchecked or already running: manual.
         for (status, detail) in [
             ("skipped", "Relevant policy is configured: assessment only"),
             ("unknown", ""),
-            ("compliant", ""),
             ("skipped", secblitz::vbs::ALREADY_ON),
-            ("applied", "Preference applied; restart required"),
         ] {
             let r = protection(mi, status, detail);
             assert_eq!(tip_fix(&tip, Some(&r), &all), TipFix::Manual, "{status} {detail}");
@@ -2381,7 +2502,7 @@ mod tests {
         }
         let managed = protection(id, "skipped", "Domain-managed machine: assessment only");
         assert_eq!(tip_fix(&tip, Some(&managed), &all), TipFix::Manual);
-        assert_eq!(tip_fix(&tip, None, &all), TipFix::Manual);
+        assert_eq!(tip_fix(&tip, None, &all), TipFix::Unchecked);
         // A Not offered row: "See why", with no steps for this reason.
         let reason = "Not offered: the hosts file uses a format we cannot keep exactly";
         assert_eq!(
@@ -2396,10 +2517,11 @@ mod tests {
             detail: String::new(),
         });
         assert_eq!(tip_fix(&tip, Some(&pending), &all), TipFix::Manual);
-        // Another check's fix row never counts for this tip.
+        // Another check's fix row never counts for this tip: no row for
+        // this one yet, so it looks again.
         assert_eq!(
             tip_fix(&tip, Some(&protection("services.unquoted_paths", "attention", "")), &all),
-            TipFix::Manual
+            TipFix::Unchecked
         );
     }
 
@@ -2454,11 +2576,47 @@ mod tests {
             "remote.rdp",
             "smb.v1",
         ] {
-            let fix = rule_fix(rule).is_some();
-            let action = rule_scan(rule) || rule_remove_threats(rule) || rule_restart(rule);
-            let steps = crate::guide::guide(rule).is_some();
-            assert!(fix || action || steps, "{rule}: needs a fix, an action or a guide");
+            let mut tip = look_tip(rule);
+            tip.scan = rule_scan(rule);
+            tip.remove_threats = rule_remove_threats(rule);
+            tip.restart = rule_restart(rule);
+            // Every state the tip can be in, not only "the fix is offered".
+            let mut states = vec![TipFix::Manual];
+            if let Some(control) = tip.fix {
+                states.extend([
+                    TipFix::Unchecked,
+                    TipFix::Offered(control),
+                    TipFix::NotOffered {
+                        control,
+                        reason: "Not offered: some reason",
+                    },
+                ]);
+            }
+            for fix in states {
+                assert_ne!(
+                    tip_action(&tip, fix, true),
+                    TipAction::None,
+                    "{rule} {fix:?}: needs a fix, an action, a page or steps"
+                );
+            }
         }
+        // A restart that finishes turning something on: the line says it all.
+        let tip = look_tip("vbs.memory_integrity");
+        let fix = TipFix::Restart(crate::app::score::RESTART_TO_START);
+        assert_eq!(tip_action(&tip, fix, true), TipAction::None);
+        assert_eq!(tip_words(&tip, fix), (crate::app::score::RESTART_TO_START, None));
+        // No Protection check yet, nothing else to do: check now. A fix that
+        // is not offered for another reason: Protection says why.
+        let tip = look_tip("net.hosts_file");
+        assert_eq!(tip_action(&tip, TipFix::Unchecked, true), TipAction::CheckNow);
+        assert_eq!(tip_action(&tip, TipFix::Manual, true), TipAction::SeeWhy);
+        assert_eq!(tip_action(&tip, TipFix::Offered("net.hosts_file"), true), TipAction::ReviewFix("net.hosts_file"));
+        // Firewall rules in your folders: the firewall page.
+        let tip = look_tip("firewall.user_dir_inbound_allow");
+        assert_eq!(
+            tip_action(&tip, TipFix::Unchecked, true),
+            TipAction::Open(secblitz::actions::Action::OpenFirewall)
+        );
         // Hidden background tasks stay with the person: steps, never a fix.
         let wmi = "persistence.wmi_subscriptions";
         assert!(rule_fix(wmi).is_none());
@@ -2466,6 +2624,25 @@ mod tests {
         assert!(guide.steps[0].contains("Don't remove anything yourself"));
         let tip = tip_for(diag::ProbeId::Persistence, &[wmi]);
         assert_eq!(tip.guide, Some(guide));
+        // Sharing its tip with a fixable check: the fix leads, and the hidden
+        // task steps stay in every state.
+        let tip = tip_for(diag::ProbeId::Persistence, &["services.unquoted_paths", wmi]);
+        assert_eq!(tip.fix, Some("services.unquoted_paths"));
+        assert_eq!(tip.guide, Some(guide));
+        for fix in [
+            TipFix::Manual,
+            TipFix::Unchecked,
+            TipFix::Offered("services.unquoted_paths"),
+            TipFix::NotOffered {
+                control: "services.unquoted_paths",
+                reason: "Not offered: some reason",
+            },
+        ] {
+            assert_eq!(tip_words(&tip, fix).1, Some(guide), "{fix:?}");
+        }
+        // A fix's own manual steps still give way to the fix.
+        let rdp = look_tip("remote.rdp");
+        assert_eq!(tip_words(&rdp, TipFix::Offered("remote_desktop.disabled")).1, None);
     }
 
     #[test]
