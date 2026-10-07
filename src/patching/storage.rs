@@ -369,8 +369,8 @@ pub(super) struct Store {
 impl Store {
     pub fn open() -> Result<Self> {
         ensure!(
-            cfg!(target_arch = "x86_64"),
-            "Patching requires elevated Windows x64"
+            crate::platform::NATIVE_64,
+            "Patching requires elevated 64-bit Windows"
         );
         crate::platform::require_admin("Patching requires elevated Windows x64")?;
         let base = crate::platform::state_dir()?;

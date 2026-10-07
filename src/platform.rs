@@ -4,6 +4,9 @@ use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+/// Both 64-bit builds are supported: x86_64, and native arm64 on Windows on ARM.
+pub const NATIVE_64: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
+
 #[cfg(windows)]
 #[path = "platform/windows.rs"]
 mod windows;
@@ -205,7 +208,9 @@ pub fn backend() -> Result<Box<dyn Backend>> {
     }
     #[cfg(not(windows))]
     {
-        bail!("Secblitz requires Windows 10/11 x64; this platform cannot assess or change Windows")
+        bail!(
+            "Secblitz requires 64-bit Windows 10/11; this platform cannot assess or change Windows"
+        )
     }
 }
 

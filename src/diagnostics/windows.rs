@@ -746,7 +746,7 @@ pub(super) fn collect(context: &Context) -> Vec<Diagnostic> {
             .map(|&id| unavailable(id, UnknownReason::Busy))
             .collect();
     };
-    if !cfg!(target_arch = "x86_64") {
+    if !crate::platform::NATIVE_64 {
         return ProbeId::ALL
             .iter()
             .map(|&id| unavailable(id, UnknownReason::PlatformUnsupported))

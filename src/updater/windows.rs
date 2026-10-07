@@ -397,7 +397,7 @@ fn select_delivery(
     origin: &reqwest::Url,
 ) -> Result<Option<delivery::Authorization>> {
     let previous = read_delivery(root, origin)?;
-    let response = client.get(origin.join("releases/delivery.json")?).send()?;
+    let response = client.get(origin.join(arch::DELIVERY_FEED)?).send()?;
     if response.status() == reqwest::StatusCode::NOT_FOUND && previous.is_none() {
         return Ok(None);
     }
@@ -488,8 +488,8 @@ fn require_local_path(path: &Path) -> Result<()> {
 }
 fn trusted_image(path: &Path, system_image: bool) -> Result<Vec<File>> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Updates require native Windows x64"
+        crate::platform::NATIVE_64,
+        "Updates require native 64-bit Windows"
     );
     require_local_path(path)?;
     let mut prefix = PathBuf::new();
@@ -1275,9 +1275,9 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
         let raw = fetch_manifest(
             &client,
             origin.join(if authorization.is_some() {
-                "releases/candidate.json"
+                arch::CANDIDATE_FEED
             } else {
-                "releases/stable.json"
+                arch::STABLE_FEED
             })?,
         )?;
         let m = match authorization.as_ref() {
@@ -2059,21 +2059,21 @@ mod tests {
         let mut m = Manifest {
             schema: 1,
             version: "9.2.0".into(),
-            filename: "secblitz-9.2.0-windows-x64-setup.exe".into(),
+            filename: setup_filename("9.2.0").into(),
             sha256: hex::encode(Sha256::digest(b"test")),
             size: 4,
             published_at: 1000,
             expires_at: 2000,
-            target: "windows-x86_64".into(),
+            target: arch::TARGET.into(),
         };
         remember_release(&test_root, &m, "9.0.0").unwrap();
         assert!(installer(&b"fail"[..], &m).is_err());
         assert_eq!(read_floor(&test_root).unwrap().unwrap().version, "9.2.0");
         m.version = "9.1.0".into();
-        m.filename = "secblitz-9.1.0-windows-x64-setup.exe".into();
+        m.filename = setup_filename("9.1.0").into();
         assert!(remember_release(&test_root, &m, "9.0.0").is_err());
         m.version = "9.3.0".into();
-        m.filename = "secblitz-9.3.0-windows-x64-setup.exe".into();
+        m.filename = setup_filename("9.3.0").into();
         let floor_path = test_root.join("release-floor.json");
         let payload_pin = open(&floor_path, false, true).unwrap();
         assert!(remember_release(&test_root, &m, "9.0.0").is_err());

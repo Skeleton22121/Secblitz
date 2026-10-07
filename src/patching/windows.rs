@@ -20,6 +20,11 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{GetShellWindow, GetWindowThreadProcessId},
 };
 
+#[cfg(target_arch = "aarch64")]
+const NATIVE_ARCHITECTURE: u16 = PROCESSOR_ARCHITECTURE_ARM64;
+#[cfg(not(target_arch = "aarch64"))]
+const NATIVE_ARCHITECTURE: u16 = PROCESSOR_ARCHITECTURE_AMD64;
+
 #[link(name = "kernel32")]
 extern "system" {
     fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> i32;
@@ -234,10 +239,10 @@ fn user_sid(token: HANDLE) -> Result<String> {
 }
 fn binding(win: &Path) -> Result<Binding> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Elevated Windows x64 required"
+        crate::platform::NATIVE_64,
+        "Elevated 64-bit Windows required"
     );
-    crate::platform::require_admin("Elevated Windows x64 required")?;
+    crate::platform::require_admin("Elevated 64-bit Windows required")?;
     // SAFETY: SYSTEM_INFO is plain data and all-zero bytes are valid.
     let mut system: SYSTEM_INFO = unsafe { zeroed() };
     // SAFETY: `system` is a valid out-structure.
@@ -246,9 +251,8 @@ fn binding(win: &Path) -> Result<Binding> {
     }
     ensure!(
         // SAFETY: the call above filled the architecture union member.
-        unsafe { system.Anonymous.Anonymous.wProcessorArchitecture }
-            == PROCESSOR_ARCHITECTURE_AMD64,
-        "Patching requires native AMD64 Windows, not an emulated process"
+        unsafe { system.Anonymous.Anonymous.wProcessorArchitecture } == NATIVE_ARCHITECTURE,
+        "Patching requires native 64-bit Windows, not an emulated process"
     );
     // SAFETY: GetCurrentProcess has no preconditions.
     let current = token(unsafe { GetCurrentProcess() })?;

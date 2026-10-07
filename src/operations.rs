@@ -144,7 +144,7 @@ pub struct Capabilities {
 
 pub fn capabilities() -> Capabilities {
     Capabilities {
-        windows_execution: cfg!(all(windows, target_arch = "x86_64")),
+        windows_execution: (cfg!(windows) && crate::platform::NATIVE_64),
         operations: [OperationKind::DismCheckHealth, OperationKind::DismScanHealth,
             OperationKind::DismRestoreHealth, OperationKind::SfcVerify,
             OperationKind::SfcRepair, OperationKind::DefenderQuickScan]
@@ -442,7 +442,7 @@ fn native<T>(
 fn native<T>(
     _f: impl FnOnce(&mut core::Engine<core::Unsupported, core::Unsupported>) -> Result<T>,
 ) -> Result<T> {
-    bail!("Maintenance execution and protected records require Windows x64")
+    bail!("Maintenance execution and protected records require 64-bit Windows")
 }
 
 pub fn start(id: Uuid) -> Result<Task> {
@@ -490,6 +490,6 @@ fn spawn(id: Uuid, recovery: bool) -> Result<Task> {
     #[cfg(not(windows))]
     {
         let _ = (id, recovery);
-        bail!("Maintenance execution requires Windows x64")
+        bail!("Maintenance execution requires 64-bit Windows")
     }
 }

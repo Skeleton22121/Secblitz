@@ -271,8 +271,8 @@ fn job(processes: u32) -> Result<Handle> {
 }
 fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value>) -> Result<T> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     super::validate_request(action, id, value)?;
     if let Some(id) = id.filter(|id| crate::hardening::is_hardening_check_id(id)) {
@@ -314,8 +314,8 @@ pub fn permission_gate(id: &str) -> Result<()> {
 pub fn support_action(id: &str) -> Result<()> {
     let script = super::support_script(id)?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let timeout = match id {
@@ -335,8 +335,8 @@ pub fn support_action(id: &str) -> Result<()> {
 pub fn remove_threats() -> Result<super::ThreatRemoval> {
     let script = super::threats_script()?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let reply: Value = run_script(script, Duration::from_secs(10 * 60))
@@ -491,8 +491,8 @@ fn run_script_in<T: DeserializeOwned>(
 struct WindowsBackend;
 pub fn backend() -> Result<Box<dyn Backend>> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     // Fail early if the trusted inbox interpreter is absent. OS/client capability
     // gates run independently before every mutation, not just construction.
