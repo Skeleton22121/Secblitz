@@ -1,5 +1,6 @@
 //! Launcher <-> elevated GUI broker: a closed set of user-context actions.
 
+use crate::app::app_access::{self, Capability, Target};
 use secblitz::user_apps;
 use secblitz::user_settings::{Op, Setting};
 use std::time::Duration;
@@ -44,6 +45,12 @@ pub enum Request {
     AppUpdate(u16),
     BitwardenStatus,
     AppInstallerStatus,
+    AppAccessList(Capability),
+    AppAccessSet {
+        capability: Capability,
+        target: Target,
+        allow: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +135,7 @@ impl Request {
             | Request::AppUpdateQuery(_)
             | Request::BitwardenStatus
             | Request::AppInstallerStatus
+            | Request::AppAccessList(_)
             | Request::UserSetting(_, Op::Query)
             | Request::OpenReportProblem
             | Request::OpenSuggestFeature
@@ -136,6 +144,7 @@ impl Request {
             | Request::InstallBitwarden
             | Request::BlockSuggestedApps
             | Request::ReinstallStoreApp(_)
+            | Request::AppAccessSet { .. }
             | Request::AppUpdate(_) => false,
             Request::OpenWindowsUpdate
             | Request::OpenWindowsSecurity
@@ -209,6 +218,8 @@ impl Request {
             | Request::AppUpdateQuery(_)
             | Request::AppUpdate(_)
             | Request::BitwardenStatus
+            | Request::AppAccessList(_)
+            | Request::AppAccessSet { .. }
             | Request::AppInstallerStatus => return None,
         })
     }
@@ -256,6 +267,15 @@ impl Request {
             Request::BitwardenStatus => (17, 0),
             Request::StartStoreApp(i) => (18, i),
             Request::StoreAppStatus(i) => (19, i),
+            Request::AppAccessList(capability) => (39, u16::from(capability.to_byte())),
+            Request::AppAccessSet {
+                capability,
+                target,
+                allow,
+            } => {
+                let (lo, hi) = app_access::encode_set(capability, target, allow);
+                (40, u16::from(lo) | (u16::from(hi) << 8))
+            }
         };
         let [lo, hi] = arg.to_le_bytes();
         [kind, lo, hi]
@@ -268,7 +288,7 @@ impl Request {
     pub fn decode_with(bytes: [u8; 3], catalog_len: usize) -> Option<Self> {
         let [kind, lo, hi] = bytes;
         let arg = u16::from_le_bytes([lo, hi]);
-        if !matches!(kind, 7 | 13 | 15 | 16 | 18 | 19) && arg != 0 {
+        if !matches!(kind, 7 | 13 | 15 | 16 | 18 | 19 | 39 | 40) && arg != 0 {
             return None;
         }
         let apps = user_apps::APPS.len();
@@ -311,6 +331,15 @@ impl Request {
             17 => Request::BitwardenStatus,
             18 if usize::from(arg) < catalog_len => Request::StartStoreApp(arg),
             19 if usize::from(arg) < catalog_len => Request::StoreAppStatus(arg),
+            39 => Request::AppAccessList(Capability::from_byte(u8::try_from(arg).ok()?)?),
+            40 => {
+                let (capability, target, allow) = app_access::decode_set(lo, hi)?;
+                Request::AppAccessSet {
+                    capability,
+                    target,
+                    allow,
+                }
+            }
             _ => return None,
         })
     }
@@ -642,8 +671,28 @@ mod tests {
             Request::StartStoreApp(41),
             Request::StoreAppStatus(0),
             Request::StoreAppStatus(41),
+            Request::AppAccessList(Capability::Camera),
+            Request::AppAccessList(Capability::Location),
         ]
         .into_iter()
+        .chain(Capability::ALL.iter().flat_map(|capability| {
+            [
+                Target::Master,
+                Target::DesktopApps,
+                Target::App(0),
+                Target::App(199),
+            ]
+            .into_iter()
+            .flat_map(move |target| {
+                [false, true]
+                    .into_iter()
+                    .map(move |allow| Request::AppAccessSet {
+                        capability: *capability,
+                        target,
+                        allow,
+                    })
+            })
+        }))
         .chain(Setting::ALL.iter().flat_map(|s| {
             [Op::Query, Op::Apply, Op::Undo]
                 .into_iter()
@@ -716,11 +765,18 @@ mod tests {
         assert!(!Request::AppUpdate(0).is_read_only());
         assert!(Request::AppUpdatesScan.is_read_only());
         assert!(Request::AppInstallerStatus.is_read_only());
+        assert!(Request::AppAccessList(Capability::Camera).is_read_only());
+        let set = Request::AppAccessSet {
+            capability: Capability::Camera,
+            target: Target::Master,
+            allow: false,
+        };
+        assert!(!set.is_read_only() && !set.opens_window());
     }
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 39, 40, 100, 255] {
+        for kind in [0u8, 41, 42, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17]) {
@@ -766,6 +822,30 @@ mod tests {
         );
         assert_eq!(Request::decode_with([7, 255, 255], 100), None);
         assert_eq!(Request::decode([7, 255, 255]), None);
+        assert_eq!(
+            Request::decode_with([39, 2, 0], 100),
+            Some(Request::AppAccessList(Capability::Location))
+        );
+        for bad in [[39, 3, 0], [39, 0, 1], [39, 255, 255]] {
+            assert_eq!(Request::decode_with(bad, 100), None);
+        }
+        assert_eq!(
+            Request::decode_with([40, 0b101, 1], 100),
+            Some(Request::AppAccessSet {
+                capability: Capability::Microphone,
+                target: Target::DesktopApps,
+                allow: true,
+            })
+        );
+        for bad in [
+            [40, 3, 0],
+            [40, 8, 0],
+            [40, 0, 202],
+            [40, 0, 255],
+            [40, 255, 255],
+        ] {
+            assert_eq!(Request::decode_with(bad, 100), None);
+        }
         for kind in [18u8, 19] {
             assert!(Request::decode_with([kind, 4, 0], 5).is_some());
             assert_eq!(Request::decode_with([kind, 5, 0], 5), None);

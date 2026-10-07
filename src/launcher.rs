@@ -177,6 +177,7 @@ pub fn user_sid() -> Option<String> {
 #[cfg(windows)]
 mod imp {
     use super::{args_are_plain, Guard, Instance};
+    use crate::app::app_access::{self, Capability, Target};
     use crate::broker::{self, Reply, Request};
     use crate::i18n::Lang;
     use anyhow::{ensure, Context, Result};
@@ -693,6 +694,12 @@ mod imp {
                 Some(AppState::Unknown) | None => Reply::Unknown,
             },
             Request::AppUpdate(index) => update_app(usize::from(index)),
+            Request::AppAccessList(capability) => app_access_list(capability),
+            Request::AppAccessSet {
+                capability,
+                target,
+                allow,
+            } => app_access_set(capability, target, allow),
             _ => request.page().map_or(Reply::Failed, open),
         }
     }
@@ -704,6 +711,47 @@ mod imp {
             Ok(result) => Reply::from_result(result),
             Err(_) if op == Op::Query => Reply::Unknown,
             Err(_) => Reply::Failed,
+        }
+    }
+
+    fn app_access_listings() -> &'static std::sync::Mutex<[Option<app_access::Listing>; 3]> {
+        static LISTINGS: std::sync::OnceLock<std::sync::Mutex<[Option<app_access::Listing>; 3]>> =
+            std::sync::OnceLock::new();
+        LISTINGS.get_or_init(Default::default)
+    }
+
+    fn app_access_list(capability: Capability) -> Reply {
+        let listing = app_access::read_listing(
+            &app_access::SystemStore,
+            capability,
+            &app_access::describe_exe,
+        );
+        let Some(path) = app_access::handoff_path(capability) else {
+            return Reply::Failed;
+        };
+        if app_access::write_handoff(&path, &listing).is_err() {
+            return Reply::Failed;
+        }
+        match app_access_listings().lock() {
+            Ok(mut remembered) => {
+                remembered[usize::from(capability.to_byte())] = Some(listing);
+                Reply::Done
+            }
+            Err(_) => Reply::Failed,
+        }
+    }
+
+    fn app_access_set(capability: Capability, target: Target, allow: bool) -> Reply {
+        let Ok(remembered) = app_access_listings().lock() else {
+            return Reply::Failed;
+        };
+        let Some(listing) = &remembered[usize::from(capability.to_byte())] else {
+            return Reply::Unavailable;
+        };
+        match app_access::set_access(&mut app_access::SystemStore, listing, target, allow) {
+            Ok(()) => Reply::Done,
+            Err(app_access::SetError::Unknown) => Reply::Unavailable,
+            Err(app_access::SetError::Failed) => Reply::Failed,
         }
     }
 
