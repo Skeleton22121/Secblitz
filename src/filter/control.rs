@@ -5,7 +5,9 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use super::config::{fresh, normalized_site, Config, Status, MAX_ALLOWED};
+use super::config::{
+    fresh, normalized_site, AllowOnce, Config, Status, ALLOW_ONCE_SECONDS, MAX_ALLOWED,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServiceState {
@@ -147,6 +149,23 @@ pub fn allowed_config(mut config: Config, site: &str) -> anyhow::Result<Config> 
     Ok(config)
 }
 
+/// Lets a site through for ten minutes. Running out of room drops the entry that would end first.
+pub fn allowed_once_config(mut config: Config, site: &str, now: u64) -> anyhow::Result<Config> {
+    let Some(name) = normalized_site(site) else {
+        anyhow::bail!(
+            "That is not a website name. Type it the way it appears in the address bar, for example example.com."
+        );
+    };
+    config
+        .allow_once
+        .retain(|a| a.until > now && a.site != name);
+    config.allow_once.push(AllowOnce {
+        site: name,
+        until: now.saturating_add(ALLOW_ONCE_SECONDS),
+    });
+    Ok(config.sanitized())
+}
+
 pub fn disallowed_config(mut config: Config, site: &str) -> Config {
     let name = normalized_site(site).unwrap_or_else(|| site.trim().to_ascii_lowercase());
     config.allow.retain(|a| *a != name);
@@ -272,6 +291,10 @@ mod glue {
         rewrite(|c| allowed_config(c, name))
     }
 
+    pub fn allow_site_once(name: &str) -> Result<()> {
+        rewrite(|c| allowed_once_config(c, name, unix_now()))
+    }
+
     pub fn remove_allowed(name: &str) -> Result<()> {
         rewrite(|c| Ok(disallowed_config(c, name)))
     }
@@ -298,8 +321,8 @@ mod glue {
 
 #[cfg(windows)]
 pub use glue::{
-    allow_site, apply_switches, install_all, pause_for, pause_until_restart, reconcile,
-    remove_allowed, remove_everything, resume,
+    allow_site, allow_site_once, apply_switches, install_all, pause_for, pause_until_restart,
+    reconcile, remove_allowed, remove_everything, resume,
 };
 
 #[cfg(test)]
@@ -538,6 +561,40 @@ mod tests {
         let c = disallowed_config(c, " A.example ");
         assert_eq!(c.allow, ["b.example"]);
         assert_eq!(disallowed_config(c.clone(), "nothing.example"), c);
+    }
+
+    #[test]
+    fn letting_a_site_through_once_lasts_ten_minutes_and_leaves_the_rest() {
+        let base = Config {
+            allow: vec!["keep.example".into()],
+            ..on()
+        };
+        let c = allowed_once_config(base.clone(), " Shop.Example. ", 1000).unwrap();
+        assert_eq!(c.allow_once.len(), 1);
+        assert_eq!(c.allow_once[0].site, "shop.example");
+        assert_eq!(c.allow_once[0].until, 1000 + ALLOW_ONCE_SECONDS);
+        assert_eq!(c.allow, base.allow);
+        assert!(c.ads);
+        assert!(c.allowed_once("www.shop.example", 1001));
+        let again = allowed_once_config(c, "shop.example", 1300).unwrap();
+        assert_eq!(again.allow_once.len(), 1);
+        assert_eq!(again.allow_once[0].until, 1300 + ALLOW_ONCE_SECONDS);
+        let e = allowed_once_config(on(), "not a site", 1000).unwrap_err();
+        assert!(e.to_string().contains("not a website name"));
+    }
+
+    #[test]
+    fn letting_sites_through_drops_the_expired_and_keeps_twenty_at_most() {
+        let mut c = on();
+        for i in 0..25u64 {
+            c = allowed_once_config(c, &format!("site{i}.example"), 1000 + i).unwrap();
+        }
+        assert_eq!(c.allow_once.len(), crate::filter::config::MAX_ALLOWED_ONCE);
+        assert!(c.allowed_once("site24.example", 1100));
+        assert!(!c.allowed_once("site0.example", 1100));
+        let later = allowed_once_config(c, "late.example", 5000).unwrap();
+        assert_eq!(later.allow_once.len(), 1);
+        assert_eq!(later.allow_once[0].site, "late.example");
     }
 
     #[test]
