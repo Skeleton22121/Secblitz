@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use super::gaps::Gap;
 use super::lists::valid_hostname;
 use super::matcher::{Kind, Switches};
 
@@ -174,6 +175,9 @@ pub struct Status {
     /// Unix seconds of the last dangerous block. Never a name.
     #[serde(default)]
     pub dangerous_at: Option<u64>,
+    /// Ways around Web protection found on this PC, or `None` when the check could not run.
+    #[serde(default)]
+    pub gaps: Option<Vec<Gap>>,
 }
 
 /// Older files have three counters; the missing ones are zero.
@@ -618,12 +622,14 @@ mod tests {
             written_at: 99,
             lookups: Lookups::PrivateFallback,
             dangerous_at: Some(88),
+            gaps: Some(vec![Gap::Vpn, Gap::BrowserSecureDns]),
         };
         save_status(&p, &s).unwrap();
         assert_eq!(load_status(&p), Some(s));
         let text = fs::read_to_string(&p).unwrap();
         assert!(text.contains("\"no-lists\"") && text.contains("\"port-in-use\""));
         assert!(text.contains("\"private-fallback\""));
+        assert!(text.contains("\"Vpn\""));
         assert_eq!(load_status(&d.path().join("missing.json")), None);
         fs::write(&p, vec![b' '; 20_000]).unwrap();
         assert_eq!(load_status(&p), None);
@@ -652,6 +658,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load_status(&p), None);
+    }
+
+    #[test]
+    fn status_files_without_gaps_still_load_and_claim_nothing() {
+        let old = r#"{"listening":true,"state":"ready","lists_updated":1,"day":2,
+            "blocked":[1,2,3,4,5],"domains":[1,2,3,4,5],"last_error":null,"written_at":3}"#;
+        let s: Status = serde_json::from_str(old).unwrap();
+        assert_eq!(s.gaps, None);
     }
 
     #[test]

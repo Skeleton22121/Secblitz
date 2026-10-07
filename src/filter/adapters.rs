@@ -70,6 +70,14 @@ fn is_name_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
 }
 
+/// An adapter that is up, as far as the gap checks need to know it.
+#[derive(Clone, PartialEq, Debug)]
+pub struct AdapterInfo {
+    pub if_type: u32,
+    pub name: String,
+    pub has_dns: bool,
+}
+
 pub fn is_metered(cost: i32, over_data_limit: bool, roaming: bool) -> bool {
     // 2 = fixed, 3 = variable (NL_NETWORK_CONNECTIVITY_COST_HINT).
     matches!(cost, 2 | 3) || over_data_limit || roaming
@@ -169,6 +177,39 @@ mod imp {
             }
         }
         usable_servers(found)
+    }
+
+    pub fn active_adapters() -> Option<Vec<AdapterInfo>> {
+        let buf = adapter_buffer()?;
+        let mut found = Vec::new();
+        // SAFETY: as in `upstream_servers`.
+        unsafe {
+            let mut adapter = buf.as_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
+            while !adapter.is_null() {
+                let a = &*adapter;
+                if a.OperStatus == IfOperStatusUp && a.IfType != IF_TYPE_SOFTWARE_LOOPBACK {
+                    let mut has_dns = false;
+                    let mut dns = a.FirstDnsServerAddress;
+                    while !dns.is_null() {
+                        let d = &*dns;
+                        has_dns |= socket_ip(&d.Address).is_some_and(|ip| !ip.is_loopback());
+                        dns = d.Next;
+                    }
+                    let name = [wide_string(a.Description), wide_string(a.FriendlyName)]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    found.push(AdapterInfo {
+                        if_type: a.IfType,
+                        name,
+                        has_dns,
+                    });
+                }
+                adapter = a.Next;
+            }
+        }
+        Some(found)
     }
 
     /// SAFETY contract: `p` is null or points to a NUL-terminated UTF-16 string.
@@ -306,6 +347,10 @@ mod imp {
     pub fn metered() -> bool {
         false
     }
+
+    pub fn active_adapters() -> Option<Vec<AdapterInfo>> {
+        None
+    }
 }
 
 pub fn upstream_servers() -> Vec<IpAddr> {
@@ -318,6 +363,11 @@ pub fn dns_suffixes() -> Vec<String> {
 
 pub fn metered() -> bool {
     imp::metered()
+}
+
+/// `None` when the adapters cannot be read.
+pub fn active_adapters() -> Option<Vec<AdapterInfo>> {
+    imp::active_adapters()
 }
 
 #[cfg(test)]
