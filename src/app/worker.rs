@@ -2,6 +2,7 @@
 //! never blocks. The GUI submits a `Job` and receives a stream of `Event`s.
 use iced::futures::channel::mpsc as stream;
 use iced::futures::Stream;
+use secblitz::engine::recover::{JournalDamaged, NotDamaged};
 use secblitz::engine::{Engine, Progress, Report};
 use std::sync::{mpsc, Arc};
 
@@ -73,7 +74,11 @@ pub enum Job {
     Undo,
     UndoSome(Vec<String>),
     History,
-    Preflight { undo: bool },
+    Preflight {
+        undo: bool,
+    },
+    /// Move the damaged undo history aside and open a fresh one. Only answered after a failed start.
+    StartFresh,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -87,6 +92,9 @@ pub type Outcome = Result<Arc<Report>, String>;
 #[derive(Debug, Clone)]
 pub enum Event {
     Opened(Result<Catalog, String>),
+    /// The start failed because the saved undo history is damaged. Sent just before the failed `Opened`.
+    Damaged(JournalDamaged),
+    Recovered(Result<Catalog, String>),
     Progress {
         phase: Phase,
         id: String,
@@ -135,10 +143,12 @@ impl std::fmt::Debug for Worker {
 
 impl Worker {
     /// Start the engine thread. `open` runs on that thread, so the session
-    /// need not be `Send`.
-    pub fn spawn<F>(open: F) -> Self
+    /// need not be `Send`. After a failed start, `recover` runs only when the
+    /// window asks for `Job::StartFresh`, and `open` is tried again.
+    pub fn spawn<F, R>(open: F, recover: R) -> Self
     where
-        F: FnOnce() -> anyhow::Result<Box<dyn Session>> + Send + 'static,
+        F: Fn() -> anyhow::Result<Box<dyn Session>> + Send + 'static,
+        R: Fn() -> anyhow::Result<()> + Send + 'static,
     {
         let (jobs, inbox) = mpsc::channel::<Request>();
         let (opened_tx, opened_rx) = stream::unbounded();
@@ -147,23 +157,22 @@ impl Worker {
             .spawn(move || {
                 let mut session = match open() {
                     Ok(session) => {
-                        let _ = opened_tx.unbounded_send(Event::Opened(Ok(Catalog {
-                            available: session.available(),
-                            restart: session.restart_ids(),
-                        })));
+                        let _ = opened_tx.unbounded_send(Event::Opened(Ok(catalog_of(&*session))));
+                        drop(opened_tx);
                         session
                     }
                     Err(error) => {
+                        if let Some(damage) = error.downcast_ref::<JournalDamaged>() {
+                            let _ = opened_tx.unbounded_send(Event::Damaged(*damage));
+                        }
                         let _ = opened_tx.unbounded_send(Event::Opened(Err(format!("{error:#}"))));
                         drop(opened_tx);
-                        let message = format!("{error:#}");
-                        for (job, reply) in inbox {
-                            let _ = reply.unbounded_send(failed(&job, &message));
+                        match wait_for_recovery(&inbox, &open, &recover, &format!("{error:#}")) {
+                            Some(session) => session,
+                            None => return,
                         }
-                        return;
                     }
                 };
-                drop(opened_tx);
                 for (job, reply) in inbox {
                     run(session.as_mut(), job, &reply);
                 }
@@ -190,6 +199,47 @@ impl Worker {
     }
 }
 
+fn catalog_of(session: &dyn Session) -> Catalog {
+    Catalog {
+        available: session.available(),
+        restart: session.restart_ids(),
+    }
+}
+
+/// Answers every job with the start-up failure until a fresh start works. `None` when the window is gone.
+fn wait_for_recovery<F, R>(
+    inbox: &mpsc::Receiver<Request>,
+    open: &F,
+    recover: &R,
+    message: &str,
+) -> Option<Box<dyn Session>>
+where
+    F: Fn() -> anyhow::Result<Box<dyn Session>>,
+    R: Fn() -> anyhow::Result<()>,
+{
+    for (job, reply) in inbox {
+        if job != Job::StartFresh {
+            let _ = reply.unbounded_send(failed(&job, message));
+            continue;
+        }
+        let recovered = match recover() {
+            Err(e) if e.downcast_ref::<NotDamaged>().is_some() => Ok(()),
+            other => other,
+        };
+        match recovered.and_then(|()| open()) {
+            Ok(session) => {
+                let _ = reply.unbounded_send(Event::Recovered(Ok(catalog_of(&*session))));
+                return Some(session);
+            }
+            Err(error) => {
+                eprintln!("Starting a fresh undo history failed: {error:#}");
+                let _ = reply.unbounded_send(Event::Recovered(Err(format!("{error:#}"))));
+            }
+        }
+    }
+    None
+}
+
 fn failed(job: &Job, message: &str) -> Event {
     let e = || -> Outcome { Err(message.to_owned()) };
     match job {
@@ -214,6 +264,7 @@ fn failed(job: &Job, message: &str) -> Event {
             undo: *undo,
             result: Err(message.to_owned()),
         },
+        Job::StartFresh => Event::Recovered(Err(message.to_owned())),
     }
 }
 
@@ -306,6 +357,7 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
             undo,
             result: session.can_start(undo).map_err(|e| format!("{e:#}")),
         },
+        Job::StartFresh => Event::Recovered(Err("Nothing needs to be started fresh.".into())),
     };
     let _ = reply.unbounded_send(event);
 }
@@ -414,13 +466,16 @@ mod tests {
     fn worker(fail_apply: bool, fail_audit: bool) -> (Worker, Log) {
         let log = Log::default();
         let l = log.clone();
-        let w = Worker::spawn(move || {
-            Ok(Box::new(Fake {
-                log: l,
-                fail_apply,
-                fail_audit,
-            }) as Box<dyn Session>)
-        });
+        let w = Worker::spawn(
+            move || {
+                Ok(Box::new(Fake {
+                    log: l.clone(),
+                    fail_apply,
+                    fail_audit,
+                }) as Box<dyn Session>)
+            },
+            || Ok(()),
+        );
         (w, log)
     }
 
@@ -612,7 +667,7 @@ mod tests {
 
     #[test]
     fn open_failure_answers_every_job_with_the_error() {
-        let w = Worker::spawn(|| anyhow::bail!("cannot open"));
+        let w = Worker::spawn(|| anyhow::bail!("cannot open"), || Ok(()));
         match block_on(w.opened().collect::<Vec<_>>()).as_slice() {
             [Event::Opened(Err(e))] => assert!(e.contains("cannot open")),
             other => panic!("unexpected {other:?}"),
@@ -630,5 +685,83 @@ mod tests {
             let text = format!("{:?}", events[0]);
             assert!(text.contains("cannot open"), "{text}");
         }
+    }
+
+    fn damaged_worker(recovers: bool) -> Worker {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let fresh = Arc::new(AtomicBool::new(false));
+        let flag = fresh.clone();
+        Worker::spawn(
+            move || {
+                if flag.load(Ordering::SeqCst) {
+                    Ok(Box::new(Fake {
+                        log: Log::default(),
+                        fail_apply: false,
+                        fail_audit: false,
+                    }) as Box<dyn Session>)
+                } else {
+                    Err(anyhow::Error::new(JournalDamaged {
+                        kind: secblitz::engine::recover::DamageKind::Total,
+                        files: 2,
+                    })
+                    .context("outer"))
+                }
+            },
+            move || {
+                anyhow::ensure!(recovers, "files are in use");
+                fresh.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+    }
+
+    #[test]
+    fn damaged_history_is_reported_before_the_failed_start() {
+        let w = damaged_worker(true);
+        match block_on(w.opened().collect::<Vec<_>>()).as_slice() {
+            [Event::Damaged(d), Event::Opened(Err(_))] => assert_eq!(d.files, 2),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn starting_fresh_reopens_the_session_and_jobs_work_again() {
+        let w = damaged_worker(true);
+        block_on(w.opened().collect::<Vec<_>>());
+        assert!(matches!(
+            collect(&w, Job::Check).as_slice(),
+            [Event::Checked(Err(_))]
+        ));
+        match collect(&w, Job::StartFresh).as_slice() {
+            [Event::Recovered(Ok(c))] => assert_eq!(c.available, vec!["a", "b"]),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            collect(&w, Job::Check).last(),
+            Some(Event::Checked(Ok(_)))
+        ));
+    }
+
+    #[test]
+    fn a_failed_fresh_start_leaves_the_session_closed_and_can_be_retried() {
+        let w = damaged_worker(false);
+        block_on(w.opened().collect::<Vec<_>>());
+        match collect(&w, Job::StartFresh).as_slice() {
+            [Event::Recovered(Err(e))] => assert!(e.contains("files are in use")),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            collect(&w, Job::Check).as_slice(),
+            [Event::Checked(Err(_))]
+        ));
+    }
+
+    #[test]
+    fn starting_fresh_does_nothing_when_the_start_worked() {
+        let (w, _) = worker(false, false);
+        assert!(matches!(
+            collect(&w, Job::StartFresh).as_slice(),
+            [Event::Recovered(Err(_))]
+        ));
     }
 }

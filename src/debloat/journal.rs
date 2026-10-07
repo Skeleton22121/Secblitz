@@ -41,12 +41,27 @@ pub fn still_removed(batches: &[Batch], catalog_len: usize) -> Vec<(u16, u64)> {
 }
 
 pub fn load_from(path: &Path) -> Vec<Batch> {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(bytes) = std::fs::read(path) else {
         return Vec::new();
     };
-    text.lines()
-        .filter_map(|line| serde_json::from_str::<Batch>(line).ok())
-        .collect()
+    let Ok(text) = String::from_utf8(bytes) else {
+        crate::damaged::keep(path, true);
+        return Vec::new();
+    };
+    let mut unreadable = false;
+    let batches = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let batch = serde_json::from_str::<Batch>(line).ok();
+            unreadable |= batch.is_none();
+            batch
+        })
+        .collect();
+    if unreadable {
+        crate::damaged::keep(path, false);
+    }
+    batches
 }
 
 pub fn append_to(path: &Path, batch: &Batch) -> Result<()> {

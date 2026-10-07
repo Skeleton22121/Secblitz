@@ -2351,6 +2351,7 @@ fn skipping_a_batch_keeps_computed_outcomes_and_reports_each_control_once() {
 }
 
 include!("recovery_tests.rs");
+include!("recover_tests.rs");
 include!("hardening_tests.rs");
 include!("revert_all_tests.rs");
 

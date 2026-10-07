@@ -26,7 +26,7 @@ use windows_sys::Win32::{
 mod journal;
 #[path = "vbs_native.rs"]
 mod vbs_native;
-pub use journal::state_dir;
+pub use journal::{create_private_dir, state_dir};
 
 struct Handle(HANDLE);
 impl Drop for Handle {

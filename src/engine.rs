@@ -7,6 +7,7 @@ mod audit;
 mod catalog;
 mod fsio;
 mod journal;
+pub mod recover;
 mod recovery;
 mod revert;
 mod store;
@@ -176,6 +177,15 @@ fn native_mutation_interlocks(held: &File) -> Result<()> {
 
 impl Engine {
     pub fn open(dir: PathBuf, backend: Box<dyn Backend>) -> Result<Self> {
+        let mut engine = Self::unopened(dir, backend)?;
+        let _lock = engine.lock()?;
+        engine.identify()?;
+        engine.load()?;
+        Ok(engine)
+    }
+
+    /// Validates the directory and backend without taking the lock or reading any journal.
+    fn unopened(dir: PathBuf, backend: Box<dyn Backend>) -> Result<Self> {
         #[cfg(all(windows, not(test)))]
         ensure!(
             dir == crate::platform::state_dir()?,
@@ -200,7 +210,7 @@ impl Engine {
                 "Backend target differs from compiled target"
             );
         }
-        let mut engine = Self {
+        Ok(Self {
             dir,
             backend,
             controls,
@@ -208,16 +218,17 @@ impl Engine {
             storage_failed: false,
             #[cfg(test)]
             mutation_check: None,
-        };
-        let _lock = engine.lock()?;
-        let machine = engine.backend.machine_id()?;
+        })
+    }
+
+    fn identify(&mut self) -> Result<()> {
+        let machine = self.backend.machine_id()?;
         ensure!(
             !machine.is_empty() && machine.len() <= 256 && !machine.chars().any(char::is_control),
             "Invalid machine identity"
         );
-        engine.machine = machine;
-        engine.load()?;
-        Ok(engine)
+        self.machine = machine;
+        Ok(())
     }
 
     pub(super) fn control(&self, id: &str) -> Result<&Control> {

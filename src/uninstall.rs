@@ -17,6 +17,8 @@ pub struct Plan {
     pub apps_store_only: usize,
     pub suggested: bool,
     pub web_on: bool,
+    /// The saved undo history cannot be read, so earlier fixes cannot be put back.
+    pub history_damaged: bool,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +35,7 @@ pub enum Left {
     Personal { id: &'static str },
     SuggestedOlderVersion,
     SuggestedChangedSince,
+    HistoryDamaged,
 }
 
 #[derive(Serialize, Default, Debug)]
@@ -60,6 +63,7 @@ const SUGGESTED_OLDER: &str =
     "Suggested apps were blocked by an older version of Secblitz, so they were left as they are. You can allow them again yourself in Windows Settings, under Personalization, then Start.";
 const SUGGESTED_CHANGED: &str =
     "Suggested apps were left as they are, because they changed since Secblitz set them or could not be checked. You can change them yourself in Windows Settings.";
+pub const HISTORY_DAMAGED: &str = "Secblitz's undo history is damaged, so its earlier fixes can't be undone. They stay as they are.";
 const WINDOWS_SETTINGS: &str = "Windows settings";
 
 pub(crate) fn personal_title(id: &str) -> &'static str {
@@ -95,6 +99,7 @@ pub fn left_line(left: &Left, lang: Lang) -> String {
             .replace("{title}", &lang.t(personal_title(id))),
         Left::SuggestedOlderVersion => lang.t(SUGGESTED_OLDER),
         Left::SuggestedChangedSince => lang.t(SUGGESTED_CHANGED),
+        Left::HistoryDamaged => lang.t(HISTORY_DAMAGED),
     }
 }
 
@@ -166,9 +171,20 @@ fn open_engine() -> Result<secblitz::engine::Engine> {
 }
 
 #[cfg(windows)]
+fn is_damaged(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<secblitz::engine::recover::JournalDamaged>()
+        .is_some()
+}
+
+#[cfg(windows)]
 pub fn plan() -> Result<Plan> {
     use secblitz::debloat::{self, journal, offline, suggested};
-    let settings = open_engine()?.undoable_changes()?;
+    let (settings, history_damaged) = match open_engine() {
+        Ok(mut engine) => (engine.undoable_changes()?, false),
+        Err(e) if is_damaged(&e) => (0, true),
+        Err(e) => return Err(e),
+    };
     let (mut apps_with_copy, mut apps_store_only) = (0, 0);
     for (index, _) in journal::still_removed(&journal::load(), debloat::catalog().len()) {
         if offline::has_copy(index) {
@@ -186,6 +202,7 @@ pub fn plan() -> Result<Plan> {
             .unwrap_or(false),
         web_on: secblitz::filter::config::config_path()
             .is_ok_and(|p| secblitz::filter::config::load_config(&p).needs_service()),
+        history_damaged,
     })
 }
 
@@ -197,6 +214,7 @@ pub fn revert_machine(progress: &dyn Fn(Step, bool)) -> Summary {
     let before = summary.left.len();
     match open_engine().and_then(|mut e| e.revert_all(|_| {})) {
         Ok(report) => fold_settings(&report.results, &mut summary),
+        Err(e) if is_damaged(&e) => summary.left.push(Left::HistoryDamaged),
         Err(_) => summary.left.push(Left::Setting {
             title: WINDOWS_SETTINGS.into(),
             reason: LeftReason::NotPossible,
@@ -366,6 +384,7 @@ mod tests {
             },
             Left::SuggestedOlderVersion,
             Left::SuggestedChangedSince,
+            Left::HistoryDamaged,
         ]
     }
 

@@ -1556,6 +1556,9 @@ pub fn view<'a>(
         };
     let mut body = column![].spacing(theme::S8);
 
+    if let Some(info) = &ctx.damage {
+        return page(Vec::new(), body.push(super::recovery::card(ctx, info)));
+    }
     if let Some(error) = &ctx.engine_error {
         return page(
             Vec::new(),

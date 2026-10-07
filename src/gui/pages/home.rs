@@ -147,6 +147,9 @@ pub fn fills_window(ctx: &Ctx) -> bool {
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
+    if let Some(info) = &ctx.damage {
+        return super::recovery::card(ctx, info);
+    }
     if let Some(error) = &ctx.engine_error {
         return error_card(state, ctx, "We couldn't start Secblitz", error, false);
     }

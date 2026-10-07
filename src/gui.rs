@@ -15,7 +15,7 @@ use crate::i18n::Lang;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
-use pages::{app_access, debloat, fixes, fixflow, history, home, settings, tools, web};
+use pages::{app_access, debloat, fixes, fixflow, history, home, recovery, settings, tools, web};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 use std::path::PathBuf;
@@ -139,6 +139,7 @@ pub struct Ctx {
     pub worker: worker::Worker,
     pub catalog: worker::Catalog,
     pub engine_error: Option<String>,
+    pub damage: Option<recovery::DamageInfo>,
     pub report: Option<Arc<Report>>,
     pub check_error: Option<String>,
     pub checked_at: Option<u64>,
@@ -248,6 +249,7 @@ pub enum Message {
     Tools(tools::Msg),
     History(history::Msg),
     Settings(settings::Msg),
+    Recovery(recovery::Msg),
     AppAccess(app_access::Msg),
     PageOpened(crate::guide::Page, bool),
     WindowFocus(bool),
@@ -349,13 +351,22 @@ impl App {
             app::settings::ThemeChoice::Dark => theme::Mode::Dark,
             app::settings::ThemeChoice::Light => theme::Mode::Light,
         };
-        let worker = worker::Worker::spawn(|| {
-            let engine = secblitz::engine::Engine::open(
-                secblitz::platform::state_dir()?,
-                secblitz::permissions::with_permissions(secblitz::platform::backend()?),
-            )?;
-            Ok(Box::new(engine) as Box<dyn worker::Session>)
-        });
+        let worker = worker::Worker::spawn(
+            || {
+                let engine = secblitz::engine::Engine::open(
+                    secblitz::platform::state_dir()?,
+                    secblitz::permissions::with_permissions(secblitz::platform::backend()?),
+                )?;
+                Ok(Box::new(engine) as Box<dyn worker::Session>)
+            },
+            || {
+                secblitz::engine::recover::start_fresh(
+                    &secblitz::platform::state_dir()?,
+                    secblitz::permissions::with_permissions(secblitz::platform::backend()?),
+                )
+                .map(drop)
+            },
+        );
         let broker = options
             .broker
             .as_deref()
@@ -388,6 +399,7 @@ impl App {
             worker: worker.clone(),
             catalog: worker::Catalog::default(),
             engine_error: None,
+            damage: None,
             check_error: None,
             checked_at,
             checking: report.is_none().then(CheckProgress::default),
@@ -669,6 +681,7 @@ impl App {
                 }
                 settings::update(&mut self.settings, m, &mut self.ctx)
             }
+            Message::Recovery(m) => recovery::update(m, &mut self.ctx),
             Message::AppAccess(m) => app_access::update(&mut self.app_access, m, &mut self.ctx),
         }
     }
@@ -708,10 +721,32 @@ impl App {
 
     fn process_worker(&mut self, event: worker::Event) -> Task<Message> {
         use worker::Event as E;
+        let mut extra = Task::none();
         match &event {
             E::Opened(Ok(catalog)) => self.ctx.catalog = catalog.clone(),
             E::Opened(Err(e)) => {
                 self.ctx.engine_error = Some(self.ctx.t(crate::launcher::friendly_problem(e)));
+            }
+            E::Damaged(damage) => self.ctx.damage = Some(recovery::DamageInfo::new(*damage)),
+            E::Recovered(Ok(catalog)) => {
+                self.ctx.catalog = catalog.clone();
+                self.ctx.damage = None;
+                self.ctx.engine_error = None;
+                self.ctx.busy = false;
+                self.ctx.report = None;
+                self.ctx.checked_at = None;
+                self.ctx.check_error = None;
+                self.record_recovery();
+                let done = self.ctx.t(recovery::DONE);
+                extra = Task::batch([
+                    self.update(Message::Toast(done, Tone::Good)),
+                    self.preload_all(),
+                ]);
+            }
+            E::Recovered(Err(_)) => {
+                recovery::failed(&mut self.ctx);
+                let text = self.ctx.t(recovery::FAILED);
+                extra = self.update(Message::Toast(text, Tone::Warn));
             }
             E::Progress { phase, id, status } => {
                 if matches!(phase, worker::Phase::Checking | worker::Phase::Verifying) {
@@ -777,7 +812,22 @@ impl App {
             fixflow::on_worker(&mut self.fix, &event, &mut self.ctx),
             history::on_worker(&mut self.history, &event, &mut self.ctx),
             warm,
+            extra,
         ])
+    }
+
+    fn record_recovery(&mut self) {
+        let Some(dir) = self.ctx.state_dir.clone() else {
+            return;
+        };
+        let entry = self.entry(
+            app::history::now(),
+            app::history::Kind::Recovery,
+            &Score::default(),
+            0,
+        );
+        let _ = app::history::record(&dir, &entry);
+        forget_check(Some(dir));
     }
 
     fn assessed(&mut self, outcome: &worker::Outcome, kind: app::history::Kind, n: usize) {

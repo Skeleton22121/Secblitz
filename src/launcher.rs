@@ -22,6 +22,8 @@ pub fn message_box(title: &str, text: &str) {
     eprintln!("{title}: {text}");
 }
 
+const DAMAGED_HISTORY: &str = "Secblitz's undo history is damaged. Open Home and choose Start fresh. Secblitz keeps a copy of the damaged files.";
+
 pub fn friendly_problem(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
@@ -31,6 +33,8 @@ pub fn friendly_problem(raw: &str) -> &'static str {
         "windows 10/11",
     ]) {
         "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
+    } else if has(&["undo history is damaged"]) {
+        DAMAGED_HISTORY
     } else if has(&["declined", "cancel"]) {
         "Secblitz needs your permission to open. Open it again and choose Yes when Windows asks."
     } else if has(&[
@@ -63,7 +67,7 @@ pub fn friendly_problem(raw: &str) -> &'static str {
 
 pub fn friendly_check_problem(raw: &str) -> &'static str {
     let found = friendly_problem(raw);
-    if found.starts_with("Secblitz works on Windows 10") {
+    if found.starts_with("Secblitz works on Windows 10") || found == DAMAGED_HISTORY {
         found
     } else {
         "Something unexpected got in the way. Press Check again. If it keeps happening, restart your PC."
@@ -1155,6 +1159,12 @@ mod tests {
     fn known_start_problems_get_a_fix_and_unknown_ones_get_the_general_text() {
         assert!(friendly_problem("The administrator prompt was declined").contains("choose Yes"));
         assert!(friendly_problem("Secblitz requires Windows").contains("Windows 10"));
+        let damaged =
+            friendly_problem("Secblitz's undo history is damaged: Invalid journal record");
+        assert!(
+            damaged.contains("Start fresh") && !damaged.contains("Restart"),
+            "{damaged}"
+        );
         assert!(
             friendly_problem("Another Secblitz operation holds the journal lock").contains("busy")
         );
@@ -1185,6 +1195,9 @@ mod tests {
         let text = friendly_check_problem("The administrator prompt was declined");
         assert!(text.contains("Press Check again") && !text.contains("open"));
         assert!(friendly_check_problem("Secblitz requires Windows").contains("Windows 10"));
+        assert!(
+            friendly_check_problem("Secblitz's undo history is damaged").contains("Start fresh")
+        );
     }
 
     #[test]
