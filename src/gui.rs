@@ -1330,6 +1330,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     application
         .window(iced::window::Settings {
             size: iced::Size::new(1100.0, 720.0),
+            position: iced::window::Position::Centered,
             min_size: Some(iced::Size::new(
                 theme::WINDOW_MIN_WIDTH,
                 theme::WINDOW_MIN_HEIGHT,
