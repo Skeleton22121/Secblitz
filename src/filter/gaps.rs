@@ -112,20 +112,35 @@ pub struct Facts {
     pub vpn: Option<bool>,
 }
 
-/// `None` when any check could not run: the app then claims neither that
-/// everything is covered nor that something is missing.
+/// Every gap that was found, even when another check could not run. `None`
+/// when nothing was found and some check could not run: the app then claims
+/// neither that everything is covered nor that something is missing.
 pub fn compute(facts: &Facts) -> Option<Vec<Gap>> {
     let mut gaps = Vec::new();
-    if facts.browser_bypasses? {
+    if facts.browser_bypasses == Some(true) {
         gaps.push(Gap::BrowserSecureDns);
     }
-    if facts.other_rule? {
+    if facts.other_rule == Some(true) {
         gaps.push(Gap::OtherDnsRule);
     }
-    if facts.vpn? {
+    if facts.vpn == Some(true) {
         gaps.push(Gap::Vpn);
     }
-    Some(gaps)
+    let unknown = [facts.browser_bypasses, facts.other_rule, facts.vpn]
+        .iter()
+        .any(Option::is_none);
+    (!gaps.is_empty() || !unknown).then_some(gaps)
+}
+
+/// Where a browser installs for one user only, under that user's profile
+/// folder. Those installs leave nothing in App Paths for a signed-out user.
+pub fn per_user_install_path(browser: Browser) -> &'static str {
+    match browser {
+        Browser::Chrome => r"AppData\Local\Google\Chrome\Application\chrome.exe",
+        Browser::Edge => r"AppData\Local\Microsoft\Edge\Application\msedge.exe",
+        Browser::Brave => r"AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe",
+        Browser::Firefox => r"AppData\Local\Mozilla Firefox\firefox.exe",
+    }
 }
 
 pub fn vpn_active(adapters: &[AdapterInfo]) -> bool {
@@ -143,6 +158,7 @@ mod imp {
     };
 
     const ERROR_FILE_NOT_FOUND: u32 = 2;
+    const ERROR_MORE_DATA: u32 = 234;
     const ERROR_NO_MORE_ITEMS: u32 = 259;
     const OUR_RULE: &str = "{0EE85A24-B573-4712-97FF-CC4BC51D8757}";
     const APP_PATHS: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
@@ -209,26 +225,46 @@ mod imp {
         None
     }
 
-    fn raw_value(key: &Key, name: &str, flags: u32) -> Option<Vec<u16>> {
+    enum Value {
+        Found(Vec<u16>),
+        Missing,
+        Failed,
+    }
+
+    fn value(key: &Key, name: &str, flags: u32) -> Value {
         let mut buf = vec![0u16; 2048];
-        let mut bytes = (buf.len() * 2) as u32;
-        // SAFETY: `buf` and `bytes` describe the same buffer.
-        let status = unsafe {
-            RegGetValueW(
-                key.0,
-                std::ptr::null(),
-                wide(name).as_ptr(),
-                flags,
-                std::ptr::null_mut(),
-                buf.as_mut_ptr().cast(),
-                &mut bytes,
-            )
-        };
-        if status != 0 {
-            return None;
+        for _ in 0..4 {
+            let mut bytes = (buf.len() * 2) as u32;
+            // SAFETY: `buf` and `bytes` describe the same buffer.
+            let status = unsafe {
+                RegGetValueW(
+                    key.0,
+                    std::ptr::null(),
+                    wide(name).as_ptr(),
+                    flags,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr().cast(),
+                    &mut bytes,
+                )
+            };
+            match status {
+                0 => {
+                    buf.truncate(bytes as usize / 2);
+                    return Value::Found(buf);
+                }
+                ERROR_FILE_NOT_FOUND => return Value::Missing,
+                ERROR_MORE_DATA => buf.resize(bytes as usize / 2 + 1, 0),
+                _ => return Value::Failed,
+            }
         }
-        buf.truncate(bytes as usize / 2);
-        Some(buf)
+        Value::Failed
+    }
+
+    fn raw_value(key: &Key, name: &str, flags: u32) -> Option<Vec<u16>> {
+        match value(key, name, flags) {
+            Value::Found(buf) => Some(buf),
+            _ => None,
+        }
     }
 
     fn read_text(key: &Key, name: &str) -> Option<String> {
@@ -242,8 +278,14 @@ mod imp {
         (buf.len() >= 2).then(|| u32::from(buf[0]) | (u32::from(buf[1]) << 16))
     }
 
+    /// A missing value is an empty list; a value that exists but cannot be
+    /// read is `None`.
     fn read_list(key: &Key, name: &str) -> Option<Vec<String>> {
-        let buf = raw_value(key, name, RRF_RT_REG_MULTI_SZ)?;
+        let buf = match value(key, name, RRF_RT_REG_MULTI_SZ) {
+            Value::Found(buf) => buf,
+            Value::Missing => return Some(Vec::new()),
+            Value::Failed => return None,
+        };
         Some(
             buf.split(|c| *c == 0)
                 .filter(|p| !p.is_empty())
@@ -270,6 +312,16 @@ mod imp {
                 continue;
             }
             if let Opened::Key(_) = open(HKEY_USERS, &format!(r"{sid}\{path}"), 0) {
+                return Some(true);
+            }
+        }
+        // Profiles that are not signed in have no loaded registry, so look
+        // for the browser's own folder in each of them.
+        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+        let profiles = std::fs::read_dir(format!(r"{drive}\Users")).ok()?;
+        for profile in profiles {
+            let profile = profile.ok()?.path();
+            if profile.join(per_user_install_path(browser)).is_file() {
                 return Some(true);
             }
         }
@@ -311,6 +363,8 @@ mod imp {
         Some(bypass)
     }
 
+    /// Only a rule for every name counts. Narrower rules, such as a company's
+    /// own domain, win for those names only and are normal on work PCs.
     fn other_rule() -> Option<bool> {
         for path in [LOCAL_RULES, GROUP_RULES] {
             let key = match open(HKEY_LOCAL_MACHINE, path, KEY_WOW64_64KEY) {
@@ -329,7 +383,7 @@ mod imp {
                 ) else {
                     return None;
                 };
-                if rule_covers_everything(&read_list(&rule, "Name").unwrap_or_default()) {
+                if rule_covers_everything(&read_list(&rule, "Name")?) {
                     return Some(true);
                 }
             }
@@ -472,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn a_check_that_failed_means_no_answer_at_all() {
+    fn a_check_that_failed_means_no_answer_unless_a_gap_was_found() {
         let ok = Facts {
             browser_bypasses: Some(false),
             other_rule: Some(false),
@@ -497,8 +551,26 @@ mod tests {
         let found_one = Facts {
             vpn: Some(true),
             other_rule: None,
+            ..ok.clone()
+        };
+        assert_eq!(compute(&found_one), Some(vec![Gap::Vpn]));
+        let browser_and_broken_vpn = Facts {
+            browser_bypasses: Some(true),
+            vpn: None,
             ..ok
         };
-        assert_eq!(compute(&found_one), None);
+        assert_eq!(
+            compute(&browser_and_broken_vpn),
+            Some(vec![Gap::BrowserSecureDns])
+        );
+    }
+
+    #[test]
+    fn per_user_installs_live_under_the_profile() {
+        for b in Browser::ALL {
+            let p = per_user_install_path(b);
+            assert!(p.starts_with(r"AppData\Local\"));
+            assert!(p.ends_with(b.app_path_name()));
+        }
     }
 }
