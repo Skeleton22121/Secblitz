@@ -20,7 +20,7 @@ use super::server::{self, upstream_addrs, BindError, Shared};
 use super::store;
 
 const TICK: Duration = Duration::from_millis(200);
-const CONFIG_EVERY: Duration = Duration::from_secs(2);
+pub(super) const CONFIG_EVERY: Duration = Duration::from_secs(2);
 const UPSTREAM_EVERY: Duration = Duration::from_secs(30);
 const UPSTREAM_RETRY_MIN: Duration = Duration::from_secs(5);
 const BIND_RETRY: Duration = Duration::from_secs(30);
@@ -292,9 +292,16 @@ pub fn serve(
     let _ = fs::create_dir_all(&paths.lists);
     let paths = Arc::new(paths);
     let mut network = adapters::upstream_servers();
+    let mut config = config::load_config(&paths.config);
+    // Fast Startup keeps uptime counting, so a service start is the end of "until restart".
+    if let Some(ended) = config.after_service_start() {
+        if config::save_config(&paths.config, &ended).is_ok() {
+            config = ended;
+        }
+    }
     let shared = Arc::new(Shared::new(
         Filter::empty(),
-        config::load_config(&paths.config),
+        config,
         upstream_addrs(&network),
     ));
     if let Some(previous) = config::load_status(&paths.status) {
@@ -782,6 +789,34 @@ mod tests {
         handle.join().unwrap();
         let stats = config::load_stats(&stats_path).unwrap();
         assert_eq!(stats.days[0].blocked, [4, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn starting_the_service_ends_a_pause_until_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        let paused = config::Config {
+            ads: true,
+            paused_boot: Some(config::boot_time(server::unix_now())),
+            ..config::Config::default()
+        };
+        config::save_config(&p.config, &paused).unwrap();
+        let (config_path, status_path) = (p.config.clone(), p.status.clone());
+        let port = free_port();
+        let addrs = vec![SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port)];
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || serve(p, &addrs, false, &stop).unwrap())
+        };
+        wait_for("a listening status", || {
+            load_status(&status_path).filter(|s| s.listening)
+        });
+        let saved = config::load_config(&config_path);
+        assert_eq!(saved.paused_boot, None);
+        assert!(saved.ads);
+        stop.store(true, Ordering::Release);
+        handle.join().unwrap();
     }
 
     #[test]

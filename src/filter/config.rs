@@ -16,9 +16,9 @@ const MAX_STATUS: u64 = 16 * 1024;
 const MAX_RECENT: u64 = 64 * 1024;
 const MAX_STATS: u64 = 64 * 1024;
 const FRESH_SECONDS: u64 = 120;
-/// The boot time is worked out from the uptime, which drifts by seconds when
-/// the clock is corrected.
-const BOOT_SLACK: u64 = 120;
+/// Boot time comes from uptime, which drifts when the clock is corrected. The service ends the pause at start, which
+/// holds with Fast Startup, which keeps the uptime counting across a shutdown.
+const BOOT_SLACK: u64 = 30;
 pub const MAX_ALLOWED: usize = 200;
 
 #[derive(Serialize, Deserialize, Default, Clone, PartialEq, Debug)]
@@ -52,6 +52,20 @@ impl Config {
             || self.adult
             || self.gambling
             || self.safe_search
+    }
+
+    pub fn needs_service(&self) -> bool {
+        self.any_on() || self.private_lookups
+    }
+
+    /// The config as it must be once the service has started: a pause that
+    /// lasts "until restart" is over, because the service only starts again
+    /// when the PC does. `None` when nothing changes.
+    pub fn after_service_start(&self) -> Option<Config> {
+        self.paused_boot.is_some().then(|| Config {
+            paused_boot: None,
+            ..self.clone()
+        })
     }
 
     pub fn paused(&self, now: u64) -> bool {
@@ -399,12 +413,35 @@ mod tests {
         };
         let on = c.active(0);
         assert!(on.adult && on.gambling && on.safe_search && !on.ads);
-        // Private lookups alone have nothing to filter.
         let private = Config {
             private_lookups: true,
             ..Config::default()
         };
         assert!(!private.any_on());
+        assert!(private.needs_service());
+        assert!(!Config::default().needs_service());
+    }
+
+    #[test]
+    fn a_service_start_ends_the_pause_until_restart() {
+        let now = 1_000_000;
+        let c = Config {
+            ads: true,
+            paused_boot: Some(boot_time(now)),
+            ..Config::default()
+        };
+        assert!(c.paused(now));
+        let started = c.after_service_start().unwrap();
+        assert_eq!(started.paused_boot, None);
+        assert!(!started.paused(now));
+        assert!(started.active(now).ads);
+        assert_eq!(started.ads, c.ads);
+        assert_eq!(Config::default().after_service_start(), None);
+        let timed = Config {
+            paused_until: Some(now + 600),
+            ..Config::default()
+        };
+        assert_eq!(timed.after_service_start(), None);
     }
 
     #[test]
