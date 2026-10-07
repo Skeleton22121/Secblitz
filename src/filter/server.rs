@@ -11,9 +11,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rand::rngs::SysRng;
 use rand::TryRng;
 
-use super::config::Config;
+use super::config::{Config, Lookups};
 use super::dns::{self, Query};
-use super::matcher::{Filter, Kind};
+use super::matcher::{Filter, HashSet64, Kind};
 
 const MAX_PACKET: usize = 4096;
 const WORKERS: usize = 16;
@@ -42,20 +42,17 @@ fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 
 #[derive(Default)]
 pub struct Stats {
-    pub blocked: [AtomicU64; 3],
+    pub blocked: [AtomicU64; 5],
     pub day: AtomicU64,
+    /// Unix seconds; 0 for none.
+    pub dangerous_at: AtomicU64,
 }
 
 impl Stats {
-    fn index(kind: Kind) -> usize {
-        match kind {
-            Kind::Ads => 0,
-            Kind::Tracking => 1,
-            Kind::Dangerous => 2,
-        }
-    }
-
     pub fn record(&self, kind: Kind, now: u64) {
+        if kind == Kind::Dangerous {
+            self.dangerous_at.store(now, Ordering::Relaxed);
+        }
         let today = now / SECONDS_PER_DAY;
         let seen = self.day.load(Ordering::Relaxed);
         if seen != today
@@ -68,12 +65,12 @@ impl Stats {
                 counter.store(0, Ordering::Relaxed);
             }
         }
-        self.blocked[Self::index(kind)].fetch_add(1, Ordering::Relaxed);
+        self.blocked[kind.index()].fetch_add(1, Ordering::Relaxed);
     }
 
     /// Picks up today's counts from before a restart (the last status file),
     /// so "blocked today" does not drop to zero after a crash or a reboot.
-    pub fn resume(&self, day: u64, counts: [u64; 3], now: u64) {
+    pub fn resume(&self, day: u64, counts: [u64; 5], now: u64) {
         if day != now / SECONDS_PER_DAY {
             return;
         }
@@ -83,25 +80,34 @@ impl Stats {
         }
     }
 
-    pub fn snapshot(&self, now: u64) -> (u64, [u64; 3]) {
+    pub fn resume_dangerous_at(&self, at: Option<u64>) {
+        self.dangerous_at.store(at.unwrap_or(0), Ordering::Relaxed);
+    }
+
+    pub fn dangerous_at(&self) -> Option<u64> {
+        Some(self.dangerous_at.load(Ordering::Relaxed)).filter(|t| *t > 0)
+    }
+
+    pub fn snapshot(&self, now: u64) -> (u64, [u64; 5]) {
         let today = now / SECONDS_PER_DAY;
         if self.day.load(Ordering::Relaxed) != today {
-            return (today, [0; 3]);
+            return (today, [0; 5]);
         }
-        let counts = [
-            self.blocked[0].load(Ordering::Relaxed),
-            self.blocked[1].load(Ordering::Relaxed),
-            self.blocked[2].load(Ordering::Relaxed),
-        ];
-        (today, counts)
+        (
+            today,
+            self.blocked.each_ref().map(|c| c.load(Ordering::Relaxed)),
+        )
     }
 }
 
 pub struct Shared {
     pub filter: RwLock<Arc<Filter>>,
     pub config: RwLock<Config>,
+    pub allow: RwLock<HashSet64>,
     pub upstream: RwLock<Vec<SocketAddr>>,
     pub stats: Stats,
+    /// How lookups leave the PC, for the status file.
+    pub lookups: RwLock<Lookups>,
     /// Set when every upstream server failed, so the loop refreshes them early.
     pub upstream_failed: AtomicBool,
 }
@@ -110,12 +116,23 @@ impl Shared {
     pub fn new(filter: Filter, config: Config, upstream: Vec<SocketAddr>) -> Self {
         Shared {
             filter: RwLock::new(Arc::new(filter)),
+            allow: RwLock::new(allowed(&config)),
             config: RwLock::new(config),
             upstream: RwLock::new(upstream),
             stats: Stats::default(),
+            lookups: RwLock::new(Lookups::default()),
             upstream_failed: AtomicBool::new(false),
         }
     }
+
+    pub fn set_config(&self, config: Config) {
+        *self.allow.write().unwrap_or_else(PoisonError::into_inner) = allowed(&config);
+        *self.config.write().unwrap_or_else(PoisonError::into_inner) = config;
+    }
+}
+
+fn allowed(config: &Config) -> HashSet64 {
+    HashSet64::from_names(config.allow.iter().map(String::as_str))
 }
 
 pub fn upstream_addrs(servers: &[IpAddr]) -> Vec<SocketAddr> {
@@ -140,14 +157,13 @@ pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action
     }
     let on = read(&shared.config).active(now);
     let filter = Arc::clone(&read(&shared.filter));
-    match filter.decide(&q.question.name, on) {
-        Some(kind) => {
-            shared.stats.record(kind, now);
-            let reply = dns::blocked_reply(packet, &q);
-            Some((q, Action::Reply(reply)))
-        }
-        None => Some((q, Action::Forward)),
+    let kind = filter.decide_allowing(&q.question.name, on, &read(&shared.allow));
+    if let Some(kind) = kind {
+        shared.stats.record(kind, now);
+        let reply = dns::blocked_reply(packet, &q);
+        return Some((q, Action::Reply(reply)));
     }
+    Some((q, Action::Forward))
 }
 
 fn unspecified_for(server: &SocketAddr) -> SocketAddr {
@@ -554,7 +570,7 @@ mod tests {
         assert_eq!(&allowed[..2], &[0x22, 0x22]);
         assert_eq!(last_four(&allowed), ANSWER_IP);
 
-        assert_eq!(shared.stats.snapshot(unix_now()).1, [1, 0, 0]);
+        assert_eq!(shared.stats.snapshot(unix_now()).1, [1, 0, 0, 0, 0]);
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
     }
@@ -699,12 +715,12 @@ mod tests {
     fn counts_resume_only_for_the_same_day() {
         let now = 20_000 * SECONDS_PER_DAY + 3_600;
         let stats = Stats::default();
-        stats.resume(20_000, [5, 6, 7], now);
+        stats.resume(20_000, [5, 6, 7, 8, 9], now);
         stats.record(Kind::Ads, now);
-        assert_eq!(stats.snapshot(now), (20_000, [6, 6, 7]));
+        assert_eq!(stats.snapshot(now), (20_000, [6, 6, 7, 8, 9]));
         let fresh = Stats::default();
-        fresh.resume(19_999, [5, 6, 7], now);
-        assert_eq!(fresh.snapshot(now), (20_000, [0, 0, 0]));
+        fresh.resume(19_999, [5, 6, 7, 8, 9], now);
+        assert_eq!(fresh.snapshot(now), (20_000, [0, 0, 0, 0, 0]));
     }
 
     #[test]
@@ -775,11 +791,79 @@ mod tests {
         stats.record(Kind::Ads, day0);
         stats.record(Kind::Ads, day0 + 1);
         stats.record(Kind::Dangerous, day0 + 2);
-        assert_eq!(stats.snapshot(day0 + 3), (10, [2, 0, 1]));
+        assert_eq!(stats.snapshot(day0 + 3), (10, [2, 0, 1, 0, 0]));
         // Tomorrow, before anything is blocked: nothing counted yet.
-        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (11, [0, 0, 0]));
+        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (11, [0; 5]));
         stats.record(Kind::Tracking, day0 + SECONDS_PER_DAY);
-        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (11, [0, 1, 0]));
+        assert_eq!(
+            stats.snapshot(day0 + SECONDS_PER_DAY),
+            (11, [0, 1, 0, 0, 0])
+        );
+    }
+
+    fn family_filter() -> Filter {
+        let cat = |names: &[&str]| Category {
+            block: HashSet64::from_names(names.iter().copied()),
+            allow: HashSet64::default(),
+        };
+        Filter {
+            ads: cat(&["ads.example"]),
+            dangerous: cat(&["evil.example"]),
+            adult: cat(&["adult.example"]),
+            gambling: cat(&["bet.example"]),
+            never: HashSet64::from_names(NEVER_BLOCK.iter().copied()),
+            ..Filter::default()
+        }
+    }
+
+    fn family_on() -> Config {
+        Config {
+            ads: true,
+            dangerous: true,
+            adult: true,
+            gambling: true,
+            ..Config::default()
+        }
+    }
+
+    fn blocked_kind(shared: &Shared, name: &str, now: u64) -> bool {
+        matches!(
+            decide(&query_bytes(name, 1, 7), shared, now),
+            Some((_, Action::Reply(_)))
+        )
+    }
+
+    #[test]
+    fn family_switches_block_their_own_lists() {
+        let shared = Shared::new(family_filter(), family_on(), vec![]);
+        for name in ["adult.example", "www.adult.example", "bet.example"] {
+            assert!(blocked_kind(&shared, name, 1000), "{name}");
+        }
+        assert_eq!(shared.stats.snapshot(1000).1, [0, 0, 0, 2, 1]);
+        shared.set_config(Config {
+            adult: false,
+            ..family_on()
+        });
+        assert!(!blocked_kind(&shared, "adult.example", 1000));
+        assert!(blocked_kind(&shared, "bet.example", 1000));
+    }
+
+    #[test]
+    fn allowed_sites_get_through_every_list() {
+        let shared = Shared::new(family_filter(), family_on(), vec![]);
+        for name in ["evil.example", "adult.example", "ads.example"] {
+            assert!(blocked_kind(&shared, name, 1000), "{name}");
+        }
+        shared.set_config(Config {
+            allow: vec!["evil.example".into(), "adult.example".into()],
+            ..family_on()
+        });
+        assert!(!blocked_kind(&shared, "evil.example", 1000));
+        assert!(!blocked_kind(&shared, "cdn.evil.example", 1000));
+        assert!(!blocked_kind(&shared, "adult.example", 1000));
+        assert!(blocked_kind(&shared, "ads.example", 1000));
+        shared.set_config(family_on());
+        assert!(blocked_kind(&shared, "evil.example", 1000));
     }
 
     #[test]

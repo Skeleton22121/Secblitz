@@ -212,6 +212,7 @@ fn all() -> Switches {
         ads: true,
         tracking: true,
         dangerous: true,
+        ..Switches::default()
     }
 }
 
@@ -276,6 +277,7 @@ fn a_pause_turns_every_switch_off_until_it_ends() {
         tracking: true,
         dangerous: true,
         paused_until: Some(100),
+        ..Config::default()
     };
     assert!(c.paused(99));
     assert_eq!(c.active(99), Switches::default());
@@ -307,7 +309,7 @@ fn a_damaged_config_means_everything_is_off() {
 fn a_config_larger_than_the_limit_is_ignored() {
     let path = temp("huge.json");
     let mut text = String::from("{\"ads\":true,\"tracking\":true,\"dangerous\":true,\"pad\":\"");
-    text.push_str(&"x".repeat(8 * 1024));
+    text.push_str(&"x".repeat(17 * 1024));
     text.push_str("\"}");
     fs::write(&path, text).unwrap();
     assert!(!load_config(&path).any_on());
@@ -321,6 +323,7 @@ fn a_saved_config_loads_back_unchanged() {
         tracking: false,
         dangerous: true,
         paused_until: Some(42),
+        ..Config::default()
     };
     save_config(&path, &c).unwrap();
     assert_eq!(load_config(&path), c);
@@ -343,10 +346,12 @@ fn a_status_file_is_written_in_the_shape_the_app_reads() {
         state: State::NoLists,
         lists_updated: Some(5),
         day: 9,
-        blocked: [1, 2, 3],
-        domains: [4, 5, 6],
+        blocked: [1, 2, 3, 4, 5],
+        domains: [4, 5, 6, 7, 8],
         last_error: Some(ErrorCode::PortInUse),
         written_at: 77,
+        lookups: Default::default(),
+        dangerous_at: Some(70),
     };
     save_status(&path, &s).unwrap();
     let text = fs::read_to_string(&path).unwrap();

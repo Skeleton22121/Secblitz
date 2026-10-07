@@ -101,7 +101,7 @@ pub fn load_all(lists_dir: &Path) -> BTreeMap<&'static str, String> {
 pub fn usable_entries(source: &Source, text: &str) -> usize {
     match source.role {
         Role::Dns | Role::WindowsTracking => lists::parse_blocklist(text).block.len(),
-        Role::Threats => lists::parse_blocklist_hashes(text).0.len(),
+        Role::Threats | Role::Adult | Role::Gambling => lists::parse_blocklist_hashes(text).0.len(),
         Role::TrackingClassifier | Role::AdClassifier => lists::parse_classifier(text).len(),
     }
 }
@@ -121,7 +121,7 @@ pub fn rebuild(lists: &BTreeMap<&str, String>) -> Option<Filter> {
     if dns.is_none() && windows.is_none() && threats.is_none() {
         return None;
     }
-    // The threat feed (millions of names) goes in as hashes only.
+    // The threat feed and the family lists go in as hashes only.
     let mut filter = lists::build(&Inputs {
         dns,
         windows,
@@ -130,13 +130,23 @@ pub fn rebuild(lists: &BTreeMap<&str, String>) -> Option<Filter> {
         ad_classifiers: text_of(lists, Role::AdClassifier),
     });
     if let Some(text) = threats {
-        let (block, allow) = lists::parse_blocklist_hashes(text);
-        filter.dangerous = Category {
-            block: HashSet64::from_hashes(block),
-            allow: HashSet64::from_hashes(allow),
-        };
+        filter.dangerous = hashed(text);
+    }
+    if let Some(text) = text_of(lists, Role::Adult).into_iter().next() {
+        filter.adult = hashed(text);
+    }
+    if let Some(text) = text_of(lists, Role::Gambling).into_iter().next() {
+        filter.gambling = hashed(text);
     }
     Some(filter)
+}
+
+fn hashed(text: &str) -> Category {
+    let (block, allow) = lists::parse_blocklist_hashes(text);
+    Category {
+        block: HashSet64::from_hashes(block),
+        allow: HashSet64::from_hashes(allow),
+    }
 }
 
 /// A freshly built set replaces the one in use unless a switch that had
@@ -209,7 +219,7 @@ mod tests {
         assert!(rebuild(&lists).is_none());
         lists.insert("hagezi-tif", "||evil.example^\n".to_string());
         let filter = rebuild(&lists).unwrap();
-        assert_eq!(lists::counts(&filter), [0, 0, 1]);
+        assert_eq!(lists::counts(&filter), [0, 0, 1, 0, 0]);
     }
 
     #[test]
@@ -257,13 +267,50 @@ mod tests {
         let candidate = rebuild(&updated).unwrap();
         assert_eq!(
             lists::counts(&accept(candidate, &previous).unwrap()),
-            [2, 2, 1]
+            [2, 2, 1, 0, 0]
         );
     }
 
     #[test]
+    fn family_lists_fill_their_own_switches() {
+        let mut lists = BTreeMap::new();
+        lists.insert("adguard-dns", "||ads.example^\n".to_string());
+        lists.insert(
+            "hagezi-nsfw",
+            "||adult.example^\n@@||ok.adult.example^\n".to_string(),
+        );
+        lists.insert("hagezi-gambling", "||bet.example^\n".to_string());
+        let filter = rebuild(&lists).unwrap();
+        assert_eq!(lists::counts(&filter), [1, 1, 0, 1, 1]);
+        assert!(filter.adult.blocks("www.adult.example"));
+        assert!(!filter.adult.blocks("ok.adult.example"));
+        assert!(filter.gambling.blocks("bet.example"));
+        assert!(!filter.gambling.blocks("adult.example"));
+        // The family lists alone are not enough to start protecting.
+        lists.remove("adguard-dns");
+        assert!(rebuild(&lists).is_none());
+    }
+
+    #[test]
+    fn family_list_that_goes_missing_keeps_the_previous_set() {
+        let mut good = BTreeMap::new();
+        good.insert("adguard-dns", "||ads.example^\n".to_string());
+        good.insert("hagezi-nsfw", "||adult.example^\n".to_string());
+        let previous = rebuild(&good).unwrap();
+        good.insert("hagezi-nsfw", "<html>oops</html>".to_string());
+        let candidate = rebuild(&good).unwrap();
+        assert!(accept(candidate, &previous).is_err());
+    }
+
+    #[test]
     fn garbage_downloads_have_no_entries() {
-        for id in ["adguard-dns", "hagezi-tif", "easylist"] {
+        for id in [
+            "adguard-dns",
+            "hagezi-tif",
+            "easylist",
+            "hagezi-nsfw",
+            "hagezi-gambling",
+        ] {
             assert_eq!(
                 usable_entries(source(id), "<html>Not found</html>"),
                 0,

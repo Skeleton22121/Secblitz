@@ -184,7 +184,7 @@ pub fn suggests(snapshot: &Snapshot) -> bool {
     snapshot.installed && !snapshot.config.any_on()
 }
 
-fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 3]> {
+fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 5]> {
     let status = snapshot.status.as_ref()?;
     if !snapshot.config.any_on() || !config::fresh(status, snapshot.now) {
         return None;
@@ -192,7 +192,7 @@ fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 3]> {
     Some(if status.day == snapshot.now / SECONDS_PER_DAY {
         status.blocked
     } else {
-        [0; 3]
+        [0; 5]
     })
 }
 
@@ -496,7 +496,7 @@ fn counted(ctx: &Ctx, one: &str, many: &str, n: u64) -> String {
         .replace("{n}", &group_digits(ctx.lang, n))
 }
 
-fn blocked_text(ctx: &Ctx, [ads, trackers, dangerous]: [u64; 3]) -> String {
+fn blocked_text(ctx: &Ctx, [ads, trackers, dangerous, ..]: [u64; 5]) -> String {
     ctx.t("Blocked today: {ads}, {trackers}, {dangerous}")
         .replace("{ads}", &counted(ctx, "{n} ad", "{n} ads", ads))
         .replace(
@@ -664,7 +664,7 @@ fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
         guard,
         changed: since,
         now: since,
-        blocked: counts,
+        blocked: counts.map(|[ads, trackers, dangerous, ..]| [ads, trackers, dangerous]),
         labels: web_globe::Labels::new(|k| ctx.t(k)),
     }
     .view();
@@ -758,7 +758,7 @@ mod tests {
             state: ListState::Ready,
             written_at: NOW - 5,
             day: NOW / SECONDS_PER_DAY,
-            blocked: [1204, 388, 0],
+            blocked: [1204, 388, 0, 0, 0],
             ..Status::default()
         }
     }
@@ -920,14 +920,14 @@ mod tests {
     #[test]
     fn counts_come_from_today_only() {
         let s = snapshot(config(true), Some(healthy()), true);
-        assert_eq!(blocked_today(&s), Some([1204, 388, 0]));
+        assert_eq!(blocked_today(&s), Some([1204, 388, 0, 0, 0]));
         let yesterday = Status {
             day: NOW / SECONDS_PER_DAY - 1,
             ..healthy()
         };
         assert_eq!(
             blocked_today(&snapshot(config(true), Some(yesterday), true)),
-            Some([0; 3])
+            Some([0; 5])
         );
         assert!(blocked_today(&snapshot(config(false), Some(healthy()), true)).is_none());
     }

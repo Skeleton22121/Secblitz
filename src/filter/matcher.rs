@@ -1,6 +1,8 @@
 //! Suffix matching over sorted 64-bit name hashes: 8 bytes per domain, a lookup
 //! is a handful of binary searches.
 
+use serde::{Deserialize, Serialize};
+
 pub fn hash(name: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in name.bytes() {
@@ -73,11 +75,34 @@ impl Category {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
     Ads,
     Tracking,
     Dangerous,
+    Adult,
+    Gambling,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 5] = [
+        Kind::Ads,
+        Kind::Tracking,
+        Kind::Dangerous,
+        Kind::Adult,
+        Kind::Gambling,
+    ];
+
+    pub fn index(self) -> usize {
+        match self {
+            Kind::Ads => 0,
+            Kind::Tracking => 1,
+            Kind::Dangerous => 2,
+            Kind::Adult => 3,
+            Kind::Gambling => 4,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -85,6 +110,9 @@ pub struct Switches {
     pub ads: bool,
     pub tracking: bool,
     pub dangerous: bool,
+    pub adult: bool,
+    pub gambling: bool,
+    pub safe_search: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -92,6 +120,8 @@ pub struct Filter {
     pub ads: Category,
     pub tracking: Category,
     pub dangerous: Category,
+    pub adult: Category,
+    pub gambling: Category,
     pub never: HashSet64,
 }
 
@@ -100,16 +130,23 @@ impl Filter {
         Self::default()
     }
 
-    /// Which enabled switch blocks `name`, if any. The never-block set wins over
-    /// everything; otherwise Dangerous, then Ads, then Tracking. Ad networks are
-    /// on the tracking lists too, so ads go first or "Blocked today" would show
-    /// no ads while plenty are blocked.
     pub fn decide(&self, name: &str, on: Switches) -> Option<Kind> {
-        if self.never.any_suffix(name) {
+        self.decide_allowing(name, on, &HashSet64::default())
+    }
+
+    /// Allowed sites and the never-block set win; then Dangerous, Adult, Gambling, Ads, Tracking. Ads go before tracking because ad networks are on the tracking lists too.
+    pub fn decide_allowing(&self, name: &str, on: Switches, allowed: &HashSet64) -> Option<Kind> {
+        if allowed.any_suffix(name) || self.never.any_suffix(name) {
             return None;
         }
         if on.dangerous && self.dangerous.blocks(name) {
             return Some(Kind::Dangerous);
+        }
+        if on.adult && self.adult.blocks(name) {
+            return Some(Kind::Adult);
+        }
+        if on.gambling && self.gambling.blocks(name) {
+            return Some(Kind::Gambling);
         }
         if on.ads && self.ads.blocks(name) {
             return Some(Kind::Ads);
@@ -140,6 +177,9 @@ mod tests {
         ads: true,
         tracking: true,
         dangerous: true,
+        adult: true,
+        gambling: true,
+        safe_search: true,
     };
 
     #[test]
@@ -187,7 +227,7 @@ mod tests {
             ads: cat(&["x.com"], &[]),
             tracking: cat(&["x.com"], &[]),
             dangerous: cat(&["x.com"], &[]),
-            never: HashSet64::default(),
+            ..Filter::empty()
         };
         assert_eq!(f.decide("x.com", ALL), Some(Kind::Dangerous));
         let no_danger = Switches {
@@ -200,6 +240,62 @@ mod tests {
             ..Switches::default()
         };
         assert_eq!(f.decide("x.com", tracking_only), Some(Kind::Tracking));
+    }
+
+    #[test]
+    fn family_lists_sit_between_dangerous_and_ads() {
+        let f = Filter {
+            ads: cat(&["x.com"], &[]),
+            tracking: cat(&["x.com"], &[]),
+            dangerous: cat(&["bad.com"], &[]),
+            adult: cat(&["x.com", "bad.com", "adult.com"], &[]),
+            gambling: cat(&["x.com", "bet.com", "adult.com"], &[]),
+            never: HashSet64::default(),
+        };
+        assert_eq!(f.decide("bad.com", ALL), Some(Kind::Dangerous));
+        assert_eq!(f.decide("adult.com", ALL), Some(Kind::Adult));
+        assert_eq!(f.decide("bet.com", ALL), Some(Kind::Gambling));
+        assert_eq!(f.decide("x.com", ALL), Some(Kind::Adult));
+        let no_adult = Switches {
+            adult: false,
+            ..ALL
+        };
+        assert_eq!(f.decide("x.com", no_adult), Some(Kind::Gambling));
+        assert_eq!(f.decide("adult.com", no_adult), Some(Kind::Gambling));
+        let no_family = Switches {
+            adult: false,
+            gambling: false,
+            ..ALL
+        };
+        assert_eq!(f.decide("x.com", no_family), Some(Kind::Ads));
+        assert_eq!(f.decide("bet.com", no_family), None);
+    }
+
+    #[test]
+    fn user_allow_beats_every_list() {
+        let f = Filter {
+            ads: cat(&["x.com"], &[]),
+            dangerous: cat(&["bad.com"], &[]),
+            adult: cat(&["adult.com"], &[]),
+            ..Filter::empty()
+        };
+        let allowed = set(&["bad.com", "adult.com", "x.com"]);
+        for name in ["bad.com", "www.bad.com", "adult.com", "a.b.x.com"] {
+            assert_eq!(f.decide_allowing(name, ALL, &allowed), None, "{name}");
+            assert!(f.decide(name, ALL).is_some(), "{name}");
+        }
+        let one = set(&["ok.x.com"]);
+        assert_eq!(f.decide_allowing("ok.x.com", ALL, &one), None);
+        assert_eq!(f.decide_allowing("x.com", ALL, &one), Some(Kind::Ads));
+        assert_eq!(f.decide_allowing("notok.x.com", ALL, &one), Some(Kind::Ads));
+    }
+
+    #[test]
+    fn kind_positions_match_the_counters() {
+        for (i, k) in Kind::ALL.iter().enumerate() {
+            assert_eq!(k.index(), i);
+        }
+        assert_eq!(serde_json::to_string(&Kind::Adult).unwrap(), "\"adult\"");
     }
 
     #[test]

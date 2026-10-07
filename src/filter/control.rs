@@ -5,7 +5,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use super::config::{fresh, Config, Status};
+use super::config::{fresh, normalized_site, Config, Status, MAX_ALLOWED};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServiceState {
@@ -114,11 +114,42 @@ pub fn parse_servers_value(value: &str) -> Vec<IpAddr> {
 
 pub fn paused_config(mut config: Config, now: u64, duration: Duration) -> Config {
     config.paused_until = Some(now.saturating_add(duration.as_secs()));
+    config.paused_boot = None;
+    config
+}
+
+pub fn paused_until_restart_config(mut config: Config, boot: u64) -> Config {
+    config.paused_until = None;
+    config.paused_boot = Some(boot);
     config
 }
 
 pub fn resumed_config(mut config: Config) -> Config {
     config.paused_until = None;
+    config.paused_boot = None;
+    config
+}
+
+pub fn allowed_config(mut config: Config, site: &str) -> anyhow::Result<Config> {
+    let Some(name) = normalized_site(site) else {
+        anyhow::bail!(
+            "That is not a website name. Type it the way it appears in the address bar, for example example.com."
+        );
+    };
+    if config.allow.contains(&name) {
+        return Ok(config);
+    }
+    anyhow::ensure!(
+        config.allow.len() < MAX_ALLOWED,
+        "The list of allowed sites is full. Remove a site you no longer need and try again."
+    );
+    config.allow.push(name);
+    Ok(config)
+}
+
+pub fn disallowed_config(mut config: Config, site: &str) -> Config {
+    let name = normalized_site(site).unwrap_or_else(|| site.trim().to_ascii_lowercase());
+    config.allow.retain(|a| *a != name);
     config
 }
 
@@ -214,8 +245,23 @@ mod glue {
         rewrite(|c| paused_config(c, unix_now(), duration))
     }
 
+    pub fn pause_until_restart() -> Result<()> {
+        rewrite(|c| paused_until_restart_config(c, config::boot_time(unix_now())))
+    }
+
     pub fn resume() -> Result<()> {
         rewrite(resumed_config)
+    }
+
+    pub fn allow_site(name: &str) -> Result<()> {
+        crate::platform::require_admin(NEEDS_ADMIN)?;
+        let path = config::config_path()?;
+        let updated = allowed_config(config::load_config(&path), name)?;
+        config::save_config(&path, &updated)
+    }
+
+    pub fn remove_allowed(name: &str) -> Result<()> {
+        rewrite(|c| disallowed_config(c, name))
     }
 
     /// Rule first, then the service, then the files. The reconcile task
@@ -239,7 +285,10 @@ mod glue {
 }
 
 #[cfg(windows)]
-pub use glue::{apply_switches, install_all, pause_for, reconcile, remove_everything, resume};
+pub use glue::{
+    allow_site, apply_switches, install_all, pause_for, pause_until_restart, reconcile,
+    remove_allowed, remove_everything, resume,
+};
 
 #[cfg(test)]
 mod tests {
@@ -405,6 +454,65 @@ mod tests {
         );
         assert!(parse_servers_value("127.0.0.1;nope").is_empty());
         assert!(parse_servers_value("").is_empty());
+    }
+
+    #[test]
+    fn pausing_for_a_while_replaces_pausing_until_restart() {
+        let until_restart = paused_until_restart_config(on(), 5_000);
+        assert_eq!(until_restart.paused_boot, Some(5_000));
+        assert_eq!(until_restart.paused_until, None);
+        let timed = paused_config(until_restart.clone(), 100, Duration::from_secs(900));
+        assert_eq!(timed.paused_until, Some(1000));
+        assert_eq!(timed.paused_boot, None);
+        let again = paused_until_restart_config(timed, 5_000);
+        assert_eq!(again, until_restart);
+        assert_eq!(resumed_config(until_restart), on());
+    }
+
+    #[test]
+    fn allowing_a_site_stores_the_plain_name_once() {
+        let c = allowed_config(on(), "  Example.COM. ").unwrap();
+        assert_eq!(c.allow, ["example.com"]);
+        let c = allowed_config(c, "example.com").unwrap();
+        assert_eq!(c.allow, ["example.com"]);
+        let c = allowed_config(c, "shop.example.org").unwrap();
+        assert_eq!(c.allow, ["example.com", "shop.example.org"]);
+        assert!(c.ads);
+    }
+
+    #[test]
+    fn allowing_refuses_what_is_not_a_site_name() {
+        for bad in [
+            "",
+            "com",
+            "a b.com",
+            "http://example.com",
+            "ex*.com",
+            "a..com",
+        ] {
+            let e = allowed_config(on(), bad).unwrap_err().to_string();
+            assert!(e.contains("not a website name"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_allowed_list_has_a_limit() {
+        let mut c = on();
+        for i in 0..MAX_ALLOWED {
+            c = allowed_config(c, &format!("site{i}.example")).unwrap();
+        }
+        let e = allowed_config(c.clone(), "one-more.example").unwrap_err();
+        assert!(e.to_string().contains("full"));
+        assert!(allowed_config(c, "site7.example").is_ok());
+    }
+
+    #[test]
+    fn removing_an_allowed_site() {
+        let c = allowed_config(on(), "a.example").unwrap();
+        let c = allowed_config(c, "b.example").unwrap();
+        let c = disallowed_config(c, " A.example ");
+        assert_eq!(c.allow, ["b.example"]);
+        assert_eq!(disallowed_config(c.clone(), "nothing.example"), c);
     }
 
     #[test]

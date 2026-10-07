@@ -1,5 +1,6 @@
-//! Block-list sources, strict parsing and the three-switch classification.
+//! Block-list sources, strict parsing and the per-switch classification.
 
+use super::config::Config;
 use super::matcher::{hash, Category, Filter, HashSet64};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -7,8 +8,20 @@ pub enum Role {
     Dns,
     WindowsTracking,
     Threats,
+    Adult,
+    Gambling,
     TrackingClassifier,
     AdClassifier,
+}
+
+impl Role {
+    pub fn wanted(self, config: &Config) -> bool {
+        match self {
+            Role::Adult => config.adult,
+            Role::Gambling => config.gambling,
+            _ => true,
+        }
+    }
 }
 
 pub struct Source {
@@ -21,7 +34,7 @@ pub struct Source {
 
 const MIB: u64 = 1024 * 1024;
 
-pub const SOURCES: [Source; 8] = [
+pub const SOURCES: [Source; 10] = [
     Source {
         id: "adguard-dns",
         url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
@@ -42,6 +55,21 @@ pub const SOURCES: [Source; 8] = [
         max_bytes: 128 * MIB,
         refresh_days: 1,
         role: Role::Threats,
+    },
+    // The medium gambling list is a third of the full size and keeps the well known sites.
+    Source {
+        id: "hagezi-nsfw",
+        url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/nsfw.txt",
+        max_bytes: 8 * MIB,
+        refresh_days: 7,
+        role: Role::Adult,
+    },
+    Source {
+        id: "hagezi-gambling",
+        url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/gambling.medium.txt",
+        max_bytes: 16 * MIB,
+        refresh_days: 7,
+        role: Role::Gambling,
     },
     Source {
         id: "adguard-tracking",
@@ -271,14 +299,17 @@ pub fn build(inputs: &Inputs) -> Filter {
             allow: HashSet64::from_names(threats.allow.iter().map(String::as_str)),
         },
         never: HashSet64::from_names(NEVER_BLOCK.iter().copied()),
+        ..Filter::empty()
     }
 }
 
-pub fn counts(filter: &Filter) -> [usize; 3] {
+pub fn counts(filter: &Filter) -> [usize; 5] {
     [
         filter.ads.block.len(),
         filter.tracking.block.len(),
         filter.dangerous.block.len(),
+        filter.adult.block.len(),
+        filter.gambling.block.len(),
     ]
 }
 
@@ -372,7 +403,7 @@ mod tests {
         assert_eq!(f.tracking.block.len(), 2);
         assert!(contains(&f.tracking, "doubleclick.net"));
         assert!(contains(&f.tracking, "hotjar.com"));
-        assert_eq!(counts(&f), [2, 2, 0]);
+        assert_eq!(counts(&f), [2, 2, 0, 0, 0]);
     }
 
     #[test]
@@ -397,7 +428,7 @@ mod tests {
             tracking_classifiers: vec![],
             ad_classifiers: vec![],
         });
-        assert_eq!(counts(&f), [2, 2, 0]);
+        assert_eq!(counts(&f), [2, 2, 0, 0, 0]);
     }
 
     #[test]
@@ -409,7 +440,7 @@ mod tests {
             tracking_classifiers: vec![],
             ad_classifiers: vec![],
         });
-        assert_eq!(counts(&f), [0, 1, 1]);
+        assert_eq!(counts(&f), [0, 1, 1, 0, 0]);
         let on = Switches {
             tracking: true,
             dangerous: true,
@@ -435,10 +466,37 @@ mod tests {
             assert!(s.url.starts_with("https://"), "{}", s.id);
             assert!(s.max_bytes > 0 && s.refresh_days > 0);
             let weekly = matches!(s.role, Role::TrackingClassifier | Role::AdClassifier);
+            let weekly = weekly || matches!(s.role, Role::Adult | Role::Gambling);
             assert_eq!(s.refresh_days, if weekly { 7 } else { 1 }, "{}", s.id);
         }
         let tif = SOURCES.iter().find(|s| s.id == "hagezi-tif").unwrap();
         assert_eq!(tif.max_bytes, 128 * MIB);
+    }
+
+    #[test]
+    fn family_lists_are_only_wanted_when_their_switch_is_on() {
+        let off = Config::default();
+        let adult = Config {
+            adult: true,
+            ..Config::default()
+        };
+        let gambling = Config {
+            gambling: true,
+            ..Config::default()
+        };
+        assert!(Role::Dns.wanted(&off) && Role::Threats.wanted(&off));
+        assert!(!Role::Adult.wanted(&off) && !Role::Gambling.wanted(&off));
+        assert!(Role::Adult.wanted(&adult) && !Role::Gambling.wanted(&adult));
+        assert!(Role::Gambling.wanted(&gambling) && !Role::Adult.wanted(&gambling));
+        let caps: Vec<_> = SOURCES
+            .iter()
+            .filter(|s| matches!(s.role, Role::Adult | Role::Gambling))
+            .map(|s| (s.id, s.max_bytes))
+            .collect();
+        assert_eq!(
+            caps,
+            [("hagezi-nsfw", 8 * MIB), ("hagezi-gambling", 16 * MIB)]
+        );
     }
 
     #[test]
@@ -463,6 +521,7 @@ mod tests {
             ads: true,
             tracking: true,
             dangerous: true,
+            ..Switches::default()
         };
         for name in [
             "spynet2.microsoft.com",

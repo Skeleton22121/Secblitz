@@ -52,7 +52,7 @@ pub fn listen_addresses() -> Vec<SocketAddr> {
 #[derive(Default)]
 struct Meta {
     state: State,
-    domains: [u64; 3],
+    domains: [u64; 5],
     lists_updated: Option<u64>,
     refresh_error: Option<ErrorCode>,
 }
@@ -108,7 +108,15 @@ fn refresh(paths: &Paths, shared: &Shared, meta: &SharedMeta) {
     };
     let mut error = None;
     let mut stored = false;
+    let config = shared
+        .config
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
     for source in &SOURCES {
+        if !source.role.wanted(&config) {
+            continue;
+        }
         let last = fetch::stored_at(&paths.lists, source.id);
         if !fetch::due(source, last, server::unix_now()) {
             continue;
@@ -151,9 +159,10 @@ struct Background {
 }
 
 impl Background {
-    fn start(&self, download: bool, load_first: bool) {
+    /// False when a refresh is already running and nothing was started.
+    fn start(&self, download: bool, load_first: bool) -> bool {
         if self.busy.swap(true, Ordering::AcqRel) {
-            return;
+            return false;
         }
         let (busy, paths, shared, meta) = (
             Arc::clone(&self.busy),
@@ -176,6 +185,7 @@ impl Background {
         if spawned.is_err() {
             self.busy.store(false, Ordering::Release);
         }
+        true
     }
 }
 
@@ -206,12 +216,13 @@ impl Every {
     }
 }
 
-/// What changes the app should hear about at once (counts only every 10 s).
+/// Counts and the last dangerous block time go out only every 10 s.
 fn same_apart_from_counts(a: &Status, b: &Status) -> bool {
     let strip = |s: &Status| Status {
         written_at: 0,
-        blocked: [0; 3],
+        blocked: [0; 5],
         day: 0,
+        dangerous_at: None,
         ..s.clone()
     };
     strip(a) == strip(b)
@@ -264,6 +275,7 @@ pub fn serve(
         shared
             .stats
             .resume(previous.day, previous.blocked, server::unix_now());
+        shared.stats.resume_dangerous_at(previous.dangerous_at);
     }
     let meta: SharedMeta = Arc::new(Mutex::new(Meta::default()));
     let background = Background {
@@ -284,6 +296,7 @@ pub fn serve(
     refresh_timer.reset();
     let mut last_status: Option<Status> = None;
     let mut upstream_checked = Instant::now();
+    let mut lists_wanted = false;
 
     while !stop.load(Ordering::Acquire) {
         if listeners.is_none() && bind_timer.due() {
@@ -297,10 +310,15 @@ pub fn serve(
         }
         if config_timer.due() {
             let fresh = config::load_config(&paths.config);
-            *shared
-                .config
-                .write()
-                .unwrap_or_else(PoisonError::into_inner) = fresh;
+            {
+                let before = shared.config.read().unwrap_or_else(PoisonError::into_inner);
+                lists_wanted |=
+                    (fresh.adult && !before.adult) || (fresh.gambling && !before.gambling);
+            }
+            shared.set_config(fresh);
+        }
+        if lists_wanted && download && background.start(true, false) {
+            lists_wanted = false;
         }
         let failed = shared.upstream_failed.load(Ordering::Acquire)
             && upstream_checked.elapsed() >= UPSTREAM_RETRY_MIN;
@@ -340,6 +358,11 @@ pub fn serve(
                 domains: m.domains,
                 last_error,
                 written_at: now,
+                lookups: *shared
+                    .lookups
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner),
+                dangerous_at: shared.stats.dangerous_at(),
             }
         };
         let changed = last_status
@@ -523,7 +546,7 @@ mod tests {
         rebuild_from_disk(&p, &shared, &meta);
         let m = lock(&meta);
         assert_eq!(m.state, State::Ready);
-        assert_eq!(m.domains, [1, 1, 2]);
+        assert_eq!(m.domains, [1, 1, 2, 0, 0]);
         assert!(m.lists_updated.is_some());
         assert!(shared
             .filter
