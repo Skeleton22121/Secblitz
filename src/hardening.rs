@@ -1,4 +1,4 @@
-//! Compiled catalog of the extended hardening controls (schema "items"). Each control observes a typed slice `{"items": {"<key>": <u32 | null>}}`, where `null` means "not configured".
+//! Compiled catalog of the extended hardening controls.
 //! The same table drives the engine, the platform wire validation and the PowerShell backend, which receives the spec as JSON from [`Spec::script_json`] so Rust and PowerShell cannot disagree about what is safe.
 //! A write only moves a key between an unsafe original and its fixed value ([`fix_of`]); safe keys are never touched and a key that drifted to anything else blocks the write. Absent values equal to Windows' own safe default count as protected. Journal data names only keys of this table (or, for dynamic controls, keys that pass a strict name check and exist at write time).
 mod specs;
@@ -16,6 +16,12 @@ pub enum Rule {
         safe: &'static [u32],
         absent_safe: bool,
         fix: Option<u32>,
+    },
+    /// A text (REG_SZ) value, compared exactly. `Key::max` is the longest accepted text in characters.
+    Text {
+        safe: &'static [&'static str],
+        absent_safe: bool,
+        fix: Option<&'static str>,
     },
     /// Firewall rule exposure: bit 8 = enabled, bit 4 = applies on the Public
     /// profile, bits 1|2 = Domain|Private. Unsafe when enabled on Public.
@@ -151,6 +157,7 @@ pub fn is_safe(rule: Rule, v: Option<u32>) -> bool {
         (Rule::Set { safe, .. }, Some(n)) => safe.contains(&n),
         (Rule::Exposure, Some(n)) => !(n & 8 != 0 && n & 4 != 0),
         (Rule::Exposure, None) => false,
+        (Rule::Text { .. }, _) => false,
     }
 }
 
@@ -162,7 +169,68 @@ pub fn fix_of(rule: Rule, v: Option<u32>) -> Option<u32> {
         (Rule::Set { fix, .. }, _) => fix,
         (Rule::Exposure, Some(n)) => Some(if n & 3 == 0 { n & !8 } else { n & !4 }),
         (Rule::Exposure, None) => None,
+        (Rule::Text { .. }, _) => None,
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Item {
+    Absent,
+    Num(u32),
+    Text(String),
+}
+
+impl Item {
+    fn from_json(v: &Value) -> anyhow::Result<Item> {
+        use anyhow::Context;
+        Ok(match v {
+            Value::Null => Item::Absent,
+            Value::Number(n) => {
+                let n = n.as_u64().and_then(|n| u32::try_from(n).ok());
+                Item::Num(n.context("Invalid hardening DWORD")?)
+            }
+            Value::String(s) => Item::Text(s.clone()),
+            _ => anyhow::bail!("Invalid hardening item value"),
+        })
+    }
+
+    fn to_json(&self) -> Value {
+        match self {
+            Item::Absent => Value::Null,
+            Item::Num(n) => Value::from(*n),
+            Item::Text(s) => Value::from(s.as_str()),
+        }
+    }
+}
+
+/// A value of the wrong kind is never safe.
+pub fn item_is_safe(rule: Rule, v: &Item) -> bool {
+    match (rule, v) {
+        (Rule::Text { absent_safe, .. }, Item::Absent) => absent_safe,
+        (Rule::Text { safe, .. }, Item::Text(s)) => safe.contains(&s.as_str()),
+        (Rule::Text { .. }, Item::Num(_)) => false,
+        (_, Item::Text(_)) => false,
+        (_, Item::Absent) => is_safe(rule, None),
+        (_, Item::Num(n)) => is_safe(rule, Some(*n)),
+    }
+}
+
+pub fn item_fix(rule: Rule, v: &Item) -> Item {
+    if item_is_safe(rule, v) {
+        return v.clone();
+    }
+    match rule {
+        Rule::Text { fix, .. } => fix.map_or(Item::Absent, |t| Item::Text(t.to_string())),
+        _ => match v {
+            Item::Num(n) => fix_of(rule, Some(*n)).map_or(Item::Absent, Item::Num),
+            _ => fix_of(rule, None).map_or(Item::Absent, Item::Num),
+        },
+    }
+}
+
+/// Plain single-line text, so a journaled original can be written back exactly.
+fn text_ok(s: &str, max: u32) -> bool {
+    s.chars().count() <= max as usize && !s.chars().any(char::is_control)
 }
 
 fn key_name_ok(source: Source, name: &str) -> bool {
@@ -354,15 +422,16 @@ impl Spec {
         let mut items = Map::new();
         for k in self.keys {
             let fixed = match k.rule {
-                Rule::Set { fix, .. } => fix,
-                Rule::Exposure => None,
+                Rule::Set { fix, .. } => fix.map_or(Value::Null, Value::from),
+                Rule::Text { fix, .. } => fix.map_or(Value::Null, Value::from),
+                Rule::Exposure => Value::Null,
             };
-            items.insert(k.name.into(), fixed.map_or(Value::Null, Value::from));
+            items.insert(k.name.into(), fixed);
         }
         json!({ "items": items })
     }
 
-    fn parse(&self, value: &Value) -> anyhow::Result<Vec<(String, Option<u32>)>> {
+    fn parse(&self, value: &Value) -> anyhow::Result<Vec<(String, Item)>> {
         use anyhow::{ensure, Context};
         let obj = value
             .as_object()
@@ -381,25 +450,23 @@ impl Spec {
             let key = self
                 .key(name)
                 .with_context(|| format!("Unknown hardening item for {}", self.id))?;
-            let parsed = match v {
-                Value::Null => None,
-                Value::Number(n) => {
-                    let n = n.as_u64().and_then(|n| u32::try_from(n).ok());
-                    Some(n.context("Invalid hardening DWORD")?)
+            let parsed = Item::from_json(v)?;
+            match (&parsed, key.rule) {
+                (Item::Absent, Rule::Exposure) => anyhow::bail!("Exposure state cannot be absent"),
+                (Item::Absent, _) => {}
+                (Item::Text(t), Rule::Text { .. }) => {
+                    ensure!(text_ok(t, key.max), "Hardening text is not a legal setting");
                 }
-                _ => anyhow::bail!("Invalid hardening item value"),
-            };
-            if let Some(n) = parsed {
-                ensure!(n <= key.max, "Hardening value out of range");
-                ensure!(
-                    key.allowed.is_empty() || key.allowed.contains(&n),
-                    "Hardening value is not a legal setting"
-                );
-            } else {
-                ensure!(
-                    !matches!(key.rule, Rule::Exposure),
-                    "Exposure state cannot be absent"
-                );
+                (Item::Text(_), _) | (Item::Num(_), Rule::Text { .. }) => {
+                    anyhow::bail!("Hardening item has the wrong kind of value")
+                }
+                (Item::Num(n), _) => {
+                    ensure!(*n <= key.max, "Hardening value out of range");
+                    ensure!(
+                        key.allowed.is_empty() || key.allowed.contains(n),
+                        "Hardening value is not a legal setting"
+                    );
+                }
             }
             out.push((name.clone(), parsed));
         }
@@ -420,7 +487,7 @@ impl Spec {
         self.parse(value).is_ok_and(|items| {
             items
                 .iter()
-                .any(|(n, v)| self.key(n).is_some_and(|k| !is_safe(k.rule, *v)))
+                .any(|(n, v)| self.key(n).is_some_and(|k| !item_is_safe(k.rule, v)))
         })
     }
 
@@ -428,7 +495,7 @@ impl Spec {
         let mut items = Map::new();
         for (name, v) in self.parse(before)? {
             let key = self.key(&name).expect("parsed key exists");
-            items.insert(name, fix_of(key.rule, v).map_or(Value::Null, Value::from));
+            items.insert(name, item_fix(key.rule, &v).to_json());
         }
         Ok(json!({ "items": items }))
     }
@@ -493,8 +560,13 @@ impl Spec {
                         safe,
                         absent_safe,
                         fix,
-                    } => ("set", safe.to_vec(), absent_safe, fix),
-                    Rule::Exposure => ("exposure", vec![], false, None),
+                    } => ("set", json!(safe), absent_safe, json!(fix)),
+                    Rule::Text {
+                        safe,
+                        absent_safe,
+                        fix,
+                    } => ("text", json!(safe), absent_safe, json!(fix)),
+                    Rule::Exposure => ("exposure", json!([]), false, Value::Null),
                 };
                 json!({
                     "name": k.name, "path": k.path,

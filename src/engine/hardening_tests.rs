@@ -62,22 +62,35 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
     }
     let mut items = serde_json::Map::new();
     for (i, k) in spec.keys.iter().enumerate() {
-        let Rule::Set {
-            safe, absent_safe, ..
-        } = k.rule
-        else {
-            unreachable!()
-        };
-        let value = if i == 0 {
-            (0..=k.max)
-                .find(|n| (k.allowed.is_empty() || k.allowed.contains(n)) && !safe.contains(n))
-                .map(Value::from)
-                .unwrap_or_else(|| {
+        let value = match k.rule {
+            Rule::Set {
+                safe, absent_safe, ..
+            } => {
+                if i == 0 {
+                    (0..=k.max)
+                        .find(|n| {
+                            (k.allowed.is_empty() || k.allowed.contains(n)) && !safe.contains(n)
+                        })
+                        .map(Value::from)
+                        .unwrap_or_else(|| {
+                            assert!(!absent_safe);
+                            Value::Null
+                        })
+                } else {
+                    Value::from(safe[0])
+                }
+            }
+            Rule::Text {
+                safe, absent_safe, ..
+            } => {
+                if i == 0 {
                     assert!(!absent_safe);
                     Value::Null
-                })
-        } else {
-            Value::from(safe[0])
+                } else {
+                    Value::from(safe[0])
+                }
+            }
+            Rule::Exposure => unreachable!(),
         };
         items.insert(k.name.into(), value);
     }
@@ -89,12 +102,16 @@ fn hardening_safe_state(spec: &Spec) -> Value {
     let mut safe = spec.derive_target(&unsafe_state).unwrap();
     if let Some(items) = safe["items"].as_object_mut() {
         for k in spec.keys {
-            if let Rule::Set {
-                absent_safe: true,
-                fix: None,
-                ..
-            } = k.rule
-            {
+            let removes = match k.rule {
+                Rule::Set {
+                    absent_safe, fix, ..
+                } => absent_safe && fix.is_none(),
+                Rule::Text {
+                    absent_safe, fix, ..
+                } => absent_safe && fix.is_none(),
+                Rule::Exposure => false,
+            };
+            if removes {
                 items.insert(k.name.into(), Value::Null);
             }
         }

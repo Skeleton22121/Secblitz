@@ -9,6 +9,60 @@ fn items(spec: &Spec, vals: &[Option<u32>]) -> Value {
     json!({ "items": m })
 }
 
+fn items_of(spec: &Spec, vals: &[Value]) -> Value {
+    let mut m = Map::new();
+    for (k, v) in spec.keys.iter().zip(vals) {
+        m.insert(k.name.into(), v.clone());
+    }
+    json!({ "items": m })
+}
+
+fn safe_value(k: &Key) -> Value {
+    match k.rule {
+        Rule::Set { safe, .. } => json!(safe[0]),
+        Rule::Text { safe, .. } => json!(safe[0]),
+        Rule::Exposure => json!(0),
+    }
+}
+
+fn fixed_value(k: &Key) -> Value {
+    match k.rule {
+        Rule::Set { fix, .. } => json!(fix),
+        Rule::Text { fix, .. } => json!(fix),
+        Rule::Exposure => Value::Null,
+    }
+}
+
+fn unsafe_values(k: &Key) -> Vec<Value> {
+    let (mut out, absent_safe) = match k.rule {
+        Rule::Set {
+            safe, absent_safe, ..
+        } => (
+            candidate_values(k)
+                .into_iter()
+                .filter(|n| !safe.contains(n))
+                .map(|n| json!(n))
+                .collect::<Vec<_>>(),
+            absent_safe,
+        ),
+        Rule::Text {
+            safe, absent_safe, ..
+        } => (
+            ["automatic", "secure", "OFF", ""]
+                .into_iter()
+                .filter(|t| !safe.contains(t))
+                .map(|t| json!(t))
+                .collect::<Vec<_>>(),
+            absent_safe,
+        ),
+        Rule::Exposure => return Vec::new(),
+    };
+    if !absent_safe {
+        out.push(Value::Null);
+    }
+    out
+}
+
 fn candidate_values(k: &Key) -> Vec<u32> {
     if k.allowed.is_empty() {
         // Wide ranges (timestamps, minutes) are sampled at the low end.
@@ -42,6 +96,23 @@ fn catalog_is_well_formed() {
                 assert!(safe.iter().all(|n| *n <= k.max));
                 assert!(k.allowed.is_empty() || safe.iter().all(|n| k.allowed.contains(n)));
             }
+            if let Rule::Text {
+                safe,
+                absent_safe,
+                fix,
+            } = k.rule
+            {
+                match fix {
+                    Some(f) => assert!(safe.contains(&f), "{} fix {f} is not safe", s.id),
+                    None => assert!(absent_safe, "{} removal needs absent_safe", s.id),
+                }
+                assert!(
+                    safe.iter().all(|t| text_ok(t, k.max) && !t.is_empty()),
+                    "{}",
+                    s.id
+                );
+                assert!(k.allowed.is_empty(), "{}", s.id);
+            }
             if s.source == Source::Registry {
                 assert!(k.path.starts_with("HKLM:\\"), "{}", s.id);
                 assert!(!k.path.contains('\''));
@@ -62,36 +133,15 @@ fn catalog_is_well_formed() {
 #[test]
 fn fixed_controls_repair_only_unsafe_keys_and_converge() {
     for s in all().iter().filter(|s| !s.dynamic()) {
+        let safe_vals: Vec<Value> = s.keys.iter().map(safe_value).collect();
         for (i, k) in s.keys.iter().enumerate() {
-            let Rule::Set {
-                safe,
-                absent_safe,
-                fix,
-                ..
-            } = k.rule
-            else {
+            if matches!(k.rule, Rule::Exposure) {
                 continue;
-            };
-            let safe_vals: Vec<Option<u32>> = s
-                .keys
-                .iter()
-                .map(|k| match k.rule {
-                    Rule::Set { safe, .. } => Some(safe[0]),
-                    Rule::Exposure => Some(0),
-                })
-                .collect();
-            let mut unsafe_candidates: Vec<Option<u32>> = candidate_values(k)
-                .into_iter()
-                .filter(|n| !safe.contains(n))
-                .map(Some)
-                .collect();
-            if !absent_safe {
-                unsafe_candidates.push(None);
             }
-            for bad in unsafe_candidates {
+            for bad in unsafe_values(k) {
                 let mut vals = safe_vals.clone();
-                vals[i] = bad;
-                let before = items(s, &vals);
+                vals[i] = bad.clone();
+                let before = items_of(s, &vals);
                 s.validate(&before).unwrap();
                 assert!(s.any_unsafe(&before), "{} {bad:?}", s.id);
                 let target = s.derive_target(&before).unwrap();
@@ -100,27 +150,13 @@ fn fixed_controls_repair_only_unsafe_keys_and_converge() {
                 assert_ne!(before, target);
                 for (j, v) in vals.iter().enumerate() {
                     if j != i {
-                        assert_eq!(
-                            target["items"][s.keys[j].name],
-                            v.map_or(Value::Null, Value::from)
-                        );
+                        assert_eq!(target["items"][s.keys[j].name], *v);
                     }
                 }
-                assert_eq!(
-                    target["items"][k.name],
-                    fix.map_or(Value::Null, Value::from)
-                );
+                assert_eq!(target["items"][k.name], fixed_value(k));
             }
         }
-        let all_safe: Vec<Option<u32>> = s
-            .keys
-            .iter()
-            .map(|k| match k.rule {
-                Rule::Set { safe, .. } => Some(safe[0]),
-                Rule::Exposure => Some(0),
-            })
-            .collect();
-        let st = items(s, &all_safe);
+        let st = items_of(s, &safe_vals);
         assert!(!s.any_unsafe(&st));
         assert_eq!(s.derive_target(&st).unwrap(), st);
     }
@@ -442,13 +478,28 @@ fn export_rule_parity_fixture_for_powershell() {
     for s in all() {
         let mut cases = Vec::new();
         for k in s.keys {
+            if let Rule::Text { safe, .. } = k.rule {
+                let mut values = vec![Item::Absent, Item::Text(String::new())];
+                values.extend(
+                    safe.iter()
+                        .map(|t| Item::Text(t.to_string()))
+                        .chain([Item::Text("automatic".into()), Item::Text("OFF".into())]),
+                );
+                for v in values {
+                    cases.push(json!({
+                        "key": k.name, "value": v.to_json(),
+                        "safe": item_is_safe(k.rule, &v), "fix": item_fix(k.rule, &v).to_json(),
+                    }));
+                }
+                continue;
+            }
             let mut values: Vec<Option<u32>> = vec![None];
             values.extend((0..=k.max.min(16)).map(Some));
             values.push(Some(k.max));
             values.extend(k.allowed.iter().map(|n| Some(*n)));
             values.extend(match k.rule {
                 Rule::Set { safe, .. } => safe.iter().map(|n| Some(*n)).collect::<Vec<_>>(),
-                Rule::Exposure => vec![],
+                Rule::Exposure | Rule::Text { .. } => vec![],
             });
             values.sort_unstable();
             values.dedup();
@@ -1248,4 +1299,182 @@ fn the_home_edition_rule_names_every_machine_policy_privacy_switch() {
             "{id} is not refused on Windows Home"
         );
     }
+}
+
+const TEXT_KEYS: &[Key] = &[
+    Key {
+        name: "Mode",
+        path: r"HKLM:\SOFTWARE\Policies\Example",
+        value: "",
+        rule: Rule::Text {
+            safe: &["off"],
+            absent_safe: false,
+            fix: Some("off"),
+        },
+        max: 64,
+        allowed: &[],
+    },
+    Key {
+        name: "Lookups",
+        path: r"HKLM:\SOFTWARE\Policies\Example",
+        value: "",
+        rule: Rule::Text {
+            safe: &["a", "b"],
+            absent_safe: true,
+            fix: None,
+        },
+        max: 64,
+        allowed: &[],
+    },
+    Key {
+        name: "Count",
+        path: r"HKLM:\SOFTWARE\Policies\Example",
+        value: "",
+        rule: Rule::Set {
+            safe: &[1],
+            absent_safe: false,
+            fix: Some(1),
+        },
+        max: 1,
+        allowed: &[],
+    },
+];
+
+const TEXT_SPEC: Spec = Spec {
+    id: "example.text",
+    title: "Example",
+    description: "Example",
+    source: Source::Registry,
+    reboot: false,
+    ask: true,
+    keys: TEXT_KEYS,
+    gate: Gate {
+        areas: &[],
+        pattern: ".",
+        tamper_exempt: false,
+        secedit: false,
+        own_policy_key: "",
+        shared_values: &[],
+        policy_values: &[],
+    },
+};
+
+fn text_state(mode: Value, lookups: Value, count: Value) -> Value {
+    json!({"items": {"Mode": mode, "Lookups": lookups, "Count": count}})
+}
+
+#[test]
+fn a_text_value_is_safe_only_when_it_matches_exactly() {
+    let rule = TEXT_KEYS[0].rule;
+    assert!(item_is_safe(rule, &Item::Text("off".into())));
+    for bad in ["OFF", "Off", "off ", " off", "", "automatic", "secure"] {
+        assert!(!item_is_safe(rule, &Item::Text(bad.into())), "{bad:?}");
+    }
+    assert!(!item_is_safe(rule, &Item::Absent));
+    assert!(!item_is_safe(rule, &Item::Num(0)));
+    assert!(!item_is_safe(rule, &Item::Num(1)));
+    let optional = TEXT_KEYS[1].rule;
+    assert!(item_is_safe(optional, &Item::Absent));
+    assert!(item_is_safe(optional, &Item::Text("b".into())));
+    assert!(!item_is_safe(optional, &Item::Text("c".into())));
+    assert!(!item_is_safe(TEXT_KEYS[2].rule, &Item::Text("1".into())));
+}
+
+#[test]
+fn a_text_repair_writes_the_fixed_text_or_removes_the_value() {
+    let rule = TEXT_KEYS[0].rule;
+    assert_eq!(
+        item_fix(rule, &Item::Text("automatic".into())),
+        Item::Text("off".into())
+    );
+    assert_eq!(item_fix(rule, &Item::Absent), Item::Text("off".into()));
+    assert_eq!(
+        item_fix(rule, &Item::Text("off".into())),
+        Item::Text("off".into())
+    );
+    let removable = TEXT_KEYS[1].rule;
+    assert_eq!(item_fix(removable, &Item::Text("c".into())), Item::Absent);
+    assert_eq!(
+        item_fix(removable, &Item::Text("a".into())),
+        Item::Text("a".into())
+    );
+    assert_eq!(item_fix(removable, &Item::Absent), Item::Absent);
+}
+
+#[test]
+fn a_state_with_text_values_derives_a_target_and_keeps_the_original_exact() {
+    let s = &TEXT_SPEC;
+    let before = text_state(json!("automatic"), json!("c"), json!(0));
+    s.validate(&before).unwrap();
+    assert!(s.any_unsafe(&before));
+    let target = s.derive_target(&before).unwrap();
+    assert_eq!(target, text_state(json!("off"), Value::Null, json!(1)));
+    s.validate(&target).unwrap();
+    assert!(!s.any_unsafe(&target));
+    assert_eq!(
+        s.derive_target(&target).unwrap(),
+        target,
+        "a repaired state is stable"
+    );
+    for original in [
+        "",
+        "automatic",
+        "https://dns.example/dns-query{?dns}",
+        "Gr\u{fc}\u{df}e \u{4e16}\u{754c}",
+        "OFF",
+    ] {
+        let before = text_state(json!(original), json!("a"), json!(1));
+        s.validate(&before).unwrap();
+        assert_eq!(before["items"]["Mode"], original);
+        let target = s.derive_target(&before).unwrap();
+        assert!(s.any_unsafe(&before));
+        assert_eq!(target["items"]["Mode"], "off");
+        assert_eq!(target["items"]["Lookups"], "a");
+    }
+    assert_eq!(
+        s.catalog_target(),
+        json!({"items": {"Mode": "off", "Lookups": null, "Count": 1}})
+    );
+}
+
+#[test]
+fn text_states_with_the_wrong_kind_of_value_are_rejected() {
+    let s = &TEXT_SPEC;
+    for bad in [
+        text_state(json!(0), json!("a"), json!(1)),
+        text_state(json!(1), json!("a"), json!(1)),
+        text_state(json!(true), json!("a"), json!(1)),
+        text_state(json!(["off"]), json!("a"), json!(1)),
+        text_state(json!({"v": "off"}), json!("a"), json!(1)),
+        text_state(json!("off"), json!(2), json!(1)),
+        text_state(json!("off"), json!("a"), json!("1")),
+        text_state(json!("off"), json!("a"), json!("")),
+        text_state(json!("o\nff"), json!("a"), json!(1)),
+        text_state(json!("o\u{0}ff"), json!("a"), json!(1)),
+        text_state(json!("o\u{7f}ff"), json!("a"), json!(1)),
+        text_state(json!("x".repeat(65)), json!("a"), json!(1)),
+    ] {
+        assert!(s.validate(&bad).is_err(), "accepted {bad}");
+        assert!(!s.any_unsafe(&bad), "an unreadable state is never offered");
+        assert!(s.derive_target(&bad).is_err(), "derived from {bad}");
+    }
+    s.validate(&text_state(json!("x".repeat(64)), json!("a"), json!(1)))
+        .unwrap();
+}
+
+#[test]
+fn the_script_description_of_a_text_key_carries_the_text_rule() {
+    let v: Value = serde_json::from_str(&TEXT_SPEC.script_json()).unwrap();
+    let keys = v["keys"].as_array().unwrap();
+    assert_eq!(keys[0]["rule"], "text");
+    assert_eq!(keys[0]["safe"], json!(["off"]));
+    assert_eq!(keys[0]["fix"], "off");
+    assert_eq!(keys[0]["absentSafe"], false);
+    assert_eq!(keys[0]["max"], 64);
+    assert_eq!(keys[1]["safe"], json!(["a", "b"]));
+    assert_eq!(keys[1]["fix"], Value::Null);
+    assert_eq!(keys[1]["absentSafe"], true);
+    assert_eq!(keys[2]["rule"], "set");
+    assert_eq!(keys[2]["safe"], json!([1]));
+    assert!(!TEXT_SPEC.script_json().contains('\''));
 }
