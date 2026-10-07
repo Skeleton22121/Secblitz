@@ -108,7 +108,7 @@ jobs:
           python3 scripts/release-tests.py
           python3 scripts/bump-version-tests.py
       - name: Keep the release notes
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-notes
           path: release-notes.md
@@ -146,7 +146,7 @@ jobs:
         run: ./scripts/build-release.ps1 -Stage Exe
       - name: Upload the unsigned exe
         id: upload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: exe-unsigned
           path: dist/secblitz-*-windows-x64.exe
@@ -179,7 +179,7 @@ jobs:
           wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: signed-exe
       - name: Upload the signed exe
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: exe-signed
           path: signed-exe/secblitz-*-windows-x64.exe
@@ -234,7 +234,7 @@ jobs:
         run: ./scripts/build-release.ps1 -Stage Setup -DownloadInno
       - name: Upload the unsigned setup
         id: upload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: setup-unsigned
           path: dist/secblitz-*-windows-x64-setup.exe
@@ -264,7 +264,7 @@ jobs:
           wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: signed-setup
       - name: Upload the signed setup
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: setup-signed
           path: signed-setup/secblitz-*-windows-x64-setup.exe
@@ -374,7 +374,7 @@ jobs:
             release/secblitz-*-windows-x64.exe
             release/secblitz-*-windows-x64-setup.exe
       - name: Keep the release files
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-files
           path: release/*
