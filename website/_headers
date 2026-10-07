@@ -5,6 +5,7 @@
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   Strict-Transport-Security: max-age=31536000
+  Cache-Control: no-transform
 
 /
   Cache-Control: no-cache
