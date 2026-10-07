@@ -109,6 +109,20 @@ fn finish_attempt(
     Ok(outcome)
 }
 
+// Only staged payloads, never floors, identity or attempt records. The
+// running worker is its own image, so only a later check can remove it.
+fn leftover_files(attempt: Option<&InstallAttempt>, from_worker: bool) -> &'static [&'static str] {
+    match (attempt, from_worker) {
+        (Some(_), _) => &[],
+        (None, true) => &["update-installer.exe", "update-manifest.json"],
+        (None, false) => &[
+            "update-installer.exe",
+            "update-manifest.json",
+            "update-worker.exe",
+        ],
+    }
+}
+
 // Trusted local state, not a new wire format. Freshness applies to incoming
 // signed manifests, never to this durable record of previously seen releases.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
