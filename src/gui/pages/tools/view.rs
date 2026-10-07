@@ -1306,90 +1306,107 @@ fn shortcut_rows<'a>(ctx: &'a Ctx, which: &[Shortcut]) -> Vec<El<'a>> {
 type SheetText = (Icon, String, Vec<String>, String);
 
 fn sheet_text(state: &State, ctx: &Ctx, sheet: Sheet) -> SheetText {
-    match sheet {
-        Sheet::Scan => (
-            Icon::Bug,
-            ctx.t("Scan for viruses?"),
-            vec![
-                ctx.t("Windows Security will check your PC for harmful software."),
-                ctx.t("If it finds something, it removes it or puts it somewhere safe."),
-                ctx.t("You can keep using your PC."),
-            ],
-            ctx.t("Start scan"),
-        ),
-        Sheet::RemoveThreats => (
-            Icon::Bug,
-            ctx.t("Remove the harmful files?"),
-            vec![
-                ctx.t("Windows Security will remove the harmful files it has found on this PC."),
-                ctx.t("It usually keeps what it removes in quarantine. If it was a mistake, you can restore an item in Windows Security."),
-                ctx.t("You can keep using your PC while it works."),
-            ],
-            ctx.t("Remove them"),
-        ),
-        Sheet::DefenderUpdate => (
-            Icon::Download,
-            ctx.t("Update virus protection?"),
-            vec![ctx.t("Windows will download the newest virus information from Microsoft.")],
-            ctx.t("Update now"),
-        ),
-        Sheet::Repair(RepairKind::Check) => (
-            Icon::Wrench,
-            ctx.t("Check for problems?"),
-            vec![
-                ctx.t("Secblitz will look at Windows for damage. Nothing is changed."),
-                ctx.t("This can take a few minutes. You can keep using your PC."),
-            ],
-            ctx.t("Start check"),
-        ),
-        Sheet::Repair(RepairKind::Repair) => (
-            Icon::Wrench,
-            ctx.t("Repair system files?"),
-            vec![
-                ctx.t("Secblitz will look for damaged Windows files and replace them with good copies."),
-                ctx.t("This can take 15–45 minutes. You can keep using your PC."),
-                ctx.t("Your own files and apps are not touched. This can't be undone automatically, but it only fixes files that belong to Windows."),
-            ],
-            ctx.t("Repair now"),
-        ),
+    let (icon, title, lines, confirm) = sheet_copy(sheet);
+    let title = match sheet {
         Sheet::InstallUpdates => {
             let n = match &state.updates {
                 Updates::Found(f) => f.updates.len(),
                 _ => 0,
             };
-            (
-                Icon::Download,
-                if n == 1 {
-                    ctx.t("Install 1 update?")
-                } else {
-                    ctx.t("Install {n} updates?").replace("{n}", &n.to_string())
-                },
-                vec![
-                    ctx.t("These updates come from Microsoft and protect your PC."),
-                    ctx.t("This can take a while. You can keep using your PC, but save your work first because Windows may need to restart."),
-                    ctx.t("Updates can't be undone automatically. By continuing you accept Microsoft's license terms for them."),
-                ],
-                ctx.t("Install now"),
-            )
+            if n == 1 {
+                ctx.t("Install 1 update?")
+            } else {
+                ctx.t("Install {n} updates?").replace("{n}", &n.to_string())
+            }
         }
+        _ => ctx.t(title),
+    };
+    (
+        icon,
+        title,
+        lines.iter().map(|l| ctx.t(l)).collect(),
+        ctx.t(confirm),
+    )
+}
+
+pub(super) type SheetCopy = (Icon, &'static str, &'static [&'static str], &'static str);
+
+/// English source of each confirmation sheet. The install sheet's title is built from the update count.
+pub(super) fn sheet_copy(sheet: Sheet) -> SheetCopy {
+    match sheet {
+        Sheet::Scan => (
+            Icon::Bug,
+            "Scan for viruses?",
+            &[
+                "Windows Security will check your PC for harmful software.",
+                "If it finds something, it removes it or puts it somewhere safe.",
+                "You can keep using your PC.",
+            ],
+            "Start scan",
+        ),
+        Sheet::RemoveThreats => (
+            Icon::Bug,
+            "Remove the harmful files?",
+            &[
+                "Windows Security will remove the harmful files it has found on this PC.",
+                "This can't be undone from Secblitz. Windows Security usually keeps what it removes in quarantine. If it was a mistake, you can restore an item there.",
+                "You can keep using your PC while it works.",
+            ],
+            "Remove them",
+        ),
+        Sheet::DefenderUpdate => (
+            Icon::Download,
+            "Update virus protection?",
+            &["Windows will download the newest virus information from Microsoft."],
+            "Update now",
+        ),
+        Sheet::Repair(RepairKind::Check) => (
+            Icon::Wrench,
+            "Check for problems?",
+            &[
+                "Secblitz will look at Windows for damage. Nothing is changed.",
+                "This can take a few minutes. You can keep using your PC.",
+            ],
+            "Start check",
+        ),
+        Sheet::Repair(RepairKind::Repair) => (
+            Icon::Wrench,
+            "Repair system files?",
+            &[
+                "Secblitz will look for damaged Windows files and replace them with good copies.",
+                "This can take 15–45 minutes. You can keep using your PC.",
+                "Your own files and apps are not touched. This can't be undone automatically, but it only fixes files that belong to Windows.",
+            ],
+            "Repair now",
+        ),
+        Sheet::InstallUpdates => (
+            Icon::Download,
+            "Install updates?",
+            &[
+                "These updates come from Microsoft and protect your PC.",
+                "This can take a while. You can keep using your PC, but save your work first because Windows may need to restart.",
+                "Updates can't be undone automatically. By continuing you accept Microsoft's license terms for them.",
+            ],
+            "Install now",
+        ),
         Sheet::Restart => (
             Icon::Restart,
-            ctx.t("Restart your PC now?"),
-            vec![
-                ctx.t("Your PC restarts to finish installing updates."),
-                ctx.t("Save your work first. Programs with unsaved work will ask you before they close."),
+            "Restart your PC now?",
+            &[
+                "Your PC restarts to finish installing updates.",
+                "Save your work first. Programs with unsaved work will ask you before they close.",
             ],
-            ctx.t("Restart now"),
+            "Restart now",
         ),
         Sheet::Bitwarden => (
             Icon::Lock,
-            ctx.t("Install Bitwarden?"),
-            vec![
-                ctx.t("Bitwarden is a free password manager."),
-                ctx.t("Secblitz will download it from its official source and install it for you."),
-                ctx.t("You can remove it later in Windows Settings."),
+            "Install Bitwarden?",
+            &[
+                "Bitwarden is a free password manager.",
+                "Secblitz will download it from its official source and install it for you.",
+                "You can remove it later in Windows Settings.",
             ],
-            ctx.t("Install"),
+            "Install",
         ),
     }
 }
@@ -1445,6 +1462,16 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     .width(Length::Fill);
     for line in lines {
         content = content.push(widgets::body(p, line));
+    }
+    if !sheet.notices().undoable {
+        content = content.push(
+            row![
+                widgets::icon(Icon::AlertTriangle, 16.0, p.tone(Tone::Warn)),
+                widgets::body(p, ctx.t("Can't be undone"))
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
+        );
     }
     if let Some(note) = state.sheet_block {
         content = content.push(
