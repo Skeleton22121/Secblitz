@@ -44,6 +44,94 @@ pub fn remove_threats() -> Result<ThreatRemoval> {
     }
 }
 
+/// Why the renewal was not started. Nothing was written when one of these comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenewalRefusal {
+    NotUefi,
+    SecureBootOff,
+    AlreadyUpdated,
+    AlreadyStarted,
+    VirtualMachine,
+    MakerBlocked,
+    TaskMissing,
+    TaskDisabled,
+    OtherSystem,
+    Unreadable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenewalOutcome {
+    /// `confirmed` is true when Windows was seen picking the request up.
+    Started {
+        confirmed: bool,
+    },
+    Refused(RenewalRefusal),
+}
+
+/// Asks Windows to renew the Secure Boot certificates. It cannot be undone and never restarts the PC.
+pub fn start_secure_boot_renewal() -> Result<RenewalOutcome> {
+    #[cfg(windows)]
+    {
+        windows::start_secure_boot_renewal()
+    }
+    #[cfg(not(windows))]
+    {
+        bail!("The startup security renewal needs Windows")
+    }
+}
+
+#[cfg(any(windows, test))]
+fn parse_renewal_reply(reply: &Value) -> Result<RenewalOutcome> {
+    let unclear = || anyhow::anyhow!("Windows did not say whether the renewal started");
+    let object = reply
+        .as_object()
+        .filter(|o| o.get("ok") == Some(&json!(true)))
+        .ok_or_else(unclear)?;
+    match object.get("result").and_then(Value::as_str) {
+        Some("started") if object.len() == 5 => {
+            let flag = |key: &str| object.get(key).and_then(Value::as_bool);
+            let (Some(confirmed), Some(task_started)) = (flag("confirmed"), flag("task_started"))
+            else {
+                return Err(unclear());
+            };
+            object
+                .get("available_updates")
+                .and_then(Value::as_u64)
+                .ok_or_else(unclear)?;
+            Ok(RenewalOutcome::Started {
+                confirmed: confirmed && task_started,
+            })
+        }
+        Some("refused") if object.len() == 3 => {
+            let reason = match object.get("reason").and_then(Value::as_str) {
+                Some("not_uefi") => RenewalRefusal::NotUefi,
+                Some("secure_boot_off") => RenewalRefusal::SecureBootOff,
+                Some("already_updated") => RenewalRefusal::AlreadyUpdated,
+                Some("already_started") => RenewalRefusal::AlreadyStarted,
+                Some("virtual_machine") => RenewalRefusal::VirtualMachine,
+                Some("maker_blocked") => RenewalRefusal::MakerBlocked,
+                Some("task_missing") => RenewalRefusal::TaskMissing,
+                Some("task_disabled") => RenewalRefusal::TaskDisabled,
+                Some("other_system") => RenewalRefusal::OtherSystem,
+                Some("unreadable") => RenewalRefusal::Unreadable,
+                _ => return Err(unclear()),
+            };
+            Ok(RenewalOutcome::Refused(reason))
+        }
+        _ => Err(unclear()),
+    }
+}
+
+#[cfg(any(windows, test))]
+fn renewal_script() -> Result<String> {
+    Ok(format!(
+        "$inputJson=$null\n{}\n$supportId='secureboot_renewal'\n{}\n{}",
+        backend_definitions()?,
+        include_str!("platform/secureboot.ps1"),
+        include_str!("actions/secureboot.ps1")
+    ))
+}
+
 /// Exactly `{"ok":true,"found":n,"removed":n,"left":n}` with consistent counts.
 #[cfg(any(windows, test))]
 fn parse_threat_reply(reply: &Value) -> Result<ThreatRemoval> {
@@ -542,6 +630,86 @@ mod tests {
             assert!(support_action(id).is_err());
         }
     }
+    #[test]
+    fn secure_boot_renewal_is_its_own_fixed_script_that_checks_before_it_writes() {
+        let script = renewal_script().unwrap();
+        assert!(script.contains("$supportId='secureboot_renewal'"));
+        assert!(script.contains("function CheckScopedPolicy"));
+        assert!(script.contains("function SbIsVirtualMachine"));
+        assert!(!script.contains("switch -CaseSensitive ($action)"));
+        let gate = script.find("$reason = RenewalRefusal").unwrap();
+        let write = script.find("        WriteAvailableUpdates 0x5944").unwrap();
+        let start = script.find("Start-ScheduledTask -TaskPath").unwrap();
+        assert!(gate < write && write < start);
+        assert_eq!(script.matches("WriteAvailableUpdates 0x5944").count(), 1);
+        for never in [
+            "HighConfidenceOptOut",
+            "MicrosoftUpdateManagedOptIn",
+            "Restart-Computer",
+            "shutdown",
+            "Suspend-BitLocker",
+            "manage-bde",
+        ] {
+            assert!(!script.contains(never), "{never}");
+        }
+        assert!(support_script("secureboot_renewal").is_err());
+        assert!(support_action("secureboot_renewal").is_err());
+        assert!(
+            validate_request("write", Some("secureboot_renewal"), Some(&json!(false))).is_err()
+        );
+        #[cfg(not(windows))]
+        assert!(start_secure_boot_renewal().is_err());
+    }
+
+    #[test]
+    fn the_renewal_reply_must_be_exact() {
+        let started = |confirmed, task| json!({"ok": true, "result": "started", "confirmed": confirmed, "task_started": task, "available_updates": 22788});
+        assert_eq!(
+            parse_renewal_reply(&started(true, true)).unwrap(),
+            RenewalOutcome::Started { confirmed: true }
+        );
+        assert_eq!(
+            parse_renewal_reply(&started(true, false)).unwrap(),
+            RenewalOutcome::Started { confirmed: false }
+        );
+        assert_eq!(
+            parse_renewal_reply(&started(false, true)).unwrap(),
+            RenewalOutcome::Started { confirmed: false }
+        );
+        for (word, reason) in [
+            ("not_uefi", RenewalRefusal::NotUefi),
+            ("secure_boot_off", RenewalRefusal::SecureBootOff),
+            ("already_updated", RenewalRefusal::AlreadyUpdated),
+            ("already_started", RenewalRefusal::AlreadyStarted),
+            ("virtual_machine", RenewalRefusal::VirtualMachine),
+            ("maker_blocked", RenewalRefusal::MakerBlocked),
+            ("task_missing", RenewalRefusal::TaskMissing),
+            ("task_disabled", RenewalRefusal::TaskDisabled),
+            ("other_system", RenewalRefusal::OtherSystem),
+            ("unreadable", RenewalRefusal::Unreadable),
+        ] {
+            assert_eq!(
+                parse_renewal_reply(&json!({"ok": true, "result": "refused", "reason": word}))
+                    .unwrap(),
+                RenewalOutcome::Refused(reason)
+            );
+        }
+        for bad in [
+            json!({"ok": true}),
+            json!({"ok": false, "result": "refused", "reason": "unreadable"}),
+            json!({"ok": true, "result": "refused", "reason": "because"}),
+            json!({"ok": true, "result": "refused"}),
+            json!({"ok": true, "result": "refused", "reason": "unreadable", "extra": 1}),
+            json!({"ok": true, "result": "started", "confirmed": true, "task_started": true}),
+            json!({"ok": true, "result": "started", "confirmed": "yes", "task_started": true, "available_updates": 1}),
+            json!({"ok": true, "result": "started", "confirmed": true, "task_started": true, "available_updates": -1}),
+            json!({"ok": true, "result": "done"}),
+            json!("started"),
+        ] {
+            assert!(parse_renewal_reply(&bad).is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn threat_removal_is_its_own_fixed_script_and_an_exact_reply() {
         let script = threats_script().unwrap();

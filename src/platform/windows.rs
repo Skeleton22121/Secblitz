@@ -344,6 +344,21 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
     super::parse_threat_reply(&reply)
 }
 
+/// The script lists firmware boot entries with the inbox bcdedit.exe, so one helper may start.
+const RENEWAL_PROCESSES: u32 = 2;
+
+pub fn start_secure_boot_renewal() -> Result<super::RenewalOutcome> {
+    let script = super::renewal_script()?;
+    ensure!(
+        cfg!(target_arch = "x86_64"),
+        "Secblitz supports Windows x64 only"
+    );
+    crate::platform::require_admin("The startup security renewal needs Administrator elevation")?;
+    let reply: Value = run_script_in(script, Duration::from_secs(150), RENEWAL_PROCESSES)
+        .context("Windows could not start the renewal. Check again in a few minutes")?;
+    super::parse_renewal_reply(&reply)
+}
+
 const DISM_PROCESSES: u32 = 4;
 const RECOVERY_PROCESSES: u32 = 4;
 const WIFI_PROCESSES: u32 = 4;

@@ -35,6 +35,7 @@ pub enum Action {
     OpenReportProblem,
     OpenSuggestFeature,
     OpenPrivacyPolicy,
+    OpenRecoveryKey,
 }
 
 pub const REPORT_PROBLEM_URL: &str =
@@ -42,6 +43,7 @@ pub const REPORT_PROBLEM_URL: &str =
 pub const SUGGEST_FEATURE_URL: &str =
     "https://github.com/secblitz/Secblitz/issues/new?template=feature_request.yml";
 pub const PRIVACY_POLICY_URL: &str = "https://secblitz.lol/privacy.html";
+pub const RECOVERY_KEY_URL: &str = "https://aka.ms/myrecoverykey";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionResult {
@@ -120,6 +122,7 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenReportProblem => Uri(REPORT_PROBLEM_URL),
         Action::OpenSuggestFeature => Uri(SUGGEST_FEATURE_URL),
         Action::OpenPrivacyPolicy => Uri(PRIVACY_POLICY_URL),
+        Action::OpenRecoveryKey => Uri(RECOVERY_KEY_URL),
         Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
         _ => return None,
     })
@@ -155,6 +158,7 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | REPORT_PROBLEM_URL
                 | SUGGEST_FEATURE_URL
                 | PRIVACY_POLICY_URL
+                | RECOVERY_KEY_URL
                 | "ms-settings:workplace"
                 | "ms-settings:recovery"
                 | "ms-settings:remotedesktop"
@@ -228,7 +232,12 @@ pub fn run(action: Action) -> Result<ActionResult> {
     })
 }
 
-pub use crate::platform::ThreatRemoval;
+pub use crate::platform::{RenewalOutcome, RenewalRefusal, ThreatRemoval};
+
+/// One way only: it cannot be undone, and the PC is never restarted. Callers ask first.
+pub fn start_secure_boot_renewal() -> Result<RenewalOutcome> {
+    crate::platform::start_secure_boot_renewal()
+}
 
 /// What Defender removes goes to quarantine; only its own counts are returned, never a claim of safety.
 pub fn remove_threats() -> Result<ThreatRemoval> {
@@ -300,6 +309,7 @@ mod tests {
             (Action::OpenReportProblem, REPORT_PROBLEM_URL),
             (Action::OpenSuggestFeature, SUGGEST_FEATURE_URL),
             (Action::OpenPrivacyPolicy, PRIVACY_POLICY_URL),
+            (Action::OpenRecoveryKey, RECOVERY_KEY_URL),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();
@@ -394,6 +404,7 @@ mod tests {
             Action::OpenReportProblem,
             Action::OpenSuggestFeature,
             Action::OpenPrivacyPolicy,
+            Action::OpenRecoveryKey,
         ] {
             assert!(run(action).is_err());
         }
