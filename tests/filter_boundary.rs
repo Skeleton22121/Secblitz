@@ -346,12 +346,13 @@ fn a_status_file_is_written_in_the_shape_the_app_reads() {
         state: State::NoLists,
         lists_updated: Some(5),
         day: 9,
-        blocked: [1, 2, 3, 4, 5],
-        domains: [4, 5, 6, 7, 8],
+        blocked: [1, 2, 3, 4, 5, 6, 7],
+        domains: [4, 5, 6, 7, 8, 9, 10],
         last_error: Some(ErrorCode::PortInUse),
         written_at: 77,
         lookups: Default::default(),
         dangerous_at: Some(70),
+        notice: None,
     };
     save_status(&path, &s).unwrap();
     let text = fs::read_to_string(&path).unwrap();

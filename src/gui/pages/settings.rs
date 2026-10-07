@@ -538,7 +538,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             widgets::row_item(
                 p,
                 Some(Icon::ShieldAlert),
-                t("Tell me when a dangerous website is blocked"),
+                t("Tell me when a dangerous or scam website is blocked"),
                 None,
                 widgets::switch(
                     p,

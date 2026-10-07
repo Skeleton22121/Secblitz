@@ -17,6 +17,16 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "A link in an email or message could take you to a look-alike bank page or a site that infects your PC.",
             change: "Your PC can't open websites on that list. If a safe site is blocked by mistake, pause web protection for an hour.",
         },
+        "web.scam" => Explainer {
+            what: "Secblitz keeps a list of fake online shops, fake streaming sites and subscription traps, and updates it every day.",
+            risk: "A fake shop takes your money and card details and sends nothing. A fake streaming site can sign you up to payments you never meant to make.",
+            change: "Your PC can't open websites on that list. If a real site is blocked by mistake, open it for 10 minutes from Recent blocks on the Overview tab, or allow it on the Sites tab.",
+        },
+        "web.popups" => Explainer {
+            what: "Secblitz keeps a list of websites known for flooding people with pop-ups and fake alerts, and updates it every day.",
+            risk: "These sites show fake messages such as 'your PC is infected' to scare you into calling a scam number or paying for software you don't need.",
+            change: "Your PC can't open websites on that list. This list sometimes blocks a real site by mistake, so you can open one for 10 minutes from Recent blocks on the Overview tab, or allow it on the Sites tab.",
+        },
         "web.adult" => Explainer {
             what: "Secblitz keeps a list of websites meant for adults and updates it often.",
             risk: "Children, and anyone else using this PC, can open those websites by accident or on purpose.",
@@ -51,6 +61,8 @@ mod tests {
             "web.ads",
             "web.tracking",
             "web.dangerous",
+            "web.scam",
+            "web.popups",
             "web.adult",
             "web.gambling",
             "web.safe_search",
