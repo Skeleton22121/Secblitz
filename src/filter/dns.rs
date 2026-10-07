@@ -12,6 +12,7 @@ pub const TYPE_AAAA: u16 = 28;
 pub const TYPE_SVCB: u16 = 64;
 pub const TYPE_HTTPS: u16 = 65;
 const TYPE_CNAME: u16 = 5;
+const TYPE_OPT: u16 = 41;
 const CLASS_IN: u16 = 1;
 /// Short, so an allowed site or an ended pause reaches browsers within seconds.
 const TTL: u32 = 10;
@@ -278,6 +279,32 @@ pub fn reply_matches(reply: &[u8], id: u16, q: &Question) -> bool {
     }
 }
 
+/// 512 bytes unless the query's EDNS record announces more.
+pub fn udp_limit(packet: &[u8], q: &Query) -> usize {
+    let at = q.question_end;
+    let has_edns = be16(packet, 10) >= 1
+        && packet.get(at) == Some(&0)
+        && packet.len() >= at + 5
+        && be16(packet, at + 1) == TYPE_OPT;
+    if has_edns {
+        usize::from(be16(packet, at + 3)).max(512)
+    } else {
+        512
+    }
+}
+
+/// Sets the truncated flag, which makes a UDP client retry over TCP.
+pub fn truncated_copy(reply: &[u8]) -> Vec<u8> {
+    let Some((_, end)) = parse_question(reply) else {
+        return reply.to_vec();
+    };
+    let mut out = reply[..end].to_vec();
+    let flags = be16(&out, 2) | 0x0200;
+    out[2..4].copy_from_slice(&flags.to_be_bytes());
+    out[6..12].fill(0);
+    out
+}
+
 pub fn truncated(reply: &[u8]) -> bool {
     reply.len() >= 4 && be16(reply, 2) & 0x0200 != 0
 }
@@ -481,6 +508,36 @@ mod tests {
         r[2] |= 0x02;
         assert!(truncated(&r));
         assert!(!truncated(&[1]));
+    }
+
+    #[test]
+    fn udp_limit_follows_the_edns_size() {
+        let (p, q) = parsed("example.com", 1);
+        assert_eq!(udp_limit(&p, &q), 512);
+        let mut with_edns = p.clone();
+        with_edns[10..12].copy_from_slice(&1u16.to_be_bytes());
+        with_edns.extend_from_slice(&[0, 0, 41, 0x04, 0xD0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(udp_limit(&with_edns, &q), 1232);
+        let mut small = with_edns.clone();
+        small[q.question_end + 3..q.question_end + 5].copy_from_slice(&100u16.to_be_bytes());
+        assert_eq!(udp_limit(&small, &q), 512);
+        // A count of zero means there is no record to read, whatever follows.
+        let mut hidden = with_edns;
+        hidden[10..12].fill(0);
+        assert_eq!(udp_limit(&hidden, &q), 512);
+    }
+
+    #[test]
+    fn truncated_copy_keeps_only_the_question() {
+        let (p, q) = parsed("example.com", 1);
+        let r = blocked_reply(&p, &q);
+        let cut = truncated_copy(&r);
+        assert!(truncated(&cut));
+        assert_eq!(cut.len(), q.question_end);
+        assert_eq!(be16(&cut, 4), 1);
+        assert_eq!(cut[6..12], [0; 6]);
+        assert!(reply_matches(&cut, q.id, &q.question));
+        assert_eq!(truncated_copy(&[1, 2]), vec![1, 2]);
     }
 
     fn v4(a: [u8; 4]) -> Address {
