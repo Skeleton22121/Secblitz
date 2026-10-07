@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-07
+
 ### Added
 - Protection groups its settings into topic tiles that show what each topic needs.
 - A notice when Windows switches back a setting Secblitz fixed, with a way to put it back.
