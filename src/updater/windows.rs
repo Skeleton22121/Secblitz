@@ -2059,7 +2059,7 @@ mod tests {
         let mut m = Manifest {
             schema: 1,
             version: "9.2.0".into(),
-            filename: setup_filename("9.2.0").into(),
+            filename: setup_filename("9.2.0"),
             sha256: hex::encode(Sha256::digest(b"test")),
             size: 4,
             published_at: 1000,
@@ -2070,10 +2070,10 @@ mod tests {
         assert!(installer(&b"fail"[..], &m).is_err());
         assert_eq!(read_floor(&test_root).unwrap().unwrap().version, "9.2.0");
         m.version = "9.1.0".into();
-        m.filename = setup_filename("9.1.0").into();
+        m.filename = setup_filename("9.1.0");
         assert!(remember_release(&test_root, &m, "9.0.0").is_err());
         m.version = "9.3.0".into();
-        m.filename = setup_filename("9.3.0").into();
+        m.filename = setup_filename("9.3.0");
         let floor_path = test_root.join("release-floor.json");
         let payload_pin = open(&floor_path, false, true).unwrap();
         assert!(remember_release(&test_root, &m, "9.0.0").is_err());

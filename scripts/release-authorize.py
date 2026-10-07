@@ -35,7 +35,7 @@ def validate_authorization(a, origin):
         if type(a[field]) is not int or not 0 <= a[field] <= 2**64 - 1:
             raise ValueError("invalid integer")
     if (a["schema"] != 1 or a["role"] != "secblitz-delivery" or a["sequence"] == 0
-            or a["origin"] != origin or a["target"] != "windows-x86_64"
+            or a["origin"] != origin or a["target"] not in {i["target"] for i in sign.ARCHES.values()}
             or not 0 < a["expires_at"] - a["published_at"] <= 7 * 86400
             or a["health"] != "update_health_v1"):
         raise ValueError("invalid authorization scope")
@@ -63,7 +63,7 @@ def prepare(raw, manifest_key, origin, sequence, basis_points, salt, now, lifeti
     if not m["published_at"] <= now < m["expires_at"] or not 1 <= lifetime_hours <= 168:
         raise ValueError("candidate must be fresh with bounded authority")
     a = dict(schema=1, role="secblitz-delivery", sequence=sequence, origin=origin,
-             target="windows-x86_64", published_at=now, expires_at=now + lifetime_hours * 3600,
+             target=m["target"], published_at=now, expires_at=now + lifetime_hours * 3600,
              version=m["version"], manifest_sha256=hashlib.sha256(raw).hexdigest(),
              manifest_key=manifest_key, rollout=dict(salt=salt, basis_points=basis_points),
              health="update_health_v1")

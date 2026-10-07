@@ -9,14 +9,19 @@ param(
     [string]$SigningKeyPath,
     [string]$UpdateOrigin,
     [ValidateSet('All', 'Exe', 'Setup')][string]$Stage = 'All',
+    [ValidateSet('x64', 'arm64')][string]$Arch = 'x64',
     [switch]$SkipTests
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-if ($env:OS -ne 'Windows_NT') { throw 'Build releases on x64 Windows with MSVC and the Windows SDK.' }
+if ($env:OS -ne 'Windows_NT') { throw 'Build releases on Windows with MSVC and the Windows SDK.' }
 $root = Split-Path $PSScriptRoot -Parent
 $dist = Join-Path $root 'dist'
-$target = 'x86_64-pc-windows-msvc'
+$target = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
+$machine = if ($Arch -eq 'arm64') { 0xAA64 } else { 0x8664 }
+if ($Arch -eq 'arm64' -and $env:PROCESSOR_ARCHITECTURE -ne 'ARM64') {
+    throw 'The arm64 release is built on a Windows on ARM PC, so the program it makes can be run and checked.'
+}
 
 if ($RequirePublisherSignature -and -not $CertificateThumbprint) {
     throw 'Production signing requires credentials: supply -CertificateThumbprint for -RequirePublisherSignature.'
@@ -79,8 +84,8 @@ function Assert-ReleasePe([string]$Path) {
         $reader.BaseStream.Position = 0x3C
         $peOffset = $reader.ReadUInt32()
         $reader.BaseStream.Position = $peOffset
-        if ($reader.ReadUInt32() -ne 0x00004550 -or $reader.ReadUInt16() -ne 0x8664) {
-            throw 'Expected an x64 PE executable.'
+        if ($reader.ReadUInt32() -ne 0x00004550 -or $reader.ReadUInt16() -ne $machine) {
+            throw "Expected an $Arch PE executable."
         }
         $optionalHeader = $peOffset + 24
         $reader.BaseStream.Position = $optionalHeader
@@ -141,7 +146,7 @@ try {
     if ($packages.Count -ne 1) { throw 'Expected exactly one secblitz package in Cargo metadata.' }
     $version = $packages[0].version
     if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Installer requires a numeric major.minor.patch version.' }
-    $exe = Join-Path $dist "secblitz-$version-windows-x64.exe"
+    $exe = Join-Path $dist "secblitz-$version-windows-$Arch.exe"
     if ($Stage -eq 'Setup') {
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Stage Setup needs $exe (build the exe stage first)." }
     } else {
@@ -178,7 +183,7 @@ try {
         if ($process.ExitCode -ne 0) { throw "Inno compiler installation failed: $($process.ExitCode)" }
     }
     if (-not (Test-Path -LiteralPath $IsccPath)) { throw 'Install official Inno Setup 6.4+ or pass -DownloadInno from an elevated build shell.' }
-    $compilerArgs = @("/DAppVersion=$version", "/DSourceExe=$exe", "/DOutputPath=$dist")
+    $compilerArgs = @("/DAppVersion=$version", "/DSourceExe=$exe", "/DOutputPath=$dist", "/DArch=$Arch")
     if ($CertificateThumbprint) {
         Sign-ReleaseFile $exe
         $signCommand = '"' + $SignToolPath + '" sign /sha1 ' + $CertificateThumbprint + ' /fd SHA256 /tr ' + $TimestampUrl + ' /td SHA256 $f'
@@ -187,7 +192,7 @@ try {
     }
     $compilerArgs += (Join-Path $root 'installer\setup.iss')
     Invoke-Checked $IsccPath $compilerArgs
-    $setup = Join-Path $dist "secblitz-$version-windows-x64-setup.exe"
+    $setup = Join-Path $dist "secblitz-$version-windows-$Arch-setup.exe"
     Assert-ReleasePe $exe
     if ($CertificateThumbprint) {
         Assert-PublisherSignature $exe
@@ -196,11 +201,11 @@ try {
     $hashes = foreach ($file in @($exe, $setup)) {
         '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
     }
-    $hashes | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
+    $hashes | Set-Content -LiteralPath (Join-Path $dist $(if ($Arch -eq 'arm64') { 'SHA256SUMS-arm64.txt' } else { 'SHA256SUMS.txt' })) -Encoding ascii
     if ($SigningKeyPath) {
         Invoke-Checked 'python' @((Join-Path $root 'scripts\sign-release.py'),
             '--key', $SigningKeyPath, '--public-key', $publicKeyPath, '--version', $version,
-            '--installer', $setup, '--output', (Join-Path $dist 'stable.json'))
+            '--installer', $setup, '--output', (Join-Path $dist $(if ($Arch -eq 'arm64') { 'stable-arm64.json' } else { 'stable.json' })))
     }
     if ($CertificateThumbprint) { Write-Host 'Signed executable and installer verified.' }
     elseif ($Stage -eq 'Setup') { Write-Host 'No local certificate was used. Check the Authenticode status of the packed exe and this setup before publishing.' }

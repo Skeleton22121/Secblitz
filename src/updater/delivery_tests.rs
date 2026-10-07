@@ -213,7 +213,7 @@ fn holdback_observes_floor_and_failed_health_cannot_enable_downgrade() {
     assert!(health::validate(b"{}", "9.0.0", None).is_err());
     let old = Manifest {
         version: "8.5.0".into(),
-        filename: setup_filename("8.5.0").into(),
+        filename: setup_filename("8.5.0"),
         ..m
     };
     assert!(advance_floor(&old, "8.0.0", Some(&floor)).is_err());
