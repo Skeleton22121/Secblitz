@@ -931,4 +931,8 @@ pub(super) const ROWS: &[[&str; 2]] = &[
     ["Hidden malware loading before Windows starts", "Malware nascosto che si carica prima dell'avvio di Windows"],
     ["Old file-sharing flaws used by worms like WannaCry", "Vecchie vulnerabilità nella condivisione dei file sfruttate da worm come WannaCry"],
     ["Malicious drivers taking over the core of Windows", "Driver dannosi che prendono il controllo del nucleo di Windows"],
+    ["Updates require native 64-bit Windows", "Gli aggiornamenti richiedono Windows a 64 bit nativo"],
+    ["Elevated 64-bit Windows required", "Serve Windows a 64 bit con permessi di amministratore"],
+    ["Patching requires native 64-bit Windows, not an emulated process", "L’applicazione delle patch richiede Windows a 64 bit nativo, non un processo emulato"],
+    ["Web protection requires 64-bit Windows", "La protezione web richiede Windows a 64 bit"],
 ];

@@ -89,7 +89,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 )))
             })
         }
-        Msg::DownloadOpened(true) => return hide_processor_tip(ctx),
+        Msg::DownloadOpened(true) => {}
         Msg::DownloadOpened(false) => {
             return Task::done(Message::Toast(
                 ctx.t("We couldn't open your web browser. Visit secblitz.lol to get the version made for your PC."),
@@ -102,8 +102,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
 }
 
 fn hide_processor_tip(ctx: &mut Ctx) -> Task<Message> {
-    ctx.prefs.processor_tip_seen = true;
+    mark_tip_seen(&mut ctx.prefs);
     Task::perform(crate::gui::save_prefs(ctx.prefs.clone()), |_| Message::Noop)
+}
+
+fn mark_tip_seen(prefs: &mut crate::app::settings::Prefs) {
+    prefs.processor_tip_seen = true;
 }
 
 fn processor_tip_due(ctx: &Ctx) -> bool {
@@ -816,6 +820,15 @@ mod tests {
         assert!(!tip_due(true, true));
         assert!(!tip_due(false, false));
         assert!(!tip_due(false, true));
+    }
+
+    #[test]
+    fn only_the_hide_button_records_the_processor_tip_as_seen() {
+        let mut prefs = crate::app::settings::Prefs::default();
+        assert!(tip_due(true, prefs.processor_tip_seen));
+        mark_tip_seen(&mut prefs);
+        assert!(prefs.processor_tip_seen);
+        assert!(!tip_due(true, prefs.processor_tip_seen));
     }
 
     fn outcome(id: &str, status: &str) -> Outcome {
