@@ -1735,4 +1735,110 @@ try {
     [IO.Directory]::Delete($recRoot, $true)
 }
 
+$wrJson = '{"id":"privacy.wifi_random_address","source":"WifiRandomAddress","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","valueName":"*","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $noGate + '}'
+MakeSpec $wrJson
+$wifiA = '{AAAAAAAA-1111-1111-1111-111111111111}'
+$wifiB = '{BBBBBBBB-2222-2222-2222-222222222222}'
+foreach ($ok in @($wifiA, $wifiB.ToLowerInvariant())) { Assert (HNameOk $ok) "wifi adapter id $ok" }
+foreach ($bad in @('Wi-Fi', '{1111}', ($wifiA + "'; calc"), '')) { Assert (!(HNameOk $bad)) "wifi adapter id accepted: $bad" }
+Assert ((HFixOf (HDef $wifiA) 0) -eq 1 -and (HIsSafe (HDef $wifiA) 1) -and !(HIsSafe (HDef $wifiA) 0)) 'random addresses off is repaired to on'
+$realWifiAdapters = ${function:HWifiAdapters}
+$realWifiState = ${function:HWifiRandomState}
+$realRunHidden = ${function:HRunHidden}
+$realNetshPath = ${function:HNetshPath}
+if ($env:SystemRoot) { Assert ((& $realNetshPath) -clike '*\System32\netsh.exe') 'the Wi-Fi tool is the one in System32' }
+$script:wifiList = @(@{ id = $wifiA; name = 'Wi-Fi' }, @{ id = $wifiB; name = 'Wi-Fi 2' })
+$script:wifiStates = @{ $wifiA = 0; $wifiB = 1 }
+$script:ran = @(); $script:netshCode = 0; $script:netshWorks = $true
+$netRoot = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'secblitz-netsh-' + [Guid]::NewGuid().ToString('N'))
+$null = [IO.Directory]::CreateDirectory($netRoot)
+$netshFile = [IO.Path]::Combine($netRoot, 'netsh.exe')
+[IO.File]::WriteAllBytes($netshFile, [byte[]]@(77, 90))
+try {
+    function HWifiAdapters { return $script:wifiList }
+    function HWifiRandomState([string]$id) { if ($script:wifiStates.ContainsKey($id)) { return $script:wifiStates[$id] }; return $null }
+    function HNetshPath { return $netshFile }
+    function HRunHidden([string]$exe, [string]$arguments) {
+        $script:ran += ,@($exe, $arguments)
+        if ($script:netshCode -eq 0 -and $script:netshWorks -and $arguments -cmatch '^wlan set randomization enabled=(yes|no) interface="Wi-Fi"$') {
+            $script:wifiStates[$wifiA] = $(if ($Matches[1] -ceq 'yes') { 1 } else { 0 })
+        }
+        return $script:netshCode
+    }
+
+    $r = HReadWifiRandom
+    Assert ($r.Count -eq 2 -and $r[$wifiA] -eq 0 -and $r[$wifiB] -eq 1) 'each adapter is read'
+    Assert (HAnyUnsafe $r) 'an adapter with random addresses off needs a look'
+    $r = HRead
+    Assert ($r.Count -eq 2 -and $r[$wifiA] -eq 0) 'the dispatcher reads the Wi-Fi adapters'
+    $script:wifiStates = @{ $wifiA = $null; $wifiB = 2 }
+    Assert ((HReadWifiRandom).Count -eq 0) 'unreadable adapters are skipped'
+    $script:wifiStates = @{ $wifiA = 0; $wifiB = 1 }
+
+    HPreflight
+    Assert $true 'offered when an adapter can be read'
+    $script:wifiList = @()
+    Reject { HPreflight } 'Not offered: this PC has no Wi-Fi adapter'
+    $script:wifiList = @(@{ id = $wifiA; name = 'Wi-Fi' })
+    $script:wifiStates = @{}
+    Reject { HPreflight } 'Wi-Fi settings of this PC could not be read'
+
+    $script:wifiList = @()
+    $o = HObserve
+    Assert (!$o.eligible -and $o.reason -ceq 'Not offered: this PC has no Wi-Fi adapter' -and $o.value.items.Count -eq 0) "no Wi-Fi adapter is a plain Not offered: $($o.reason)"
+    $script:wifiList = @(@{ id = $wifiA; name = 'Wi-Fi' })
+    $script:wifiStates = @{ $wifiA = 0 }
+    $o = HObserve
+    Assert ($o.eligible -and $o.value.items[$wifiA] -eq 0) 'offered while random addresses are off'
+    $script:wifiStates = @{ $wifiA = 1 }
+    $o = HObserve
+    Assert ($o.eligible -and $o.value.items[$wifiA] -eq 1) 'nothing to offer once they are on'
+
+    $script:wifiList = @(@{ id = $wifiA; name = 'Wi-Fi' }, @{ id = $wifiB; name = 'Wi-Fi 2' })
+    $script:ran = @()
+    HSetWifiRandom $wifiA 1
+    Assert ($script:ran.Count -eq 1 -and $script:ran[0][0] -ceq $netshFile -and $script:ran[0][1] -ceq 'wlan set randomization enabled=yes interface="Wi-Fi"') "turned on: $($script:ran[0][1])"
+    HSetWifiRandom $wifiB 0
+    Assert ($script:ran.Count -eq 2 -and $script:ran[1][1] -ceq 'wlan set randomization enabled=no interface="Wi-Fi 2"') "turned off: $($script:ran[1][1])"
+    Reject { HSetWifiRandom $wifiA 2 } 'Invalid Wi-Fi address setting'
+    Reject { HSetWifiRandom 'Wi-Fi' 1 } 'Invalid Wi-Fi address setting'
+    Reject { HSetWifiRandom '{CCCCCCCC-3333-3333-3333-333333333333}' 1 } 'exactly once'
+    foreach ($badName in @('Wi-Fi" & calc', 'Wi-Fi\', ' Wi-Fi', ('x' * 257), '')) {
+        $script:wifiList = @(@{ id = $wifiA; name = $badName })
+        Reject { HSetWifiRandom $wifiA 1 } 'cannot be used safely'
+    }
+    Assert ($script:ran.Count -eq 2) 'nothing is run for a name that cannot be quoted safely'
+    $script:wifiList = @(@{ id = $wifiA; name = 'Wi-Fi' })
+    $script:netshCode = 1
+    Reject { HSetWifiRandom $wifiA 1 } 'could not change the Wi-Fi address setting (code 1)'
+    $script:netshCode = 0
+    [IO.File]::Delete($netshFile)
+    Reject { HSetWifiRandom $wifiA 1 } 'Wi-Fi tool is missing'
+    [IO.File]::WriteAllBytes($netshFile, [byte[]]@(77, 90))
+
+    $script:wifiStates = @{ $wifiA = 0 }
+    $script:ran = @()
+    HWrite (Input ('{"items":{"' + $wifiA + '":1}}'))
+    Assert ($script:wifiStates[$wifiA] -eq 1 -and $script:ran.Count -eq 1) 'repair turns random addresses on'
+    HWrite (Input ('{"items":{"' + $wifiA + '":0}}'))
+    Assert ($script:wifiStates[$wifiA] -eq 0 -and $script:ran.Count -eq 2) 'undo turns them back off'
+    Reject { HWrite (Input '{"items":{"{CCCCCCCC-3333-3333-3333-333333333333}":1}}') } 'no longer exists'
+    Reject { HWrite (Input '{"items":{"Wi-Fi":1}}') } 'Unknown hardening item'
+    $script:netshWorks = $false
+    $script:ran = @()
+    Reject { HWrite (Input ('{"items":{"' + $wifiA + '":1}}')) } 'Readback did not match'
+    Assert ($script:wifiStates[$wifiA] -eq 0) 'a change that did not happen is reported, not assumed'
+    $script:netshWorks = $true
+    $script:netshCode = 1
+    Reject { HWrite (Input ('{"items":{"' + $wifiA + '":1}}')) } 'could not change the Wi-Fi address setting'
+    Assert ($script:wifiStates[$wifiA] -eq 0) 'a refused change leaves the adapter alone'
+    $script:netshCode = 0
+} finally {
+    ${function:HWifiAdapters} = $realWifiAdapters
+    ${function:HWifiRandomState} = $realWifiState
+    ${function:HRunHidden} = $realRunHidden
+    ${function:HNetshPath} = $realNetshPath
+    [IO.Directory]::Delete($netRoot, $true)
+}
+
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"
