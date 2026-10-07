@@ -29,6 +29,7 @@ pub fn friendly_problem(raw: &str) -> &'static str {
         "requires windows",
         "only supported on windows",
         "windows 10/11",
+        "64-bit windows",
     ]) {
         "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
     } else if has(&["declined", "cancel"]) {
@@ -1155,6 +1156,13 @@ mod tests {
     fn known_start_problems_get_a_fix_and_unknown_ones_get_the_general_text() {
         assert!(friendly_problem("The administrator prompt was declined").contains("choose Yes"));
         assert!(friendly_problem("Secblitz requires Windows").contains("Windows 10"));
+        for raw in [
+            "The monitor requires 64-bit Windows",
+            "Secblitz supports 64-bit Windows only",
+            "Web protection requires 64-bit Windows",
+        ] {
+            assert!(friendly_problem(raw).contains("Windows 10"), "{raw}");
+        }
         assert!(
             friendly_problem("Another Secblitz operation holds the journal lock").contains("busy")
         );

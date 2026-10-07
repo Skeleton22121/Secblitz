@@ -474,6 +474,13 @@ fn validate_value(id: &str, value: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emulation_on_an_arm_pc_is_only_detected_on_windows() {
+        #[cfg(not(windows))]
+        assert!(!x64_on_arm());
+    }
+
     #[test]
     fn firewall_observation_wire_contract_preserves_raw_values() {
         use crate::model::{

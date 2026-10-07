@@ -282,17 +282,21 @@ is drafted.
    website and README show exactly this version, the older downloads all have a
    pinned hash, and the release tool tests pass.
 2. `build-exe`: tests, clippy and the build on `windows-latest` with MSVC
-   (`build-release.ps1 -Stage Exe`). No cache of any kind.
+   (`build-release.ps1 -Stage Exe`). No cache of any kind. The arm64 jobs
+   (`build-exe-arm64`, `sign-exe-arm64`, `build-setup-arm64`,
+   `sign-setup-arm64`) do the same natively on a `windows-11-arm` runner
+   (`-Arch arm64`) and run beside the x64 ones.
 3. `sign-exe`: only if SignPath is on.
 4. `build-setup`: packs the Inno Setup from that exe (`-Stage Setup`).
 5. `sign-setup`: only if SignPath is on.
-6. `test-installer`: runs the installer harnesses against the final setup:
+6. `test-installer`: runs, for x64 on `windows-2022` and for arm64 on
+   `windows-11-arm`, the installer harnesses against the final setup:
    `installer/test-maintenance.ps1`, `installer/test-setup-exit.ps1` (exit
    codes) and `installer/test-lifecycle.ps1` (install, upgrade with a running
    monitor, uninstall preservation). A broken installer stops the release here,
    before any attestation or draft exists.
 7. `attest`: writes `SHA256SUMS` and creates build provenance attestations for
-   the exe and the setup.
+   the exe and the setup of each architecture.
 8. `draft-release`: creates a **draft** GitHub Release named "Secblitz X.Y.Z"
    with the changelog section as text and the setup, the portable exe and
    `SHA256SUMS` attached.
@@ -313,7 +317,8 @@ Download the files from the draft, then:
 gh release download v0.8.1 --dir check          # you are signed in, so drafts work
 cd check
 sha256sum --check SHA256SUMS
-for f in secblitz-0.8.1-windows-x64-setup.exe secblitz-0.8.1-windows-x64.exe; do
+for f in secblitz-0.8.1-windows-x64-setup.exe secblitz-0.8.1-windows-x64.exe \\
+         secblitz-0.8.1-windows-arm64-setup.exe secblitz-0.8.1-windows-arm64.exe; do
   gh attestation verify "$f" --repo secblitz/Secblitz \
     --signer-workflow secblitz/Secblitz/.github/workflows/release.yml \
     --source-ref refs/tags/v0.8.1 \
@@ -341,8 +346,13 @@ bytes from the draft (after SignPath, if used) and the key outside the repositor
 python3 scripts/sign-release.py --key /path/to/secret.pem \
   --public-key assets/update-public-key.hex --version 0.8.1 \
   --installer check/secblitz-0.8.1-windows-x64-setup.exe --output check/stable.json
-# The same check CI will make: signature, version, setup hash, freshness.
+python3 scripts/sign-release.py --key /path/to/secret.pem --arch arm64 \
+  --public-key assets/update-public-key.hex --version 0.8.1 \
+  --installer check/secblitz-0.8.1-windows-arm64-setup.exe --output check/stable-arm64.json
+# The same checks CI will make: signature, version, setup hash, freshness.
 python3 scripts/prepare-pages.py --verify-feed check/stable.json \
+  --installer-directory check --expected-version 0.8.1
+python3 scripts/prepare-pages.py --verify-feed check/stable-arm64.json --arch arm64 \
   --installer-directory check --expected-version 0.8.1
 ```
 
@@ -352,14 +362,15 @@ do not sign it long before you publish.
 
 ### 8. Upload the feed and publish the release
 
-Attach the signed feed to the draft **under the exact name `stable.json`**:
+Attach the signed feeds to the draft **under the exact names `stable.json` and
+`stable-arm64.json`**:
 
 ```sh
-gh release upload v0.8.1 check/stable.json
+gh release upload v0.8.1 check/stable.json check/stable-arm64.json
 ```
 
-The release must then carry exactly four files: the setup, the portable exe,
-`SHA256SUMS` and `stable.json`. Anything else, or a missing file, stops the
+The release must then carry exactly seven files: the setup and the portable exe
+for x64 and for arm64, `SHA256SUMS` and the two feeds. Anything else, or a missing file, stops the
 website deploy. Edit the notes if needed, then press Publish (a normal release,
 not a pre-release).
 
@@ -369,10 +380,10 @@ Publishing starts `publish-website.yml` on the tag.
 
 1. `verify` (no secrets): the run is on the tag, the commit is on `main`,
    `Cargo.toml`, the changelog and the website version all equal the tag, the
-   release is final and has exactly the four files, `SHA256SUMS` matches, both
-   build files pass `gh attestation verify` bound to this repository, to
+   release is final and has exactly the seven files, `SHA256SUMS` matches, all
+   four build files pass `gh attestation verify` bound to this repository, to
    `release.yml` as the signer, to `refs/tags/vX.Y.Z` and to the tagged commit,
-   and `stable.json` passes `prepare-pages.py --verify-feed`: signature valid for
+   and both feeds pass `prepare-pages.py --verify-feed`: signature valid for
    the public key pinned in `assets/update-public-key.hex`, version equals the
    tag, the setup name, size and SHA-256 equal the released setup, not expired.
    Then it fetches the older downloads (each must match its pinned hash), and
@@ -385,8 +396,8 @@ Publishing starts `publish-website.yml` on the tag.
    `wrangler` from `deploy/package-lock.json` with `npm ci`, and runs
    `wrangler pages deploy` with the Cloudflare token. This is the only step that
    sees the token.
-4. The live check (`verify-live-site.py`): fetches `/releases/stable.json`, `/`
-   (the download page) and the setup from the live origin and
+4. The live check (`verify-live-site.py`): fetches both feeds, `/`
+   (the download page) and both setups from the live origin and
    compares their SHA-256 with the deployed files. A fresh deploy may need a
    short time to reach every edge, so it retries for about five minutes and then
    fails loudly, naming each file that differs.
@@ -397,14 +408,15 @@ workflow from" and typed in). A deploy that passed its upload but failed the
 live check means the live site is not what you released: investigate before
 telling anyone to update.
 
-Installed copies pick the new version up from the live `releases/stable.json`,
-verified with the pinned key inside the app.
+Installed copies pick the new version up from the live `releases/stable.json`
+(x64 builds) or `releases/stable-arm64.json` (native ARM builds), verified with
+the pinned key inside the app.
 
 ### Staged rollouts and renewals
 
 `scripts/release-authorize.py` (candidate and delivery files) and
 `scripts/release-renew.py` still work as before, but the automated deploy only
-carries `releases/stable.json` (the `stage-pages.py` allowlist). Publish those
+carries `releases/stable.json` and `releases/stable-arm64.json` (the `stage-pages.py` allowlist). Publish those
 extra files by hand, or add them to the allowlist in a reviewed pull request.
 Renewing an existing feed (new `published_at` and `expires_at`, same installer)
 cannot go through this workflow with "Immutable releases" on, because a
@@ -486,7 +498,9 @@ Once approved:
 
 1. In SignPath, create the project, an artifact configuration for the exe and
    one for the setup (a zip containing one `.exe`, signed with Authenticode),
-   and a signing policy. Add the GitHub trusted build system and connect it to
+   and a signing policy. The same two artifact configurations are used for the
+   arm64 files, so they must accept `secblitz-*-windows-arm64.exe` and
+   `secblitz-*-windows-arm64-setup.exe` as well. Add the GitHub trusted build system and connect it to
    this repository.
 2. Create an API token for a submitter user.
 3. In GitHub, create the secret and variables listed under "Environment
