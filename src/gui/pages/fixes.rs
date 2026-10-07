@@ -2383,6 +2383,7 @@ mod tests {
         let label = |kind: &str, name: &str| ItemLabel {
             kind: kind.into(),
             name: name.into(),
+            ..ItemLabel::default()
         };
         let outcome = |id: &str, items: Vec<ItemLabel>| secblitz::engine::Outcome {
             id: id.into(),

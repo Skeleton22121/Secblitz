@@ -157,6 +157,12 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: the Wi-Fi settings of this PC could not be read" => {
             "We couldn't read this PC's Wi-Fi settings, so we leave them alone."
         }
+        "Not offered: a browser rule already turns off every add-on" => {
+            "A rule on this PC already turns off browser add-ons, so we leave it alone."
+        }
+        "Not offered: the browser add-on rules on this PC could not be read" => {
+            "We couldn't read this PC's browser add-on rules, so we leave them alone."
+        }
         _ => return None,
     })
 }

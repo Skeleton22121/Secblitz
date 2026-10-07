@@ -843,6 +843,8 @@ struct FakeState {
     readiness_count: usize,
     short_batch: bool,
     extra_findings: Vec<Finding>,
+    /// A write changes only the items it names, the way a real dynamic control does.
+    merge_items: bool,
 }
 struct Fake {
     state: Rc<RefCell<FakeState>>,
@@ -959,7 +961,17 @@ impl Backend for Fake {
         if s.fail_before_write {
             bail!("Simulated failure before mutation");
         }
-        s.values.insert(id.into(), value.clone());
+        let mut stored = value.clone();
+        if let (true, Some(old), Some(new)) = (
+            s.merge_items,
+            s.values.get(id).and_then(|v| v["items"].as_object()),
+            value["items"].as_object(),
+        ) {
+            let mut items = old.clone();
+            items.extend(new.clone());
+            stored = json!({ "items": items });
+        }
+        s.values.insert(id.into(), stored);
         s.writes.push((id.into(), value.clone()));
         if s.fail_write {
             bail!("Simulated crash after mutation");

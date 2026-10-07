@@ -470,6 +470,8 @@ mod tests {
             "Not offered: the old file-sharing version could not be checked",
             "Not offered: the old file-sharing version (SMB1) is still on",
             "Not offered: a shared folder or drive may rely on the old name service",
+            "Not offered: a browser rule already turns off every add-on",
+            "Not offered: the browser add-on rules on this PC could not be read",
             "Not offered: Recall is not available on this PC",
             "Not offered: Paint was not found on this PC",
             "Not offered: Notepad was not found on this PC",
@@ -736,6 +738,7 @@ mod tests {
             "firewall.user_dir_inbound_allow",
             "net.hosts_file",
             "persistence.run_and_tasks",
+            "browser.extensions_off",
         ] {
             assert!(is_choice_check_id(id), "{id}");
             let a = for_control(id, &CheckStatus::Attention, "Eligible");

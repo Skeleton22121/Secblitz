@@ -195,6 +195,7 @@ mod tests {
             ("browser.data_collection", Browsers),
             ("browser.safety_mode", Browsers),
             ("browser.dns_bypass", Browsers),
+            ("browser.extensions_off", Browsers),
             ("privacy.recall", Ai),
             ("ai.click_to_do", Ai),
             ("ai.paint", Ai),

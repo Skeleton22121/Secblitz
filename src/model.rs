@@ -51,15 +51,21 @@ pub struct Observation {
     pub labels: Vec<ItemLabel>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ItemLabel {
     pub kind: String,
     pub name: String,
+    /// The item's own name in its control, for kinds the person can pick from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+    /// Comma separated reasons from [`ItemLabel::WHY`] that explain why it is listed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub why: String,
 }
 
 impl ItemLabel {
-    pub const KINDS: [&'static str; 10] = [
+    pub const KINDS: [&'static str; 11] = [
         "service",
         "rule",
         "startup",
@@ -67,10 +73,12 @@ impl ItemLabel {
         "hosts",
         "account",
         "share",
+        "addon",
         "skip_missing",
         "skip_shadow",
         "more",
     ];
+    pub const WHY: [&'static str; 2] = ["sites", "programs"];
     pub const MAX_ITEMS: usize = 64;
     pub const MAX_NAME: usize = 120;
 
@@ -88,9 +96,21 @@ impl ItemLabel {
                     .take(Self::MAX_NAME)
                     .collect();
                 let name = name.trim().to_owned();
-                (!name.is_empty()).then(|| ItemLabel {
+                let key = if l.kind == "addon" && crate::hardening::addon_name_ok(&l.key) {
+                    l.key.clone()
+                } else {
+                    String::new()
+                };
+                let why: Vec<&str> = l.why.split(',').filter(|w| Self::WHY.contains(w)).collect();
+                (!name.is_empty() && (l.kind != "addon" || !key.is_empty())).then(|| ItemLabel {
                     kind: l.kind.clone(),
                     name,
+                    key,
+                    why: if l.kind == "addon" {
+                        why.join(",")
+                    } else {
+                        String::new()
+                    },
                 })
             })
             .take(Self::MAX_ITEMS)

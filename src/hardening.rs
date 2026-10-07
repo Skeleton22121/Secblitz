@@ -93,12 +93,18 @@ pub enum Source {
     RecoveryTools,
     /// Read from the Wi-Fi service setting, never from tool display text.
     WifiRandomAddress,
+    /// Dynamic: Chrome and Edge add-ons that can read every site or talk to
+    /// other programs (1 on, 0 turned off by us through the browser's block
+    /// list, 2 turned off by us and changed since). Only the add-ons the person
+    /// picks are ever looked at (see [`Spec::narrow`]).
+    BrowserExtensions,
 }
 
 pub const ITEM_FIXED: u32 = 0;
 pub const ITEM_FLAGGED: u32 = 1;
 pub const ITEM_CHANGED: u32 = 2;
 const HANDLED_SAFE: &[u32] = &[ITEM_FIXED, ITEM_CHANGED];
+pub const ADDON_PREFIXES: [&str; 2] = ["chromium:chrome:", "chromium:edge:"];
 pub const STARTUP_PREFIXES: [&str; 6] = [
     "run-machine:",
     "run-machine32:",
@@ -300,8 +306,17 @@ fn key_name_ok(source: Source, name: &str) -> bool {
         }
         Source::StaleAccounts => stale_account_name_ok(name),
         Source::ShareGrants => share_grant_name_ok(name),
+        Source::BrowserExtensions => addon_name_ok(name),
         _ => false,
     }
+}
+
+/// `chromium:<chrome|edge>:<extension id>`: Chromium extension ids are 32 letters from a to p.
+pub fn addon_name_ok(name: &str) -> bool {
+    ADDON_PREFIXES
+        .iter()
+        .find_map(|p| name.strip_prefix(p))
+        .is_some_and(|id| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b)))
 }
 
 /// A local account SID with a user-created RID (1000 and up): never the
@@ -402,7 +417,54 @@ impl Spec {
                 | Source::StartupItems
                 | Source::StaleAccounts
                 | Source::ShareGrants
+                | Source::BrowserExtensions
         )
+    }
+
+    /// Whether the person names the items to change. Without a choice nothing is
+    /// ever written, so applying every control at once cannot touch them.
+    pub fn needs_choice(&self) -> bool {
+        self.source == Source::BrowserExtensions
+    }
+
+    /// Whether items found later are changed in a batch of their own, next to
+    /// the batches already recorded.
+    pub fn adds_batches(&self) -> bool {
+        self.source == Source::BrowserExtensions
+    }
+
+    pub fn item_name_ok(&self, name: &str) -> bool {
+        self.dynamic() && key_name_ok(self.source, name)
+    }
+
+    /// An observation reduced to the named items. Items that are not named are
+    /// left out of the record altogether.
+    pub fn narrow(&self, observed: &Value, names: &[String]) -> Value {
+        let Some(items) = observed.get("items").and_then(Value::as_object) else {
+            return observed.clone();
+        };
+        let kept: Map<String, Value> = items
+            .iter()
+            .filter(|(k, _)| names.contains(k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        json!({ "items": kept })
+    }
+
+    /// Whether `observed` holds an item that still needs changing and is not part of `recorded`.
+    pub fn has_unrecorded_unsafe(&self, observed: &Value, recorded: &Value) -> bool {
+        let (Some(o), Some(r)) = (
+            observed.get("items").and_then(Value::as_object),
+            recorded.get("items").and_then(Value::as_object),
+        ) else {
+            return false;
+        };
+        o.iter().any(|(k, v)| {
+            !r.contains_key(k)
+                && self.key(k).is_some_and(|key| {
+                    Item::from_json(v).is_ok_and(|item| !item_is_safe(key.rule, &item))
+                })
+        })
     }
 
     fn key(&self, name: &str) -> Option<&Key> {

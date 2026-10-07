@@ -38,6 +38,7 @@ const IDS: &[&str] = &[
     "browser.data_collection",
     "browser.safety_mode",
     "browser.dns_bypass",
+    "browser.extensions_off",
 ];
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
@@ -181,6 +182,11 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Browsers can look up website addresses by their own private route, which skips the filtering Web protection does for the whole PC.",
             "Ads, trackers and dangerous sites that Web protection blocks can still open in your browsers.",
             "Browsers drop their own private lookups, so keep Web protection on. They will say they are managed by your organization, which only means a setting was made.",
+        ),
+        "browser.extensions_off" => e(
+            "Some Chrome and Edge add-ons can read every website you visit, or talk to other programs on your PC.",
+            "A bad or taken-over add-on could see your passwords and everything you type on any website.",
+            "The add-ons you pick turn off for everyone here. Browsers say they are managed by your organization, which only means a setting was made.",
         ),
         "defender.exclusions_risky" => e(
             "Your antivirus keeps a list of places and programs it was told to skip, and some entries cover far too much.",

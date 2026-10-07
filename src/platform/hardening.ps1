@@ -32,6 +32,7 @@ function HNameOk([string]$name) {
     }
     if ($spec.source -ceq 'StaleAccounts') { return (HStaleNameOk $name) }
     if ($spec.source -ceq 'ShareGrants') { return (HShareNameOk $name) }
+    if ($spec.source -ceq 'BrowserExtensions') { return (HAddonNameOk $name) }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -364,6 +365,7 @@ function HRead() {
         'StartupItems' { return (HReadStartup) }
         'StaleAccounts' { return (HReadStale) }
         'ShareGrants' { return (HReadShares) }
+        'BrowserExtensions' { return (HReadExtensions) }
         'RecoveryTools' { return (HReadRecovery) }
     }
     throw 'Unknown hardening source'
@@ -603,6 +605,7 @@ function HPreflight() {
             if (!(HRecoveryImageReady) -or ![IO.File]::Exists((HReagentPath))) { throw 'Not offered: the recovery tools are missing from this PC' }
         }
         'persistence.run_and_tasks' { HStartupPreflight }
+        'browser.extensions_off' { HAddonPreflight }
         'session.lock_on_wake' {
             Load 'CimCmdlets'; Load 'Microsoft.PowerShell.LocalAccounts'
             $who = [string](Get-CimInstance Win32_ComputerSystem).UserName
@@ -861,6 +864,7 @@ function HSet([string]$name, $v) {
         'StartupItems' { HSetStartup $name $v }
         'StaleAccounts' { HSetStale $name $v }
         'ShareGrants' { HSetShare $name $v }
+        'BrowserExtensions' { HSetExtension $name $v }
         'RecoveryTools' { HSetRecovery $name $v }
         default { throw 'Unknown hardening source' }
     }

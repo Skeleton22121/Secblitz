@@ -205,6 +205,13 @@ const BROWSER_MANAGEMENT: &[(&str, &str)] = &[
     (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
 ];
 
+const ADDON_GATE: &[(&str, &str)] = &[
+    (CHROME_POLICY, "CloudManagementEnrollmentToken"),
+    (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+    (CHROME_POLICY, "ExtensionSettings"),
+    (EDGE_POLICY, "ExtensionSettings"),
+];
+
 const BROWSER_AREAS: &[&str] = &["Browser", "Edge", "ADMX_MicrosoftEdge"];
 
 pub(super) const TCPIP: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
@@ -1395,6 +1402,21 @@ pub(super) static SPECS: &[Spec] = &[
             areas: BROWSER_AREAS,
             pattern: "DnsOverHttps|DNSOverHTTPS",
             policy_values: BROWSER_MANAGEMENT,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "browser.extensions_off",
+        title: "Turn off a browser add-on",
+        description: "Turn off the Chrome or Edge add-ons you pick, from those that can read every site you visit or talk to other programs, by adding each one to the browser's block list. Only the entry Secblitz adds is ever removed again, so undo turns the add-on back on with its data. Other entries, a block-everything rule and managed browsers are left alone. This applies to everyone who uses the browser on this PC.",
+        source: Source::BrowserExtensions,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: Gate {
+            areas: BROWSER_AREAS,
+            pattern: "ExtensionInstall|ExtensionSettings",
+            policy_values: ADDON_GATE,
             ..NO_GATE
         },
     },
