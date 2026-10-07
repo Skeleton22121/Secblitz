@@ -10,28 +10,23 @@ pub enum ThemeChoice {
     Dark,
 }
 
-/// The Tools page sections a person can open and close. PC health tips is
-/// always open and has no entry here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolsSection {
-    Virus,
-    Repair,
-    Passwords,
+pub enum ToolsTab {
+    #[default]
+    Tips,
+    Viruses,
+    Updates,
     Account,
-    Apps,
-    Windows,
 }
 
-impl ToolsSection {
+impl ToolsTab {
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
-            "virus" => Self::Virus,
-            "repair" => Self::Repair,
-            "passwords" => Self::Passwords,
+            "tips" => Self::Tips,
+            "viruses" => Self::Viruses,
+            "updates" => Self::Updates,
             "account" => Self::Account,
-            "apps" => Self::Apps,
-            "windows" => Self::Windows,
             _ => return None,
         })
     }
@@ -44,7 +39,7 @@ pub struct Prefs {
     #[serde(default)]
     pub lang: Option<String>,
     #[serde(default)]
-    pub tools_open: Vec<ToolsSection>,
+    pub tools_tab: ToolsTab,
     #[serde(default)]
     pub protection_topic: Option<super::topics::Topic>,
     #[serde(default = "on")]
@@ -62,7 +57,7 @@ impl Default for Prefs {
         Prefs {
             theme: ThemeChoice::default(),
             lang: None,
-            tools_open: Vec::new(),
+            tools_tab: ToolsTab::default(),
             protection_topic: None,
             notify_reverted: true,
             notify_dangerous: true,
@@ -73,18 +68,6 @@ impl Default for Prefs {
 impl Prefs {
     pub fn notify(&self) -> secblitz::status::Notify {
         secblitz::status::Notify::new(self.notify_reverted, self.notify_dangerous)
-    }
-
-    pub fn tools_section_open(&self, section: ToolsSection) -> bool {
-        self.tools_open.contains(&section)
-    }
-
-    pub fn toggle_tools_section(&mut self, section: ToolsSection) {
-        if self.tools_section_open(section) {
-            self.tools_open.retain(|s| *s != section);
-        } else {
-            self.tools_open.push(section);
-        }
     }
 }
 
@@ -125,16 +108,12 @@ pub fn parse(bytes: &[u8]) -> Prefs {
     ] {
         *slot = map.get(key).and_then(|v| v.as_bool()).unwrap_or(true);
     }
-    if let Some(items) = map.get("tools_open").and_then(|v| v.as_array()) {
-        for section in items
-            .iter()
-            .filter_map(|v| v.as_str())
-            .filter_map(ToolsSection::parse)
-        {
-            if !prefs.tools_section_open(section) {
-                prefs.tools_open.push(section);
-            }
-        }
+    if let Some(tab) = map
+        .get("tools_tab")
+        .and_then(|v| v.as_str())
+        .and_then(ToolsTab::parse)
+    {
+        prefs.tools_tab = tab;
     }
     prefs.protection_topic = map
         .get("protection_topic")
@@ -427,11 +406,11 @@ mod tests {
         let p = parse(br#"{"theme":"dark","lang":"../../etc"}"#);
         assert_eq!(p.theme, ThemeChoice::Dark);
         assert_eq!(p.lang, None);
-        let p = parse(br#"{"tools_open":["repair","bogus",7,null,"virus","repair"]}"#);
-        assert_eq!(p.tools_open, [ToolsSection::Repair, ToolsSection::Virus]);
-        assert_eq!(parse(br#"{"tools_open":"virus"}"#).tools_open, []);
-        assert_eq!(parse(br#"{"tools_open":{"virus":true}}"#).tools_open, []);
-        assert_eq!(parse(br#"{"theme":"dark"}"#).tools_open, []);
+        let p = parse(br#"{"tools_tab":"updates"}"#);
+        assert_eq!(p.tools_tab, ToolsTab::Updates);
+        assert_eq!(parse(br#"{"tools_tab":"bogus"}"#).tools_tab, ToolsTab::Tips);
+        assert_eq!(parse(br#"{"tools_tab":7}"#).tools_tab, ToolsTab::Tips);
+        assert_eq!(parse(br#"{"theme":"dark"}"#).tools_tab, ToolsTab::Tips);
         let big = format!(r#"{{"theme":"dark","pad":"{}"}}"#, "x".repeat(9000));
         assert_eq!(parse(big.as_bytes()), Prefs::default());
     }
@@ -443,7 +422,7 @@ mod tests {
         let prefs = Prefs {
             theme: ThemeChoice::Dark,
             lang: Some("de".into()),
-            tools_open: vec![ToolsSection::Passwords, ToolsSection::Windows],
+            tools_tab: ToolsTab::Account,
             protection_topic: Some(crate::app::topics::Topic::Browsers),
             notify_reverted: false,
             notify_dangerous: true,
@@ -457,12 +436,10 @@ mod tests {
 
     #[test]
     fn a_bad_tools_value_keeps_the_other_choices() {
-        let p = parse(br#"{"theme":"dark","lang":"it","tools_open":[1,"nope","apps"]}"#);
+        let p = parse(br#"{"theme":"dark","lang":"it","tools_tab":["nope"]}"#);
         assert_eq!(p.theme, ThemeChoice::Dark);
         assert_eq!(p.lang.as_deref(), Some("it"));
-        assert_eq!(p.tools_open, [ToolsSection::Apps]);
-        let big = format!(r#"{{"tools_open":["apps"],"pad":"{}"}}"#, "x".repeat(9000));
-        assert!(parse(big.as_bytes()).tools_open.is_empty());
+        assert_eq!(p.tools_tab, ToolsTab::Tips);
     }
 
     #[test]
@@ -496,14 +473,14 @@ mod tests {
     }
 
     #[test]
-    fn toggling_a_tools_section_opens_and_closes_it_once() {
-        let mut prefs = Prefs::default();
-        assert!(!prefs.tools_section_open(ToolsSection::Virus));
-        prefs.toggle_tools_section(ToolsSection::Virus);
-        prefs.toggle_tools_section(ToolsSection::Apps);
-        assert_eq!(prefs.tools_open, [ToolsSection::Virus, ToolsSection::Apps]);
-        prefs.toggle_tools_section(ToolsSection::Virus);
-        assert_eq!(prefs.tools_open, [ToolsSection::Apps]);
+    fn older_preferences_with_open_sections_still_load() {
+        let p = parse(br#"{"theme":"dark","lang":"fr","tools_open":["repair","virus"]}"#);
+        assert_eq!(p.theme, ThemeChoice::Dark);
+        assert_eq!(p.lang.as_deref(), Some("fr"));
+        assert_eq!(p.tools_tab, ToolsTab::Tips);
+        let direct: Prefs =
+            serde_json::from_slice(br#"{"tools_open":["virus"],"tools_tab":"viruses"}"#).unwrap();
+        assert_eq!(direct.tools_tab, ToolsTab::Viruses);
     }
 
     #[test]

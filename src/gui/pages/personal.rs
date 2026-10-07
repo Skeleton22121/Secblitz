@@ -336,59 +336,18 @@ pub fn apps<'a>(state: &'a State, ctx: &'a Ctx) -> Part<'a> {
     }
 }
 
-pub fn account_status(state: &State, ctx: &Ctx) -> Option<tools::Status> {
-    let working = |text| tools::Status::new(Tone::Neutral, ctx.t(text));
-    state.cells.iter().find_map(|c| match c {
-        Cell::Working => Some(working("Changing…")),
-        Cell::Loading => Some(working("Checking…")),
-        _ => None,
-    })
+pub fn account_busy(state: &State) -> bool {
+    state.cells.iter().any(|c| matches!(c, Cell::Working))
 }
 
-pub fn apps_status(state: &State, ctx: &Ctx) -> Option<tools::Status> {
-    if ctx.helper != Helper::Ready {
-        return None;
-    }
-    let mut all = Vec::new();
-    let status = |tone, text: &str| tools::Status::new(tone, ctx.t(text));
-    match state.apps {
-        Apps::Preparing | Apps::Scanning | Apps::Reading(_) => {
-            all.push(status(Tone::Neutral, "Looking for app updates…"));
-        }
-        Apps::Failed(_) => all.push(status(Tone::Warn, "We couldn't check for updates")),
-        Apps::Ready => {
-            let waiting = state
-                .app_cells
-                .iter()
-                .filter(|c| matches!(c, AppCell::Available))
-                .count();
-            all.push(match waiting {
-                0 => status(Tone::Good, "Your popular programs are up to date."),
-                1 => status(Tone::Warn, "1 app can be updated"),
-                n => tools::Status::new(
-                    Tone::Warn,
-                    ctx.t("{n} apps can be updated")
-                        .replace("{n}", &n.to_string()),
-                ),
-            });
-        }
-        Apps::Unchecked | Apps::Probing | Apps::Idle => {}
-    }
-    for cell in &state.app_cells {
-        match cell {
-            AppCell::Preparing | AppCell::Updating => {
-                all.push(status(Tone::Neutral, "Updating…"));
-            }
-            AppCell::Failed(_) | AppCell::Unconfirmed => {
-                all.push(status(Tone::Warn, "An app update needs a look"));
-            }
-            AppCell::Updated if state.apps != Apps::Ready => {
-                all.push(status(Tone::Good, "Updated."));
-            }
-            _ => {}
-        }
-    }
-    tools::most_important(all)
+pub fn apps_busy(state: &State) -> bool {
+    matches!(
+        state.apps,
+        Apps::Preparing | Apps::Scanning | Apps::Reading(_)
+    ) || state
+        .app_cells
+        .iter()
+        .any(|c| matches!(c, AppCell::Preparing | AppCell::Updating))
 }
 
 fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {

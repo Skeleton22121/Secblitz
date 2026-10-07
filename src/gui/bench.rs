@@ -1,7 +1,7 @@
 //! Timing of the interface on the CPU renderer. Run with
 //! `CARGO_PROFILE_DEV_OPT_LEVEL=2 cargo test bench_pages -- --ignored --nocapture`.
 use super::*;
-use crate::app::settings::ToolsSection;
+use crate::app::settings::ToolsTab;
 use iced::advanced::layout::{Layout, Limits};
 use iced::advanced::renderer::Headless;
 use iced::advanced::renderer::Renderer as _;
@@ -682,154 +682,104 @@ fn tools_msg(app: &mut App, msg: tools::Msg) {
     drop(app.update(Message::Tools(msg)));
 }
 
-fn toggle_tools_section(app: &mut App, section: ToolsSection) {
-    tools_msg(app, tools::Msg::ToggleSection(section));
-}
-
-fn tools_status(app: &App, section: ToolsSection) -> Option<tools::Status> {
-    tools::section_status(&app.tools, &app.ctx, section)
-}
-
-const TOOLS_SECTIONS: [ToolsSection; 6] = [
-    ToolsSection::Virus,
-    ToolsSection::Repair,
-    ToolsSection::Passwords,
-    ToolsSection::Account,
-    ToolsSection::Apps,
-    ToolsSection::Windows,
+const TOOLS_TABS: [ToolsTab; 4] = [
+    ToolsTab::Tips,
+    ToolsTab::Viruses,
+    ToolsTab::Updates,
+    ToolsTab::Account,
 ];
 
+fn open_tools_tab(app: &mut App, tab: ToolsTab) {
+    tools_msg(app, tools::Msg::SetTab(tab));
+}
+
 #[test]
-fn the_tools_page_starts_with_pc_health_tips_then_the_closed_sections() {
-    assert_eq!(tools::PAGE_ORDER[0], tools::Block::Tips);
-    let rest: Vec<_> = tools::PAGE_ORDER[1..]
-        .iter()
-        .map(|block| match block {
-            tools::Block::Section(section) => *section,
-            tools::Block::Tips => panic!("tips appear once, at the top"),
-        })
-        .collect();
-    assert_eq!(rest, TOOLS_SECTIONS);
+fn the_tools_page_opens_on_pc_health_tips() {
     let mut app = app();
-    assert!(TOOLS_SECTIONS
-        .iter()
-        .all(|s| !app.ctx.prefs.tools_section_open(*s)));
+    assert_eq!(app.ctx.prefs.tools_tab, ToolsTab::Tips);
     app.page = Page::Tools;
     drop(app.view());
 }
 
 #[test]
-fn a_tools_section_opens_and_closes_without_touching_the_others() {
+fn every_tools_tab_draws_in_every_language_with_work_finished() {
     let mut app = app();
-    toggle_tools_section(&mut app, ToolsSection::Repair);
-    assert!(app.ctx.prefs.tools_section_open(ToolsSection::Repair));
-    assert!(TOOLS_SECTIONS
-        .iter()
-        .filter(|s| **s != ToolsSection::Repair)
-        .all(|s| !app.ctx.prefs.tools_section_open(*s)));
-    toggle_tools_section(&mut app, ToolsSection::Windows);
-    toggle_tools_section(&mut app, ToolsSection::Repair);
-    assert!(!app.ctx.prefs.tools_section_open(ToolsSection::Repair));
-    assert!(app.ctx.prefs.tools_section_open(ToolsSection::Windows));
-    app.page = Page::Tools;
-    drop(app.view());
-}
-
-#[test]
-fn tools_sections_stay_as_left_after_leaving_the_page_and_after_a_restart() {
-    let mut app = app();
-    toggle_tools_section(&mut app, ToolsSection::Apps);
-    toggle_tools_section(&mut app, ToolsSection::Virus);
-    drop(app.update(Message::Navigate(Page::Tools)));
-    drop(app.update(Message::Navigate(Page::Home)));
-    drop(app.update(Message::Navigate(Page::Fixes)));
-    drop(app.update(Message::Navigate(Page::Tools)));
-    assert!(app.ctx.prefs.tools_section_open(ToolsSection::Apps));
-    assert!(app.ctx.prefs.tools_section_open(ToolsSection::Virus));
-    assert!(!app.ctx.prefs.tools_section_open(ToolsSection::Passwords));
-    let saved = serde_json::to_vec(&app.ctx.prefs).expect("prefs serialize");
-    let restarted = app::settings::parse(&saved);
-    assert_eq!(restarted.tools_open, app.ctx.prefs.tools_open);
-    assert!(restarted.tools_section_open(ToolsSection::Apps));
-}
-
-#[test]
-fn a_closed_tools_section_says_what_is_running_or_finished_inside() {
-    let mut app = app();
-    assert!(TOOLS_SECTIONS
-        .iter()
-        .all(|s| tools_status(&app, *s).is_none()));
-
     tools_msg(&mut app, tools::Msg::ScanDone(Ok(())));
-    let scan = tools_status(&app, ToolsSection::Virus).expect("a finished scan is told");
-    assert_eq!(
-        (scan.tone, scan.text.as_str()),
-        (Tone::Good, "Scan started")
-    );
-
     tools_msg(&mut app, tools::Msg::DefenderDone(Err("offline".into())));
-    let defender = tools_status(&app, ToolsSection::Virus).expect("a failed update is told");
-    assert_eq!(
-        defender.tone,
-        Tone::Warn,
-        "what needs attention wins over what went well"
-    );
-    assert_eq!(defender.text, "We couldn't update right now");
-
-    let left = secblitz::actions::ThreatRemoval {
-        found: 3,
-        removed: 1,
-        left: 2,
-    };
-    tools_msg(&mut app, tools::Msg::ThreatsDone(Ok(left)));
-    let threats = tools_status(&app, ToolsSection::Virus).expect("threats left are told");
-    assert_eq!(
-        (threats.tone, threats.text.as_str()),
-        (Tone::Warn, "Some are still there")
-    );
-
-    tools_msg(&mut app, tools::Msg::LookForUpdates);
-    let looking = tools_status(&app, ToolsSection::Repair).expect("a running look is told");
-    assert_eq!(
-        (looking.tone, looking.text.as_str()),
-        (Tone::Neutral, "Looking for updates…")
-    );
     tools_msg(&mut app, tools::Msg::Found(Err(("raw".into(), "network"))));
-    let failed = tools_status(&app, ToolsSection::Repair).expect("a failed look is told");
-    assert_eq!(
-        (failed.tone, failed.text.as_str()),
-        (Tone::Warn, "We couldn't check for updates")
-    );
-
     tools_msg(
         &mut app,
         tools::Msg::BitwardenDone(Ok(crate::broker::Reply::Done)),
     );
-    let manager = tools_status(&app, ToolsSection::Passwords).expect("an install is told");
-    assert_eq!(
-        (manager.tone, manager.text.as_str()),
-        (Tone::Good, "Bitwarden is installed")
-    );
-    tools_msg(&mut app, tools::Msg::ClearBitwarden);
-    assert!(tools_status(&app, ToolsSection::Passwords).is_none());
-
-    assert!(tools_status(&app, ToolsSection::Windows).is_none());
-    app.ctx.lang = Lang::De;
-    let german = tools_status(&app, ToolsSection::Virus).expect("still told");
-    assert_ne!(
-        german.text, "Some are still there",
-        "the summary follows the language"
-    );
     app.page = Page::Tools;
-    drop(app.view());
+    for lang in [Lang::En, Lang::De, Lang::Fr] {
+        app.ctx.lang = lang;
+        for tab in TOOLS_TABS {
+            open_tools_tab(&mut app, tab);
+            assert_eq!(app.ctx.prefs.tools_tab, tab);
+            drop(app.view());
+        }
+    }
 }
 
 #[test]
-fn the_summary_shows_only_while_the_section_is_closed() {
-    let note = || Some(tools::Status::new(Tone::Warn, "Needs you".into()));
-    assert_eq!(tools::closed_summary(false, note()), note());
-    assert_eq!(tools::closed_summary(true, note()), None);
-    assert_eq!(tools::closed_summary(false, None), None);
+fn picking_a_tools_tab_changes_only_that_choice() {
+    let mut app = app();
+    app.ctx.lang = Lang::De;
+    app.ctx.prefs.lang = Some("de".into());
+    open_tools_tab(&mut app, ToolsTab::Viruses);
+    assert_eq!(app.ctx.prefs.tools_tab, ToolsTab::Viruses);
+    assert_eq!(app.ctx.prefs.lang.as_deref(), Some("de"));
+    open_tools_tab(&mut app, ToolsTab::Viruses);
+    assert_eq!(app.ctx.prefs.tools_tab, ToolsTab::Viruses);
+}
+
+#[test]
+fn the_tools_tab_stays_as_left_after_leaving_the_page_and_after_a_restart() {
+    let mut app = app();
+    open_tools_tab(&mut app, ToolsTab::Account);
+    drop(app.update(Message::Navigate(Page::Tools)));
+    drop(app.update(Message::Navigate(Page::Home)));
+    drop(app.update(Message::Navigate(Page::Fixes)));
+    drop(app.update(Message::Navigate(Page::Tools)));
+    assert_eq!(app.ctx.prefs.tools_tab, ToolsTab::Account);
+    let saved = serde_json::to_vec(&app.ctx.prefs).expect("prefs serialize");
+    assert_eq!(app::settings::parse(&saved).tools_tab, ToolsTab::Account);
+}
+
+#[test]
+fn a_tab_shows_a_dot_while_its_work_is_running() {
+    let mut app = app();
+    let label = |app: &App, tab| tools::tab_label(&app.tools, &app.ctx, tab);
+    for tab in TOOLS_TABS {
+        assert!(!app.tools.tab_busy(tab), "{tab:?} is quiet at the start");
+        assert!(!label(&app, tab).contains('\u{2022}'));
+    }
+
+    tools_msg(&mut app, tools::Msg::LookForUpdates);
+    assert!(app.tools.tab_busy(ToolsTab::Updates));
+    assert!(label(&app, ToolsTab::Updates).ends_with(" \u{2022}"));
+    assert!(!app.tools.tab_busy(ToolsTab::Viruses));
+    assert!(!label(&app, ToolsTab::Viruses).contains('\u{2022}'));
+
+    tools_msg(&mut app, tools::Msg::Found(Err(("raw".into(), "network"))));
+    assert!(!app.tools.tab_busy(ToolsTab::Updates));
+    assert!(!label(&app, ToolsTab::Updates).contains('\u{2022}'));
+
+    tools_msg(&mut app, tools::Msg::Ask(tools::Sheet::Scan));
+    tools_msg(&mut app, tools::Msg::Confirm);
+    assert!(app.tools.tab_busy(ToolsTab::Viruses));
+    tools_msg(&mut app, tools::Msg::ScanDone(Ok(())));
+    assert!(!app.tools.tab_busy(ToolsTab::Viruses));
+
+    tools_msg(
+        &mut app,
+        tools::Msg::PickTips(app::maintenance::TipProfile::Everyday),
+    );
+    assert!(app.tools.tab_busy(ToolsTab::Tips));
+    assert!(label(&app, ToolsTab::Tips).ends_with(" \u{2022}"));
+    app.page = Page::Tools;
+    drop(app.view());
 }
 
 fn ads(app: &mut App, msg: debloat::ads::Msg) {

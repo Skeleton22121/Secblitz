@@ -1,12 +1,12 @@
 //! Drawing code for the Tools page.
 use super::{
-    most_important, repair_ratio, stage_ratio, tools, Account, Detail, Msg, Repair, Run, Sheet,
-    Shortcut, Slot, State, Status, Tips, Updates,
+    repair_ratio, stage_ratio, tools, Account, Detail, Msg, Repair, Run, Sheet, Shortcut, Slot,
+    State, Tips, Updates,
 };
 use crate::app::maintenance::{
     self as logic, InstallResult, RepairKind, RepairResult, TipProfile, TipState,
 };
-use crate::app::settings::ToolsSection;
+use crate::app::settings::ToolsTab;
 use crate::broker;
 use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
@@ -29,221 +29,111 @@ pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<El<'a>> {
     state.sheet.map(|sheet| sheet_panel(state, ctx, sheet))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Block {
-    Tips,
-    Section(ToolsSection),
-}
-
-pub const PAGE_ORDER: [Block; 7] = [
-    Block::Tips,
-    Block::Section(ToolsSection::Virus),
-    Block::Section(ToolsSection::Repair),
-    Block::Section(ToolsSection::Passwords),
-    Block::Section(ToolsSection::Account),
-    Block::Section(ToolsSection::Apps),
-    Block::Section(ToolsSection::Windows),
-];
-
 fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let mut sections = column![].spacing(theme::S3).width(Length::Fill);
-    for block in PAGE_ORDER {
-        if let Block::Section(which) = block {
-            sections = sections.push(section(state, ctx, which));
-        }
-    }
+    let tab = ctx.prefs.tools_tab;
+    let tabs = widgets::segmented(
+        p,
+        &[
+            ToolsTab::Tips,
+            ToolsTab::Viruses,
+            ToolsTab::Updates,
+            ToolsTab::Account,
+        ]
+        .map(|t| (t, tab_label(state, ctx, t))),
+        tab,
+        |t| tools(Msg::SetTab(t)),
+    );
+    let body = match tab {
+        ToolsTab::Tips => tips_tab(state, ctx),
+        ToolsTab::Viruses => viruses_tab(state, ctx),
+        ToolsTab::Updates => updates_tab(state, ctx),
+        ToolsTab::Account => account_tab(state, ctx),
+    };
     column![
         widgets::page_header(
             p,
             ctx.t("Tools"),
             Some(ctx.t("Handy ways to keep your PC safe and healthy.")),
         ),
+        column![tabs, body].spacing(theme::S4).width(Length::Fill),
+    ]
+    .spacing(theme::S6)
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn tab_label(state: &State, ctx: &Ctx, tab: ToolsTab) -> String {
+    let name = ctx.t(match tab {
+        ToolsTab::Tips => "Health tips",
+        ToolsTab::Viruses => "Viruses",
+        ToolsTab::Updates => "Updates and repair",
+        ToolsTab::Account => "Account and passwords",
+    });
+    if state.tab_busy(tab) {
+        format!("{name} \u{2022}")
+    } else {
+        name
+    }
+}
+
+fn tips_tab<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    widgets::group(
+        ctx.palette,
+        ctx.t("PC health tips"),
+        None,
+        None,
+        tips_block(state, ctx),
+    )
+}
+
+fn viruses_tab<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    let mut rows = virus_rows(state, ctx);
+    rows.extend(shortcut_rows(ctx, &[Shortcut::WindowsSecurity]));
+    widgets::group(ctx.palette, ctx.t("Virus protection"), None, None, rows)
+}
+
+fn updates_tab<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
+    let p = ctx.palette;
+    let mut windows = vec![repair_row(state, ctx), updates_row(state, ctx)];
+    windows.extend(shortcut_rows(ctx, &[Shortcut::WindowsUpdate]));
+    let apps = personal::apps(&state.personal, ctx);
+    column![
+        widgets::group(p, ctx.t("Repair & updates"), None, None, windows),
         widgets::group(
             p,
-            ctx.t("PC health tips"),
+            ctx.t("App updates"),
+            Some(apps.subtitle),
             None,
-            None,
-            tips_block(state, ctx)
+            apps.rows
         ),
-        sections,
     ]
     .spacing(theme::S8)
     .width(Length::Fill)
     .into()
 }
 
-fn section_title(ctx: &Ctx, which: ToolsSection) -> String {
-    ctx.t(match which {
-        ToolsSection::Virus => "Virus protection",
-        ToolsSection::Repair => "Repair & updates",
-        ToolsSection::Passwords => "Passwords",
-        ToolsSection::Account => "Your account",
-        ToolsSection::Apps => "App updates",
-        ToolsSection::Windows => "Windows settings",
-    })
-}
-
-/// What the closed section says about anything running or finished inside it.
-pub fn section_status(state: &State, ctx: &Ctx, which: ToolsSection) -> Option<Status> {
-    match which {
-        ToolsSection::Virus => virus_status(state, ctx),
-        ToolsSection::Repair => repair_status(state, ctx),
-        ToolsSection::Passwords => passwords_status(state, ctx),
-        ToolsSection::Account => personal::account_status(&state.personal, ctx),
-        ToolsSection::Apps => personal::apps_status(&state.personal, ctx),
-        ToolsSection::Windows => None,
-    }
-}
-
-fn section<'a>(state: &'a State, ctx: &'a Ctx, which: ToolsSection) -> El<'a> {
+fn account_tab<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
-    let (subtitle, rows) = match which {
-        ToolsSection::Virus => (None, virus_rows(state, ctx)),
-        ToolsSection::Repair => (None, vec![repair_row(state, ctx), updates_row(state, ctx)]),
-        ToolsSection::Passwords => (None, vec![manager_row(state, ctx)]),
-        ToolsSection::Account => {
-            let part = personal::account(&state.personal, ctx);
-            (Some(part.subtitle), part.rows)
-        }
-        ToolsSection::Apps => {
-            let part = personal::apps(&state.personal, ctx);
-            (Some(part.subtitle), part.rows)
-        }
-        ToolsSection::Windows => (
-            (!ctx.can_open_pages()).then(|| helper_hint(ctx)),
-            settings_rows(ctx),
+    let account = personal::account(&state.personal, ctx);
+    let mut rows = account.rows;
+    rows.extend(shortcut_rows(
+        ctx,
+        &[Shortcut::Encryption, Shortcut::SignIn],
+    ));
+    column![
+        widgets::group(p, ctx.t("Your account"), Some(account.subtitle), None, rows),
+        widgets::group(
+            p,
+            ctx.t("Passwords"),
+            None,
+            None,
+            vec![manager_row(state, ctx)]
         ),
-    };
-    let open = ctx.prefs.tools_section_open(which);
-    let mut body = column![].spacing(theme::S2).width(Length::Fill);
-    if let Some(sub) = subtitle {
-        body = body.push(container(widgets::small(p, sub)).padding([0.0, theme::S4]));
-    }
-    body = body.push(column(rows).spacing(theme::S1).width(Length::Fill));
-    let summary = closed_summary(open, section_status(state, ctx, which)).map(|s| {
-        let color = match s.tone {
-            Tone::Warn | Tone::Bad => p.tone_text(s.tone),
-            Tone::Good => p.good_text,
-            Tone::Neutral | Tone::Brand => p.text_muted,
-        };
-        (s.text, color)
-    });
-    widgets::collapsible_toned(
-        p,
-        section_title(ctx, which),
-        summary,
-        open,
-        tools(Msg::ToggleSection(which)),
-        body,
-    )
-}
-
-/// An open section shows its own rows, so only a closed one needs the summary.
-pub fn closed_summary(open: bool, status: Option<Status>) -> Option<Status> {
-    status.filter(|_| !open)
-}
-
-fn working(ctx: &Ctx, text: &str) -> Status {
-    Status::new(Tone::Neutral, ctx.t(text))
-}
-
-fn done(ctx: &Ctx, tone: Tone, text: &str) -> Status {
-    Status::new(tone, ctx.t(text))
-}
-
-fn virus_status(state: &State, ctx: &Ctx) -> Option<Status> {
-    let mut all = Vec::new();
-    match &state.threats {
-        Run::Idle => {}
-        Run::Working => all.push(working(ctx, "Removing threats…")),
-        Run::Done(Ok(result)) => all.push(match logic::threats_result(result) {
-            logic::ThreatsResult::Nothing => done(ctx, Tone::Good, "Nothing to remove"),
-            logic::ThreatsResult::Removed => done(ctx, Tone::Good, "Harmful files removed"),
-            logic::ThreatsResult::Partly => done(ctx, Tone::Warn, "Some are still there"),
-            logic::ThreatsResult::Stuck => done(ctx, Tone::Warn, "We couldn't remove them"),
-        }),
-        Run::Done(Err(_)) => all.push(done(ctx, Tone::Warn, "We couldn't remove them")),
-    }
-    match &state.scan {
-        Run::Idle => {}
-        Run::Working => all.push(working(ctx, "Starting the scan…")),
-        Run::Done(Ok(())) => all.push(done(ctx, Tone::Good, "Scan started")),
-        Run::Done(Err(_)) => all.push(done(ctx, Tone::Warn, "We couldn't start the scan")),
-    }
-    match &state.defender {
-        Run::Idle => {}
-        Run::Working => all.push(working(ctx, "Updating…")),
-        Run::Done(Ok(())) => all.push(done(ctx, Tone::Good, "Virus protection updated")),
-        Run::Done(Err(_)) => all.push(done(ctx, Tone::Warn, "We couldn't update right now")),
-    }
-    most_important(all)
-}
-
-fn result_tone(good: bool, bad: bool) -> Tone {
-    if good {
-        Tone::Good
-    } else if bad {
-        Tone::Bad
-    } else {
-        Tone::Warn
-    }
-}
-
-fn repair_status(state: &State, ctx: &Ctx) -> Option<Status> {
-    let mut all = Vec::new();
-    match &state.repair {
-        Repair::Idle => {}
-        Repair::Working { kind, .. } => all.push(working(
-            ctx,
-            match kind {
-                RepairKind::Check => "Checking for problems",
-                RepairKind::Repair => "Repairing Windows",
-            },
-        )),
-        Repair::Done { result, .. } => all.push(Status::new(
-            result_tone(
-                matches!(result, RepairResult::NoProblems | RepairResult::Repaired),
-                *result == RepairResult::CouldNotFinish,
-            ),
-            ctx.t(result.title()),
-        )),
-    }
-    match &state.updates {
-        Updates::Idle => {}
-        Updates::Looking => all.push(working(ctx, "Looking for updates…")),
-        Updates::UpToDate => all.push(done(ctx, Tone::Good, "Your PC is up to date")),
-        Updates::Found(found) => all.push(Status::new(
-            Tone::Warn,
-            match found.updates.len() {
-                1 => ctx.t("1 update ready"),
-                n => ctx.t("{n} updates ready").replace("{n}", &n.to_string()),
-            },
-        )),
-        Updates::Failed { .. } => {
-            all.push(done(ctx, Tone::Warn, "We couldn't check for updates"));
-        }
-        Updates::Installing { count, .. } => {
-            all.push(Status::new(Tone::Neutral, count_installing(ctx, *count)));
-        }
-        Updates::Done { result, .. } => all.push(Status::new(
-            result_tone(
-                *result == InstallResult::Installed,
-                *result == InstallResult::CouldNotFinish,
-            ),
-            ctx.t(result.title()),
-        )),
-    }
-    most_important(all)
-}
-
-fn passwords_status(state: &State, ctx: &Ctx) -> Option<Status> {
-    match &state.bitwarden {
-        Run::Idle => None,
-        Run::Working => Some(working(ctx, "Installing Bitwarden…")),
-        Run::Done(Ok(())) => Some(done(ctx, Tone::Good, "Bitwarden is installed")),
-        Run::Done(Err(_)) => Some(done(ctx, Tone::Warn, "We couldn't install Bitwarden")),
-    }
+    ]
+    .spacing(theme::S8)
+    .width(Length::Fill)
+    .into()
 }
 
 fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
@@ -1364,10 +1254,10 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     }
 }
 
-fn settings_rows<'a>(ctx: &'a Ctx) -> Vec<El<'a>> {
+fn shortcut_rows<'a>(ctx: &'a Ctx, which: &[Shortcut]) -> Vec<El<'a>> {
     let p = ctx.palette;
     let available = ctx.can_open_pages();
-    Shortcut::ALL
+    let mut rows: Vec<El<'a>> = which
         .iter()
         .map(|&shortcut| {
             let (icon, title, desc) = match shortcut {
@@ -1401,7 +1291,15 @@ fn settings_rows<'a>(ctx: &'a Ctx) -> Vec<El<'a>> {
                 available.then_some(tools(Msg::Open(shortcut))),
             )
         })
-        .collect()
+        .collect();
+    if !available {
+        rows.push(
+            container(widgets::small(p, helper_hint(ctx)))
+                .padding([0.0, theme::S4])
+                .into(),
+        );
+    }
+    rows
 }
 
 type SheetText = (Icon, String, Vec<String>, String);

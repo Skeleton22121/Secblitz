@@ -7,7 +7,7 @@ use crate::app::maintenance::{
     self as logic, Found, InstallEvent, InstallResult, InstallStage, RepairEvent, RepairKind,
     RepairProgress, RepairResult, TipProfile, TipsReport,
 };
-use crate::app::settings::ToolsSection;
+use crate::app::settings::ToolsTab;
 use crate::broker;
 use crate::gui::widgets::anim::{self, Clock};
 use crate::gui::{blocking, blocking_stream, Ctx, Message, Tone};
@@ -18,31 +18,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 #[cfg(test)]
-pub use view::{closed_summary, section_status, Block, PAGE_ORDER};
+pub use view::tab_label;
 pub use view::{modal, view};
-
-/// What a closed section says about its work, so nothing important is hidden.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Status {
-    pub tone: Tone,
-    pub text: String,
-}
-
-impl Status {
-    pub fn new(tone: Tone, text: String) -> Self {
-        Self { tone, text }
-    }
-}
-
-/// The most important of several statuses: what needs attention first, then
-/// what is still running, then what finished well.
-pub fn most_important(items: Vec<Status>) -> Option<Status> {
-    items.into_iter().min_by_key(|status| match status.tone {
-        Tone::Bad | Tone::Warn => 0,
-        Tone::Neutral | Tone::Brand => 1,
-        Tone::Good => 2,
-    })
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
@@ -64,12 +41,6 @@ pub enum Shortcut {
 }
 
 impl Shortcut {
-    pub const ALL: [Shortcut; 4] = [
-        Self::WindowsUpdate,
-        Self::WindowsSecurity,
-        Self::Encryption,
-        Self::SignIn,
-    ];
     fn page(self) -> crate::guide::Page {
         use crate::guide::Page;
         match self {
@@ -127,7 +98,7 @@ pub enum Msg {
     OpenSecurity,
     RestartDone(Result<(), String>),
     ToggleDetail(Detail),
-    ToggleSection(ToolsSection),
+    SetTab(ToolsTab),
     PrefsSaved,
     Personal(personal::Msg),
     AccountKnown(Option<&'static str>),
@@ -641,8 +612,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Tone::Warn,
             )),
         },
-        Msg::ToggleSection(section) => {
-            ctx.prefs.toggle_tools_section(section);
+        Msg::SetTab(tab) => {
+            if ctx.prefs.tools_tab == tab {
+                return Task::none();
+            }
+            ctx.prefs.tools_tab = tab;
             Task::perform(crate::gui::save_prefs(ctx.prefs.clone()), |_| {
                 tools(Msg::PrefsSaved)
             })
@@ -695,6 +669,25 @@ impl State {
             || matches!(self.defender, Run::Working)
             || matches!(self.bitwarden, Run::Working)
             || matches!(self.updates, Updates::Looking)
+    }
+
+    pub fn tab_busy(&self, tab: ToolsTab) -> bool {
+        match tab {
+            ToolsTab::Tips => matches!(self.tips, Tips::Running(_)),
+            ToolsTab::Viruses => {
+                matches!(self.scan, Run::Working)
+                    || matches!(self.threats, Run::Working)
+                    || matches!(self.defender, Run::Working)
+            }
+            ToolsTab::Updates => {
+                matches!(self.repair, Repair::Working { .. })
+                    || matches!(self.updates, Updates::Looking | Updates::Installing { .. })
+                    || personal::apps_busy(&self.personal)
+            }
+            ToolsTab::Account => {
+                matches!(self.bitwarden, Run::Working) || personal::account_busy(&self.personal)
+            }
+        }
     }
 
     pub(super) fn spin_elapsed(&self) -> std::time::Duration {
