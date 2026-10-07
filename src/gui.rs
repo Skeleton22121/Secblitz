@@ -318,6 +318,7 @@ pub struct App {
     warm_at: [Option<std::time::Instant>; 3],
     recheck: Recheck,
     switch_backs_seen: std::collections::HashSet<String>,
+    open_request_seen: u64,
     focused: bool,
     user: Option<String>,
 }
@@ -424,6 +425,7 @@ impl App {
             warm_at: [None; 3],
             recheck: Recheck::default(),
             switch_backs_seen: reverted.into_iter().collect(),
+            open_request_seen: now,
             focused: true,
             user,
         };
@@ -591,10 +593,23 @@ impl App {
                 self.focused = focused;
                 let idle = self.ctx.checking.is_none() && !self.ctx.busy;
                 let recheck = self.recheck.focus(focused, std::time::Instant::now(), idle);
-                if recheck || (focused && idle && self.switched_back_unseen()) {
+                let check = if recheck || (focused && idle && self.switched_back_unseen()) {
                     self.update(Message::CheckNow)
                 } else {
                     Task::none()
+                };
+                let asked = focused
+                    .then(|| app::open_request::read(app::history::now(), self.open_request_seen))
+                    .flatten();
+                match asked {
+                    Some((page, at)) => {
+                        self.open_request_seen = at;
+                        Task::batch([
+                            check,
+                            self.update(Message::Navigate(Page::open_target(&page))),
+                        ])
+                    }
+                    None => check,
                 }
             }
             Message::DismissToast => self.begin_toast_exit(),

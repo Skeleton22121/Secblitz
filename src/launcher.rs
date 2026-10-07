@@ -173,13 +173,14 @@ pub struct Guard {
     _namespace: Option<imp::Namespace>,
 }
 
-pub fn single_instance() -> anyhow::Result<Instance> {
+pub fn single_instance(open: Option<&str>) -> anyhow::Result<Instance> {
     #[cfg(windows)]
     {
-        imp::single_instance()
+        imp::single_instance(open)
     }
     #[cfg(not(windows))]
     {
+        let _ = open;
         Ok(Instance::First(Guard {}))
     }
 }
@@ -654,6 +655,9 @@ mod imp {
             );
             return Ok(1);
         }
+        if show_existing(open) {
+            return Ok(0);
+        }
         let id = broker::new_id();
         let pipe = create_pipe(&id)?;
         let args = super::gui_args(&id, lang, open);
@@ -1055,7 +1059,7 @@ mod imp {
         Ok(Namespace(handle))
     }
 
-    pub fn single_instance() -> Result<Instance> {
+    pub fn single_instance(open: Option<&str>) -> Result<Instance> {
         let mut session = 0u32;
         unsafe { ProcessIdToSessionId(std::process::id(), &mut session) };
         let namespace = private_namespace().ok();
@@ -1075,7 +1079,7 @@ mod imp {
             }));
         }
         for _ in 0..20 {
-            if focus_existing() {
+            if show_existing(open) {
                 return Ok(Instance::Existing);
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -1085,7 +1089,7 @@ mod imp {
 
     struct Search {
         exe: String,
-        found: bool,
+        found: Option<HANDLE>,
     }
 
     unsafe extern "system" fn visit(hwnd: HANDLE, param: isize) -> BOOL {
@@ -1106,26 +1110,38 @@ mod imp {
         if !same || pid == std::process::id() {
             return 1;
         }
-        if IsIconic(hwnd) != 0 {
-            ShowWindow(hwnd, SW_RESTORE);
-        }
-        SetForegroundWindow(hwnd);
-        search.found = true;
+        search.found = Some(hwnd);
         0
     }
 
-    fn focus_existing() -> bool {
-        let Ok(exe) = std::env::current_exe() else {
-            return false;
-        };
+    fn existing_window() -> Option<HANDLE> {
+        let exe = std::env::current_exe().ok()?;
         let mut search = Search {
             exe: exe.to_string_lossy().into_owned(),
-            found: false,
+            found: None,
         };
         unsafe {
             EnumWindows(Some(visit), &mut search as *mut Search as isize);
         }
         search.found
+    }
+
+    /// Brings the open window forward on the asked page; false when none is open.
+    fn show_existing(open: Option<&str>) -> bool {
+        let Some(hwnd) = existing_window() else {
+            return false;
+        };
+        // Before the window gains focus, which is when it reads the request.
+        if let Some(page) = open {
+            crate::app::open_request::write(page, crate::app::history::now());
+        }
+        unsafe {
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
+            SetForegroundWindow(hwnd);
+        }
+        true
     }
 }
 

@@ -584,7 +584,7 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
         if broker.is_none() && launcher::reopen_normally(lang, open) {
             return Ok(0);
         }
-        let _guard = match launcher::single_instance()? {
+        let _guard = match launcher::single_instance(open)? {
             launcher::Instance::First(guard) => guard,
             launcher::Instance::Existing => return Ok(0),
         };
