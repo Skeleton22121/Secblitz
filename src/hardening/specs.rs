@@ -66,6 +66,11 @@ pub(super) const EXPLORER_MACHINE: &str =
 pub(super) const WINDOWS_AI_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
 const DSH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Dsh";
 const DEVICE_METADATA_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata";
+const WINDOWS_SEARCH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search";
+const INPUT_PERSONALIZATION_POLICY: &str =
+    r"HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization";
+const TEXT_INPUT_POLICY: &str =
+    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\TextInput";
 const PAINT_POLICY: &str = r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint";
 const NOTEPAD_POLICY: &str = r"HKLM:\SOFTWARE\Policies\WindowsNotepad";
 pub(super) const DATA_COLLECTION_POLICY: &str =
@@ -518,6 +523,97 @@ pub(super) static SPECS: &[Spec] = &[
         gate: Gate {
             areas: &["Privacy"],
             pattern: "^AllowAdvertisingId",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.start_web_search",
+        title: "Web results in Start search",
+        description: "Stop Windows search sending what you type to the web and showing web results (ConnectedSearchUseWeb=0). Restart required. Not offered on Windows Home. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[set("ConnectedSearchUseWeb", WINDOWS_SEARCH_POLICY, &[0], false, Some(0), 1)],
+        gate: Gate {
+            areas: &["Search"],
+            pattern: "^DoNotUseWebResults",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.online_speech",
+        title: "Online speech recognition",
+        description: "Stop people on this PC from turning on cloud-based speech recognition (AllowInputPersonalization=0). Voice typing stops working. Not offered on Windows Home. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set(
+            "AllowInputPersonalization",
+            INPUT_PERSONALIZATION_POLICY,
+            &[0],
+            false,
+            Some(0),
+            1,
+        )],
+        gate: Gate {
+            areas: &["Privacy"],
+            pattern: "^AllowInputPersonalization",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.typing_inking",
+        title: "Sending what you type and write by hand",
+        description: "Stop Windows sending typing and handwriting samples to Microsoft to improve recognition (AllowLinguisticDataCollection=0). Not offered on Windows Home. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set(
+            "AllowLinguisticDataCollection",
+            TEXT_INPUT_POLICY,
+            &[0],
+            false,
+            Some(0),
+            1,
+        )],
+        gate: Gate {
+            areas: &["TextInput"],
+            pattern: "^AllowLinguisticDataCollection",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.lock_screen_notifications",
+        title: "Messages on the lock screen",
+        description: "Stop app notifications showing on the lock screen (DisableLockScreenAppNotifications=1). Not offered on Windows Home. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("DisableLockScreenAppNotifications", SYSPOL, &[1], false, Some(1), 1)],
+        gate: Gate {
+            areas: &["WindowsLogon"],
+            pattern: "^DisableLockScreenAppNotifications",
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "privacy.signin_email",
+        title: "Your email address on the sign-in screen",
+        description: "Stop people choosing to show account details such as an email address on the sign-in screen (BlockUserFromShowingAccountDetailsOnSignin=1). Not offered on Windows Home. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set(
+            "BlockUserFromShowingAccountDetailsOnSignin",
+            SYSPOL,
+            &[1],
+            false,
+            Some(1),
+            1,
+        )],
+        gate: Gate {
+            areas: &["ADMX_Logon"],
+            pattern: "^BlockUserFromShowingAccountDetailsOnSignin",
             ..NO_GATE
         },
     },

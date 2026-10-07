@@ -987,6 +987,17 @@ Remove-Item -LiteralPath function:Get-Service
 MakeSpec '{"id":"debloat.device_companion_apps","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}'
 HPreflight
 Assert $true 'device companion apps have no extra requirement'
+foreach ($privacyId in @('privacy.start_web_search','privacy.online_speech','privacy.typing_inking','privacy.lock_screen_notifications','privacy.signin_email')) {
+    MakeSpec ('{"id":"' + $privacyId + '","source":"Registry","dynamic":false,"reboot":false,"keys":[],"gate":{}}')
+    $script:edition = 'Professional'
+    HPreflight
+    Assert $true ($privacyId + ' is offered on Pro')
+    foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
+        $script:edition = $ed
+        Reject { HPreflight } 'not available on Windows Home'
+    }
+}
+$script:edition = 'Professional'
 
 
 $smbNames = @('SMB1Protocol', 'SMB1Protocol-Client', 'SMB1Protocol-Server', 'SMB1Protocol-Deprecation')

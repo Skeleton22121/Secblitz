@@ -831,6 +831,11 @@ fn system_controls_follow_the_research_exclusions() {
         "privacy.diagnostic_data_level",
         "privacy.delivery_optimization",
         "privacy.clipboard_sync",
+        "privacy.start_web_search",
+        "privacy.online_speech",
+        "privacy.typing_inking",
+        "privacy.lock_screen_notifications",
+        "privacy.signin_email",
         "defender.exclusions_risky",
         "ai.click_to_do",
         "ai.paint",
@@ -1088,4 +1093,93 @@ fn click_to_do_and_recall_share_one_policy_key_without_blocking_each_other() {
     }
     let gate = serde_json::from_str::<Value>(&click.script_json()).unwrap()["gate"].clone();
     assert_eq!(gate["sharedValues"], json!(["DisableAIDataAnalysis"]));
+}
+
+#[test]
+fn privacy_extras_set_only_their_documented_policy_values() {
+    const SYSTEM: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\System";
+    for (id, path, name, off, reboot, area, pattern) in [
+        (
+            "privacy.start_web_search",
+            r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search",
+            "ConnectedSearchUseWeb",
+            0,
+            true,
+            "Search",
+            "^DoNotUseWebResults",
+        ),
+        (
+            "privacy.online_speech",
+            r"HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization",
+            "AllowInputPersonalization",
+            0,
+            false,
+            "Privacy",
+            "^AllowInputPersonalization",
+        ),
+        (
+            "privacy.typing_inking",
+            r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\TextInput",
+            "AllowLinguisticDataCollection",
+            0,
+            false,
+            "TextInput",
+            "^AllowLinguisticDataCollection",
+        ),
+        (
+            "privacy.lock_screen_notifications",
+            SYSTEM,
+            "DisableLockScreenAppNotifications",
+            1,
+            false,
+            "WindowsLogon",
+            "^DisableLockScreenAppNotifications",
+        ),
+        (
+            "privacy.signin_email",
+            SYSTEM,
+            "BlockUserFromShowingAccountDetailsOnSignin",
+            1,
+            false,
+            "ADMX_Logon",
+            "^BlockUserFromShowingAccountDetailsOnSignin",
+        ),
+    ] {
+        let s = spec(id).unwrap();
+        assert!(s.ask && !s.dynamic(), "{id}");
+        assert_eq!(s.reboot, reboot, "{id}");
+        assert_eq!(s.source, Source::Registry, "{id}");
+        assert_eq!(s.keys.len(), 1, "{id}");
+        let k = &s.keys[0];
+        assert_eq!((k.name, k.path, k.value), (name, path, ""), "{id}");
+        let Rule::Set {
+            safe,
+            absent_safe,
+            fix,
+        } = k.rule
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (safe, absent_safe, fix),
+            (&[off][..], false, Some(off)),
+            "{id}"
+        );
+        assert_eq!(s.gate.areas, [area], "{id}");
+        assert_eq!(s.gate.pattern, pattern, "{id}");
+        // These keys hold unrelated policies, so none is this control's own key.
+        assert_eq!(s.gate.own_policy_key, "", "{id}");
+        assert!(
+            s.any_unsafe(&items(s, &[None])),
+            "{id}: absent means still on"
+        );
+        assert!(s.any_unsafe(&items(s, &[Some(1 - off)])), "{id}");
+        assert!(!s.any_unsafe(&items(s, &[Some(off)])), "{id}");
+        assert_eq!(
+            s.derive_target(&items(s, &[None])).unwrap(),
+            items(s, &[Some(off)]),
+            "{id}"
+        );
+        assert!(s.validate(&items(s, &[Some(2)])).is_err(), "{id}");
+    }
 }
