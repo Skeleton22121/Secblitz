@@ -1,15 +1,15 @@
 //! Private lookups: names go to Quad9 over HTTPS. The service is the PC's own DNS server, so the client
 //! uses Quad9's built-in addresses and never asks the system for `dns.quad9.net` (it would loop back here).
 
+use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 
 use super::dns::{self, Query};
-use super::fetch;
 
 pub const HOST: &str = "dns.quad9.net";
 pub const URL: &str = "https://dns.quad9.net/dns-query";
@@ -26,63 +26,93 @@ const MEDIA_TYPE: &str = "application/dns-message";
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 const TOTAL_TIMEOUT: Duration = Duration::from_millis(2500);
 const IDLE_CONNECTION: Duration = Duration::from_secs(30);
+/// A reused connection is quick or dead (Wi-Fi switch, sleep, NAT timeout), so the first try is short.
+const WARM_FIRST_TRY: Duration = Duration::from_millis(1000);
+const PING_EVERY: Duration = Duration::from_secs(15);
+const PING_REPLY_WITHIN: Duration = Duration::from_secs(5);
 const MAX_REPLY: usize = 64 * 1024;
 pub const FALLBACK_FOR: Duration = Duration::from_secs(120);
 const PROBE_LEASE: Duration = Duration::from_secs(5);
 
-/// One shared connection pool to Quad9. The client is built on first use.
 pub struct Doh {
     url: String,
     pinned: bool,
-    client: OnceLock<Option<Client>>,
+    client: Mutex<Option<Client>>,
+    last_answer: Mutex<Option<Instant>>,
 }
 
 impl Doh {
     pub fn quad9() -> Doh {
-        Doh {
-            url: URL.to_string(),
-            pinned: true,
-            client: OnceLock::new(),
-        }
+        Doh::new(URL, true)
     }
 
     #[cfg(test)]
     pub fn plain_http(url: &str) -> Doh {
+        Doh::new(url, false)
+    }
+
+    fn new(url: &str, pinned: bool) -> Doh {
         Doh {
             url: url.to_string(),
-            pinned: false,
-            client: OnceLock::new(),
+            pinned,
+            client: Mutex::new(None),
+            last_answer: Mutex::new(None),
         }
     }
 
-    fn client(&self) -> Option<&Client> {
-        self.client.get_or_init(|| build(self.pinned)).as_ref()
+    fn client(&self) -> Option<Client> {
+        let mut slot = self.client.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = build(self.pinned);
+        }
+        slot.clone()
     }
 
-    /// The answer to the lookup in `packet`, or `None` when the encrypted
-    /// way did not give a valid one. The caller's transaction id is put back.
+    fn forget_connections(&self) {
+        *self.client.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    fn recently_answered(&self, now: Instant) -> bool {
+        self.last_answer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some_and(|t| now.saturating_duration_since(t) < IDLE_CONNECTION)
+    }
+
+    /// A stale pooled connection is replaced and the lookup retried once.
     pub fn ask(&self, packet: &[u8], q: &Query) -> Option<Vec<u8>> {
-        let client = self.client()?;
         // Id 0 on the wire lets the provider reuse its answers (RFC 8484).
         let wire = dns::with_id(packet, 0);
-        let deadline = Instant::now() + TOTAL_TIMEOUT;
+        let started = Instant::now();
+        let deadline = started + TOTAL_TIMEOUT;
+        let warm = self.recently_answered(started);
         for attempt in 0..2 {
             let left = deadline.checked_duration_since(Instant::now())?;
             if left < Duration::from_millis(100) {
                 return None;
             }
-            match self.exchange(client, &wire, q, left) {
-                Ok(reply) => return Some(dns::with_id(&reply, q.id)),
-                // A connection that sat idle may have been closed by the
-                // other side; one more try opens a fresh one.
-                Err(true) if attempt == 0 => {}
+            let limit = if attempt == 0 && warm {
+                left.min(WARM_FIRST_TRY)
+            } else {
+                left
+            };
+            let client = self.client()?;
+            match self.exchange(&client, &wire, q, limit) {
+                Ok(reply) => {
+                    *self
+                        .last_answer
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+                    return Some(dns::with_id(&reply, q.id));
+                }
+                Err(true) if attempt == 0 => self.forget_connections(),
                 Err(_) => return None,
             }
         }
         None
     }
 
-    /// `Err(true)` when asking again could help.
+    /// `Err(true)` when asking again on a new connection could help.
     fn exchange(
         &self,
         client: &Client,
@@ -97,7 +127,7 @@ impl Doh {
             .timeout(left)
             .body(wire.to_vec())
             .send()
-            .map_err(|e| !e.is_timeout())?;
+            .map_err(|_| true)?;
         if response.status().as_u16() != 200 {
             return Err(false);
         }
@@ -114,7 +144,14 @@ impl Doh {
         {
             return Err(false);
         }
-        let body = fetch::read_capped(response, MAX_REPLY as u64).map_err(|_| false)?;
+        let mut body = Vec::new();
+        response
+            .take(MAX_REPLY as u64 + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| true)?;
+        if body.len() > MAX_REPLY {
+            return Err(false);
+        }
         if dns::reply_matches(&body, 0, &q.question) {
             Ok(body)
         } else {
@@ -131,7 +168,10 @@ fn build(pinned: bool) -> Option<Client> {
         .gzip(false)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
-        .pool_idle_timeout(IDLE_CONNECTION);
+        .pool_idle_timeout(IDLE_CONNECTION)
+        .http2_keep_alive_interval(PING_EVERY)
+        .http2_keep_alive_timeout(PING_REPLY_WITHIN)
+        .http2_keep_alive_while_idle(true);
     if pinned {
         builder = builder.https_only(true).resolve_to_addrs(HOST, &PINNED);
     }
@@ -173,13 +213,33 @@ impl Fallback {
     }
 }
 
-const LOCAL_ENDINGS: [&str; 6] = [
+const LOCAL_ENDINGS: [&str; 10] = [
     "local",
+    "localhost",
     "lan",
     "home",
     "home.arpa",
     "internal",
     "localdomain",
+    "corp",
+    "intranet",
+    "private",
+];
+
+/// Public-looking endings that only routers answer to.
+const ROUTER_NAMES: [&str; 12] = [
+    "fritz.box",
+    "speedport.ip",
+    "routerlogin.net",
+    "routerlogin.com",
+    "tplinkwifi.net",
+    "tplinkap.net",
+    "tplinkrepeater.net",
+    "router.asus.com",
+    "orbilogin.com",
+    "orbilogin.net",
+    "mynetworksettings.com",
+    "myfiosgateway.com",
 ];
 
 fn under(name: &str, suffix: &str) -> bool {
@@ -194,6 +254,7 @@ pub fn is_local_name(name: &str, suffixes: &[String]) -> bool {
         return true;
     }
     LOCAL_ENDINGS.iter().any(|s| under(name, s))
+        || ROUTER_NAMES.iter().any(|s| name == *s || under(name, s))
         || suffixes.iter().any(|s| name == s || under(name, s))
         || private_reverse_name(name)
 }
@@ -383,6 +444,16 @@ mod tests {
             "files.internal",
             "pc.localdomain",
             "a.b.nas.local",
+            "fritz.box",
+            "nas.fritz.box",
+            "speedport.ip",
+            "routerlogin.net",
+            "www.routerlogin.net",
+            "tplinkwifi.net",
+            "dc01.corp",
+            "wiki.intranet",
+            "scanner.private",
+            "app.localhost",
         ] {
             assert!(local(name), "{name}");
         }
@@ -399,6 +470,10 @@ mod tests {
             "internal.example",
             "home.arpa.example.com",
             "e164.arpa",
+            "corp.com",
+            "fritz.box.example.com",
+            "notrouterlogin.net",
+            "evil.speedport.ip.example",
         ] {
             assert!(!local(name), "{name}");
         }
@@ -645,6 +720,27 @@ mod tests {
         let doh = Doh::plain_http(&dead.url);
         assert!(doh.ask(&packet, &q).is_none());
         assert_eq!(dead.hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_connection_that_went_quiet_is_replaced_instead_of_failing() {
+        let ok = good([7, 7, 7, 7]);
+        let mock = serve(move |n, r| {
+            if n == 1 {
+                thread::sleep(Duration::from_millis(1300));
+                None
+            } else {
+                ok(n, r)
+            }
+        });
+        let doh = Doh::plain_http(&mock.url);
+        let (packet, q) = query("example.com", 4);
+        assert!(doh.ask(&packet, &q).is_some());
+        let start = Instant::now();
+        let reply = doh.ask(&packet, &q).expect("the new connection answers");
+        assert_eq!(reply[reply.len() - 4..], [7, 7, 7, 7]);
+        assert!(start.elapsed() < TOTAL_TIMEOUT);
+        assert_eq!(mock.hits.load(Ordering::SeqCst), 3);
     }
 
     #[test]
