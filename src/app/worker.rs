@@ -73,6 +73,8 @@ impl Session for Engine {
     }
 }
 
+type ProgressSink = Box<dyn FnMut(Progress<'_>)>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Job {
     Check,
@@ -275,7 +277,7 @@ fn applied(
     session: &mut dyn Session,
     ids: Vec<String>,
     picked: ItemChoice,
-    progress: &dyn Fn(Phase) -> Box<dyn FnMut(Progress<'_>)>,
+    progress: &dyn Fn(Phase) -> ProgressSink,
 ) -> Event {
     let result = match session.choose_items(picked) {
         Ok(()) => outcome(apply_in_batches(

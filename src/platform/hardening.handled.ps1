@@ -813,22 +813,22 @@ function HReadExtensions() {
     $script:hAddonInfo = @{}
     $out = @{}
     $lists = @{ chrome = (HAddonList 'chrome'); edge = (HAddonList 'edge') }
-    if (HInteractiveIsMe) {
-        foreach ($a in @(HAddonInventory)) {
-            if (@($lists[$a.browser].Values) -ccontains $a.id) { continue }
-            $out[$a.name] = 1
-            HLabel $a.name $a.title
-            $script:hAddonInfo[$a.name] = $a.why
-        }
-    }
     foreach ($name in @(HStateNames)) {
         $parts = HAddonParts $name
-        if ($null -eq $parts -or $out.ContainsKey($name)) { continue }
+        if ($null -eq $parts) { continue }
         $st = HStateGet $name
         if ($null -eq $st) { continue }
         $list = $lists[$parts.browser]
         $number = [string]$st.v
         $out[$name] = $(if ($list.ContainsKey($number) -and $null -ne $list[$number] -and $list[$number] -ceq $parts.id) { 0 } else { 2 })
+    }
+    if (HInteractiveIsMe) {
+        foreach ($a in @(HAddonInventory)) {
+            if ($out.ContainsKey($a.name) -or @($lists[$a.browser].Values) -ccontains $a.id) { continue }
+            $out[$a.name] = 1
+            HLabel $a.name $a.title
+            $script:hAddonInfo[$a.name] = $a.why
+        }
     }
     return $out
 }

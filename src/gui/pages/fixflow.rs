@@ -1508,6 +1508,19 @@ pub fn result_summary(state: &State) -> Option<&Summary> {
 }
 
 #[cfg(test)]
+pub fn addons_waiting(state: &State) -> bool {
+    match &state.stage {
+        Stage::Review { ids, undo: false } => waiting_for_a_pick(state, ids),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+pub fn addon_apply_job(state: &State) -> Job {
+    apply_job(state, vec![ADDONS.to_owned()])
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1575,17 +1588,4 @@ mod tests {
         assert!((bar_target(3, 0, true) - 0.75).abs() < 1e-6);
         assert!(bar_target(0, 0, true) <= 0.0 + f32::EPSILON);
     }
-}
-
-#[cfg(test)]
-pub fn addons_waiting(state: &State) -> bool {
-    match &state.stage {
-        Stage::Review { ids, undo: false } => waiting_for_a_pick(state, ids),
-        _ => false,
-    }
-}
-
-#[cfg(test)]
-pub fn addon_apply_job(state: &State) -> Job {
-    apply_job(state, vec![ADDONS.to_owned()])
 }

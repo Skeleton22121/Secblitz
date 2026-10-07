@@ -1743,7 +1743,10 @@ fn browser_add_ons_start_unpicked_and_only_the_picked_ones_are_turned_off() {
     drop(app.view());
 
     drop(app.update(Message::Fix(fixflow::Msg::PickAddon("not.listed".into()))));
-    assert!(fixflow::addons_waiting(&app.fix), "unknown keys are ignored");
+    assert!(
+        fixflow::addons_waiting(&app.fix),
+        "unknown keys are ignored"
+    );
     drop(app.update(Message::Fix(fixflow::Msg::PickAddon(key('b')))));
     assert!(!fixflow::addons_waiting(&app.fix));
     assert_eq!(
