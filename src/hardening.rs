@@ -135,6 +135,49 @@ pub struct Spec {
     pub gate: Gate,
 }
 
+/// What a person is told before agreeing to a fix, derived from the table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Notices {
+    pub managed: bool,
+    pub restart: bool,
+    pub undoable: bool,
+}
+
+const BROWSER_POLICY_ROOTS: [&str; 4] = [
+    r"HKLM:\SOFTWARE\Policies\Microsoft\Edge",
+    r"HKLM:\SOFTWARE\Policies\Google\Chrome",
+    r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox",
+    r"HKLM:\SOFTWARE\Policies\BraveSoftware",
+];
+
+fn is_browser_policy(path: &str) -> bool {
+    BROWSER_POLICY_ROOTS.iter().any(|root| {
+        path.len() >= root.len()
+            && path.is_char_boundary(root.len())
+            && path[..root.len()].eq_ignore_ascii_case(root)
+            && matches!(path.as_bytes().get(root.len()), None | Some(b'\\'))
+    })
+}
+
+/// A fix that only removes policy values leaves no "managed" notice behind.
+fn writes_a_value(rule: &Rule) -> bool {
+    matches!(
+        rule,
+        Rule::Set { fix: Some(_), .. } | Rule::Text { fix: Some(_), .. }
+    )
+}
+
+pub fn notices(spec: &Spec) -> Notices {
+    Notices {
+        managed: spec
+            .keys
+            .iter()
+            .any(|k| is_browser_policy(k.path) && writes_a_value(&k.rule)),
+        restart: spec.reboot,
+        undoable: true,
+    }
+}
+
 pub fn all() -> &'static [Spec] {
     SPECS
 }

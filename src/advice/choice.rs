@@ -15,7 +15,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Sign-in add-ons from other companies may stop working. Needs a restart."
         }
         "autorun.disabled" => {
-            "Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead."
+            "Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead. Needs a restart."
         }
         "wifi.risky_profiles" => {
             "Saved risky Wi-Fi networks stop joining by themselves. You can still connect by hand."
