@@ -90,9 +90,6 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "privacy.delivery_optimization" => {
             "Updates still come from Microsoft. This PC just stops sharing them with others."
         }
-        "privacy.start_web_search" => {
-            "Start search shows only things on this PC. Needs a restart."
-        }
         "privacy.online_speech" => {
             "Voice typing and dictation stop working. Nothing else changes."
         }

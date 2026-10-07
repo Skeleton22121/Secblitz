@@ -506,7 +506,7 @@ function HPreflight() {
             $ucpd = Get-Service -Name 'UCPD' -ErrorAction SilentlyContinue
             if ($null -ne $ucpd -and [string]$ucpd.Status -ceq 'Running') { throw 'Not offered: Windows keeps this setting for you to change yourself' }
         }
-        { $_ -in @('privacy.clipboard_sync','privacy.start_web_search','privacy.online_speech','privacy.typing_inking','privacy.lock_screen_notifications','privacy.signin_email') } {
+        { $_ -in @('privacy.clipboard_sync','privacy.online_speech','privacy.typing_inking','privacy.lock_screen_notifications','privacy.signin_email') } {
             $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID' -ErrorAction Stop).EditionID
             if ($edition -cmatch '^Core') { throw 'Not offered: this setting is not available on Windows Home' }
         }

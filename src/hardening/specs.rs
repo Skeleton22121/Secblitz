@@ -66,7 +66,6 @@ pub(super) const EXPLORER_MACHINE: &str =
 pub(super) const WINDOWS_AI_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
 const DSH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Dsh";
 const DEVICE_METADATA_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata";
-const WINDOWS_SEARCH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search";
 const INPUT_PERSONALIZATION_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization";
 const TEXT_INPUT_POLICY: &str =
@@ -523,20 +522,6 @@ pub(super) static SPECS: &[Spec] = &[
         gate: Gate {
             areas: &["Privacy"],
             pattern: "^AllowAdvertisingId",
-            ..NO_GATE
-        },
-    },
-    Spec {
-        id: "privacy.start_web_search",
-        title: "Web results in Start search",
-        description: "Stop Windows search sending what you type to the web and showing web results (ConnectedSearchUseWeb=0). Restart required. Not offered on Windows Home. Undo restores the earlier value.",
-        source: Source::Registry,
-        reboot: true,
-        ask: true,
-        keys: &[set("ConnectedSearchUseWeb", WINDOWS_SEARCH_POLICY, &[0], false, Some(0), 1)],
-        gate: Gate {
-            areas: &["Search"],
-            pattern: "^DoNotUseWebResults",
             ..NO_GATE
         },
     },

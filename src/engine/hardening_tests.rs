@@ -432,7 +432,6 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("privacy.diagnostic_data_level", json!({"AllowTelemetry": null})),
         ("privacy.delivery_optimization", json!({"DODownloadMode": null})),
         ("privacy.clipboard_sync", json!({"AllowCrossDeviceClipboard": null})),
-        ("privacy.start_web_search", json!({"ConnectedSearchUseWeb": null})),
         ("privacy.online_speech", json!({"AllowInputPersonalization": null})),
         ("privacy.typing_inking", json!({"AllowLinguisticDataCollection": null})),
         ("privacy.lock_screen_notifications", json!({"DisableLockScreenAppNotifications": null})),

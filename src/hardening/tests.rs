@@ -831,7 +831,6 @@ fn system_controls_follow_the_research_exclusions() {
         "privacy.diagnostic_data_level",
         "privacy.delivery_optimization",
         "privacy.clipboard_sync",
-        "privacy.start_web_search",
         "privacy.online_speech",
         "privacy.typing_inking",
         "privacy.lock_screen_notifications",
@@ -1099,15 +1098,6 @@ fn click_to_do_and_recall_share_one_policy_key_without_blocking_each_other() {
 fn privacy_extras_set_only_their_documented_policy_values() {
     const SYSTEM: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\System";
     for (id, path, name, off, reboot, area, pattern) in [
-        (
-            "privacy.start_web_search",
-            r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search",
-            "ConnectedSearchUseWeb",
-            0,
-            true,
-            "Search",
-            "^DoNotUseWebResults",
-        ),
         (
             "privacy.online_speech",
             r"HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization",

@@ -22,7 +22,6 @@ const IDS: &[&str] = &[
     "privacy.diagnostic_data_level",
     "privacy.delivery_optimization",
     "privacy.clipboard_sync",
-    "privacy.start_web_search",
     "privacy.online_speech",
     "privacy.typing_inking",
     "privacy.lock_screen_notifications",
@@ -107,11 +106,6 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Windows can copy what you cut or copy on one device to your other devices that use the same account.",
             "Anything you copy, like a password or a card number, can turn up on another device you forgot about.",
             "Copying and pasting works as usual on this PC. It just no longer appears on your other devices.",
-        ),
-        "privacy.start_web_search" => e(
-            "Windows can send what you type in Start to Bing and show web results next to your own files and apps.",
-            "What you type to find a file or app can leave your PC, and web results can crowd out what you wanted.",
-            "Search shows only things on your PC. Restart your PC to apply it. Not for Windows Home. You can undo this.",
         ),
         "privacy.online_speech" => e(
             "Online speech recognition sends what you say to Microsoft so Windows can turn your voice into text.",
