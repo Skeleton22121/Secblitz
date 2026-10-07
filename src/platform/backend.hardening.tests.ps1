@@ -988,6 +988,14 @@ foreach ($ed in @('Core', 'CoreSingleLanguage', 'CoreN')) {
     Reject { HPreflight } 'Windows Home cannot accept Remote Desktop connections'
 }
 
+$webRule = 'HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig\{0EE85A24-B573-4712-97FF-CC4BC51D8757}'
+MakeSpec '{"id":"browser.dns_bypass","source":"Registry","dynamic":false,"reboot":false,"keys":[]}'
+$script:fakeFs = $true; $script:fakePaths = @()
+Reject { HPreflight } 'Web protection is off'
+$script:fakePaths = @($webRule)
+HPreflight
+$script:fakeFs = $false; $script:fakePaths = @()
+
 # Optional switches: values that sibling controls keep in one policy key, installed-app checks and edition checks.
 $aiOwn = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
 $aiPath = $aiOwn.Replace('\', '\\')

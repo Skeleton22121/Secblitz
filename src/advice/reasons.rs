@@ -52,6 +52,9 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: Defender real-time protection is off" => {
             "Turn on live virus protection first, then check again."
         }
+        "Not offered: Web protection is off" => {
+            "Turn on Web protection first, then check again."
+        }
         "Not offered: Defender cloud protection is off" => {
             "Turn on cloud threat lookups first, then check again."
         }

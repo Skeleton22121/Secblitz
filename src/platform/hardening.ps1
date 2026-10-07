@@ -513,6 +513,10 @@ function HPreflight() {
                 if ($status.BehaviorMonitorEnabled -ne $true) { throw 'Not offered: Defender behavior monitoring is off' }
             }
         }
+        'browser.dns_bypass' {
+            # Only offered while the filter is really answering lookups.
+            if (!(Test-Path -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig\{0EE85A24-B573-4712-97FF-CC4BC51D8757}')) { throw 'Not offered: Web protection is off' }
+        }
         'net.netbios' { HNetbiosPreflight }
         'privacy.wifi_random_address' { HWifiRandomPreflight }
         'accounts.stale_enabled' { HStalePreflight }

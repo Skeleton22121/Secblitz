@@ -462,6 +462,7 @@ mod tests {
             "Not offered: no other administrator account could be confirmed",
             "Not offered: Defender real-time protection is off",
             "Not offered: Defender cloud protection is off",
+            "Not offered: Web protection is off",
             "Not offered: this PC uses Configuration Manager",
             "Not offered: Microsoft Office was not found",
             "Not offered: this edition of Windows does not include it",
