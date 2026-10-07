@@ -335,9 +335,11 @@ pub fn valid_id(id: &str) -> bool {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn new_id() -> String {
-    use rand::RngCore;
+    use rand::TryRng;
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("the system random generator failed");
     hex::encode(bytes)
 }
 

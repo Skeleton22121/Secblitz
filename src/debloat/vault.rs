@@ -6,7 +6,7 @@
 //! Archive (plaintext): `'D' len:u16 path` | `'F' len:u16 path size:u64 bytes` | `'E'`.
 use super::backup::{valid_relative, MAX_BYTES, MAX_FILES};
 use anyhow::{bail, ensure, Result};
-use rand::RngCore;
+use rand::TryRng;
 #[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
@@ -59,7 +59,7 @@ struct FrameWriter<'a> {
 impl FrameWriter<'_> {
     fn frame(&mut self, last: bool) -> Result<()> {
         let mut nonce = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        rand::rngs::SysRng.try_fill_bytes(&mut nonce)?;
         let sealed = self.sealer.seal(
             &nonce,
             &aad(self.family, self.sid, self.index, last),

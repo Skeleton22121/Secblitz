@@ -8,8 +8,8 @@ use std::sync::{mpsc, Arc, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 
 use super::config::Config;
 use super::dns::{self, Query};
@@ -158,7 +158,9 @@ fn unspecified_for(server: &SocketAddr) -> SocketAddr {
 }
 
 fn random_id() -> u16 {
-    OsRng.next_u32() as u16
+    SysRng
+        .try_next_u32()
+        .expect("the system random generator failed") as u16
 }
 
 /// One UDP exchange with one server: a fresh socket (so a fresh random source

@@ -74,9 +74,9 @@ fn planted(handle: &Handle) -> Result<bool> {
 /// Rename a planted entry (the entry itself, never a link's target) to a
 /// fresh random name next to it. Its contents are left untouched.
 fn set_aside(base: &Path, path: &Path) -> Result<()> {
-    use rand::RngCore;
+    use rand::TryRng;
     let mut tag = [0u8; 8];
-    rand::rngs::OsRng.fill_bytes(&mut tag);
+    rand::rngs::SysRng.try_fill_bytes(&mut tag)?;
     let aside = base.join(format!("Secblitz.untrusted-{}", hex::encode(tag)));
     let (from, to) = (wide(path)?, wide(&aside)?);
     ensure!(

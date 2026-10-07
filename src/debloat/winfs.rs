@@ -149,7 +149,7 @@ fn open_io(
 }
 
 fn mark_delete(f: &File) -> Result<()> {
-    let d = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+    let d = FILE_DISPOSITION_INFO { DeleteFile: true };
     ensure!(
         // SAFETY: the handle is live and the struct size matches the information class.
         unsafe {

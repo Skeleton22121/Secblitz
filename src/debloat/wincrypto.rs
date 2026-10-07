@@ -3,7 +3,7 @@
 
 use super::vault::Sealer;
 use anyhow::{ensure, Result};
-use rand::RngCore;
+use rand::TryRng;
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{LocalFree, STATUS_SUCCESS};
 use windows_sys::Win32::Security::Cryptography::*;
@@ -15,7 +15,9 @@ pub struct Key([u8; 32]);
 impl Key {
     pub fn random() -> Key {
         let mut k = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut k);
+        rand::rngs::SysRng
+            .try_fill_bytes(&mut k)
+            .expect("the system random generator failed");
         Key(k)
     }
     #[cfg(test)]

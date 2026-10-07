@@ -159,11 +159,7 @@ mod imp {
             if get(&mut hint) != ERROR_SUCCESS {
                 return false;
             }
-            is_metered(
-                hint.ConnectivityCost,
-                hint.OverDataLimit != 0,
-                hint.Roaming != 0,
-            )
+            is_metered(hint.ConnectivityCost, hint.OverDataLimit, hint.Roaming)
         }
     }
 }

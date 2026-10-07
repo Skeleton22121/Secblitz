@@ -183,9 +183,10 @@ mod imp {
     use secblitz::user_apps::{self, AppState};
     use secblitz::user_settings::{self, Op, Setting, SystemRegistry};
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut, time::Duration};
+    use windows_sys::core::BOOL;
     use windows_sys::Win32::{
         Foundation::{
-            CloseHandle, GetLastError, LocalFree, BOOL, ERROR_ALREADY_EXISTS, ERROR_CANCELLED,
+            CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, ERROR_CANCELLED,
             ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
         },
         Security::{
