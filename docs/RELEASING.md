@@ -34,7 +34,8 @@ bump PR -> merge -> tag -> release build (tests, installer tests, attestations) 
 | `scripts/verify-live-site.py` | Compares the live site with the deployed files |
 | `scripts/requirements-release.txt` | Hash-pinned Python packages for the checks |
 | `deploy/package.json`, `deploy/package-lock.json` | The one pinned Cloudflare deploy tool (wrangler) |
-| `wrangler.jsonc` | The Cloudflare Pages project name and output folder |
+| `wrangler.jsonc` | The Cloudflare Pages project name output folder and the download count database |
+| `functions/api/downloads.js`, `deploy/downloads.sql` | The public download count and its database table |
 | `.github/dependabot.yml`, `.github/CODEOWNERS` | Weekly updates, and who must review the files that decide what ships |
 | `rust-toolchain.toml` | The one pinned compiler (1.93.0) |
 | `CHANGELOG.md` | Release notes, in plain words |
@@ -136,6 +137,24 @@ Create it at Cloudflare, My Profile, API Tokens, "Create Custom Token".
 
 The project name comes from `wrangler.jsonc` (`secblitz`). The deploy is a
 Pages Direct Upload, so no Git integration is needed on Cloudflare.
+
+### Download count
+
+`/api/downloads` (shown on the page and in the README badge) adds up whole
+downloads of the files in `/downloads/`, installs and updates, from Cloudflare's
+request analytics for secblitz.lol and beacons.lol. Requests from scripts and
+crawlers are left out. It refreshes at most every 10 minutes, when someone
+asks for the number. The downloads themselves are not touched.
+
+- D1 database `secblitz-downloads`, bound as `DB` in `wrangler.jsonc`. Create
+  the tables with `wrangler d1 execute secblitz-downloads --remote --file
+  deploy/downloads.sql`.
+- Pages secret `ANALYTICS_TOKEN` (production and preview): a Cloudflare token
+  with only Zone, Analytics, Read on those two zones.
+- Analytics go back about 30 days. If nobody asks for the number for longer
+  than that, the oldest unread days are lost.
+- The first row is the count from before the counter existed (6 September to
+  7 October 2026), one per address and file, without our own test downloads.
 
 ### Environment `signing` and SignPath (optional, off until you turn it on)
 

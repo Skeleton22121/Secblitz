@@ -9,7 +9,7 @@ Secblitz maximizes Windows security and privacy by fixing security holes and mis
 
 [**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.8.2-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![Version 0.8.2](https://img.shields.io/badge/version-0.8.2-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B)
+![Version 0.8.2](https://img.shields.io/badge/version-0.8.2-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
