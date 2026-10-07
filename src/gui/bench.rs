@@ -1712,3 +1712,52 @@ fn the_app_access_panel_lays_out_in_every_language() {
     app.ctx.helper = Helper::Reopen;
     drop(app_access::view(&app.app_access, &app.ctx));
 }
+
+#[test]
+fn browser_add_ons_start_unpicked_and_only_the_picked_ones_are_turned_off() {
+    let _motion = widgets::anim::forced::set(false);
+    let mut app = app();
+    let id = "browser.extensions_off";
+    let key = |n: char| format!("chromium:chrome:{}", n.to_string().repeat(32));
+    with_report(&mut app, |r| {
+        let o = r.results.iter_mut().find(|o| o.id == id).expect("the spec");
+        o.status = "attention".into();
+        o.items = ['a', 'b']
+            .iter()
+            .map(|c| secblitz::model::ItemLabel {
+                kind: "addon".into(),
+                name: format!("Add-on {c}"),
+                key: key(*c),
+                why: "sites,programs".into(),
+            })
+            .collect();
+    });
+    drop(app.update(Message::ReviewFixes(vec![id.into()])));
+    assert_eq!(fixflow::stage_name(&app.fix), "review");
+    assert!(fixflow::addons_waiting(&app.fix), "nothing starts picked");
+    assert_eq!(
+        fixflow::addon_apply_job(&app.fix),
+        worker::Job::Apply(Vec::new()),
+        "with nothing picked the fix is left out"
+    );
+    drop(app.view());
+
+    drop(app.update(Message::Fix(fixflow::Msg::PickAddon("not.listed".into()))));
+    assert!(fixflow::addons_waiting(&app.fix), "unknown keys are ignored");
+    drop(app.update(Message::Fix(fixflow::Msg::PickAddon(key('b')))));
+    assert!(!fixflow::addons_waiting(&app.fix));
+    assert_eq!(
+        fixflow::addon_apply_job(&app.fix),
+        worker::Job::ApplyPicked {
+            ids: vec![id.into()],
+            picked: [(id.to_owned(), vec![key('b')])].into(),
+        }
+    );
+    drop(app.view());
+    drop(app.update(Message::Fix(fixflow::Msg::PickAddon(key('b')))));
+    assert!(fixflow::addons_waiting(&app.fix), "a second tap unpicks");
+
+    drop(app.update(Message::Fix(fixflow::Msg::Cancel)));
+    drop(app.update(Message::ReviewFixes(vec![id.into()])));
+    assert!(fixflow::addons_waiting(&app.fix), "picks do not carry over");
+}
