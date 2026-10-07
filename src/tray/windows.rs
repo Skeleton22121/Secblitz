@@ -69,6 +69,8 @@ struct Tray {
     last: Option<Status>,
     shown: Option<(usize, String)>,
     opened: Option<Instant>,
+    danger: logic::Dangerous,
+    page: Option<&'static str>,
 }
 thread_local! {
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
@@ -193,21 +195,30 @@ fn remove_icon(hwnd: HWND) {
     }
 }
 
-fn balloon(hwnd: HWND, lang: Lang) {
+fn balloon(hwnd: HWND, t: &mut Tray, notice: &logic::Balloon) {
     let mut nid = data(hwnd);
     nid.uFlags = NIF_INFO;
     nid.dwInfoFlags = NIIF_INFO;
     copy_text(&mut nid.szInfoTitle, "Secblitz");
-    copy_text(
-        &mut nid.szInfo,
-        &lang.t("Your protection dropped. Open Secblitz to see what needs attention."),
-    );
+    copy_text(&mut nid.szInfo, &notice.text(t.lang));
+    t.page = notice.page();
     unsafe {
         Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
 }
 
-fn open_app(t: &mut Tray) {
+/// The time of the last dangerous block; it holds no site names, so the unelevated tray may read it.
+fn dangerous_at() -> Option<u64> {
+    use std::io::Read;
+    let file = std::fs::File::open(secblitz::filter::config::status_path().ok()?).ok()?;
+    let mut bytes = Vec::new();
+    file.take(logic::DANGEROUS_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    logic::dangerous_at(&bytes)
+}
+
+fn open_app(t: &mut Tray, page: Option<&str>) {
     if t.opened
         .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
     {
@@ -220,12 +231,13 @@ fn open_app(t: &mut Tray) {
     let file = wide(&exe);
     let dir = exe.parent().map(wide);
     let verb = wide("open");
+    let arguments = page.map(|page| wide(format!("--open {page}")));
     unsafe {
         ShellExecuteW(
             null_mut(),
             verb.as_ptr(),
             file.as_ptr(),
-            null(),
+            arguments.as_ref().map_or(null(), |a| a.as_ptr()),
             dir.as_ref().map_or(null(), |d| d.as_ptr()),
             SW_SHOWNORMAL,
         );
@@ -237,14 +249,21 @@ fn refresh(hwnd: HWND, t: &mut Tray) {
     let icon = index(logic::icon_for(now.as_ref()));
     let tip = logic::tooltip(t.lang, now.as_ref());
     set_icon(hwnd, t, icon, &tip);
+    let notify = status::read_notify();
     if let Some(now) = now {
-        if t.last
+        let notice = t
+            .last
             .as_ref()
-            .is_some_and(|prev| logic::worsened(prev, &now))
-        {
-            balloon(hwnd, t.lang);
+            .and_then(|prev| logic::status_balloon(prev, &now, &notify));
+        if let Some(notice) = notice {
+            balloon(hwnd, t, &notice);
         }
         t.last = Some(now);
+    }
+    if t.danger
+        .observe(dangerous_at(), status::now(), notify.dangerous)
+    {
+        balloon(hwnd, t, &logic::Balloon::Dangerous);
     }
 }
 
@@ -320,7 +339,7 @@ fn menu(hwnd: HWND, lang: Lang) -> usize {
 fn menu_choice(hwnd: HWND, chosen: usize) {
     match chosen {
         ID_OPEN | ID_CHECK => {
-            with_tray(open_app);
+            with_tray(|t| open_app(t, None));
         }
         ID_QUIT => unsafe {
             DestroyWindow(hwnd);
@@ -334,8 +353,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         CALLBACK => {
             let event = (lparam & 0xFFFF) as u32;
             match event {
-                WM_LBUTTONUP | NIN_SELECT | NIN_BALLOONUSERCLICK => {
-                    with_tray(open_app);
+                NIN_BALLOONUSERCLICK => {
+                    with_tray(|t| {
+                        let page = t.page.take();
+                        open_app(t, page);
+                    });
+                }
+                WM_LBUTTONUP | NIN_SELECT => {
+                    with_tray(|t| open_app(t, None));
                 }
                 WM_RBUTTONUP | WM_CONTEXTMENU => {
                     if let Some(lang) = with_tray(|t| t.lang) {
@@ -437,6 +462,8 @@ pub fn run(lang: Lang) -> Result<i32> {
                 last: None,
                 shown: None,
                 opened: None,
+                danger: logic::Dangerous::default(),
+                page: None,
             })
         });
         CreateWindowExW(

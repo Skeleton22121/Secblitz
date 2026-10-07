@@ -316,11 +316,25 @@ pub struct App {
     flight: [bool; 3],
     warm_at: [Option<std::time::Instant>; 3],
     recheck: Recheck,
+    switch_backs_seen: std::collections::HashSet<String>,
     focused: bool,
     user: Option<String>,
 }
 
 impl App {
+    /// A setting the monitor saw switched back after the result on screen was made.
+    fn switched_back_unseen(&mut self) -> bool {
+        let (Some(report), Some(status)) = (&self.ctx.report, secblitz::status::read()) else {
+            return false;
+        };
+        let missed = app::last_check::missed_switch_backs(report, &status.reverted);
+        let unseen = missed
+            .iter()
+            .any(|id| !self.switch_backs_seen.contains(*id));
+        self.switch_backs_seen.extend(missed.into_iter().cloned());
+        unseen
+    }
+
     fn new(options: Options) -> (Self, Task<Message>) {
         let prefs = app::settings::load();
         let lang = prefs
@@ -358,6 +372,11 @@ impl App {
             (Some(dir), Some(user), Some(boot)) => app::last_check::load(dir, user, now, boot),
             _ => None,
         };
+        let reverted = secblitz::status::read()
+            .map(|s| s.reverted)
+            .unwrap_or_default();
+        let cached =
+            cached.filter(|(r, _)| app::last_check::missed_switch_backs(r, &reverted).is_empty());
         let checked_at = cached.as_ref().map(|(_, at)| *at);
         let report = cached.map(|(report, _)| Arc::new(report));
         let ctx = Ctx {
@@ -401,6 +420,7 @@ impl App {
             flight: [false; 3],
             warm_at: [None; 3],
             recheck: Recheck::default(),
+            switch_backs_seen: reverted.into_iter().collect(),
             focused: true,
             user,
         };
@@ -558,7 +578,8 @@ impl App {
             Message::WindowFocus(focused) => {
                 self.focused = focused;
                 let idle = self.ctx.checking.is_none() && !self.ctx.busy;
-                if self.recheck.focus(focused, std::time::Instant::now(), idle) {
+                let recheck = self.recheck.focus(focused, std::time::Instant::now(), idle);
+                if recheck || (focused && idle && self.switched_back_unseen()) {
                     self.update(Message::CheckNow)
                 } else {
                     Task::none()

@@ -55,6 +55,19 @@ pub fn load(dir: &Path, user: &str, now: u64, boot: u64) -> Option<(Report, u64)
         .then_some((saved.report, saved.at))
 }
 
+/// Settings the monitor saw switched back that this check still shows as protected.
+pub fn missed_switch_backs<'a>(report: &Report, reverted: &'a [String]) -> Vec<&'a String> {
+    reverted
+        .iter()
+        .filter(|id| {
+            report
+                .results
+                .iter()
+                .any(|r| &&r.id == id && r.status == secblitz::model::CheckStatus::Compliant)
+        })
+        .collect()
+}
+
 pub fn forget(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(FILE));
 }
@@ -102,6 +115,16 @@ mod tests {
         assert!(!fresh(400, 1000, 500));
         // A clock that went backwards never makes an old check look new.
         assert!(!fresh(2000, 1000, 500));
+    }
+
+    #[test]
+    fn a_switch_back_counts_only_when_the_check_still_shows_it_protected() {
+        let mut r = report();
+        let ids = vec!["defender.realtime".to_string(), "other".to_string()];
+        assert_eq!(missed_switch_backs(&r, &ids), vec![&ids[0]]);
+        r.results[0].status = CheckStatus::Attention;
+        assert!(missed_switch_backs(&r, &ids).is_empty());
+        assert!(missed_switch_backs(&report(), &[]).is_empty());
     }
 
     #[test]

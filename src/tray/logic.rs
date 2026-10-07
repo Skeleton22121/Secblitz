@@ -1,6 +1,7 @@
 //! Portable tray logic (icon, tooltip, alerts) and the shield icon renderer.
 use crate::i18n::Lang;
-use secblitz::status::{State, Status};
+use secblitz::status::{Notify, State, Status};
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -44,7 +45,7 @@ pub fn tooltip(lang: Lang, status: Option<&Status>) -> String {
         },
         _ => lang.t("Not checked yet"),
     };
-    let text = format!("Secblitz \u{2014} {body}");
+    let text = format!("Secblitz: {body}");
     let mut out = String::new();
     let mut units = 0;
     for c in text.chars() {
@@ -63,6 +64,123 @@ pub fn worsened(previous: &Status, now: &Status) -> bool {
             .attention
             .iter()
             .any(|id| !previous.attention.contains(id))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Balloon {
+    Worsened,
+    Reverted(Vec<String>),
+    Dangerous,
+}
+
+impl Balloon {
+    pub fn page(&self) -> Option<&'static str> {
+        match self {
+            Balloon::Worsened => None,
+            Balloon::Reverted(_) => Some("protection"),
+            Balloon::Dangerous => Some("web"),
+        }
+    }
+
+    pub fn text(&self, lang: Lang) -> String {
+        match self {
+            Balloon::Worsened => {
+                lang.t("Your protection dropped. Open Secblitz to see what needs attention.")
+            }
+            Balloon::Reverted(ids) => reverted_text(lang, ids),
+            Balloon::Dangerous => lang.t(
+                "Secblitz blocked a dangerous website. It may try to steal passwords or install harmful software.",
+            ),
+        }
+    }
+}
+
+fn reverted_text(lang: Lang, ids: &[String]) -> String {
+    match ids {
+        [id] if secblitz::advice::control_label(id) != "Protection check" => lang
+            .t("Windows switched back a setting Secblitz fixed: {title}. Click to put it back.")
+            .replace("{title}", lang.control(id).trim_end_matches('.')),
+        [_] => lang.t("Windows switched back a setting Secblitz fixed. Click to put it back."),
+        many => lang
+            .t("Windows switched back {n} settings Secblitz fixed. Click to put them back.")
+            .replace("{n}", &many.len().to_string()),
+    }
+}
+
+pub fn newly_reverted(previous: &Status, now: &Status) -> Vec<String> {
+    now.reverted
+        .iter()
+        .filter(|id| !previous.reverted.contains(id))
+        .cloned()
+        .collect()
+}
+
+pub fn status_balloon(previous: &Status, now: &Status, notify: &Notify) -> Option<Balloon> {
+    let gained = newly_reverted(previous, now);
+    if gained.is_empty() {
+        return worsened(previous, now).then_some(Balloon::Worsened);
+    }
+    if notify.reverted {
+        return Some(Balloon::Reverted(gained));
+    }
+    let something_else = now
+        .attention
+        .iter()
+        .any(|id| !previous.attention.contains(id) && !gained.contains(id));
+    something_else.then_some(Balloon::Worsened)
+}
+
+pub const DANGEROUS_GAP: u64 = 10 * 60;
+/// Clock skew tolerated before a block time counts as forged.
+const DANGEROUS_FUTURE: u64 = 5 * 60;
+pub const DANGEROUS_LIMIT: u64 = 16 * 1024;
+
+#[derive(Deserialize)]
+struct DangerousAt {
+    #[serde(default)]
+    dangerous_at: Option<u64>,
+}
+
+/// Never a site name.
+pub fn dangerous_at(bytes: &[u8]) -> Option<u64> {
+    if bytes.len() as u64 > DANGEROUS_LIMIT {
+        return None;
+    }
+    serde_json::from_slice::<DangerousAt>(bytes)
+        .ok()?
+        .dangerous_at
+}
+
+#[derive(Debug, Default)]
+pub struct Dangerous {
+    seen: Option<u64>,
+    shown: Option<u64>,
+}
+
+impl Dangerous {
+    /// True when a notice should appear now. The first reading only sets the
+    /// starting point, so old blocks never trigger a notice at sign-in.
+    pub fn observe(&mut self, at: Option<u64>, now: u64, allowed: bool) -> bool {
+        let Some(at) = at.filter(|at| *at <= now.saturating_add(DANGEROUS_FUTURE)) else {
+            return false;
+        };
+        let Some(seen) = self.seen else {
+            self.seen = Some(at);
+            return false;
+        };
+        if at <= seen {
+            return false;
+        }
+        self.seen = Some(at);
+        let spaced = self
+            .shown
+            .is_none_or(|last| now.saturating_sub(last) >= DANGEROUS_GAP);
+        if !allowed || !spaced {
+            return false;
+        }
+        self.shown = Some(now);
+        true
+    }
 }
 
 fn colour(icon: Icon) -> [f32; 3] {
@@ -169,6 +287,11 @@ mod tests {
         }
     }
 
+    fn back(mut s: Status, ids: &[&str]) -> Status {
+        s.reverted = ids.iter().map(|s| s.to_string()).collect();
+        s
+    }
+
     #[test]
     fn icon_and_tooltip_follow_status() {
         assert_eq!(icon_for(None), Icon::Unknown);
@@ -193,17 +316,17 @@ mod tests {
         let lang = Lang::parse("en").unwrap();
         assert_eq!(
             tooltip(lang, Some(&st(State::Ok, 5, 5, &[]))),
-            "Secblitz \u{2014} You're protected"
+            "Secblitz: You're protected"
         );
         assert_eq!(
             tooltip(lang, Some(&st(State::Attention, 2, 5, &["a", "b", "c"]))),
-            "Secblitz \u{2014} 3 things need your attention"
+            "Secblitz: 3 things need your attention"
         );
         assert_eq!(
             tooltip(lang, Some(&st(State::Attention, 4, 5, &["a"]))),
-            "Secblitz \u{2014} 1 thing needs your attention"
+            "Secblitz: 1 thing needs your attention"
         );
-        assert_eq!(tooltip(lang, None), "Secblitz \u{2014} Not checked yet");
+        assert_eq!(tooltip(lang, None), "Secblitz: Not checked yet");
         assert!(tooltip(lang, None).encode_utf16().count() < 128);
     }
 
@@ -222,6 +345,157 @@ mod tests {
             &st(State::Ok, 6, 6, &[]),
             &st(State::Attention, 5, 6, &["z"])
         ));
+    }
+
+    #[test]
+    fn no_tray_text_has_an_em_dash() {
+        let lang = Lang::parse("en").unwrap();
+        let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for b in [
+            Balloon::Worsened,
+            Balloon::Dangerous,
+            Balloon::Reverted(ids(&["defender.realtime"])),
+            Balloon::Reverted(ids(&["not.a.control"])),
+            Balloon::Reverted(ids(&["a", "b"])),
+        ] {
+            assert!(!b.text(lang).contains('\u{2014}'));
+        }
+        assert!(!tooltip(lang, None).contains('\u{2014}'));
+    }
+
+    #[test]
+    fn switched_back_text_names_one_setting_or_counts_several() {
+        let lang = Lang::parse("en").unwrap();
+        let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            Balloon::Reverted(ids(&["defender.realtime"])).text(lang),
+            "Windows switched back a setting Secblitz fixed: Live virus protection. Click to put it back."
+        );
+        assert_eq!(
+            Balloon::Reverted(ids(&["defender.realtime", "defender.ioav", "uac.enabled"]))
+                .text(lang),
+            "Windows switched back 3 settings Secblitz fixed. Click to put them back."
+        );
+        let unknown = Balloon::Reverted(ids(&["not.a.control"])).text(lang);
+        assert_eq!(
+            unknown,
+            "Windows switched back a setting Secblitz fixed. Click to put it back."
+        );
+        assert!(!unknown.contains("not.a.control"));
+        assert_eq!(
+            Balloon::Dangerous.text(lang),
+            "Secblitz blocked a dangerous website. It may try to steal passwords or install harmful software."
+        );
+    }
+
+    #[test]
+    fn balloons_open_the_page_that_explains_them() {
+        assert_eq!(Balloon::Worsened.page(), None);
+        assert_eq!(
+            Balloon::Reverted(vec!["a".into()]).page(),
+            Some("protection")
+        );
+        assert_eq!(Balloon::Dangerous.page(), Some("web"));
+    }
+
+    #[test]
+    fn a_gained_switched_back_item_gets_its_own_balloon() {
+        let on = Notify::new(true, true);
+        let before = st(State::Attention, 5, 6, &["a"]);
+        let same = back(st(State::Attention, 5, 6, &["a"]), &["a"]);
+        assert_eq!(newly_reverted(&before, &same), ["a"]);
+        assert_eq!(
+            status_balloon(&before, &same, &on),
+            Some(Balloon::Reverted(vec!["a".into()]))
+        );
+        let more = back(
+            st(State::Attention, 4, 6, &["a", "b", "c"]),
+            &["a", "b", "c"],
+        );
+        assert_eq!(
+            status_balloon(&same, &more, &on),
+            Some(Balloon::Reverted(vec!["b".into(), "c".into()]))
+        );
+        assert_eq!(status_balloon(&more, &more, &on), None);
+        let fewer = back(st(State::Attention, 5, 6, &["a"]), &["a"]);
+        assert_eq!(status_balloon(&more, &fewer, &on), None);
+    }
+
+    #[test]
+    fn without_new_switched_back_items_the_old_alert_rules_apply() {
+        let on = Notify::new(true, true);
+        let before = st(State::Attention, 4, 6, &["a", "b"]);
+        assert_eq!(status_balloon(&before, &before, &on), None);
+        assert_eq!(
+            status_balloon(&before, &st(State::Attention, 3, 6, &["a", "b"]), &on),
+            Some(Balloon::Worsened)
+        );
+        assert_eq!(
+            status_balloon(&before, &st(State::Attention, 4, 6, &["a", "c"]), &on),
+            Some(Balloon::Worsened)
+        );
+        let kept = back(st(State::Attention, 4, 6, &["a", "b"]), &["a"]);
+        assert_eq!(
+            status_balloon(&back(before.clone(), &["a"]), &kept, &on),
+            None
+        );
+    }
+
+    #[test]
+    fn switching_the_notice_off_silences_switched_back_items_only() {
+        let off = Notify::new(false, true);
+        let before = st(State::Attention, 5, 6, &["a"]);
+        let flipped = back(st(State::Attention, 4, 6, &["a", "b"]), &["b"]);
+        assert_eq!(status_balloon(&before, &flipped, &off), None);
+        let and_more = back(st(State::Attention, 3, 6, &["a", "b", "c"]), &["b"]);
+        assert_eq!(
+            status_balloon(&before, &and_more, &off),
+            Some(Balloon::Worsened)
+        );
+    }
+
+    #[test]
+    fn the_dangerous_notice_waits_for_a_new_block_and_a_quiet_ten_minutes() {
+        let mut d = Dangerous::default();
+        assert!(!d.observe(None, 1000, true));
+        assert!(
+            !d.observe(Some(900), 1000, true),
+            "first reading is the start"
+        );
+        assert!(!d.observe(Some(900), 1060, true));
+        assert!(d.observe(Some(1100), 1120, true));
+        assert!(!d.observe(Some(1100), 1180, true));
+        assert!(!d.observe(Some(1200), 1240, true), "inside ten minutes");
+        assert!(!d.observe(Some(1300), 1120 + DANGEROUS_GAP - 1, true));
+        assert!(d.observe(Some(1400), 1120 + DANGEROUS_GAP, true));
+        assert!(!d.observe(None, 5000, true));
+        assert!(!d.observe(Some(1000), 5000, true), "older times never show");
+    }
+
+    #[test]
+    fn the_dangerous_notice_respects_the_switch_and_ignores_forged_times() {
+        let mut d = Dangerous::default();
+        assert!(!d.observe(Some(100), 200, false));
+        assert!(!d.observe(Some(150), 210, false), "off: seen, not shown");
+        assert!(d.observe(Some(300), 400, true), "off did not use the gap");
+        let mut e = Dangerous::default();
+        assert!(!e.observe(Some(100), 200, true));
+        assert!(!e.observe(Some(u64::MAX), 300, true));
+        assert!(
+            e.observe(Some(350), 400, true),
+            "a forged time changed nothing"
+        );
+    }
+
+    #[test]
+    fn only_the_block_time_is_read_from_the_web_status() {
+        let full = br#"{"listening":true,"state":"on","blocked":[1,2,3],"dangerous_at":1791334020,"future":"x"}"#;
+        assert_eq!(dangerous_at(full), Some(1_791_334_020));
+        assert_eq!(dangerous_at(br#"{"listening":true}"#), None);
+        assert_eq!(dangerous_at(br#"{"dangerous_at":null}"#), None);
+        assert_eq!(dangerous_at(br#"{"dangerous_at":"soon"}"#), None);
+        assert_eq!(dangerous_at(b"not json"), None);
+        assert_eq!(dangerous_at(&vec![b' '; 20_000]), None);
     }
 
     #[test]
