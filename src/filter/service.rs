@@ -359,10 +359,7 @@ pub fn serve(
                     || (fresh.scam && !before.scam)
                     || (fresh.popups && !before.popups);
             }
-            let fresh = match fresh.without_expired(server::unix_now()) {
-                Some(pruned) if config::save_config(&paths.config, &pruned).is_ok() => pruned,
-                _ => fresh,
-            };
+            let fresh = fresh.without_expired(server::unix_now()).unwrap_or(fresh);
             shared.set_config(fresh);
         }
         if lists_wanted && download && background.start(true, false) {

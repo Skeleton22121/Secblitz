@@ -265,7 +265,9 @@ mod glue {
     fn rewrite(edit: impl FnOnce(Config) -> Result<Config>) -> Result<()> {
         crate::platform::require_admin(NEEDS_ADMIN)?;
         let path = config::config_path()?;
-        config::save_config(&path, &edit(config::load_config(&path))?)?;
+        let edited = edit(config::load_config(&path))?;
+        let edited = edited.without_expired(unix_now()).unwrap_or(edited);
+        config::save_config(&path, &edited)?;
         settle();
         Ok(())
     }
