@@ -306,6 +306,7 @@ pub struct App {
     pub history: history::State,
     pub settings: settings::State,
     pub app_access: app_access::State,
+    privacy_shown: bool,
     toast_gen: u32,
     toast_leaving: bool,
     entered: Option<std::time::Instant>,
@@ -411,6 +412,7 @@ impl App {
             history: Default::default(),
             settings: Default::default(),
             app_access: Default::default(),
+            privacy_shown: false,
             toast_gen: 0,
             toast_leaving: false,
             entered: None,
@@ -444,7 +446,16 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let was_busy = self.ctx.busy;
-        let task = self.handle(message);
+        let mut task = self.handle(message);
+        let privacy = self.page == Page::Fixes
+            && fixes::topic_on_show(&self.fixes) == Some(crate::app::topics::Topic::Privacy);
+        if privacy && !self.privacy_shown {
+            task = Task::batch([
+                task,
+                app_access::on_enter(&mut self.app_access, &mut self.ctx),
+            ]);
+        }
+        self.privacy_shown = privacy;
         // A fix, undo, removal or repair may change what a check finds: the
         // next opening must check again (a fix or undo saves its own re-check).
         if self.ctx.busy && !was_busy {
@@ -942,7 +953,7 @@ impl App {
         let p = Palette::of(self.ctx.palette.mode);
         let content: Element<'_, Message> = match self.page {
             Page::Home => home::view(&self.home, &self.ctx),
-            Page::Fixes => fixes::view(&self.fixes, &self.ctx),
+            Page::Fixes => fixes::view(&self.fixes, &self.ctx, &self.app_access),
             Page::Debloat => debloat::view(&self.debloat, &self.ctx),
             Page::Web => web::view(&self.web, &self.ctx),
             Page::Tools => tools::view(&self.tools, &self.ctx),

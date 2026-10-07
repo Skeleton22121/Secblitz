@@ -58,7 +58,6 @@ fn toast(text: String) -> Task<Message> {
     Task::done(Message::Toast(text, Tone::Warn))
 }
 
-#[allow(dead_code)]
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if state.load[slot(state.capability)] == Load::Failed {
         state.load[slot(state.capability)] = Load::Idle;

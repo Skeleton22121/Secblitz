@@ -948,7 +948,6 @@ pub fn open_protected(state: &State, ctx: &Ctx) -> bool {
     .unwrap_or(false)
 }
 
-#[cfg(test)]
 pub fn topic_on_show(state: &State) -> Option<Topic> {
     state.topic.get()
 }
@@ -1525,7 +1524,11 @@ pub fn fills_window(ctx: &Ctx) -> bool {
         && (ctx.full_check().is_some() || (ctx.report.is_none() && ctx.check_error.is_none()))
 }
 
-pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
+pub fn view<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    access: &'a super::app_access::State,
+) -> Element<'a, Message> {
     let p = ctx.palette;
     let to_check = ctx
         .report
@@ -1669,6 +1672,9 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         };
         let head = container(head).padding([0.0, theme::S4]);
         let mut section = column![head].spacing(theme::S3);
+        if topic == Topic::Privacy {
+            section = section.push(super::app_access::view(access, ctx));
+        }
         let mut groups = topic_groups(state, ctx, rows, &part, topic, false).into_iter();
         if let Some(first) = groups.next() {
             section = section.push(first);
