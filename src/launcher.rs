@@ -86,14 +86,35 @@ fn args_are_plain(args: &[String]) -> bool {
         .all(|a| !a.is_empty() && a.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'))
 }
 
-pub fn run(lang: Lang) -> anyhow::Result<i32> {
+const OPEN_PAGES: [&str; 4] = ["protection", "web", "tools", "history"];
+
+pub fn open_page(value: &str) -> Option<&'static str> {
+    OPEN_PAGES
+        .into_iter()
+        .find(|p| p.eq_ignore_ascii_case(value))
+}
+
+/// Every word is a fixed or generated plain word.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn gui_args(id: &str, lang: Lang, open: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = ["gui", "--broker", id, "--lang", lang.code()]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    if let Some(page) = open.and_then(open_page) {
+        args.extend(["--open".to_owned(), page.to_owned()]);
+    }
+    args
+}
+
+pub fn run(lang: Lang, open: Option<&str>) -> anyhow::Result<i32> {
     #[cfg(windows)]
     {
-        imp::run(lang)
+        imp::run(lang, open)
     }
     #[cfg(not(windows))]
     {
-        let _ = lang;
+        let _ = (lang, open);
         anyhow::bail!("Secblitz requires Windows")
     }
 }
@@ -115,14 +136,14 @@ pub fn elevate_and_wait(args: &[String]) -> anyhow::Result<i32> {
 
 /// A "Run as administrator" start has no broker: start again the normal way
 /// and let this copy close. False when that is not possible or not needed.
-pub fn reopen_normally(lang: Lang) -> bool {
+pub fn reopen_normally(lang: Lang, open: Option<&str>) -> bool {
     #[cfg(windows)]
     {
-        matches!(imp::split_token_elevated(), Ok(true)) && imp::reopen_normally(lang).is_ok()
+        matches!(imp::split_token_elevated(), Ok(true)) && imp::reopen_normally(lang, open).is_ok()
     }
     #[cfg(not(windows))]
     {
-        let _ = lang;
+        let _ = (lang, open);
         false
     }
 }
@@ -345,7 +366,7 @@ mod imp {
 
     /// Starts Secblitz again with the desktop user's normal rights, so it goes
     /// through the launcher (and its UAC prompt) and gets a broker.
-    pub fn reopen_normally(lang: Lang) -> Result<()> {
+    pub fn reopen_normally(lang: Lang, open: Option<&str>) -> Result<()> {
         // SAFETY: GetShellWindow has no preconditions.
         let shell = unsafe { GetShellWindow() };
         ensure!(!shell.is_null(), "No desktop shell");
@@ -404,7 +425,12 @@ mod imp {
         let primary = Owned(primary);
         let exe = std::env::current_exe()?;
         let application: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
-        let mut command = wide(&format!("\"{}\" gui --lang {}", exe.display(), lang.code()));
+        let mut line = format!("\"{}\" gui --lang {}", exe.display(), lang.code());
+        if let Some(page) = open.and_then(super::open_page) {
+            line.push_str(" --open ");
+            line.push_str(page);
+        }
+        let mut command = wide(&line);
         // SAFETY: plain C structs for which all-zero bytes are valid initial values.
         let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
         startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
@@ -617,9 +643,9 @@ mod imp {
         }
     }
 
-    pub fn run(lang: Lang) -> Result<i32> {
+    pub fn run(lang: Lang, open: Option<&str>) -> Result<i32> {
         if split_token_elevated()? {
-            if reopen_normally(lang).is_ok() {
+            if reopen_normally(lang, open).is_ok() {
                 return Ok(0);
             }
             super::message_box(
@@ -630,10 +656,7 @@ mod imp {
         }
         let id = broker::new_id();
         let pipe = create_pipe(&id)?;
-        let args: Vec<String> = ["gui", "--broker", &id, "--lang", lang.code()]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let args = super::gui_args(&id, lang, open);
         let Some(child) = elevate(&args)? else {
             return Ok(0);
         };
@@ -1144,6 +1167,37 @@ mod tests {
         let text = friendly_check_problem("The administrator prompt was declined");
         assert!(text.contains("Press Check again") && !text.contains("open"));
         assert!(friendly_check_problem("Secblitz requires Windows").contains("Windows 10"));
+    }
+
+    #[test]
+    fn open_names_only_known_pages() {
+        for page in ["protection", "web", "tools", "history"] {
+            assert_eq!(open_page(page), Some(page));
+        }
+        assert_eq!(open_page("Protection"), Some("protection"));
+        for other in [
+            "",
+            "home",
+            "settings",
+            "fixes",
+            "../x",
+            "protection ",
+            "web&x",
+        ] {
+            assert_eq!(open_page(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn the_elevated_copy_gets_the_page_as_plain_words() {
+        let id = "a".repeat(32);
+        let with = gui_args(&id, Lang::En, Some("web"));
+        assert_eq!(with[with.len() - 2..], ["--open", "web"]);
+        assert!(args_are_plain(&with));
+        let none = gui_args(&id, Lang::En, None);
+        assert!(!none.iter().any(|a| a == "--open"));
+        let unknown = gui_args(&id, Lang::En, Some("x y; calc"));
+        assert_eq!(unknown, none);
     }
 
     #[test]

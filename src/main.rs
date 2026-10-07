@@ -33,6 +33,13 @@ fn command(lang: Lang) -> Command {
                 .help(text(lang.t("Language (default: Windows display language)"))),
         )
         .arg(
+            Arg::new("open")
+                .long("open")
+                .value_name("page")
+                .hide(true)
+                .num_args(1),
+        )
+        .arg(
             Arg::new("no-animation")
                 .long("no-animation")
                 .global(true)
@@ -233,7 +240,7 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
         .subcommand_matches("service")
         .and_then(ArgMatches::subcommand_name)
     else {
-        return launcher::run(lang);
+        return launcher::run(lang, matches.get_one::<String>("open").map(String::as_str));
     };
     if service_action == "run" {
         service::run()?;
@@ -545,7 +552,7 @@ fn elevate_and_wait(args: &[String]) -> Result<i32> {
 fn first_word(args: &[std::ffi::OsString]) -> Option<&str> {
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--lang" {
+        if arg == "--lang" || arg == "--open" {
             args.next();
             continue;
         }
@@ -567,11 +574,14 @@ fn run_gui(args: &[std::ffi::OsString], lang: Lang) -> i32 {
         let broker = flag_value(args, "--broker")
             .filter(|id| broker::valid_id(id))
             .map(str::to_owned);
-        let start = flag_value(args, "--self-test").and_then(gui::Page::parse);
+        let open = flag_value(args, "--open");
+        let start = flag_value(args, "--self-test")
+            .and_then(gui::Page::parse)
+            .or_else(|| open.map(gui::Page::open_target));
         if !platform::is_elevated_or_false() {
-            return launcher::run(lang);
+            return launcher::run(lang, open);
         }
-        if broker.is_none() && launcher::reopen_normally(lang) {
+        if broker.is_none() && launcher::reopen_normally(lang, open) {
             return Ok(0);
         }
         let _guard = match launcher::single_instance()? {
@@ -1122,6 +1132,42 @@ mod tests {
             .try_get_matches_from(["secblitz"])
             .unwrap();
         assert!(m.subcommand_name().is_none());
+    }
+
+    #[test]
+    fn open_picks_the_page_the_app_starts_on() {
+        let m = command(Lang::En)
+            .try_get_matches_from(["secblitz", "--open", "protection"])
+            .unwrap();
+        assert!(m.subcommand_name().is_none());
+        assert_eq!(
+            m.get_one::<String>("open").map(String::as_str),
+            Some("protection")
+        );
+        let none = command(Lang::En)
+            .try_get_matches_from(["secblitz"])
+            .unwrap();
+        assert!(none.get_one::<String>("open").is_none());
+        assert_eq!(first_word(&os(&["secblitz", "--open", "protection"])), None);
+        assert_eq!(
+            first_word(&os(&["secblitz", "--open", "web", "gui"])),
+            Some("gui")
+        );
+        let args = os(&["secblitz", "gui", "--broker", "abc", "--open", "tools"]);
+        assert_eq!(flag_value(&args, "--open"), Some("tools"));
+        for (word, page) in [
+            ("protection", gui::Page::Fixes),
+            ("web", gui::Page::Web),
+            ("tools", gui::Page::Tools),
+            ("history", gui::Page::History),
+            ("History", gui::Page::History),
+            ("settings", gui::Page::Home),
+            ("home", gui::Page::Home),
+            ("", gui::Page::Home),
+            ("nonsense", gui::Page::Home),
+        ] {
+            assert_eq!(gui::Page::open_target(word), page, "{word}");
+        }
     }
 
     #[test]

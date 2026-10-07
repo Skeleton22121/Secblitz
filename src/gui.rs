@@ -68,6 +68,15 @@ impl Page {
             _ => return None,
         })
     }
+    pub fn open_target(s: &str) -> Page {
+        match s.to_ascii_lowercase().as_str() {
+            "protection" => Page::Fixes,
+            "web" => Page::Web,
+            "tools" => Page::Tools,
+            "history" => Page::History,
+            _ => Page::Home,
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
             Page::Home => "Home",
