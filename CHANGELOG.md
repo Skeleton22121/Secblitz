@@ -9,7 +9,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-10-07
+## [0.9.1] - 2026-10-07
 
 ### Added
 - Protection groups its settings into topic tiles that show what each topic needs.
@@ -30,6 +30,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Web protection is split into Overview, What to block and Sites.
 - The History chart shows one point per day, and your starting point until there are two days.
 - Secblitz opens in the middle of the screen.
+- Links to the source code and to report a problem use the new GitHub address.
 
 ### Fixed
 - The notification area status stays up to date while background monitoring is on.
