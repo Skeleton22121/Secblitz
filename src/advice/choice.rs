@@ -99,6 +99,9 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "privacy.lock_screen_notifications" => {
             "Messages no longer show on the lock screen. You still see them after you sign in."
         }
+        "privacy.wifi_random_address" => {
+            "Wi-Fi networks stop recognising this PC. One for known devices only may ask you to approve it again."
+        }
         "privacy.signin_email" => {
             "The sign-in screen no longer shows your email address."
         }

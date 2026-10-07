@@ -26,6 +26,7 @@ const IDS: &[&str] = &[
     "privacy.typing_inking",
     "privacy.lock_screen_notifications",
     "privacy.signin_email",
+    "privacy.wifi_random_address",
     "ai.click_to_do",
     "ai.paint",
     "ai.notepad",
@@ -126,6 +127,11 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Windows can show your email address on the sign-in screen, even before anyone has signed in.",
             "Anyone who walks past your PC or looks at a screen share could learn your email address.",
             "Nobody can turn that on, so the sign-in screen shows only your name or picture. Not for Windows Home. You can undo this.",
+        ),
+        "privacy.wifi_random_address" => e(
+            "Your Wi-Fi adapter has a fixed hardware address that every Wi-Fi network you join can see.",
+            "Cafes, hotels and other public networks can use that address to spot your PC each time and follow where it goes.",
+            "Each network sees its own made-up address instead. A network that only lets in known devices may ask you to approve this PC again. You can undo this.",
         ),
         "ai.click_to_do" => e(
             "Click to Do lets you pick text or pictures on your screen and send them to AI tools for quick actions.",

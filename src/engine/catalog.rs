@@ -186,6 +186,9 @@ pub(super) fn assessment_status(id: &str, o: &Observation) -> Result<CheckStatus
         return Ok(CheckStatus::Skipped);
     }
     if let Some(spec) = crate::hardening::spec(id) {
+        if spec.nothing_to_protect(&o.value) {
+            return Ok(CheckStatus::Skipped);
+        }
         return Ok(if !spec.any_unsafe(&o.value) {
             CheckStatus::Compliant
         } else if apply_eligible(id, o) {

@@ -504,6 +504,8 @@ mod tests {
             "Not offered: a shared folder would be left that only administrators can open",
             "Not offered: a shared folder has permissions that could not be put back exactly",
             "Not offered: the recovery tools are missing from this PC",
+            "Not offered: this PC has no Wi-Fi adapter",
+            "Not offered: the Wi-Fi settings of this PC could not be read",
         ] {
             let a = for_control("lsa.run_as_ppl", &CheckStatus::Skipped, reason);
             assert_eq!(a.status, "Not offered", "{reason}");
@@ -529,6 +531,7 @@ mod tests {
             ("privacy.typing_inking", "Privacy extras"),
             ("privacy.lock_screen_notifications", "Privacy extras"),
             ("privacy.signin_email", "Privacy extras"),
+            ("privacy.wifi_random_address", "Privacy extras"),
             ("ai.click_to_do", "AI features"),
             ("ai.paint", "AI features"),
             ("ai.notepad", "AI features"),

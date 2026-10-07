@@ -15,6 +15,12 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "{33333333-3333-3333-3333-333333333333}": 2,
         }});
     }
+    if spec.source == Source::WifiRandomAddress {
+        return json!({"items": {
+            "{11111111-1111-1111-1111-111111111111}": 0,
+            "{22222222-2222-2222-2222-222222222222}": 1,
+        }});
+    }
     if spec.source == Source::LegacyServices {
         return json!({"items": {"RemoteRegistry": 10, "sshd": 4, "WinRM": 12}});
     }
@@ -149,6 +155,17 @@ fn hardening_safe_and_default_states_are_protected_and_never_written() {
         assert!(state.borrow().writes.is_empty(), "{id}");
         assert!(e.history().unwrap().is_empty(), "{id}");
     }
+}
+
+#[test]
+fn a_pc_without_wi_fi_is_not_offered_a_random_wi_fi_address() {
+    let id = "privacy.wifi_random_address";
+    let (_dir, state, mut e) = fixture(id, json!({"items": {}}));
+    let result = e.audit().unwrap().results.remove(0);
+    assert_eq!(result.status, CheckStatus::Skipped);
+    let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_ne!(report.results[0].status, CheckStatus::Applied);
+    assert!(state.borrow().writes.is_empty());
 }
 
 #[test]

@@ -835,6 +835,7 @@ fn system_controls_follow_the_research_exclusions() {
         "privacy.typing_inking",
         "privacy.lock_screen_notifications",
         "privacy.signin_email",
+        "privacy.wifi_random_address",
         "defender.exclusions_risky",
         "ai.click_to_do",
         "ai.paint",
@@ -936,14 +937,14 @@ fn recovery_tools_are_a_plain_fix_that_only_turns_them_back_on() {
     for never in ["bcdedit", "BitLocker", "manage-bde", "diskpart"] {
         assert!(!json.contains(never), "{never}");
     }
-    // The backend starts exactly one program, ReAgentc.exe, for exactly
-    // two changes, hidden and with every output captured. Nothing else in
-    // the hardening scripts starts a program or edits start-up settings.
+    // Only ReAgentc.exe (two changes) and netsh.exe (one Wi-Fi address) are started, through the one hidden-window launcher.
     let script = include_str!("../platform/hardening.ps1");
     let start = script.find("function HRunReagent(").unwrap();
+    let reagent = &script[start..start + script[start..].find("\n}\n").unwrap()];
+    assert!(reagent.contains("@('/enable', '/disable') -cnotcontains $verb"));
+    let start = script.find("function HRunHidden(").unwrap();
     let body = &script[start..start + script[start..].find("\n}\n").unwrap()];
     for must in [
-        "@('/enable', '/disable') -cnotcontains $verb",
         "$start.UseShellExecute = $false",
         "$start.CreateNoWindow = $true",
         "$start.RedirectStandardInput = $true",
@@ -1171,5 +1172,80 @@ fn privacy_extras_set_only_their_documented_policy_values() {
             "{id}"
         );
         assert!(s.validate(&items(s, &[Some(2)])).is_err(), "{id}");
+    }
+}
+
+#[test]
+fn random_wifi_address_is_a_per_adapter_choice_that_undoes_each_adapter() {
+    let w = spec("privacy.wifi_random_address").unwrap();
+    assert_eq!(w.source, Source::WifiRandomAddress);
+    assert!(w.ask && w.dynamic() && !w.reboot);
+    let a = "{11111111-1111-1111-1111-111111111111}";
+    let b = "{abcdefAB-2222-2222-2222-222222222222}";
+    w.validate(&json!({"items": {a: 0, b: 1}})).unwrap();
+    for bad in [
+        json!({"items": {"Wi-Fi": 0}}),
+        json!({"items": {"{1111}": 0}}),
+        json!({"items": {"{1111111g-1111-1111-1111-111111111111}": 0}}),
+        json!({"items": {"{11111111-1111-1111-1111-111111111111}\"; x": 0}}),
+        json!({"items": {a: 2}}),
+    ] {
+        assert!(w.validate(&bad).is_err(), "accepted {bad}");
+    }
+    assert!(w.any_unsafe(&json!({"items": {a: 0, b: 1}})));
+    assert!(!w.any_unsafe(&json!({"items": {a: 1, b: 1}})));
+    assert_eq!(
+        w.derive_target(&json!({"items": {a: 0, b: 1}})).unwrap(),
+        json!({"items": {a: 1, b: 1}})
+    );
+    assert_eq!(
+        w.view(&json!({"items": {a: 1, b: 0}}), &json!({"items": {a: 1}})),
+        json!({"items": {a: 1}})
+    );
+
+    let script = include_str!("../platform/hardening.ps1");
+    let start = script.find("function HWifiAdapters(").unwrap();
+    let find = &script[start..start + script[start..].find("\n}\n").unwrap()];
+    assert!(find.contains("MSFT_NetAdapter") && find.contains("-ne 9"));
+    assert!(script.contains(r"SOFTWARE\Microsoft\WlanSvc\Interfaces\"));
+    assert!(script.contains("'RandomMacState'"));
+    let start = script.find("function HSetWifiRandom(").unwrap();
+    let set = &script[start..start + script[start..].find("\n}\n").unwrap()];
+    for must in [
+        "!(HNameOk $name) -or $null -eq $v -or @(0,1) -notcontains [int]$v",
+        "'wlan set randomization enabled='",
+        "'System32\\netsh.exe'",
+    ] {
+        assert!(
+            set.contains(must) || script.contains(must),
+            "{must} is missing"
+        );
+    }
+    assert_eq!(script.matches("[Diagnostics.Process]::Start(").count(), 1);
+    assert_eq!(script.matches("HRunHidden $exe").count(), 2);
+    assert!(!script.to_lowercase().contains("show randomization"));
+    assert!(!script.contains("Start-Process"));
+}
+
+#[test]
+fn the_home_edition_rule_names_every_machine_policy_privacy_switch() {
+    let script = include_str!("../platform/hardening.ps1");
+    let start = script.find("function HPreflight()").unwrap();
+    let line = script[start..]
+        .lines()
+        .find(|l| l.contains("$_ -in @(") && l.contains("'privacy.clipboard_sync'"))
+        .expect("the Windows Home case");
+    for id in [
+        "privacy.clipboard_sync",
+        "privacy.online_speech",
+        "privacy.typing_inking",
+        "privacy.lock_screen_notifications",
+        "privacy.signin_email",
+    ] {
+        assert!(spec(id).is_some(), "{id}");
+        assert!(
+            line.contains(&format!("'{id}'")),
+            "{id} is not refused on Windows Home"
+        );
     }
 }

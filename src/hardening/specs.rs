@@ -526,6 +526,19 @@ pub(super) static SPECS: &[Spec] = &[
         },
     },
     Spec {
+        id: "privacy.wifi_random_address",
+        title: "Random hardware address on Wi-Fi",
+        description: "Turn on random hardware addresses on each Wi-Fi adapter, so Wi-Fi networks cannot recognise this PC from one visit to the next. Applies from the next Wi-Fi connection. Not offered when the PC has no Wi-Fi adapter. Undo restores every adapter.",
+        source: Source::WifiRandomAddress,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1],
+            ..set("*", "", &[1], false, Some(1), 1)
+        }],
+        gate: NO_GATE,
+    },
+    Spec {
         id: "privacy.online_speech",
         title: "Online speech recognition",
         description: "Stop people on this PC from turning on cloud-based speech recognition (AllowInputPersonalization=0). Voice typing stops working. Not offered on Windows Home. Undo restores the earlier value.",

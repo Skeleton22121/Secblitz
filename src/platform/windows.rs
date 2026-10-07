@@ -281,10 +281,12 @@ fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value
         // write may start helpers; every other script runs with no descendants.
         // Turning the recovery tools on or off goes through the inbox
         // ReAgentc.exe, which copies the recovery image: only that write may
-        // start it. Reading their state never needs a helper.
+        // start it. Reading their state never needs a helper. Random Wi-Fi
+        // addresses are changed with the inbox netsh.exe in the same way.
         let (limit, processes) = match (id, action) {
             ("ps.v2_engine" | "smb1.disabled", "write") => (900, DISM_PROCESSES),
             ("recovery.winre_enabled", "write") => (600, RECOVERY_PROCESSES),
+            ("privacy.wifi_random_address", "write") => (60, WIFI_PROCESSES),
             _ => (90, 1),
         };
         return run_script_in(
@@ -344,6 +346,7 @@ pub fn remove_threats() -> Result<super::ThreatRemoval> {
 
 const DISM_PROCESSES: u32 = 4;
 const RECOVERY_PROCESSES: u32 = 4;
+const WIFI_PROCESSES: u32 = 4;
 
 fn run_script<T: DeserializeOwned>(script: String, timeout: Duration) -> Result<T> {
     run_script_in(script, timeout, 1)

@@ -2,7 +2,7 @@
 # for ids in the compiled Rust catalog. $hardeningSpecJson comes from that catalog; all state is a
 # slice {items: {key: int|null}} where null means "not configured". Writes can only move a key
 # between its recorded unsafe original and the fixed value (HFixOf). No native child processes,
-# except the DISM feature writes and ReAgentc.exe, whose jobs allow exactly that.
+# except the DISM feature writes, ReAgentc.exe and netsh.exe (one adapter's random Wi-Fi address).
 $spec = ConvertFrom-Json -InputObject $hardeningSpecJson
 
 function HEq($a, $b) {
@@ -17,7 +17,7 @@ function HDef([string]$name) {
 function HNameOk([string]$name) {
     if (!$spec.dynamic) { foreach ($k in @($spec.keys)) { if ($k.name -ceq $name) { return $true } }; return $false }
     if ($spec.source -ceq 'FirewallExposure') { return ($name -cmatch '^(FPS|NETDIS)-[A-Za-z0-9_.-]{1,92}$') }
-    if ($spec.source -ceq 'NetbiosAdapters') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
+    if ($spec.source -ceq 'NetbiosAdapters' -or $spec.source -ceq 'WifiRandomAddress') { return ($name -cmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') }
     if ($spec.source -ceq 'LegacyServices') { return ((HServiceNames) -ccontains $name) }
     if ($spec.source -ceq 'DefenderExclusions') { return (HExclusionNameOk $name) }
     if ($spec.source -ceq 'UnquotedServices') { return ($name.Length -ge 1 -and $name.Length -le 256 -and $name -cnotmatch '[\x00-\x1f\x7f-\x9f"\\/*?\[\]]' -and $name.Trim() -ceq $name) }
@@ -250,6 +250,46 @@ function HReadWifi() {
     }
     return $out
 }
+# Adapters are found by media type (Native 802.11), which is the same in every language. The setting is read from the
+# Wi-Fi service's own key (a DWORD; absent means off). The display text of netsh is never parsed.
+function HWifiAdapters() {
+    Load 'CimCmdlets'
+    $list = @()
+    foreach ($a in @(Get-CimInstance -Namespace 'root/StandardCimv2' -ClassName 'MSFT_NetAdapter')) {
+        if ($null -eq $a.NdisPhysicalMedium -or [int64]$a.NdisPhysicalMedium -ne 9) { continue }
+        $guid = [Guid]::Empty
+        if (![Guid]::TryParse([string]$a.InterfaceGuid, [ref]$guid)) { continue }
+        $id = '{' + $guid.ToString().ToUpperInvariant() + '}'
+        if (!(HNameOk $id)) { continue }
+        $list += @{ id = $id; name = [string]$a.Name }
+    }
+    return $list
+}
+function HWifiRandomState([string]$id) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(('SOFTWARE\Microsoft\WlanSvc\Interfaces\' + $id), $false)
+    if ($null -eq $key) { return $null }
+    try {
+        if (@($key.GetValueNames()) -notcontains 'RandomMacState') { return 0 }
+        if ($key.GetValueKind('RandomMacState') -ne [Microsoft.Win32.RegistryValueKind]::DWord) { return $null }
+        return [int]$key.GetValue('RandomMacState')
+    } finally { $key.Dispose() }
+}
+function HReadWifiRandom() {
+    $out = @{}
+    $dupes = @{}
+    foreach ($a in @(HWifiAdapters)) {
+        $n = HWifiRandomState $a.id
+        if ($null -eq $n -or @(0,1) -notcontains [int]$n) { continue }
+        # Two adapters with one id are ambiguous: leave them alone.
+        if ($out.ContainsKey($a.id) -or $dupes.ContainsKey($a.id)) { $dupes[$a.id] = $true; $out.Remove($a.id); continue }
+        $out[$a.id] = [int]$n
+    }
+    return $out
+}
+function HWifiRandomPreflight() {
+    if (@(HWifiAdapters).Count -eq 0) { throw 'Not offered: this PC has no Wi-Fi adapter' }
+    if ((HReadWifiRandom).Count -eq 0) { throw 'Not offered: the Wi-Fi settings of this PC could not be read' }
+}
 function HReadNetbios() {
     Load 'CimCmdlets'
     $out = @{}
@@ -293,6 +333,7 @@ function HRead() {
         'FirewallExposure' { return (HReadFirewall) }
         'WifiProfiles' { return (HReadWifi) }
         'NetbiosAdapters' { return (HReadNetbios) }
+        'WifiRandomAddress' { return (HReadWifiRandom) }
         'FirewallOutbound' { return (HReadOutbound) }
         'ExploitMitigations' { return (HReadMitigations) }
         'PowerShellV2' { return (HReadPowerShellV2) }
@@ -459,6 +500,7 @@ function HPreflight() {
             }
         }
         'net.netbios' { HNetbiosPreflight }
+        'privacy.wifi_random_address' { HWifiRandomPreflight }
         'accounts.stale_enabled' { HStalePreflight }
         'smb.shares_exposed' { HSharesPreflight }
         'accounts.builtin_administrator' {
@@ -624,7 +666,7 @@ function HObserve() {
     $o = @{ value = @{ items = $slice }; eligible = $true; reason = 'Eligible unmanaged local preference' }
     try {
         HGate
-        if (HAnyUnsafe $slice) {
+        if ((HAnyUnsafe $slice) -or ($spec.source -ceq 'WifiRandomAddress' -and $slice.Count -eq 0)) {
             HPreflight
             $labels = @(HLabelList $slice)
             if ($labels.Count -gt 0) { $o.labels = $labels }
@@ -706,6 +748,20 @@ function HSetNetbios($name, $v) {
     $r = Invoke-CimMethod -InputObject $found[0] -MethodName SetTcpipNetbios -Arguments @{ TcpipNetbiosOptions = [uint32]$v }
     if ($null -eq $r -or @(0,1) -notcontains [int]$r.ReturnValue) { throw "NetBIOS setting was refused (code $($r.ReturnValue))" }
 }
+function HNetshPath() { return [IO.Path]::Combine($env:SystemRoot, 'System32\netsh.exe') }
+function HSetWifiRandom($name, $v) {
+    if (!(HNameOk $name) -or $null -eq $v -or @(0,1) -notcontains [int]$v) { throw 'Invalid Wi-Fi address setting' }
+    $found = @(HWifiAdapters | Where-Object { $_.id -ceq $name })
+    if ($found.Count -ne 1) { throw 'Wi-Fi adapter not found exactly once' }
+    $iface = [string]$found[0].name
+    # The adapter name goes into a quoted argument: refuse anything that could end the quote.
+    if ($iface.Length -lt 1 -or $iface.Length -gt 256 -or $iface -cmatch '[\x00-\x1f\x7f"]' -or $iface.Trim() -cne $iface -or $iface.EndsWith('\')) { throw 'This Wi-Fi adapter has a name that cannot be used safely' }
+    $exe = HNetshPath
+    if (![IO.File]::Exists($exe)) { throw 'The Wi-Fi tool is missing from this PC' }
+    $enabled = $(if ([int]$v -eq 1) { 'yes' } else { 'no' })
+    $code = HRunHidden $exe ('wlan set randomization enabled=' + $enabled + ' interface="' + $iface + '"')
+    if ($code -ne 0) { throw "Windows could not change the Wi-Fi address setting (code $code)" }
+}
 function HSetOutbound($v) {
     Load 'NetSecurity'
     if ([int]$v -eq 1) {
@@ -762,6 +818,7 @@ function HSet([string]$name, $v) {
         'FirewallExposure' { HSetFirewall $name $v }
         'WifiProfiles' { HSetWifi $name $v }
         'NetbiosAdapters' { HSetNetbios $name $v }
+        'WifiRandomAddress' { HSetWifiRandom $name $v }
         'FirewallOutbound' { HSetOutbound $v }
         'ExploitMitigations' { HSetMitigation $name $v }
         'PowerShellV2' { HSetPowerShellV2 $v }
@@ -1568,11 +1625,8 @@ function HRecoveryImageReady() {
     $image = [IO.FileInfo]::new([IO.Path]::Combine((HRecoveryDir), 'Winre.wim'))
     return ($image.Exists -and $image.Length -gt 0)
 }
-function HRunReagent([string]$verb) {
-    if (@('/enable', '/disable') -cnotcontains $verb) { throw 'Unknown recovery tools change' }
-    $exe = HReagentPath
-    if (![IO.File]::Exists($exe)) { throw 'The recovery tools are missing from this PC' }
-    $start = [Diagnostics.ProcessStartInfo]::new($exe, $verb)
+function HRunHidden([string]$exe, [string]$arguments) {
+    $start = [Diagnostics.ProcessStartInfo]::new($exe, $arguments)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true
@@ -1589,7 +1643,7 @@ function HRunReagent([string]$verb) {
         $p.StandardInput.Close()
         # Both outputs are drained so a full pipe can never stall the tool. The
         # text is in the display language, so it is never parsed: the exit code
-        # and a fresh read of ReAgent.xml decide.
+        # and a fresh read of the setting decide.
         $out = $p.StandardOutput.ReadToEndAsync()
         $err = $p.StandardError.ReadToEndAsync()
         $p.WaitForExit()
@@ -1597,6 +1651,12 @@ function HRunReagent([string]$verb) {
         $null = $err.Result
         return [int]$p.ExitCode
     } finally { $p.Dispose() }
+}
+function HRunReagent([string]$verb) {
+    if (@('/enable', '/disable') -cnotcontains $verb) { throw 'Unknown recovery tools change' }
+    $exe = HReagentPath
+    if (![IO.File]::Exists($exe)) { throw 'The recovery tools are missing from this PC' }
+    return (HRunHidden $exe $verb)
 }
 function HSetRecovery([string]$name, $v) {
     if ($name -cne 'Enabled') { throw 'Unknown hardening item' }

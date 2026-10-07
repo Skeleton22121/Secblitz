@@ -269,6 +269,7 @@ All journaled, gated and reversible like the table above; every one is a choice 
 | `privacy.typing_inking` | TextInput policy AllowLinguisticDataCollection=0; not offered on Home |
 | `privacy.lock_screen_notifications` | System policy DisableLockScreenAppNotifications=1; not offered on Home |
 | `privacy.signin_email` | System policy BlockUserFromShowingAccountDetailsOnSignin=1; not offered on Home |
+| `privacy.wifi_random_address` | One item per Wi-Fi adapter, found by media type; read from the `RandomMacState` DWORD under `WlanSvc\Interfaces\<GUID>` (absent means off), changed with the inbox `netsh wlan set randomization` for that adapter only; applies from the next connection; not offered without a Wi-Fi adapter; undo restores each adapter; MUST be confirmed on real hardware that the value follows the command before release |
 | `ai.click_to_do` | WindowsAI DisableClickToDo=1; not offered before Windows build 26100; shares the WindowsAI key with `privacy.recall` without blocking it |
 | `ai.paint` | Paint policy DisableCocreator, DisableGenerativeFill and DisableImageCreator = 1; not offered when the Paint app is not installed |
 | `ai.notepad` | WindowsNotepad DisableAIFeatures=1; not offered when the Notepad app is not installed |

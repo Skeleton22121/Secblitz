@@ -102,6 +102,9 @@ pub fn control_impact(id: &str) -> &'static str {
         "privacy.lock_screen_notifications" => {
             "Anyone nearby reading your messages on the lock screen"
         }
+        "privacy.wifi_random_address" => {
+            "Public Wi-Fi networks recognising your PC from one visit to the next"
+        }
         "privacy.signin_email" => "Your email address showing on the sign-in screen",
         "ai.click_to_do" => "Windows offering to pass what is on your screen to AI tools",
         "ai.paint" => "Your drawings being sent to online AI tools",

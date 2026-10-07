@@ -148,6 +148,12 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: the recovery tools are missing from this PC" => {
             "The files the recovery tools need are missing from this PC, so we leave this alone."
         }
+        "Not offered: this PC has no Wi-Fi adapter" => {
+            "This PC has no Wi-Fi adapter, so there is nothing to change."
+        }
+        "Not offered: the Wi-Fi settings of this PC could not be read" => {
+            "We couldn't read this PC's Wi-Fi settings, so we leave them alone."
+        }
         _ => return None,
     })
 }

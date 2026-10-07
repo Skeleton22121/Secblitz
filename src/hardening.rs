@@ -85,6 +85,8 @@ pub enum Source {
     /// language and needs no helper program. Changed only with the inbox
     /// `ReAgentc.exe /enable` and `/disable`.
     RecoveryTools,
+    /// Read from the Wi-Fi service setting, never from tool display text.
+    WifiRandomAddress,
 }
 
 pub const ITEM_FIXED: u32 = 0;
@@ -172,8 +174,7 @@ fn key_name_ok(source: Source, name: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
         }
-        Source::NetbiosAdapters => {
-            // Adapter SettingID: a braced GUID.
+        Source::NetbiosAdapters | Source::WifiRandomAddress => {
             name.len() == 38
                 && name.starts_with('{')
                 && name.ends_with('}')
@@ -311,12 +312,20 @@ pub const LEGACY_SERVICES: &[&str] = &[
 ];
 
 impl Spec {
+    /// Turned on for each device found, so with no device there is nothing to
+    /// protect and an empty reading is not a protected one.
+    pub fn nothing_to_protect(&self, value: &Value) -> bool {
+        self.source == Source::WifiRandomAddress
+            && self.parse(value).is_ok_and(|items| items.is_empty())
+    }
+
     pub fn dynamic(&self) -> bool {
         matches!(
             self.source,
             Source::FirewallExposure
                 | Source::WifiProfiles
                 | Source::NetbiosAdapters
+                | Source::WifiRandomAddress
                 | Source::LegacyServices
                 | Source::DefenderExclusions
                 | Source::UnquotedServices

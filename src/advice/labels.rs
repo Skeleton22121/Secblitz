@@ -70,6 +70,7 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.typing_inking" => "Sending typing and handwriting",
         "privacy.lock_screen_notifications" => "Messages on the lock screen",
         "privacy.signin_email" => "Email address on the sign-in screen",
+        "privacy.wifi_random_address" => "Random Wi-Fi address",
         "ai.click_to_do" => "Click to Do",
         "ai.paint" => "AI tools in Paint",
         "ai.notepad" => "AI tools in Notepad",
@@ -205,6 +206,7 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.typing_inking"
         | "privacy.lock_screen_notifications"
         | "privacy.signin_email"
+        | "privacy.wifi_random_address"
         | "ai.click_to_do"
         | "ai.paint"
         | "ai.notepad"
