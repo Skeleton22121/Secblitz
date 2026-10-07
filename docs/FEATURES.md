@@ -275,4 +275,8 @@ All journaled, gated and reversible like the table above; every one is a choice 
 | `ai.notepad` | WindowsNotepad DisableAIFeatures=1; not offered when the Notepad app is not installed |
 | `debloat.widgets_policy` | Dsh AllowNewsAndInterests=0; not offered on Home |
 | `debloat.device_companion_apps` | Device Metadata PreventDeviceMetadataFromNetwork=1 |
+| `browser.shopping_ai` | Edge EdgeShoppingAssistantEnabled=0 and HubsSidebarEnabled=0; Chrome ShoppingListEnabled=0 and GeminiSettings=1. Browsers then show "Managed by your organization", which the review text says first |
+| `browser.data_collection` | Edge DiagnosticData 0 (1 also counts as safe) and PersonalizationReportingEnabled=0; Chrome MetricsReportingEnabled, UrlKeyedAnonymizedDataCollectionEnabled and four PrivacySandbox values (AdTopics, SiteEnabledAds, AdMeasurement, Prompt) = 0; Firefox DisableTelemetry=1 and DisableFirefoxStudies=1 |
+| `browser.safety_mode` | Edge EnhanceSecurityMode=1 (balanced, strict also counts as safe); Firefox EnableTrackingProtection\Value=1. Chrome's warnings stay with `smartscreen.browser_policy` |
+| `browser.dns_bypass` | Edge and Chrome DnsOverHttpsMode="off" (REG_SZ); Firefox DNSOverHTTPS Enabled=0 and Locked=1, so browsers use the PC's own lookups that Web protection filters |
 | `defender.exclusions_risky` | Remove only risky exclusions (drive roots, Windows, user folders, exe/dll/ps1/bat/js/vbs/scr, script engines); each is journaled and re-added on undo |
