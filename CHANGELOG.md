@@ -9,6 +9,20 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- Renew your PC's startup security certificates before the old ones expire, with a clear warning that it can't be undone.
+- An optional fix that turns off the Run box, which fake "I'm not a robot" pages use to install password stealers.
+- A check that warns when something typed into the Run box looks like a fake check page trick.
+- The AI features topic shows when the Copilot app is installed, with a way to remove it.
+- A way to start fresh when Secblitz's undo history is damaged, keeping a copy of the damaged files.
+
+### Changed
+- Before you agree, every fix says if it can't be undone, needs a restart, or makes your browser say "Managed by your organization".
+- Older version downloads are no longer offered on the website.
+
+### Fixed
+- Files left over from an update are removed once the update is confirmed.
+
 ## [0.9.3] - 2026-10-07
 
 ### Fixed
