@@ -49,6 +49,7 @@ pub enum Request {
     AppAccessSet {
         capability: Capability,
         target: Target,
+        tag: u8,
         allow: bool,
     },
 }
@@ -271,9 +272,10 @@ impl Request {
             Request::AppAccessSet {
                 capability,
                 target,
+                tag,
                 allow,
             } => {
-                let (lo, hi) = app_access::encode_set(capability, target, allow);
+                let (lo, hi) = app_access::encode_set(capability, target, tag, allow);
                 (40, u16::from(lo) | (u16::from(hi) << 8))
             }
         };
@@ -333,10 +335,11 @@ impl Request {
             19 if usize::from(arg) < catalog_len => Request::StoreAppStatus(arg),
             39 => Request::AppAccessList(Capability::from_byte(u8::try_from(arg).ok()?)?),
             40 => {
-                let (capability, target, allow) = app_access::decode_set(lo, hi)?;
+                let (capability, target, tag, allow) = app_access::decode_set(lo, hi)?;
                 Request::AppAccessSet {
                     capability,
                     target,
+                    tag,
                     allow,
                 }
             }
@@ -677,18 +680,19 @@ mod tests {
         .into_iter()
         .chain(Capability::ALL.iter().flat_map(|capability| {
             [
-                Target::Master,
-                Target::DesktopApps,
-                Target::App(0),
-                Target::App(199),
+                (Target::Master, 0),
+                (Target::DesktopApps, 0),
+                (Target::App(0), 0),
+                (Target::App(199), 31),
             ]
             .into_iter()
-            .flat_map(move |target| {
+            .flat_map(move |(target, tag)| {
                 [false, true]
                     .into_iter()
                     .map(move |allow| Request::AppAccessSet {
                         capability: *capability,
                         target,
+                        tag,
                         allow,
                     })
             })
@@ -769,6 +773,7 @@ mod tests {
         let set = Request::AppAccessSet {
             capability: Capability::Camera,
             target: Target::Master,
+            tag: 0,
             allow: false,
         };
         assert!(!set.is_read_only() && !set.opens_window());
@@ -834,12 +839,23 @@ mod tests {
             Some(Request::AppAccessSet {
                 capability: Capability::Microphone,
                 target: Target::DesktopApps,
+                tag: 0,
+                allow: true,
+            })
+        );
+        assert_eq!(
+            Request::decode_with([40, 0b1_1101, 2], 100),
+            Some(Request::AppAccessSet {
+                capability: Capability::Microphone,
+                target: Target::App(0),
+                tag: 3,
                 allow: true,
             })
         );
         for bad in [
             [40, 3, 0],
             [40, 8, 0],
+            [40, 0b1_1101, 1],
             [40, 0, 202],
             [40, 0, 255],
             [40, 255, 255],

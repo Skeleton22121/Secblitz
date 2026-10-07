@@ -698,8 +698,9 @@ mod imp {
             Request::AppAccessSet {
                 capability,
                 target,
+                tag,
                 allow,
-            } => app_access_set(capability, target, allow),
+            } => app_access_set(capability, target, tag, allow),
             _ => request.page().map_or(Reply::Failed, open),
         }
     }
@@ -724,6 +725,7 @@ mod imp {
         let listing = app_access::read_listing(
             &app_access::SystemStore,
             capability,
+            crate::app::last_check::boot_time(crate::app::history::now()),
             &app_access::describe_exe,
         );
         let Some(path) = app_access::handoff_path(capability) else {
@@ -741,17 +743,17 @@ mod imp {
         }
     }
 
-    fn app_access_set(capability: Capability, target: Target, allow: bool) -> Reply {
+    fn app_access_set(capability: Capability, target: Target, tag: u8, allow: bool) -> Reply {
         let Ok(remembered) = app_access_listings().lock() else {
             return Reply::Failed;
         };
         let Some(listing) = &remembered[usize::from(capability.to_byte())] else {
             return Reply::Unavailable;
         };
-        match app_access::set_access(&mut app_access::SystemStore, listing, target, allow) {
+        match app_access::set_access(&mut app_access::SystemStore, listing, target, tag, allow) {
             Ok(()) => Reply::Done,
             Err(app_access::SetError::Unknown) => Reply::Unavailable,
-            Err(app_access::SetError::Failed) => Reply::Failed,
+            Err(app_access::SetError::Failed | app_access::SetError::Controlled) => Reply::Failed,
         }
     }
 

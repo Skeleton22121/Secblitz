@@ -10,10 +10,13 @@ use std::path::PathBuf;
 const CONSENT_STORE: &str =
     r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore";
 const NON_PACKAGED: &str = "NonPackaged";
+const APP_PRIVACY_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\AppPrivacy";
 const MAX_APPS: usize = 200;
 const MAX_DESKTOP: usize = 400;
 const NAMED_DESKTOP: usize = 12;
 const MAX_NAME: usize = 60;
+const NAMES_SHOWN: usize = 3;
+const NAMES_BUDGET: usize = 60;
 const MAX_HANDOFF: u64 = 256 * 1024;
 const FILETIME_UNIX_OFFSET: u64 = 11_644_473_600;
 const YEAR_3000: u64 = 32_503_680_000;
@@ -97,6 +100,8 @@ pub struct Listing {
     pub apps: Vec<Entry>,
     pub desktop_allowed: bool,
     pub desktop: Vec<Entry>,
+    #[serde(default)]
+    pub controlled: bool,
 }
 
 impl Listing {
@@ -107,6 +112,7 @@ impl Listing {
             apps: Vec::new(),
             desktop_allowed: true,
             desktop: Vec::new(),
+            controlled: false,
         }
     }
 
@@ -294,7 +300,22 @@ pub fn file_stem(path: &str) -> String {
     clean_name(stem)
 }
 
-/// Only paths on a letter drive are looked into for a name; a network path could stall the launcher.
+pub fn names_summary(names: &[&str]) -> (Vec<String>, usize) {
+    let mut shown: Vec<String> = Vec::new();
+    let mut used = 0;
+    for name in names.iter().take(NAMES_SHOWN) {
+        let width = name.chars().count() + if shown.is_empty() { 0 } else { 2 };
+        if !shown.is_empty() && used + width > NAMES_BUDGET {
+            break;
+        }
+        used += width;
+        shown.push((*name).to_owned());
+    }
+    let more = names.len() - shown.len();
+    (shown, more)
+}
+
+/// Only letter-drive paths are opened for a name; a network path could stall the launcher.
 pub fn local_exe_path(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() > 3
@@ -311,6 +332,8 @@ pub trait ConsentStore {
     fn string(&self, path: &str, name: &str) -> Option<String>;
     fn qword(&self, path: &str, name: &str) -> Option<u64>;
     fn set_string(&mut self, path: &str, name: &str, value: &str) -> Result<()>;
+    fn machine_string(&self, path: &str, name: &str) -> Option<String>;
+    fn machine_dword(&self, path: &str, name: &str) -> Option<u32>;
 }
 
 fn base_path(capability: Capability) -> String {
@@ -321,17 +344,35 @@ fn is_allowed(value: Option<String>) -> bool {
     !value.is_some_and(|v| v.trim().eq_ignore_ascii_case("deny"))
 }
 
+fn policy_name(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Camera => "LetAppsAccessCamera",
+        Capability::Microphone => "LetAppsAccessMicrophone",
+        Capability::Location => "LetAppsAccessLocation",
+    }
+}
+
+fn is_controlled(store: &dyn ConsentStore, capability: Capability) -> bool {
+    let device_off = store
+        .machine_string(&base_path(capability), "Value")
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("deny"));
+    let policy = store.machine_dword(APP_PRIVACY_POLICY, policy_name(capability));
+    device_off || matches!(policy, Some(1 | 2))
+}
+
 struct Times {
     in_use: bool,
     last_used: Option<u64>,
     seen: bool,
 }
 
-fn times(store: &dyn ConsentStore, path: &str) -> Times {
+/// Windows leaves the stop time empty on a forced close or power loss, so a start from before boot is not still running.
+fn times(store: &dyn ConsentStore, path: &str, boot: Option<u64>) -> Times {
     let start = store.qword(path, "LastUsedTimeStart").unwrap_or(0);
     let stop = store.qword(path, "LastUsedTimeStop").unwrap_or(0);
+    let started_since_boot = filetime_to_unix(start).is_some_and(|at| boot.is_none_or(|b| at >= b));
     Times {
-        in_use: start != 0 && stop == 0,
+        in_use: start != 0 && stop == 0 && started_since_boot,
         last_used: filetime_to_unix(start)
             .into_iter()
             .chain(filetime_to_unix(stop))
@@ -340,15 +381,17 @@ fn times(store: &dyn ConsentStore, path: &str) -> Times {
     }
 }
 
-/// Reads one capability. `describe` names a desktop app from the program file at a path.
+/// Reads one capability. `boot` is when Windows last started, in seconds since 1970.
 pub fn read_listing(
     store: &dyn ConsentStore,
     capability: Capability,
+    boot: Option<u64>,
     describe: &dyn Fn(&str) -> Option<String>,
 ) -> Listing {
     let base = base_path(capability);
     let mut listing = Listing::empty(capability);
     listing.master = is_allowed(store.string(&base, "Value"));
+    listing.controlled = is_controlled(store, capability);
 
     for key in store.subkeys(&base, MAX_APPS * 2) {
         if listing.apps.len() >= MAX_APPS {
@@ -359,7 +402,7 @@ pub fn read_listing(
         }
         let path = format!(r"{base}\{key}");
         let value = store.string(&path, "Value");
-        let used = times(store, &path);
+        let used = times(store, &path, boot);
         if value.is_none() && !used.seen {
             continue;
         }
@@ -377,7 +420,7 @@ pub fn read_listing(
     listing.desktop_allowed = is_allowed(store.string(&non_packaged, "Value"));
     let mut desktop = Vec::new();
     for key in store.subkeys(&non_packaged, MAX_DESKTOP) {
-        let used = times(store, &format!(r"{non_packaged}\{key}"));
+        let used = times(store, &format!(r"{non_packaged}\{key}"), boot);
         if !used.seen || key.chars().any(char::is_control) {
             continue;
         }
@@ -410,6 +453,7 @@ pub fn read_listing(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetError {
     Unknown,
+    Controlled,
     Failed,
 }
 
@@ -418,8 +462,12 @@ pub fn set_access(
     store: &mut dyn ConsentStore,
     listing: &Listing,
     target: Target,
+    tag: u8,
     allow: bool,
 ) -> Result<(), SetError> {
+    if listing.controlled {
+        return Err(SetError::Controlled);
+    }
     let base = base_path(listing.capability);
     let exists = |store: &dyn ConsentStore, key: &str| {
         store
@@ -439,7 +487,7 @@ pub fn set_access(
             let app = listing
                 .apps
                 .get(usize::from(index))
-                .filter(|a| valid_package_key(&a.key))
+                .filter(|a| valid_package_key(&a.key) && app_tag(&a.key) == tag)
                 .ok_or(SetError::Unknown)?;
             if !exists(store, &app.key) {
                 return Err(SetError::Unknown);
@@ -495,22 +543,33 @@ pub fn take_handoff(path: &std::path::Path, capability: Capability) -> Result<Li
     Ok(listing.sanitized())
 }
 
-/// Packs a switch into the two bytes of a broker request: which capability and whether to allow,
-/// then which target.
-pub fn encode_set(capability: Capability, target: Target, allow: bool) -> (u8, u8) {
+/// The launcher refuses the switch when the app at that place is not the one clicked.
+pub fn app_tag(key: &str) -> u8 {
+    let hash = key.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b.to_ascii_lowercase())).wrapping_mul(0x0100_0193)
+    });
+    ((hash ^ (hash >> 16)) & TAG_MASK) as u8
+}
+
+const TAG_MASK: u32 = 0b1_1111;
+
+pub fn encode_set(capability: Capability, target: Target, tag: u8, allow: bool) -> (u8, u8) {
     (
-        capability.to_byte() | (u8::from(allow) << 2),
+        capability.to_byte() | (u8::from(allow) << 2) | ((tag & TAG_MASK as u8) << 3),
         target.to_byte(),
     )
 }
 
-pub fn decode_set(lo: u8, hi: u8) -> Option<(Capability, Target, bool)> {
-    if lo & !0b111 != 0 {
+pub fn decode_set(lo: u8, hi: u8) -> Option<(Capability, Target, u8, bool)> {
+    let target = Target::from_byte(hi)?;
+    let tag = lo >> 3;
+    if lo & 0b11 == 3 || (tag != 0 && !matches!(target, Target::App(_))) {
         return None;
     }
     Some((
         Capability::from_byte(lo & 0b11)?,
-        Target::from_byte(hi)?,
+        target,
+        tag,
         lo & 0b100 != 0,
     ))
 }
@@ -528,7 +587,8 @@ mod system {
     };
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegCreateKeyExW, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW,
-        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_QWORD, REG_SZ,
+        RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE,
+        REG_DWORD, REG_QWORD, REG_SZ,
     };
 
     const DRIVE_FIXED: u32 = 3;
@@ -539,12 +599,43 @@ mod system {
         s.encode_utf16().chain(Some(0)).collect()
     }
 
-    fn open(path: &str, access: u32) -> Option<HKEY> {
+    fn open_in(root: HKEY, path: &str, access: u32) -> Option<HKEY> {
         let path = wide(path);
         let mut handle: HKEY = null_mut();
-        let status =
-            unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, access, &mut handle) };
+        let status = unsafe { RegOpenKeyExW(root, path.as_ptr(), 0, access, &mut handle) };
         (status == 0).then_some(handle)
+    }
+
+    fn open(path: &str, access: u32) -> Option<HKEY> {
+        open_in(HKEY_CURRENT_USER, path, access)
+    }
+
+    fn read_string(root: HKEY, path: &str, name: &str) -> Option<String> {
+        let handle = open_in(root, path, KEY_READ)?;
+        let name = wide(name);
+        let mut kind = 0u32;
+        let mut buf = [0u16; 128];
+        let mut size = (buf.len() * 2) as u32;
+        let status = unsafe {
+            RegQueryValueExW(
+                handle,
+                name.as_ptr(),
+                std::ptr::null(),
+                &mut kind,
+                buf.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        unsafe { RegCloseKey(handle) };
+        if status != 0 || kind != REG_SZ {
+            return None;
+        }
+        let len = (size as usize / 2).min(buf.len());
+        Some(
+            String::from_utf16_lossy(&buf[..len])
+                .trim_end_matches('\0')
+                .to_owned(),
+        )
     }
 
     impl ConsentStore for SystemStore {
@@ -578,31 +669,7 @@ mod system {
         }
 
         fn string(&self, path: &str, name: &str) -> Option<String> {
-            let handle = open(path, KEY_READ)?;
-            let name = wide(name);
-            let mut kind = 0u32;
-            let mut buf = [0u16; 128];
-            let mut size = (buf.len() * 2) as u32;
-            let status = unsafe {
-                RegQueryValueExW(
-                    handle,
-                    name.as_ptr(),
-                    std::ptr::null(),
-                    &mut kind,
-                    buf.as_mut_ptr().cast(),
-                    &mut size,
-                )
-            };
-            unsafe { RegCloseKey(handle) };
-            if status != 0 || kind != REG_SZ {
-                return None;
-            }
-            let len = (size as usize / 2).min(buf.len());
-            Some(
-                String::from_utf16_lossy(&buf[..len])
-                    .trim_end_matches('\0')
-                    .to_owned(),
-            )
+            read_string(HKEY_CURRENT_USER, path, name)
         }
 
         fn qword(&self, path: &str, name: &str) -> Option<u64> {
@@ -623,6 +690,30 @@ mod system {
             };
             unsafe { RegCloseKey(handle) };
             (status == 0 && kind == REG_QWORD && size == 8).then(|| u64::from_le_bytes(data))
+        }
+
+        fn machine_string(&self, path: &str, name: &str) -> Option<String> {
+            read_string(HKEY_LOCAL_MACHINE, path, name)
+        }
+
+        fn machine_dword(&self, path: &str, name: &str) -> Option<u32> {
+            let handle = open_in(HKEY_LOCAL_MACHINE, path, KEY_READ)?;
+            let name = wide(name);
+            let mut kind = 0u32;
+            let mut data = [0u8; 4];
+            let mut size = 4u32;
+            let status = unsafe {
+                RegQueryValueExW(
+                    handle,
+                    name.as_ptr(),
+                    std::ptr::null(),
+                    &mut kind,
+                    data.as_mut_ptr(),
+                    &mut size,
+                )
+            };
+            unsafe { RegCloseKey(handle) };
+            (status == 0 && kind == REG_DWORD && size == 4).then(|| u32::from_le_bytes(data))
         }
 
         fn set_string(&mut self, path: &str, name: &str, value: &str) -> Result<()> {
@@ -730,6 +821,8 @@ mod tests {
         strings: HashMap<(String, String), String>,
         qwords: HashMap<(String, String), u64>,
         keys: HashMap<String, Vec<String>>,
+        machine_strings: HashMap<(String, String), String>,
+        machine_dwords: HashMap<(String, String), u32>,
         fail_writes: bool,
         drop_writes: bool,
     }
@@ -778,6 +871,12 @@ mod tests {
         }
         fn qword(&self, path: &str, name: &str) -> Option<u64> {
             self.qwords.get(&id(path, name)).copied()
+        }
+        fn machine_string(&self, path: &str, name: &str) -> Option<String> {
+            self.machine_strings.get(&id(path, name)).cloned()
+        }
+        fn machine_dword(&self, path: &str, name: &str) -> Option<u32> {
+            self.machine_dwords.get(&id(path, name)).copied()
         }
         fn set_string(&mut self, path: &str, name: &str, value: &str) -> Result<()> {
             if self.fail_writes {
@@ -894,7 +993,7 @@ mod tests {
         fake.desktop(CAM, "C:#Apps#Zoom#Zoom.exe", (ft(NOW - 100), ft(NOW - 50)));
         fake.desktop(CAM, "C:#Other#Zoom.exe", (ft(NOW - 5000), ft(NOW - 4000)));
         fake.desktop(CAM, "C:#Apps#unused#unused.exe", (0, 0));
-        let listing = read_listing(&fake, CAM, &|path| {
+        let listing = read_listing(&fake, CAM, None, &|path| {
             path.ends_with("Zoom.exe")
                 .then(|| "Zoom Meetings".to_owned())
         });
@@ -923,12 +1022,16 @@ mod tests {
             id(&format!(r"{}\{NON_PACKAGED}", base_path(CAM)), "Value"),
             "Deny".into(),
         );
-        let listing = read_listing(&fake, CAM, &no_names);
+        let listing = read_listing(&fake, CAM, None, &no_names);
         assert!(!listing.master);
         assert!(!listing.desktop_allowed);
-        let other = read_listing(&fake, Capability::Location, &no_names);
+        let other = read_listing(&fake, Capability::Location, None, &no_names);
         assert!(other.master, "a missing value is the Windows default, on");
         assert!(other.is_empty());
+    }
+
+    fn skype_tag() -> u8 {
+        app_tag("Microsoft.SkypeApp_kzf8qxf38zg5c")
     }
 
     fn sample() -> (Fake, Listing) {
@@ -940,7 +1043,7 @@ mod tests {
             (ft(NOW - 10), 0),
         );
         fake.desktop(CAM, "C:#Apps#Zoom#Zoom.exe", (ft(NOW - 100), ft(NOW - 50)));
-        let listing = read_listing(&fake, CAM, &no_names);
+        let listing = read_listing(&fake, CAM, None, &no_names);
         (fake, listing)
     }
 
@@ -948,11 +1051,11 @@ mod tests {
     fn switches_write_allow_and_deny_where_they_belong() {
         let (mut fake, listing) = sample();
         let base = base_path(CAM);
-        set_access(&mut fake, &listing, Target::Master, false).unwrap();
+        set_access(&mut fake, &listing, Target::Master, 0, false).unwrap();
         assert_eq!(fake.string(&base, "Value").as_deref(), Some("Deny"));
-        set_access(&mut fake, &listing, Target::Master, true).unwrap();
+        set_access(&mut fake, &listing, Target::Master, 0, true).unwrap();
         assert_eq!(fake.string(&base, "Value").as_deref(), Some("Allow"));
-        set_access(&mut fake, &listing, Target::App(0), false).unwrap();
+        set_access(&mut fake, &listing, Target::App(0), skype_tag(), false).unwrap();
         assert_eq!(
             fake.string(
                 &format!(r"{base}\Microsoft.SkypeApp_kzf8qxf38zg5c"),
@@ -961,7 +1064,7 @@ mod tests {
             .as_deref(),
             Some("Deny")
         );
-        set_access(&mut fake, &listing, Target::DesktopApps, false).unwrap();
+        set_access(&mut fake, &listing, Target::DesktopApps, 0, false).unwrap();
         assert_eq!(
             fake.string(&format!(r"{base}\NonPackaged"), "Value")
                 .as_deref(),
@@ -973,31 +1076,31 @@ mod tests {
     fn switches_refuse_targets_outside_the_listing() {
         let (mut fake, listing) = sample();
         assert_eq!(
-            set_access(&mut fake, &listing, Target::App(1), false),
+            set_access(&mut fake, &listing, Target::App(1), 0, false),
             Err(SetError::Unknown)
         );
         assert_eq!(
-            set_access(&mut fake, &listing, Target::App(250), false),
+            set_access(&mut fake, &listing, Target::App(250), 0, false),
             Err(SetError::Unknown)
         );
         let mut gone = Fake::default();
         assert_eq!(
-            set_access(&mut gone, &listing, Target::App(0), false),
+            set_access(&mut gone, &listing, Target::App(0), skype_tag(), false),
             Err(SetError::Unknown)
         );
         assert_eq!(
-            set_access(&mut gone, &listing, Target::DesktopApps, false),
+            set_access(&mut gone, &listing, Target::DesktopApps, 0, false),
             Err(SetError::Unknown)
         );
         let mut forged = listing.clone();
         forged.apps[0].key = r"..\..\Run_x".into();
         assert_eq!(
-            set_access(&mut fake, &forged, Target::App(0), false),
+            set_access(&mut fake, &forged, Target::App(0), skype_tag(), false),
             Err(SetError::Unknown)
         );
         let none = Listing::empty(CAM);
         assert_eq!(
-            set_access(&mut fake, &none, Target::DesktopApps, false),
+            set_access(&mut fake, &none, Target::DesktopApps, 0, false),
             Err(SetError::Unknown)
         );
     }
@@ -1007,13 +1110,13 @@ mod tests {
         let (mut fake, listing) = sample();
         fake.fail_writes = true;
         assert_eq!(
-            set_access(&mut fake, &listing, Target::Master, false),
+            set_access(&mut fake, &listing, Target::Master, 0, false),
             Err(SetError::Failed)
         );
         fake.fail_writes = false;
         fake.drop_writes = true;
         assert_eq!(
-            set_access(&mut fake, &listing, Target::Master, false),
+            set_access(&mut fake, &listing, Target::Master, 0, false),
             Err(SetError::Failed)
         );
     }
@@ -1022,23 +1125,140 @@ mod tests {
     fn set_bytes_round_trip_and_reject_junk() {
         for cap in Capability::ALL {
             for allow in [false, true] {
-                for target in [
-                    Target::Master,
-                    Target::DesktopApps,
-                    Target::App(0),
-                    Target::App(100),
-                    Target::App(MAX_APPS as u8 - 1),
+                for (target, tag) in [
+                    (Target::Master, 0),
+                    (Target::DesktopApps, 0),
+                    (Target::App(0), 0),
+                    (Target::App(100), 17),
+                    (Target::App(MAX_APPS as u8 - 1), 31),
                 ] {
-                    let (lo, hi) = encode_set(cap, target, allow);
-                    assert_eq!(decode_set(lo, hi), Some((cap, target, allow)));
+                    let (lo, hi) = encode_set(cap, target, tag, allow);
+                    assert_eq!(decode_set(lo, hi), Some((cap, target, tag, allow)));
                 }
             }
         }
         assert_eq!(decode_set(3, 0), None);
-        assert_eq!(decode_set(8, 0), None);
         assert_eq!(decode_set(0, 255), None);
         assert_eq!(decode_set(0, 202), None);
-        assert_eq!(decode_set(0, 201), Some((CAM, Target::App(199), false)));
+        assert_eq!(decode_set(0, 201), Some((CAM, Target::App(199), 0, false)));
+        assert_eq!(decode_set(1 << 3, 0), None, "only an app carries a tag");
+        assert_eq!(decode_set(1 << 3, 1), None);
+        assert!(decode_set(1 << 3, 2).is_some());
+    }
+
+    #[test]
+    fn a_switch_for_a_different_app_than_the_one_clicked_is_refused() {
+        let (mut fake, listing) = sample();
+        let wrong = (skype_tag() + 1) & 0b1_1111;
+        assert_eq!(
+            set_access(&mut fake, &listing, Target::App(0), wrong, false),
+            Err(SetError::Unknown)
+        );
+        let base = base_path(CAM);
+        assert_eq!(
+            fake.string(
+                &format!(r"{base}\Microsoft.SkypeApp_kzf8qxf38zg5c"),
+                "Value"
+            ),
+            Some("Allow".to_owned())
+        );
+        let other = [
+            "Microsoft.WindowsCamera_8wekyb3d8bbwe",
+            "SpotifyAB.SpotifyMusic_zpdnekdrzrea0",
+            "Microsoft.SkypeApp_kzf8qxf38zg5c",
+        ]
+        .map(app_tag);
+        assert!(
+            other.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+            "the tag tells apps apart"
+        );
+        assert!(other.iter().all(|t| *t < 32));
+    }
+
+    #[test]
+    fn an_app_left_running_by_a_crash_or_power_loss_is_not_in_use() {
+        let mut fake = Fake::default();
+        fake.app(
+            CAM,
+            "Microsoft.SkypeApp_kzf8qxf38zg5c",
+            Some("Allow"),
+            (ft(NOW - 5000), 0),
+        );
+        fake.app(
+            CAM,
+            "Microsoft.WindowsCamera_8wekyb3d8bbwe",
+            Some("Allow"),
+            (ft(NOW - 50), 0),
+        );
+        fake.desktop(CAM, "C:#Apps#Zoom#Zoom.exe", (ft(NOW - 5000), 0));
+        let boot = Some(NOW - 1000);
+        let listing = read_listing(&fake, CAM, boot, &no_names);
+        let by_name = |n: &str| listing.apps.iter().find(|a| a.name == n).unwrap();
+        assert!(by_name("Windows Camera").in_use);
+        let skype = by_name("Skype");
+        assert!(!skype.in_use);
+        assert_eq!(skype.last_used, Some(NOW - 5000));
+        assert_eq!(skype.recency(NOW), Recency::Hours(1));
+        assert!(!listing.desktop[0].in_use);
+        assert_eq!(
+            listing.apps[0].name, "Windows Camera",
+            "the live one sorts first"
+        );
+        let unknown = read_listing(&fake, CAM, None, &no_names);
+        assert!(unknown.apps.iter().all(|a| a.in_use));
+    }
+
+    #[test]
+    fn a_setting_the_pc_or_organization_controls_is_marked() {
+        let (mut fake, listing) = sample();
+        assert!(!listing.controlled);
+        let base = base_path(CAM);
+        fake.machine_strings
+            .insert(id(&base, "Value"), "Allow".into());
+        fake.machine_dwords
+            .insert(id(APP_PRIVACY_POLICY, "LetAppsAccessCamera"), 0);
+        assert!(!read_listing(&fake, CAM, None, &no_names).controlled);
+
+        fake.machine_strings
+            .insert(id(&base, "Value"), "Deny".into());
+        let off = read_listing(&fake, CAM, None, &no_names);
+        assert!(off.controlled);
+        assert_eq!(
+            set_access(&mut fake, &off, Target::Master, 0, false),
+            Err(SetError::Controlled)
+        );
+        assert_eq!(fake.string(&base, "Value"), None, "nothing was written");
+        assert!(!read_listing(&fake, Capability::Location, None, &no_names).controlled);
+
+        fake.machine_strings
+            .insert(id(&base, "Value"), "Allow".into());
+        for forced in [1, 2] {
+            fake.machine_dwords
+                .insert(id(APP_PRIVACY_POLICY, "LetAppsAccessCamera"), forced);
+            assert!(read_listing(&fake, CAM, None, &no_names).controlled);
+        }
+        fake.machine_dwords
+            .insert(id(APP_PRIVACY_POLICY, "LetAppsAccessMicrophone"), 2);
+        assert!(read_listing(&fake, Capability::Microphone, None, &no_names).controlled);
+    }
+
+    #[test]
+    fn the_desktop_app_names_stay_short() {
+        let (shown, more) = names_summary(&["Zoom", "Firefox", "OBS Studio", "Discord", "Teams"]);
+        assert_eq!(shown, ["Zoom", "Firefox", "OBS Studio"]);
+        assert_eq!(more, 2);
+        let long = "x".repeat(MAX_NAME);
+        let (shown, more) = names_summary(&[&long, &long, "Zoom"]);
+        assert_eq!(
+            (shown.len(), more),
+            (1, 2),
+            "one long name uses the whole line"
+        );
+        let (shown, more) = names_summary(&["Zoom"]);
+        assert_eq!((shown.len(), more), (1, 0));
+        assert_eq!(names_summary(&[]), (Vec::<String>::new(), 0));
+        let total: usize = shown.iter().map(|n| n.chars().count()).sum();
+        assert!(total <= NAMES_BUDGET);
     }
 
     #[test]

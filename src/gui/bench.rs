@@ -1447,6 +1447,7 @@ fn access_listing(capability: access_model::Capability) -> access_model::Listing
             ),
         ],
         desktop_allowed: true,
+        controlled: false,
         desktop: vec![
             access_entry("Zoom", false, Some(now - 90), true),
             access_entry("Firefox", false, Some(now - 90_000), true),
@@ -1511,7 +1512,7 @@ fn only_one_app_access_switch_changes_at_a_time() {
     use access_model::{Capability, Target};
     let mut app = app();
     app.ctx.helper = Helper::Ready;
-    access(&mut app, app_access::Msg::Toggle(Target::Master, false));
+    access(&mut app, app_access::Msg::Toggle(Target::Master, 0, false));
     assert!(
         !app_access::is_changing(&app.app_access),
         "nothing to switch before the list is read"
@@ -1520,10 +1521,10 @@ fn only_one_app_access_switch_changes_at_a_time() {
         &mut app,
         app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
     );
-    access(&mut app, app_access::Msg::Toggle(Target::App(1), true));
+    access(&mut app, app_access::Msg::Toggle(Target::App(1), 0, true));
     assert!(app_access::is_changing(&app.app_access));
     drop(app_access::view(&app.app_access, &app.ctx));
-    access(&mut app, app_access::Msg::Toggle(Target::Master, false));
+    access(&mut app, app_access::Msg::Toggle(Target::Master, 0, false));
     access(
         &mut app,
         app_access::Msg::Changed(Capability::Camera, Ok(Reply::Done)),
@@ -1533,12 +1534,109 @@ fn only_one_app_access_switch_changes_at_a_time() {
         app_access::shown_as(&app.app_access, Capability::Camera),
         "reloading"
     );
-    access(&mut app, app_access::Msg::Toggle(Target::Master, false));
+    access(&mut app, app_access::Msg::Toggle(Target::Master, 0, false));
     access(
         &mut app,
         app_access::Msg::Changed(Capability::Camera, Err("unavailable".into())),
     );
     assert!(!app_access::is_changing(&app.app_access));
+}
+
+#[test]
+fn app_access_switches_wait_while_the_list_is_read_again() {
+    use crate::broker::Reply;
+    use access_model::{Capability, Target};
+    let mut app = app();
+    app.ctx.helper = Helper::Ready;
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    access(&mut app, app_access::Msg::Toggle(Target::Master, 0, false));
+    access(
+        &mut app,
+        app_access::Msg::Changed(Capability::Camera, Ok(Reply::Done)),
+    );
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "reloading"
+    );
+    access(&mut app, app_access::Msg::Toggle(Target::App(1), 0, true));
+    assert!(
+        !app_access::is_changing(&app.app_access),
+        "a switch pressed while the list is being read again does nothing"
+    );
+    drop(app_access::view(&app.app_access, &app.ctx));
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    access(&mut app, app_access::Msg::Toggle(Target::App(1), 0, true));
+    assert!(app_access::is_changing(&app.app_access));
+}
+
+#[test]
+fn the_app_access_list_is_read_again_and_never_left_stale() {
+    use access_model::Capability;
+    let mut app = app();
+    app.ctx.helper = Helper::Ready;
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    drop(app_access::on_enter(&mut app.app_access, &mut app.ctx));
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "reloading",
+        "opening the panel again reads the list again"
+    );
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    access(&mut app, app_access::Msg::Select(Capability::Camera));
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "reloading",
+        "picking a tab reads its list again"
+    );
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Err("x".into())),
+    );
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "failed",
+        "a failed read hides the old switch positions"
+    );
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    access(
+        &mut app,
+        app_access::Msg::Listed(Capability::Camera, Ok(crate::broker::Reply::Failed)),
+    );
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "failed"
+    );
+}
+
+#[test]
+fn app_access_switches_do_nothing_when_windows_or_the_organization_decides() {
+    use access_model::{Capability, Target};
+    let mut app = app();
+    app.ctx.helper = Helper::Ready;
+    let mut listing = access_listing(Capability::Camera);
+    listing.controlled = true;
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(listing)),
+    );
+    access(&mut app, app_access::Msg::Toggle(Target::Master, 0, false));
+    assert!(!app_access::is_changing(&app.app_access));
+    drop(app_access::view(&app.app_access, &app.ctx));
 }
 
 #[test]

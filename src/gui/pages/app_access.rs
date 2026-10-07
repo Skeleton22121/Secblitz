@@ -10,15 +10,13 @@ use iced::{Element, Length, Task};
 
 type El<'a> = Element<'a, Message>;
 
-const NAMES_SHOWN: usize = 3;
-
 #[derive(Debug, Clone)]
 pub enum Msg {
     Select(Capability),
     Retry,
     Listed(Capability, Result<Reply, String>),
     Read(Capability, Result<Listing, String>),
-    Toggle(Target, bool),
+    Toggle(Target, u8, bool),
     Changed(Capability, Result<Reply, String>),
 }
 
@@ -60,13 +58,16 @@ fn toast(text: String) -> Task<Message> {
     Task::done(Message::Toast(text, Tone::Warn))
 }
 
-/// Loads the list the first time the panel is shown.
 #[allow(dead_code)]
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
-    if state.load[slot(state.capability)] == Load::Idle {
-        return load(state, ctx, state.capability);
+    if state.load[slot(state.capability)] == Load::Failed {
+        state.load[slot(state.capability)] = Load::Idle;
     }
-    Task::none()
+    load(state, ctx, state.capability)
+}
+
+fn busy(state: &State) -> bool {
+    state.changing.is_some() || state.load[slot(state.capability)] == Load::Loading
 }
 
 fn load(state: &mut State, ctx: &Ctx, capability: Capability) -> Task<Message> {
@@ -83,11 +84,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Select(capability) => {
             state.capability = capability;
-            if state.listings[slot(capability)].is_none() {
+            if state.load[slot(capability)] == Load::Failed {
                 state.load[slot(capability)] = Load::Idle;
-                return load(state, ctx, capability);
             }
-            Task::none()
+            load(state, ctx, capability)
         }
         Msg::Retry => {
             state.load[slot(state.capability)] = Load::Idle;
@@ -103,7 +103,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 move |listing| wrap(Msg::Read(capability, listing)),
             ),
             _ => {
-                state.load[slot(capability)] = Load::Failed;
+                fail(state, capability);
                 Task::none()
             }
         },
@@ -114,13 +114,16 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Task::none()
             }
             Err(_) => {
-                state.load[slot(capability)] = Load::Failed;
+                fail(state, capability);
                 Task::none()
             }
         },
-        Msg::Toggle(target, allow) => {
+        Msg::Toggle(target, tag, allow) => {
             let capability = state.capability;
-            if state.changing.is_some() || state.listings[slot(capability)].is_none() {
+            let switchable = state.listings[slot(capability)]
+                .as_ref()
+                .is_some_and(|l| !l.controlled);
+            if busy(state) || !switchable {
                 return Task::none();
             }
             state.changing = Some(target);
@@ -128,6 +131,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Request::AppAccessSet {
                     capability,
                     target,
+                    tag,
                     allow,
                 },
                 move |r| wrap(Msg::Changed(capability, r)),
@@ -150,6 +154,12 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
         }
     }
+}
+
+/// A listing that could not be read again is not shown, so old switch positions never pass for current ones.
+fn fail(state: &mut State, capability: Capability) {
+    state.load[slot(capability)] = Load::Failed;
+    state.listings[slot(capability)] = None;
 }
 
 fn helper_text(ctx: &Ctx) -> String {
@@ -239,8 +249,9 @@ fn app_row<'a>(
     now: u64,
 ) -> El<'a> {
     let target = Target::App(index as u8);
-    let toggle = (master && state.changing.is_none())
-        .then_some(move |allow: bool| wrap(Msg::Toggle(target, allow)));
+    let tag = app_access::app_tag(&entry.key);
+    let toggle = (master && !busy(state))
+        .then_some(move |allow: bool| wrap(Msg::Toggle(target, tag, allow)));
     widgets::row_item(
         ctx.palette,
         Some(Icon::Package),
@@ -253,14 +264,9 @@ fn app_row<'a>(
 
 fn desktop_row<'a>(state: &State, ctx: &Ctx, listing: &Listing, now: u64) -> El<'a> {
     let p = ctx.palette;
-    let names: Vec<&str> = listing
-        .desktop
-        .iter()
-        .take(NAMES_SHOWN)
-        .map(|e| e.name.as_str())
-        .collect();
-    let more = listing.desktop.len().saturating_sub(NAMES_SHOWN);
-    let joined = names.join(", ");
+    let all: Vec<&str> = listing.desktop.iter().map(|e| e.name.as_str()).collect();
+    let (shown, more) = app_access::names_summary(&all);
+    let joined = shown.join(", ");
     let names = if more == 0 {
         joined
     } else {
@@ -272,8 +278,8 @@ fn desktop_row<'a>(state: &State, ctx: &Ctx, listing: &Listing, now: u64) -> El<
         .desktop
         .first()
         .map_or(Recency::Never, |e| e.recency(now));
-    let toggle = (listing.master && state.changing.is_none())
-        .then_some(|allow: bool| wrap(Msg::Toggle(Target::DesktopApps, allow)));
+    let toggle = (listing.master && !listing.controlled && !busy(state))
+        .then_some(|allow: bool| wrap(Msg::Toggle(Target::DesktopApps, 0, allow)));
     widgets::row_item_below(
         p,
         Some(Icon::Apps),
@@ -282,7 +288,7 @@ fn desktop_row<'a>(state: &State, ctx: &Ctx, listing: &Listing, now: u64) -> El<
         widgets::switch(p, listing.desktop_allowed, toggle),
         vec![widgets::small(
             p,
-            ctx.t("Windows can only switch desktop apps off all together."),
+            ctx.t("Windows can only switch all desktop apps on or off together."),
         )],
         None,
     )
@@ -293,10 +299,8 @@ fn listing_rows<'a>(state: &State, ctx: &Ctx, listing: &Listing) -> Vec<El<'a>> 
     let now = crate::app::history::now();
     let capability = listing.capability;
     let (title, sub) = master_texts(ctx, capability, listing.master);
-    let toggle = state
-        .changing
-        .is_none()
-        .then_some(|allow: bool| wrap(Msg::Toggle(Target::Master, allow)));
+    let toggle = (!listing.controlled && !busy(state))
+        .then_some(|allow: bool| wrap(Msg::Toggle(Target::Master, 0, allow)));
     let mut rows: Vec<El<'a>> = vec![widgets::row_item(
         p,
         Some(Icon::Lock),
@@ -305,6 +309,13 @@ fn listing_rows<'a>(state: &State, ctx: &Ctx, listing: &Listing) -> Vec<El<'a>> 
         widgets::switch(p, listing.master, toggle),
         None,
     )];
+    if listing.controlled {
+        rows.push(info_row(
+            ctx,
+            Icon::Info,
+            ctx.t("Windows or your organization controls this setting, so the switches here can't change it."),
+        ));
+    }
     if listing.is_empty() {
         rows.push(info_row(ctx, Icon::Info, nothing_yet(ctx, capability)));
         return rows;
@@ -319,7 +330,14 @@ fn listing_rows<'a>(state: &State, ctx: &Ctx, listing: &Listing) -> Vec<El<'a>> 
             .into(),
         );
         for (index, entry) in listing.apps.iter().enumerate() {
-            rows.push(app_row(state, ctx, index, entry, listing.master, now));
+            rows.push(app_row(
+                state,
+                ctx,
+                index,
+                entry,
+                listing.master && !listing.controlled,
+                now,
+            ));
         }
     }
     if !listing.desktop.is_empty() {
