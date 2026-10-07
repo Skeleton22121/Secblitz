@@ -250,6 +250,21 @@ pub fn to_check_ids(report: &Report) -> Vec<String> {
         .collect()
 }
 
+/// Settings Secblitz changed and has not undone, per the journal behind the report.
+pub fn changed_ids(report: &Report) -> Vec<String> {
+    report
+        .results
+        .iter()
+        .filter(|r| r.undoable)
+        .map(|r| r.id.clone())
+        .collect()
+}
+
+/// Items that need attention again although Secblitz had changed them.
+pub fn reverted_ids(report: &Report, attention: &[String]) -> Vec<String> {
+    secblitz::status::reverted_of(attention, &changed_ids(report))
+}
+
 impl Score {
     pub fn of(report: &Report) -> Self {
         let mut s = Score::default();
@@ -309,6 +324,19 @@ mod tests {
             results,
             ..Report::default()
         }
+    }
+
+    #[test]
+    fn a_fixed_setting_that_needs_attention_again_counts_as_switched_back() {
+        let mut fixed_then_off = out("defender.realtime", "attention");
+        fixed_then_off.undoable = true;
+        let mut fixed_and_on = out("uac.enabled", "compliant");
+        fixed_and_on.undoable = true;
+        let never_fixed = out("firewall.public.enabled", "attention");
+        let r = rep(vec![fixed_then_off, fixed_and_on, never_fixed]);
+        assert_eq!(changed_ids(&r), ["defender.realtime", "uac.enabled"]);
+        let attention = to_check_ids(&r);
+        assert_eq!(reverted_ids(&r, &attention), ["defender.realtime"]);
     }
 
     #[test]

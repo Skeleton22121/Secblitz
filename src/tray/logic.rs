@@ -164,6 +164,7 @@ mod tests {
             protected,
             total,
             attention: ids.iter().map(|s| s.to_string()).collect(),
+            reverted: Vec::new(),
             state,
         }
     }

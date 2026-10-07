@@ -1,4 +1,4 @@
-//! Background file writes: history, the status file and the saved check.
+//! Background file writes: history, the status file, the changed list and the saved check.
 use crate::app;
 use iced::futures;
 use std::path::PathBuf;
@@ -15,11 +15,15 @@ pub fn persist(
     dir: Option<PathBuf>,
     entry: Option<app::history::Entry>,
     status: secblitz::status::Status,
+    changed: Option<Vec<String>>,
     cache: Cache,
 ) {
     write_in_order(move || {
         if let (Some(dir), Some(entry)) = (&dir, &entry) {
             let _ = app::history::record(dir, entry);
+        }
+        if let Some(changed) = &changed {
+            let _ = secblitz::status::write_changed(changed);
         }
         let _ = secblitz::status::write(&status);
         if let Some(dir) = &dir {
