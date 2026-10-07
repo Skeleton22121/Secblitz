@@ -25,6 +25,7 @@ pub use view::{tab_label, tab_name, BUSY_MARK};
 pub enum Sheet {
     Scan,
     RemoveThreats,
+    Renewal { bitlocker: bool },
     DefenderUpdate,
     Repair(RepairKind),
     InstallUpdates,
@@ -74,6 +75,9 @@ pub enum Msg {
     ScanDone(Result<(), String>),
     ThreatsDone(Result<actions::ThreatRemoval, String>),
     ClearThreats,
+    RenewalDone(Result<actions::RenewalOutcome, String>),
+    OpenRecoveryKey,
+    RecoveryKeyOpened(bool),
     DefenderDone(Result<(), String>),
     ClearScan,
     ClearDefender,
@@ -198,6 +202,7 @@ pub struct State {
     account: Account,
     scan: Run<Result<(), String>>,
     threats: Run<Result<actions::ThreatRemoval, String>>,
+    renewing: bool,
     defender: Run<Result<(), String>>,
     repair: Repair,
     updates: Updates,
@@ -236,6 +241,7 @@ impl Default for State {
             account: Account::Checking,
             scan: Run::Idle,
             threats: Run::Idle,
+            renewing: false,
             defender: Run::Idle,
             repair: Repair::Idle,
             updates: Updates::Idle,
@@ -321,7 +327,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             // a threat removal must not run alongside a fix or undo.
             let changes_pc = matches!(
                 sheet,
-                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart | Sheet::RemoveThreats
+                Sheet::Repair(_)
+                    | Sheet::InstallUpdates
+                    | Sheet::Restart
+                    | Sheet::RemoveThreats
+                    | Sheet::Renewal { .. }
             );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
             if blocked {
@@ -403,6 +413,48 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 _ => Task::none(),
             }
         }
+        Msg::RenewalDone(r) => {
+            ctx.busy = false;
+            state.renewing = false;
+            record_renewal(ctx, &r);
+            let (words, tone) = match &r {
+                Ok(outcome) => (
+                    crate::app::maintenance::renewal_result_text(*outcome),
+                    match outcome {
+                        actions::RenewalOutcome::Started { .. } => Tone::Good,
+                        actions::RenewalOutcome::Refused(_) => Tone::Warn,
+                    },
+                ),
+                Err(_) => (
+                    "We couldn't confirm that the renewal started. Check again in a few minutes.",
+                    Tone::Warn,
+                ),
+            };
+            let toast = Task::done(Message::Toast(ctx.t(words), tone));
+            match &state.tips {
+                Tips::Done(shown) => {
+                    let profile = shown.profile;
+                    Task::batch([
+                        toast,
+                        Task::perform(blocking(move || logic::run_tips(profile)), |r| {
+                            tools(Msg::TipsRefreshed(Box::new(r)))
+                        }),
+                    ])
+                }
+                _ => toast,
+            }
+        }
+        Msg::OpenRecoveryKey => ctx.broker_task(crate::broker::Request::OpenRecoveryKey, |reply| {
+            tools(Msg::RecoveryKeyOpened(matches!(
+                reply,
+                Ok(crate::broker::Reply::Done)
+            )))
+        }),
+        Msg::RecoveryKeyOpened(true) => Task::none(),
+        Msg::RecoveryKeyOpened(false) => Task::done(Message::Toast(
+            ctx.t("We couldn't open your web browser. Visit aka.ms/myrecoverykey to find your recovery key."),
+            Tone::Warn,
+        )),
         Msg::TipsRefreshed(report) => {
             if matches!(state.tips, Tips::Done(_)) {
                 state.tips = Tips::Done(report);
@@ -673,7 +725,7 @@ impl State {
 
     pub fn tab_busy(&self, tab: ToolsTab) -> bool {
         match tab {
-            ToolsTab::Tips => matches!(self.tips, Tips::Running(_)),
+            ToolsTab::Tips => matches!(self.tips, Tips::Running(_)) || self.renewing,
             ToolsTab::Viruses => {
                 matches!(self.scan, Run::Working)
                     || matches!(self.threats, Run::Working)
@@ -706,6 +758,25 @@ impl State {
     }
 }
 
+fn record_renewal(ctx: &Ctx, result: &Result<actions::RenewalOutcome, String>) {
+    if !matches!(result, Ok(actions::RenewalOutcome::Started { .. })) {
+        return;
+    }
+    if let Some(dir) = &ctx.state_dir {
+        let score = ctx.score().unwrap_or_default();
+        let _ = crate::app::history::record(
+            dir,
+            &crate::app::history::Entry {
+                t: crate::app::history::now(),
+                kind: crate::app::history::Kind::SecureBootRenewal,
+                protected: score.protected,
+                total: score.total,
+                n: 0,
+            },
+        );
+    }
+}
+
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
     ctx.forget_check();
     match sheet {
@@ -733,6 +804,17 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             Task::perform(blocking(|| actions::remove_threats().map_err(plain)), |r| {
                 tools(Msg::ThreatsDone(r))
             })
+        }
+        Sheet::Renewal { .. } => {
+            if ctx.busy || !state.can_start_change() {
+                return Task::none();
+            }
+            ctx.busy = true;
+            state.renewing = true;
+            Task::perform(
+                blocking(|| actions::start_secure_boot_renewal().map_err(plain)),
+                |r| tools(Msg::RenewalDone(r)),
+            )
         }
         Sheet::DefenderUpdate => {
             state.defender = Run::Working;

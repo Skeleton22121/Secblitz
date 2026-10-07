@@ -33,6 +33,19 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
     })
 }
 
+/// What the startup security tip says while the renewal is offered, started or held back.
+pub fn rule_renewal_advice(renewal: secblitz::diagnostics::Renewal) -> Option<&'static str> {
+    use secblitz::diagnostics::{Blocker, Renewal};
+    Some(match renewal {
+        Renewal::Offer { .. } => "Your PC's startup security certificates need renewing. Secblitz can start this for you.",
+        Renewal::Started => "Renewal started. It finishes after you restart your PC. You can keep working.",
+        Renewal::Blocked(Blocker::MakerUpdate) => "Your PC maker needs to update your PC first. Check their website for a firmware update.",
+        Renewal::Blocked(Blocker::TaskOff) => "Windows can't renew your startup security because its update job is switched off. Install all Windows updates, then check again.",
+        Renewal::Blocked(Blocker::OtherSystem) => "Your PC also starts another system, such as Linux. Renewing could stop it from starting, so Secblitz leaves this to you. Check that system's website first.",
+        Renewal::Blocked(Blocker::NotChecked) | Renewal::NotApplicable | Renewal::Done | Renewal::VirtualPc | Renewal::Unknown => return None,
+    })
+}
+
 pub fn rule_open(rule_id: &str) -> Option<secblitz::actions::Action> {
     use secblitz::actions::Action;
     if let Some(g) = crate::guide::guide(rule_id) {
@@ -90,6 +103,22 @@ pub fn rule_scan(rule_id: &str) -> bool {
 
 pub fn rule_remove_threats(rule_id: &str) -> bool {
     rule_id == "defender.threats"
+}
+
+/// The plain sentence for a renewal that was refused or has just started.
+pub fn renewal_result_text(outcome: secblitz::actions::RenewalOutcome) -> &'static str {
+    use secblitz::actions::{RenewalOutcome, RenewalRefusal};
+    match outcome {
+        RenewalOutcome::Started { confirmed: true } => "Renewal started. It finishes after you restart your PC. You can keep working.",
+        RenewalOutcome::Started { confirmed: false } => "Windows has been asked to start the renewal. It finishes after you restart your PC. You can keep working.",
+        RenewalOutcome::Refused(RenewalRefusal::AlreadyStarted) => "The renewal has already started. It finishes after you restart your PC.",
+        RenewalOutcome::Refused(RenewalRefusal::AlreadyUpdated) => "Your startup security is already up to date.",
+        RenewalOutcome::Refused(RenewalRefusal::MakerBlocked) => "Your PC maker needs to update your PC first. Check their website for a firmware update.",
+        RenewalOutcome::Refused(RenewalRefusal::OtherSystem) => "Your PC also starts another system, so Secblitz didn't change anything. Check that system's website first.",
+        RenewalOutcome::Refused(RenewalRefusal::VirtualMachine) => "This is a virtual PC, so Secblitz didn't change anything.",
+        RenewalOutcome::Refused(RenewalRefusal::TaskMissing | RenewalRefusal::TaskDisabled) => "Windows can't renew your startup security because its update job is switched off. Install all Windows updates, then try again.",
+        RenewalOutcome::Refused(_) => "We couldn't start the renewal, and nothing was changed. Install all Windows updates, then try again.",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

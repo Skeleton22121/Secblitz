@@ -15,6 +15,7 @@ pub enum Kind {
     UndoSome,
     Debloat,
     Restore,
+    SecureBootRenewal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +142,9 @@ pub fn label(kind: Kind, n: usize) -> &'static str {
         (Kind::Debloat, 0 | 1) => "Removed 1 app",
         (Kind::Debloat, _) => "Removed {n} apps",
         (Kind::Restore, _) => "Restored an app",
+        (Kind::SecureBootRenewal, _) => {
+            "Started the startup security renewal. This can't be undone."
+        }
     }
 }
 
@@ -242,6 +246,19 @@ mod tests {
         assert_eq!(load(dir.path()), vec![e(5, Kind::Undo, 1, 2, 0)]);
         record(dir.path(), &e(6, Kind::Check, 2, 2, 0)).unwrap();
         assert_eq!(load(dir.path()).len(), 2);
+    }
+
+    #[test]
+    fn the_renewal_is_logged_with_a_plain_cannot_be_undone_label() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), &e(9, Kind::SecureBootRenewal, 4, 6, 0)).unwrap();
+        assert_eq!(
+            load(dir.path()),
+            vec![e(9, Kind::SecureBootRenewal, 4, 6, 0)]
+        );
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(text.contains("\"secure_boot_renewal\""));
+        assert!(label(Kind::SecureBootRenewal, 0).contains("can't be undone"));
     }
 
     #[test]

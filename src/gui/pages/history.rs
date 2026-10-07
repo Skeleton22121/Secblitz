@@ -154,6 +154,7 @@ fn kind_icon(kind: Kind) -> (Icon, Tone) {
         Kind::Undo | Kind::UndoSome => (Icon::Undo, Tone::Warn),
         Kind::Debloat => (Icon::Package, Tone::Neutral),
         Kind::Restore => (Icon::Refresh, Tone::Good),
+        Kind::SecureBootRenewal => (Icon::ShieldCheck, Tone::Neutral),
     }
 }
 
