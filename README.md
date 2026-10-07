@@ -57,7 +57,7 @@ On Windows 11, install:
 - [Inno Setup 6.4 or later](https://jrsoftware.org/isinfo.php), only for the installer
 
 ```powershell
-git clone https://github.com/Skeleton22121/Secblitz.git
+git clone https://github.com/secblitz/Secblitz.git
 cd Secblitz
 
 # The app only: target\release\secblitz.exe

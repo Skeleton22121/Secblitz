@@ -38,9 +38,9 @@ pub enum Action {
 }
 
 pub const REPORT_PROBLEM_URL: &str =
-    "https://github.com/Skeleton22121/Secblitz/issues/new?template=bug_report.yml";
+    "https://github.com/secblitz/Secblitz/issues/new?template=bug_report.yml";
 pub const SUGGEST_FEATURE_URL: &str =
-    "https://github.com/Skeleton22121/Secblitz/issues/new?template=feature_request.yml";
+    "https://github.com/secblitz/Secblitz/issues/new?template=feature_request.yml";
 pub const PRIVACY_POLICY_URL: &str = "https://secblitz.lol/privacy.html";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

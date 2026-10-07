@@ -43,7 +43,7 @@ bump PR -> merge -> tag -> release build (tests, installer tests, attestations) 
 ## One-time GitHub setup
 
 Do this once, before the first release through this pipeline. The repository
-is `Skeleton22121/Secblitz`.
+is `secblitz/Secblitz`.
 
 ### Repository settings
 
@@ -64,7 +64,7 @@ is `Skeleton22121/Secblitz`.
    poisoned release is pulled before it reaches a pull request).
 3. **Settings, General, Releases.** If offered, turn on "Immutable releases", so a
    published release and its files can never be changed or replaced afterwards.
-4. **Code owners.** `.github/CODEOWNERS` names `@Skeleton22121` for `.github/`,
+4. **Code owners.** `.github/CODEOWNERS` names `@secblitz` for `.github/`,
    `scripts/`, `installer/`, `website/`, `deploy/`, `wrangler.jsonc`,
    `src/updater/`, the update public key and the update origin.
 
@@ -314,8 +314,8 @@ gh release download v0.8.1 --dir check          # you are signed in, so drafts w
 cd check
 sha256sum --check SHA256SUMS
 for f in secblitz-0.8.1-windows-x64-setup.exe secblitz-0.8.1-windows-x64.exe; do
-  gh attestation verify "$f" --repo Skeleton22121/Secblitz \
-    --signer-workflow Skeleton22121/Secblitz/.github/workflows/release.yml \
+  gh attestation verify "$f" --repo secblitz/Secblitz \
+    --signer-workflow secblitz/Secblitz/.github/workflows/release.yml \
     --source-ref refs/tags/v0.8.1 \
     --source-digest "$(git rev-parse origin/main)"   # the main commit you expect
 done

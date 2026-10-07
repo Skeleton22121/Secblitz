@@ -343,7 +343,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             ctx,
         ),
         Msg::FeedbackOpened(false) => toast(
-            "We couldn't open your web browser. Visit github.com/Skeleton22121/Secblitz/issues to write to us.",
+            "We couldn't open your web browser. Visit github.com/secblitz/Secblitz/issues to write to us.",
             Tone::Warn,
             ctx,
         ),

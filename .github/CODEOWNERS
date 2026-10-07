@@ -2,13 +2,13 @@
 # trust. Takes effect once "Require review from Code Owners" is on in the main
 # branch ruleset.
 
-/.github/ @Skeleton22121
-/scripts/ @Skeleton22121
-/installer/ @Skeleton22121
-/website/ @Skeleton22121
-/wrangler.jsonc @Skeleton22121
-/deploy/ @Skeleton22121
-/src/updater/ @Skeleton22121
+/.github/ @secblitz
+/scripts/ @secblitz
+/installer/ @secblitz
+/website/ @secblitz
+/wrangler.jsonc @secblitz
+/deploy/ @secblitz
+/src/updater/ @secblitz
 # The key every installed copy trusts, and the origin it downloads from.
-/assets/update-public-key.hex @Skeleton22121
-/assets/update-origin.txt @Skeleton22121
+/assets/update-public-key.hex @secblitz
+/assets/update-origin.txt @secblitz
