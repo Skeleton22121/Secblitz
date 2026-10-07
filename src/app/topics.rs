@@ -35,8 +35,8 @@ impl Topic {
             (_, "smartscreen.apps" | "net.hosts_file") | ("defender", _) => Topic::Threats,
             ("uac" | "accounts" | "lsa" | "wdigest" | "ntlm" | "session", _) => Topic::SignIn,
             (
-                "firewall" | "net" | "tls" | "smb" | "smb1" | "remote_desktop" | "remote_assistance"
-                | "wifi",
+                "firewall" | "net" | "tls" | "smb" | "smb1" | "remote_desktop"
+                | "remote_assistance" | "wifi",
                 _,
             )
             | (_, "printer.spooler_remote" | "services.legacy_remote") => Topic::Network,
@@ -227,7 +227,10 @@ mod tests {
             );
         }
         for (id, _) in expected {
-            assert!(secblitz::hardening::spec(id).is_some(), "{id} is not a setting");
+            assert!(
+                secblitz::hardening::spec(id).is_some(),
+                "{id} is not a setting"
+            );
         }
     }
 
@@ -246,7 +249,10 @@ mod tests {
         ids.extend(secblitz::permissions::controls().into_iter().map(|c| c.id));
         assert!(ids.len() > 60);
         let mut seen = 0;
-        for id in ids.iter().filter(|id| secblitz::hardening::spec(id).is_none()) {
+        for id in ids
+            .iter()
+            .filter(|id| secblitz::hardening::spec(id).is_none())
+        {
             let family = id.split('.').next().unwrap();
             let topic = by_family(family).unwrap_or_else(|| panic!("no expectation for {id}"));
             assert_eq!(Topic::of(id), topic, "{id}");
@@ -332,10 +338,7 @@ mod tests {
             serde_json::to_string(&Topic::SignIn).unwrap(),
             "\"sign_in\""
         );
-        assert_eq!(
-            serde_json::from_str::<Topic>("\"ai\"").unwrap(),
-            Topic::Ai
-        );
+        assert_eq!(serde_json::from_str::<Topic>("\"ai\"").unwrap(), Topic::Ai);
         assert!(serde_json::from_str::<Topic>("\"nope\"").is_err());
     }
 
@@ -406,7 +409,10 @@ mod tests {
             switched_back(&r, &available),
             ["defender.pua", "privacy.advertising_id"]
         );
-        assert!(switched_back(&r, &[]).is_empty(), "only settings that can be fixed");
+        assert!(
+            switched_back(&r, &[]).is_empty(),
+            "only settings that can be fixed"
+        );
     }
 
     #[test]

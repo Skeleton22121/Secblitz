@@ -327,7 +327,7 @@ fn settings_secblitz_changed_come_first_and_nothing_starts_chosen() {
     drop(app.update(Message::Fixes(fixes::Msg::ToggleUndo(ids[0].clone()))));
     assert!(fixes::undo_selected_ids(&app.fixes).is_empty());
     drop(app.update(Message::Fixes(fixes::Msg::FocusUndo)));
-    assert!(fixes::open_protected(&app.fixes));
+    assert!(fixes::open_protected(&app.fixes, &app.ctx));
     drop(app.view());
 }
 
@@ -549,7 +549,7 @@ fn the_history_row_opens_the_protection_page_on_the_changed_settings() {
     assert_eq!(app.page, Page::History);
     drop(app.update(Message::PutBackChosen));
     assert_eq!(app.page, Page::Fixes);
-    assert!(fixes::open_protected(&app.fixes));
+    assert!(fixes::open_protected(&app.fixes, &app.ctx));
 }
 
 #[test]
@@ -1130,4 +1130,238 @@ fn bench_pages() {
         drop(app.update(Message::Toast("Saved.".into(), Tone::Good)));
     });
     println!("toast               {t:6.3}");
+}
+
+use crate::app::topics::{Line, Topic};
+
+fn report_with(app: &mut App, open: &[&str], changed: &[&str]) {
+    with_report(app, |r| {
+        for o in &mut r.results {
+            o.status = if open.contains(&o.id.as_str()) {
+                CheckStatus::Attention
+            } else {
+                CheckStatus::Compliant
+            };
+            o.undoable = changed.contains(&o.id.as_str());
+        }
+    });
+}
+
+fn all_protected_except(app: &mut App, open: &[&str]) {
+    report_with(app, open, &[]);
+}
+
+fn line_of(app: &App, topic: Topic) -> Line {
+    fixes::tile_lines(&app.fixes, &app.ctx)
+        .into_iter()
+        .find(|(t, _)| *t == topic)
+        .map(|(_, line)| line)
+        .expect("every topic has a tile")
+}
+
+#[test]
+fn every_protection_row_is_in_exactly_one_topic() {
+    let app = app();
+    let rows = fixes::rows_by_topic(&app.fixes, &app.ctx);
+    assert!(rows.len() > 50, "{}", rows.len());
+    let mut keys: Vec<&String> = rows.iter().map(|(_, key)| key).collect();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), rows.len(), "a row must not be listed twice");
+    let mut counted = 0;
+    for topic in Topic::ALL {
+        let here: Vec<&String> = rows
+            .iter()
+            .filter(|(t, _)| *t == topic)
+            .map(|(_, key)| key)
+            .collect();
+        assert!(!here.is_empty(), "{topic:?} has nothing to show");
+        counted += here.len();
+        for key in here {
+            if !key.starts_with("other:") {
+                assert_eq!(Topic::of(key), topic, "{key}");
+            }
+        }
+    }
+    assert_eq!(counted, rows.len());
+}
+
+#[test]
+fn each_tile_says_what_its_topic_needs() {
+    let mut app = app();
+    all_protected_except(
+        &mut app,
+        &[
+            "smartscreen.browser_policy",
+            "privacy.advertising_id",
+            "defender.pua",
+        ],
+    );
+    assert_eq!(line_of(&app, Topic::Browsers), Line::ToFix(1));
+    assert_eq!(line_of(&app, Topic::Threats), Line::ToFix(1));
+    assert_eq!(line_of(&app, Topic::Privacy), Line::Options(1));
+    assert_eq!(line_of(&app, Topic::Ai), Line::AllSet);
+    assert_eq!(line_of(&app, Topic::Network), Line::AllSet);
+    assert_eq!(line_of(&app, Topic::SignIn), Line::AllSet);
+}
+
+#[test]
+fn a_setting_secblitz_fixed_that_is_off_again_is_counted_and_chosen() {
+    let mut app = app();
+    report_with(
+        &mut app,
+        &["net.llmnr", "privacy.advertising_id", "wsh.disabled"],
+        &["net.llmnr", "privacy.advertising_id"],
+    );
+    let mut back = fixes::banner_ids(&app.fixes, &app.ctx);
+    back.sort();
+    assert_eq!(back, ["net.llmnr", "privacy.advertising_id"]);
+    assert_eq!(line_of(&app, Topic::Network), Line::SwitchedBack(1));
+    assert_eq!(line_of(&app, Topic::Privacy), Line::SwitchedBack(1));
+    assert_eq!(line_of(&app, Topic::Windows), Line::ToFix(1));
+    drop(app.update(Message::Fixes(fixes::Msg::Expand("x".into()))));
+    let chosen = fixes::selected_ids(&app.fixes);
+    assert!(chosen.contains(&"net.llmnr".to_owned()));
+    assert!(
+        chosen.contains(&"privacy.advertising_id".to_owned()),
+        "a setting that was fixed before is chosen again"
+    );
+    drop(app.update(Message::Fixes(fixes::Msg::SelectNone)));
+    drop(app.update(Message::Fixes(fixes::Msg::PutBack)));
+    let mut chosen = fixes::selected_ids(&app.fixes);
+    chosen.retain(|id| back.contains(id));
+    assert_eq!(chosen, back, "putting them back chooses exactly those");
+    assert!(
+        !fixes::selected_ids(&app.fixes).contains(&"wsh.disabled".to_owned()),
+        "other settings are not swept along"
+    );
+    drop(app.view());
+}
+
+#[test]
+fn a_topic_counts_only_its_own_chosen_fixes() {
+    let mut app = app();
+    all_protected_except(&mut app, &["defender.pua", "net.llmnr"]);
+    drop(app.update(Message::Fixes(fixes::Msg::SelectAll)));
+    assert_eq!(
+        fixes::chosen_in_topic(&app.fixes, &app.ctx, Topic::Threats),
+        ["defender.pua"]
+    );
+    assert_eq!(
+        fixes::chosen_in_topic(&app.fixes, &app.ctx, Topic::Network),
+        ["net.llmnr"]
+    );
+}
+
+#[test]
+fn settings_nobody_switched_back_are_not_flagged() {
+    let mut app = app();
+    all_protected_except(&mut app, &["net.llmnr", "wsh.disabled"]);
+    assert!(fixes::banner_ids(&app.fixes, &app.ctx).is_empty());
+    assert_eq!(line_of(&app, Topic::Network), Line::ToFix(1));
+    report_with(&mut app, &["net.llmnr"], &["defender.pua"]);
+    assert!(
+        fixes::banner_ids(&app.fixes, &app.ctx).is_empty(),
+        "a protected setting is not switched back"
+    );
+}
+
+#[test]
+fn the_review_strip_chooses_every_recommended_fix_in_every_topic() {
+    let mut app = app();
+    all_protected_except(
+        &mut app,
+        &["defender.pua", "smartscreen.browser_policy", "net.llmnr"],
+    );
+    let report = app.ctx.report.clone().expect("a report");
+    let recommended = app::flow::recommended(&report, &app.ctx.catalog.available);
+    assert!(recommended.len() >= 2, "{recommended:?}");
+    drop(app.update(Message::Fixes(fixes::Msg::SelectNone)));
+    assert!(fixes::selected_ids(&app.fixes).is_empty());
+    drop(app.update(Message::Fixes(fixes::Msg::ReviewRecommended)));
+    let chosen = fixes::selected_ids(&app.fixes);
+    for id in &recommended {
+        assert!(chosen.contains(id), "{id}");
+    }
+}
+
+#[test]
+fn the_first_result_opens_the_first_topic_with_something_to_fix_and_later_ones_the_remembered_topic(
+) {
+    let mut app = app();
+    app.page = Page::Fixes;
+    app.ctx.prefs.protection_topic = Some(Topic::Privacy);
+    all_protected_except(&mut app, &["smartscreen.browser_policy", "ai.paint"]);
+    drop(app.view());
+    assert_eq!(fixes::topic_on_show(&app.fixes), Some(Topic::Browsers));
+
+    let mut app = self::app();
+    app.page = Page::Fixes;
+    app.ctx.prefs.protection_topic = Some(Topic::Privacy);
+    all_protected_except(&mut app, &["ai.paint"]);
+    drop(app.view());
+    assert_eq!(
+        fixes::topic_on_show(&app.fixes),
+        Some(Topic::Privacy),
+        "nothing to fix: the remembered topic"
+    );
+
+    let mut app = self::app();
+    app.page = Page::Fixes;
+    all_protected_except(&mut app, &[]);
+    drop(app.view());
+    assert_eq!(fixes::topic_on_show(&app.fixes), Some(Topic::Threats));
+
+    drop(app.update(Message::Fixes(fixes::Msg::Topic(Topic::Windows))));
+    assert_eq!(fixes::topic_on_show(&app.fixes), Some(Topic::Windows));
+    assert_eq!(app.ctx.prefs.protection_topic, Some(Topic::Windows));
+    all_protected_except(&mut app, &["smartscreen.browser_policy"]);
+    drop(app.view());
+    assert_eq!(
+        fixes::topic_on_show(&app.fixes),
+        Some(Topic::Windows),
+        "a new check does not move the person"
+    );
+}
+
+#[test]
+fn searching_shows_matches_from_every_topic() {
+    let mut app = app();
+    type_into_protection(&mut app, "fire");
+    let shown = shown_on_protection(&app);
+    let rows = fixes::rows_by_topic(&app.fixes, &app.ctx);
+    let topics: std::collections::HashSet<Topic> = rows
+        .iter()
+        .filter(|(_, key)| shown.contains(key))
+        .map(|(t, _)| *t)
+        .collect();
+    assert!(topics.len() >= 2, "{topics:?}");
+    drop(app.view());
+}
+
+#[test]
+fn every_topic_lays_out_in_two_and_four_columns() {
+    let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        theme::REGULAR,
+        14.0.into(),
+        Some("tiny-skia"),
+    ))
+    .expect("tiny-skia renderer");
+    let mut app = app();
+    app.page = Page::Fixes;
+    app.enter_t = 1.0;
+    for topic in Topic::ALL {
+        drop(app.update(Message::Fixes(fixes::Msg::Topic(topic))));
+        for width in [1100.0, 880.0] {
+            let size = iced::Size::new(width, 720.0);
+            let mut element = app.view();
+            let mut tree = Tree::new(&element);
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(iced::Size::ZERO, size),
+            );
+            assert!(node.size().height > 0.0, "{topic:?} {width}");
+        }
+    }
 }

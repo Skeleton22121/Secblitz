@@ -2,6 +2,7 @@
 use crate::app::flow;
 use crate::app::score::{self, Class};
 use crate::app::search::{Haystack, Query};
+use crate::app::topics::{self, Counts, Line, Topic};
 use crate::broker::Reply;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
@@ -9,6 +10,7 @@ use crate::gui::widgets::anim;
 use crate::gui::widgets::hairline::magnifier::{self, Labels, Magnifier, Status};
 use crate::gui::widgets::hairline::Plate;
 use crate::gui::widgets::scan;
+use crate::gui::widgets::tile::{self, Tile};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use crate::guide::{self, Guide, Page};
@@ -19,13 +21,14 @@ use iced::{Subscription, Task};
 use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
 pub const SEARCH_ID: &str = "fixes-search";
 const FIRST_ROWS: usize = 8;
+const FEW_PROTECTED: usize = 5;
 const TICKER_LINES: usize = 6;
 const INDENT: f32 =
     theme::CHECK + theme::S1 * 2.0 + theme::S1 + theme::S4 + theme::ICON_ROW + theme::S4;
@@ -38,10 +41,9 @@ pub struct State {
     /// Settings Secblitz changed that the person ticked to put back. Never filled for them.
     undo_selected: HashSet<String>,
     expanded: HashSet<String>,
-    open_protected: bool,
-    open_cant: bool,
-    open_managed: bool,
-    open_info: bool,
+    flipped_protected: HashSet<Topic>,
+    open_more: HashSet<Topic>,
+    topic: Cell<Option<Topic>>,
     all_attention: bool,
     all_protected: bool,
     show_error: bool,
@@ -60,10 +62,9 @@ impl Default for State {
             selected: HashSet::new(),
             undo_selected: HashSet::new(),
             expanded: HashSet::new(),
-            open_protected: false,
-            open_cant: false,
-            open_managed: false,
-            open_info: false,
+            flipped_protected: HashSet::new(),
+            open_more: HashSet::new(),
+            topic: Cell::new(None),
             all_attention: false,
             all_protected: false,
             show_error: false,
@@ -88,10 +89,15 @@ pub enum Msg {
     /// Opens the group of protected settings, with the ones Secblitz changed first.
     FocusUndo,
     Expand(String),
-    ShowProtected,
-    ToggleCant,
-    ToggleManaged,
-    ToggleInfo,
+    ShowProtected(Topic),
+    ToggleMore(Topic),
+    Topic(Topic),
+    SelectTopic(Topic),
+    SelectNoneTopic(Topic),
+    UndoSelectTopic(Topic),
+    UndoSelectNoneTopic(Topic),
+    ReviewRecommended,
+    PutBack,
     AllAttention,
     AllProtected,
     ErrorDetails,
@@ -150,6 +156,86 @@ impl Rows {
     }
 }
 
+impl<'r> Shown<'r> {
+    fn in_topic(&self, topic: Topic) -> Shown<'r> {
+        Shown {
+            attention: self
+                .attention
+                .iter()
+                .copied()
+                .filter(|r| r.topic == topic)
+                .collect(),
+            privacy: self
+                .privacy
+                .iter()
+                .copied()
+                .filter(|r| r.topic == topic)
+                .collect(),
+            others: self
+                .others
+                .iter()
+                .copied()
+                .filter(|r| r.topic == topic)
+                .collect(),
+            protected: self
+                .protected
+                .iter()
+                .copied()
+                .filter(|r| r.topic == topic)
+                .collect(),
+        }
+    }
+}
+
+impl Rows {
+    fn counts(&self, topic: Topic) -> Counts {
+        let fix = |r: &&Att| r.topic == topic;
+        let back = |r: &&Att| r.switched_back;
+        Counts {
+            to_fix: self
+                .attention
+                .iter()
+                .filter(fix)
+                .filter(|r| !back(r))
+                .count()
+                + self
+                    .others
+                    .iter()
+                    .filter(|o| o.topic == topic && o.bucket == Bucket::Look)
+                    .count(),
+            switched_back: self
+                .attention
+                .iter()
+                .chain(&self.privacy)
+                .filter(fix)
+                .filter(back)
+                .count(),
+            options: self.privacy.iter().filter(fix).filter(|r| !back(r)).count(),
+        }
+    }
+
+    fn line(&self, topic: Topic) -> Line {
+        Line::of(Some(self.counts(topic)))
+    }
+
+    fn switched_back(&self) -> Vec<String> {
+        self.attention
+            .iter()
+            .chain(&self.privacy)
+            .filter(|r| r.switched_back)
+            .map(|r| r.id.clone())
+            .collect()
+    }
+
+    fn first_topic_to_act_on(&self) -> Option<Topic> {
+        topics::first_needing_action(|t| self.line(t))
+    }
+
+    fn protected_count(&self, topic: Topic) -> usize {
+        self.protected.iter().filter(|r| r.topic == topic).count()
+    }
+}
+
 impl Shown<'_> {
     fn is_empty(&self) -> bool {
         self.attention.is_empty()
@@ -169,6 +255,8 @@ impl Shown<'_> {
 #[derive(Debug)]
 struct Att {
     id: String,
+    topic: Topic,
+    switched_back: bool,
     name: String,
     line: String,
     why: String,
@@ -182,6 +270,7 @@ struct Att {
 #[derive(Debug)]
 struct Other {
     key: String,
+    topic: Topic,
     explain: String,
     report_only: bool,
     name: String,
@@ -200,6 +289,7 @@ struct Other {
 #[derive(Debug)]
 struct Prot {
     id: String,
+    topic: Topic,
     name: String,
     line: String,
     /// Secblitz changed this setting and can put it back.
@@ -295,6 +385,8 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         );
         list.push(Att {
             id: id.clone(),
+            topic: Topic::of(id),
+            switched_back: r.undoable,
             name,
             line,
             why: ctx.t(a.next),
@@ -333,6 +425,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             );
             rows.protected.push(Prot {
                 id: r.id.clone(),
+                topic: Topic::of(&r.id),
                 name,
                 line,
                 undoable: r.undoable,
@@ -358,6 +451,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             OtherSource {
                 index: rows.others.len(),
+                topic: Topic::of(&r.id),
                 explain: (r.id.as_str(), false),
                 name: lang.control(&r.id),
                 name_source: advice::control_label(&r.id),
@@ -397,6 +491,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &a,
             OtherSource {
                 index: rows.others.len(),
+                topic: Topic::of_finding(&f.title),
                 explain: (f.title.as_str(), true),
                 name: ctx.t(a.label),
                 name_source: a.label,
@@ -424,6 +519,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
 
 struct OtherSource<'a> {
     index: usize,
+    topic: Topic,
     explain: (&'a str, bool),
     name: String,
     name_source: &'a str,
@@ -436,6 +532,7 @@ struct OtherSource<'a> {
 fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
     let OtherSource {
         index,
+        topic,
         explain,
         name,
         name_source,
@@ -468,6 +565,7 @@ fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
     );
     Other {
         key: format!("other:{index}"),
+        topic,
         explain: explain.0.to_owned(),
         report_only: explain.1,
         name,
@@ -581,16 +679,18 @@ fn candidates(ctx: &Ctx) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The fixes that start chosen: the recommended ones and the ones switched back.
+fn starting_choice(ctx: &Ctx) -> Vec<String> {
+    ctx.report
+        .as_deref()
+        .map(|r| topics::default_selection(r, &ctx.catalog.available))
+        .unwrap_or_default()
+}
+
 fn sync(state: &mut State, ctx: &Ctx) {
     if state.synced_at != ctx.checked_at || state.synced_at.is_none() {
         state.synced_at = ctx.checked_at;
-        state.selected = ctx
-            .report
-            .as_deref()
-            .map(|r| flow::recommended(r, &ctx.catalog.available))
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        state.selected = starting_choice(ctx).into_iter().collect();
         state.expanded.clear();
         let undoable = |id: &String| {
             ctx.report
@@ -608,11 +708,7 @@ fn selection(state: &State, ctx: &Ctx, all: &[String]) -> Vec<String> {
             .cloned()
             .collect()
     } else {
-        let recommended = ctx
-            .report
-            .as_deref()
-            .map(|r| flow::recommended(r, &ctx.catalog.available))
-            .unwrap_or_default();
+        let recommended = starting_choice(ctx);
         all.iter()
             .filter(|id| recommended.contains(*id))
             .cloned()
@@ -658,7 +754,45 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::FocusUndo => {
             state.search.clear();
-            state.open_protected = true;
+            focus_undo(state, ctx);
+        }
+        Msg::SelectTopic(topic) => {
+            let ids = topic_candidates(state, ctx, topic);
+            state.selected.extend(ids);
+        }
+        Msg::SelectNoneTopic(topic) => {
+            for id in topic_candidates(state, ctx, topic) {
+                state.selected.remove(&id);
+            }
+        }
+        Msg::UndoSelectTopic(topic) => {
+            let ids = topic_undoable(state, ctx, topic);
+            state.undo_selected.extend(ids);
+        }
+        Msg::UndoSelectNoneTopic(topic) => {
+            for id in topic_undoable(state, ctx, topic) {
+                state.undo_selected.remove(&id);
+            }
+        }
+        Msg::Topic(topic) => {
+            state.topic.set(Some(topic));
+            if ctx.prefs.protection_topic != Some(topic) {
+                ctx.prefs.protection_topic = Some(topic);
+                return Task::perform(crate::gui::save_prefs(ctx.prefs.clone()), |_| Message::Noop);
+            }
+        }
+        Msg::ReviewRecommended => {
+            let ids = flow::recommended(
+                ctx.report.as_deref().unwrap_or(&Report::default()),
+                &ctx.catalog.available,
+            );
+            state.selected.extend(ids);
+            return Task::done(Message::ReviewFixes(chosen_in_order(state, ctx)));
+        }
+        Msg::PutBack => {
+            let ids = switched_back_ids(state, ctx);
+            state.selected.extend(ids.iter().cloned());
+            return Task::done(Message::ReviewFixes(ids));
         }
         Msg::Search(text) => state.search = text,
         Msg::ClearSearch => {
@@ -666,10 +800,8 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             return iced::widget::operation::focus(SEARCH_ID);
         }
         Msg::Expand(id) => flip(&mut state.expanded, id),
-        Msg::ShowProtected => state.open_protected = !state.open_protected,
-        Msg::ToggleCant => state.open_cant = !state.open_cant,
-        Msg::ToggleManaged => state.open_managed = !state.open_managed,
-        Msg::ToggleInfo => state.open_info = !state.open_info,
+        Msg::ShowProtected(topic) => flip_topic(&mut state.flipped_protected, topic),
+        Msg::ToggleMore(topic) => flip_topic(&mut state.open_more, topic),
         Msg::AllAttention => state.all_attention = !state.all_attention,
         Msg::AllProtected => state.all_protected = !state.all_protected,
         Msg::Frame(now) => track_scan(state, ctx, now),
@@ -722,6 +854,73 @@ fn visible_undoable(state: &State, ctx: &Ctx) -> Vec<String> {
         .collect()
 }
 
+fn flip_topic(set: &mut HashSet<Topic>, topic: Topic) {
+    if !set.remove(&topic) {
+        set.insert(topic);
+    }
+}
+
+fn with_rows<T>(state: &State, ctx: &Ctx, read: impl FnOnce(&Rows) -> T) -> Option<T> {
+    let report = ctx.report.as_ref()?;
+    ensure(state, ctx, report);
+    let cache = state.cache.borrow();
+    Some(read(&cache.as_ref().expect("filled by ensure").rows))
+}
+
+fn protected_open(state: &State, topic: Topic, count: usize) -> bool {
+    (count <= FEW_PROTECTED) != state.flipped_protected.contains(&topic)
+}
+
+fn focus_undo(state: &mut State, ctx: &Ctx) {
+    let found = with_rows(state, ctx, |rows| {
+        let topic = Topic::ALL
+            .into_iter()
+            .find(|t| rows.protected.iter().any(|r| r.undoable && r.topic == *t))?;
+        Some((topic, rows.protected_count(topic)))
+    })
+    .flatten();
+    if let Some((topic, count)) = found {
+        state.topic.set(Some(topic));
+        if !protected_open(state, topic, count) {
+            flip_topic(&mut state.flipped_protected, topic);
+        }
+    }
+}
+
+fn topic_candidates(state: &State, ctx: &Ctx, topic: Topic) -> Vec<String> {
+    with_rows(state, ctx, |rows| {
+        rows.attention
+            .iter()
+            .chain(&rows.privacy)
+            .filter(|r| r.topic == topic)
+            .map(|r| r.id.clone())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn topic_undoable(state: &State, ctx: &Ctx, topic: Topic) -> Vec<String> {
+    with_rows(state, ctx, |rows| {
+        rows.protected
+            .iter()
+            .filter(|r| r.undoable && r.topic == topic)
+            .map(|r| r.id.clone())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn switched_back_ids(state: &State, ctx: &Ctx) -> Vec<String> {
+    with_rows(state, ctx, Rows::switched_back).unwrap_or_default()
+}
+
+fn chosen_in_order(state: &State, ctx: &Ctx) -> Vec<String> {
+    candidates(ctx)
+        .into_iter()
+        .filter(|id| state.selected.contains(id))
+        .collect()
+}
+
 #[cfg(test)]
 pub fn undo_selected_ids(state: &State) -> Vec<String> {
     let mut ids: Vec<String> = state.undo_selected.iter().cloned().collect();
@@ -740,8 +939,19 @@ pub fn all_undoable(state: &State, ctx: &Ctx) -> Vec<String> {
 }
 
 #[cfg(test)]
-pub fn open_protected(state: &State) -> bool {
-    state.open_protected
+pub fn open_protected(state: &State, ctx: &Ctx) -> bool {
+    let Some(topic) = state.topic.get() else {
+        return false;
+    };
+    with_rows(state, ctx, |rows| {
+        protected_open(state, topic, rows.protected_count(topic))
+    })
+    .unwrap_or(false)
+}
+
+#[cfg(test)]
+pub fn topic_on_show(state: &State) -> Option<Topic> {
+    state.topic.get()
 }
 
 /// The keys of every row on screen, section by section.
@@ -758,6 +968,38 @@ pub fn visible_rows(state: &State, ctx: &Ctx) -> Vec<String> {
     keys.extend(shown.others.iter().map(|o| o.explain.clone()));
     keys.extend(shown.protected.iter().map(|r| r.id.clone()));
     keys
+}
+
+#[cfg(test)]
+pub fn rows_by_topic(state: &State, ctx: &Ctx) -> Vec<(Topic, String)> {
+    with_rows(state, ctx, |rows| {
+        let mut out: Vec<(Topic, String)> = Vec::new();
+        out.extend(rows.attention.iter().map(|r| (r.topic, r.id.clone())));
+        out.extend(rows.privacy.iter().map(|r| (r.topic, r.id.clone())));
+        out.extend(rows.others.iter().map(|r| (r.topic, r.key.clone())));
+        out.extend(rows.protected.iter().map(|r| (r.topic, r.id.clone())));
+        out
+    })
+    .unwrap_or_default()
+}
+
+#[cfg(test)]
+pub fn tile_lines(state: &State, ctx: &Ctx) -> Vec<(Topic, Line)> {
+    with_rows(state, ctx, |rows| {
+        Topic::ALL.into_iter().map(|t| (t, rows.line(t))).collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The ids the "switched back" banner would put back.
+#[cfg(test)]
+pub fn chosen_in_topic(state: &State, ctx: &Ctx, topic: Topic) -> Vec<String> {
+    with_rows(state, ctx, |rows| chosen_in(state, ctx, rows, Some(topic))).unwrap_or_default()
+}
+
+#[cfg(test)]
+pub fn banner_ids(state: &State, ctx: &Ctx) -> Vec<String> {
+    switched_back_ids(state, ctx)
 }
 
 #[cfg(test)]
@@ -962,7 +1204,10 @@ fn attention_row<'a>(
     let p = ctx.palette;
     let open = state.expanded.contains(&a.id);
     let mut pills = row![].spacing(theme::S3).align_y(Alignment::Center);
-    if a.choice && !extra {
+    if a.switched_back {
+        pills = pills.push(widgets::pill(p, ctx.t("Switched back"), Tone::Warn));
+    }
+    if a.choice {
         pills = pills.push(widgets::pill(p, choice_label.to_owned(), Tone::Neutral));
     }
     if a.restart {
@@ -1292,38 +1537,48 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     };
     let header = widgets::page_header(p, ctx.t("Protection"), Some(subtitle));
     let bar = shows_search(ctx).then(|| search_bar(state, ctx));
-    let page = |body: Column<'a, Message>| -> Element<'a, Message> {
-        let mut top = column![header, space::vertical().height(theme::S4)];
-        if let Some(bar) = bar {
-            top = top.push(bar).push(space::vertical().height(theme::S6));
-        }
-        top.push(body).into()
-    };
+    let page =
+        |strips: Vec<Element<'a, Message>>, body: Column<'a, Message>| -> Element<'a, Message> {
+            let mut top = column![header, space::vertical().height(theme::S4)];
+            for strip in strips {
+                top = top.push(strip).push(space::vertical().height(theme::S3));
+            }
+            if let Some(bar) = bar {
+                top = top.push(bar).push(space::vertical().height(theme::S6));
+            }
+            top.push(body).into()
+        };
     let mut body = column![].spacing(theme::S8);
 
     if let Some(error) = &ctx.engine_error {
-        return page(body.push(widgets::region(
-            p,
-            widgets::empty_state(
+        return page(
+            Vec::new(),
+            body.push(widgets::region(
                 p,
-                Icon::ShieldAlert,
-                ctx.t("We couldn't start the protection check"),
-                ctx.t(
-                    "Close Secblitz and open it again. If this keeps happening, restart your PC.",
+                widgets::empty_state(
+                    p,
+                    Icon::ShieldAlert,
+                    ctx.t("We couldn't start the protection check"),
+                    ctx.t(
+                        "Close Secblitz and open it again. If this keeps happening, restart your PC.",
+                    ),
+                    Some(error_details(state, ctx, error)),
                 ),
-                Some(error_details(state, ctx, error)),
-            ),
-        )));
+            )),
+        );
     }
 
     if fills_window(ctx) {
-        return page(column![first_check(state, ctx)].height(Length::Fill));
+        return page(
+            Vec::new(),
+            column![first_check(state, ctx)].height(Length::Fill),
+        );
     }
     let Some(report) = ctx.report.as_ref() else {
         if let Some(error) = &ctx.check_error {
-            return page(body.push(check_failed(state, ctx, error)));
+            return page(Vec::new(), body.push(check_failed(state, ctx, error)));
         }
-        return page(body);
+        return page(Vec::new(), body);
     };
 
     ensure(state, ctx, report);
@@ -1331,6 +1586,8 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let rows = &cache.as_ref().expect("filled by ensure").rows;
     let query = Query::new(&state.search);
     let shown = rows.shown(&query);
+    let narrowed = !query.is_empty();
+    let topic = current_topic(state, ctx, rows);
 
     if ctx.checking.is_some() {
         body = body.push(checking_region(state, ctx));
@@ -1356,34 +1613,223 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         body = body.push(widgets::inline_notice(p, Tone::Warn, ctx.t(sentence)));
     }
 
-    if rows.attention.is_empty() && ctx.checking.is_none() && query.is_empty() {
-        body = body.push(widgets::region(
-            p,
-            widgets::empty_state(
-                p,
-                Icon::ShieldCheck,
-                ctx.t("Nothing needs fixing right now"),
-                ctx.t("We'll tell you if anything changes."),
-                None,
-            ),
-        ));
+    let mut strips = Vec::new();
+    if narrowed {
+        if shown.is_empty() {
+            body = body.push(widgets::region(p, no_matches(ctx, &state.search)));
+        } else {
+            let mut results = column![].spacing(theme::S8);
+            if shown.selectable().next().is_some() {
+                results = results.push(search_bar_controls(state, ctx, report, rows, &shown));
+            }
+            for t in Topic::ALL {
+                let part = shown.in_topic(t);
+                if part.is_empty() {
+                    continue;
+                }
+                let mut section =
+                    column![container(widgets::h2(p, ctx.t(t.label()))).padding([0.0, theme::S4])]
+                        .spacing(theme::S3);
+                for group in topic_groups(state, ctx, rows, &part, t, true) {
+                    section = section.push(group);
+                }
+                results = results.push(section);
+            }
+            body = body.push(results);
+        }
+    } else {
+        let ready = ready_to_change(ctx, report);
+        let back = rows.switched_back().len();
+        if back > 0 {
+            strips.push(switched_back_strip(ctx, back, ready));
+        }
+        let recommended = flow::recommended(report, &ctx.catalog.available).len();
+        if recommended > 0 {
+            strips.push(review_strip(ctx, recommended, ready));
+        }
+        body = body.push(tile::grid(p, tiles(ctx, rows, topic)));
+        let part = shown.in_topic(topic);
+        let title = widgets::h2(p, ctx.t(topic.label()));
+        let head: Element<'_, Message> = if part.selectable().next().is_some() {
+            let (count, buttons) = fix_controls(state, ctx, report, rows, &part, Some(topic));
+            row![
+                column![title, widgets::small(p, count)]
+                    .spacing(theme::S1)
+                    .width(Length::Fill),
+                buttons,
+            ]
+            .spacing(theme::S3)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            title
+        };
+        let head = container(head).padding([0.0, theme::S4]);
+        let mut section = column![head].spacing(theme::S3);
+        let mut groups = topic_groups(state, ctx, rows, &part, topic, false).into_iter();
+        if let Some(first) = groups.next() {
+            section = section.push(first);
+        }
+        body = body.push(section);
+        for (i, group) in groups.enumerate() {
+            body = body.push(widgets::appear::settle_after(
+                group,
+                p.bg,
+                widgets::appear::stagger_delay(i),
+            ));
+        }
     }
-    let mut groups = attention_groups(state, ctx, report, rows, &shown);
-    groups.extend(other_groups(state, ctx, &shown));
-    if !shown.protected.is_empty() {
-        groups.push(protected_group(state, ctx, rows, &shown));
+    page(strips, body)
+}
+
+/// The first result shown opens the first topic with something to act on, otherwise the one viewed last.
+fn current_topic(state: &State, ctx: &Ctx, rows: &Rows) -> Topic {
+    if let Some(topic) = state.topic.get() {
+        return topic;
     }
-    if !query.is_empty() && shown.is_empty() {
-        body = body.push(widgets::region(p, no_matches(ctx, &state.search)));
+    let topic = rows
+        .first_topic_to_act_on()
+        .or(ctx.prefs.protection_topic)
+        .unwrap_or(Topic::Threats);
+    state.topic.set(Some(topic));
+    topic
+}
+
+fn ready_to_change(ctx: &Ctx, report: &Report) -> bool {
+    !ctx.busy
+        && ctx.checking.is_none()
+        && ctx.check_error.is_none()
+        && flow::repairs_blocked(report).is_none()
+}
+
+fn topic_icon(topic: Topic) -> Icon {
+    match topic {
+        Topic::Threats => Icon::Shield,
+        Topic::SignIn => Icon::Key,
+        Topic::Network => Icon::Wifi,
+        Topic::Windows => Icon::Desktop,
+        Topic::Browsers => Icon::Globe,
+        Topic::Privacy => Icon::Eye,
+        Topic::Ai => Icon::Bot,
+        Topic::Clutter => Icon::Apps,
     }
-    for (i, group) in groups.into_iter().enumerate() {
-        body = body.push(widgets::appear::settle_after(
-            group,
-            p.bg,
-            widgets::appear::stagger_delay(i),
-        ));
+}
+
+fn line_text(ctx: &Ctx, line: Line) -> String {
+    match line {
+        Line::ToFix(n) => ctx.t("{n} to fix").replace("{n}", &n.to_string()),
+        Line::SwitchedBack(n) => ctx.t("{n} switched back").replace("{n}", &n.to_string()),
+        Line::Options(1) => ctx.t("1 option"),
+        Line::Options(n) => ctx.t("{n} options").replace("{n}", &n.to_string()),
+        Line::AllSet => ctx.t("All set"),
+        Line::Checking => ctx.t("Checking…"),
     }
-    page(body)
+}
+
+fn line_tone(line: Line) -> Tone {
+    match line {
+        Line::ToFix(_) | Line::SwitchedBack(_) => Tone::Warn,
+        Line::AllSet => Tone::Good,
+        Line::Options(_) | Line::Checking => Tone::Neutral,
+    }
+}
+
+fn tiles(ctx: &Ctx, rows: &Rows, on_show: Topic) -> Vec<Tile> {
+    Topic::ALL
+        .into_iter()
+        .map(|topic| {
+            let line = rows.line(topic);
+            Tile {
+                glyph: topic_icon(topic),
+                title: ctx.t(topic.label()),
+                status: line_text(ctx, line),
+                tone: line_tone(line),
+                done: line == Line::AllSet,
+                selected: topic == on_show,
+                on_press: Message::Fixes(Msg::Topic(topic)),
+            }
+        })
+        .collect()
+}
+
+fn strip<'a>(
+    ctx: &Ctx,
+    tone: Tone,
+    glyph: Icon,
+    text: String,
+    button: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let tint = p.tint(tone);
+    container(
+        row![
+            widgets::icon(glyph, 18.0, p.tone(tone)),
+            iced::widget::text(text)
+                .size(theme::BODY)
+                .font(theme::REGULAR)
+                .color(p.text)
+                .width(Length::Fill),
+            button,
+        ]
+        .spacing(theme::S3)
+        .align_y(Alignment::Center),
+    )
+    .padding(iced::Padding {
+        top: theme::S2,
+        right: theme::S3,
+        bottom: theme::S2,
+        left: theme::S4,
+    })
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+        background: Some(iced::Background::Color(tint)),
+        border: iced::Border {
+            radius: theme::R.into(),
+            ..iced::Border::default()
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
+fn switched_back_strip<'a>(ctx: &Ctx, n: usize, ready: bool) -> Element<'a, Message> {
+    let (text, label) = if n == 1 {
+        (
+            ctx.t("1 setting was switched back since Secblitz fixed it."),
+            ctx.t("Put it back"),
+        )
+    } else {
+        (
+            ctx.t("{n} settings were switched back since Secblitz fixed them.")
+                .replace("{n}", &n.to_string()),
+            ctx.t("Put them back"),
+        )
+    };
+    let button = widgets::action(
+        ctx.palette,
+        ButtonKind::Secondary,
+        label,
+        Some(Icon::Undo),
+        ready.then_some(Message::Fixes(Msg::PutBack)),
+    );
+    strip(ctx, Tone::Warn, Icon::AlertTriangle, text, button)
+}
+
+fn review_strip<'a>(ctx: &Ctx, n: usize, ready: bool) -> Element<'a, Message> {
+    let text = if n == 1 {
+        ctx.t("1 recommended fix")
+    } else {
+        ctx.t("{n} recommended fixes")
+            .replace("{n}", &n.to_string())
+    };
+    let button = widgets::action(
+        ctx.palette,
+        ButtonKind::Primary,
+        ctx.t("Review fixes"),
+        Some(Icon::Wrench),
+        ready.then_some(Message::Fixes(Msg::ReviewRecommended)),
+    );
+    strip(ctx, Tone::Neutral, Icon::ShieldCheck, text, button)
 }
 
 fn search_bar<'a>(state: &State, ctx: &Ctx) -> Element<'a, Message> {
@@ -1458,45 +1904,32 @@ fn unfinished_change<'a>(ctx: &Ctx) -> Element<'a, Message> {
     )
 }
 
-/// The "Needs your attention" group and the optional extras groups with their shared
-/// selection count and Fix selected button.
-fn attention_groups<'a>(
-    state: &'a State,
-    ctx: &'a Ctx,
-    report: &Report,
-    rows: &Rows,
-    shown: &Shown,
-) -> Vec<Element<'a, Message>> {
-    if shown.attention.is_empty() && shown.privacy.is_empty() {
-        return Vec::new();
-    }
-    let narrowed = searching(state);
-    let p = ctx.palette;
+/// The chosen fixes in one topic, or in every topic when `topic` is `None`.
+fn chosen_in(state: &State, ctx: &Ctx, rows: &Rows, topic: Option<Topic>) -> Vec<String> {
     let all: Vec<String> = rows
         .attention
         .iter()
         .chain(&rows.privacy)
+        .filter(|a| topic.is_none_or(|t| a.topic == t))
         .map(|a| a.id.clone())
         .collect();
-    let chosen = selection(state, ctx, &all);
+    selection(state, ctx, &all)
+}
+
+/// `scope` is `None` while searching; the buttons then act on the rows the search shows.
+fn fix_controls<'a>(
+    state: &State,
+    ctx: &Ctx,
+    report: &Report,
+    rows: &Rows,
+    shown: &Shown,
+    scope: Option<Topic>,
+) -> (String, Element<'a, Message>) {
+    let narrowed = searching(state);
+    let p = ctx.palette;
+    let topic = scope.filter(|_| !narrowed);
+    let chosen = chosen_in(state, ctx, rows, topic);
     let n = chosen.len();
-    let restart_label = ctx.t("Restart needed");
-    let choice_label = ctx.t("Your choice");
-    let rows_of = |list: &[&Att], extra: bool| -> Vec<Element<'a, Message>> {
-        list.iter()
-            .map(|a| {
-                attention_row(
-                    state,
-                    ctx,
-                    a,
-                    chosen.contains(&a.id),
-                    &restart_label,
-                    &choice_label,
-                    extra,
-                )
-            })
-            .collect()
-    };
     let hidden = if narrowed {
         let on_screen: HashSet<&str> = shown.selectable().collect();
         chosen
@@ -1515,40 +1948,133 @@ fn attention_groups<'a>(
         1 => ctx.t("1 selected"),
         _ => ctx.t("{n} selected").replace("{n}", &n.to_string()),
     };
-    let ready = !ctx.busy
-        && ctx.checking.is_none()
-        && ctx.check_error.is_none()
-        && flow::repairs_blocked(report).is_none();
-    let every_shown_chosen =
-        narrowed && shown.selectable().all(|id| chosen.iter().any(|c| c == id));
-    let select = if (narrowed && every_shown_chosen) || (!narrowed && n == all.len()) {
-        (
-            Icon::X,
-            ctx.t("Select none"),
-            Message::Fixes(Msg::SelectNone),
-        )
-    } else {
-        (
-            Icon::Check,
-            ctx.t("Select all"),
-            Message::Fixes(Msg::SelectAll),
-        )
+    let label = match n {
+        0 => ctx.t("Fix selected"),
+        _ => ctx.t("Fix {n} selected").replace("{n}", &n.to_string()),
     };
-    let mut trailing = Some(
-        row![
-            widgets::action(
-                p,
-                ButtonKind::Primary,
-                ctx.t("Fix selected"),
-                Some(Icon::Wrench),
-                (ready && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
-            ),
-            widgets::overflow_menu(p, vec![(select.0, select.1, select.2, false)]),
-        ]
-        .spacing(theme::S1)
-        .align_y(Alignment::Center),
+    let fix = widgets::action(
+        p,
+        ButtonKind::Primary,
+        label,
+        Some(Icon::Wrench),
+        (ready_to_change(ctx, report) && n > 0).then(|| Message::ReviewFixes(chosen.clone())),
     );
+    let mut buttons = row![fix].spacing(theme::S1).align_y(Alignment::Center);
+    let in_scope: Vec<&str> = match topic {
+        Some(topic) => rows
+            .attention
+            .iter()
+            .chain(&rows.privacy)
+            .filter(|a| a.topic == topic)
+            .map(|a| a.id.as_str())
+            .collect(),
+        None => shown.selectable().collect(),
+    };
+    if !in_scope.is_empty() {
+        let every = in_scope.iter().all(|id| chosen.iter().any(|c| c == id));
+        let item = match (topic, every) {
+            (Some(t), true) => (
+                Icon::X,
+                ctx.t("Select none"),
+                Message::Fixes(Msg::SelectNoneTopic(t)),
+            ),
+            (Some(t), false) => (
+                Icon::Check,
+                ctx.t("Select all"),
+                Message::Fixes(Msg::SelectTopic(t)),
+            ),
+            (None, true) => (
+                Icon::X,
+                ctx.t("Select none"),
+                Message::Fixes(Msg::SelectNone),
+            ),
+            (None, false) => (
+                Icon::Check,
+                ctx.t("Select all"),
+                Message::Fixes(Msg::SelectAll),
+            ),
+        };
+        buttons = buttons.push(widgets::overflow_menu(
+            p,
+            vec![(item.0, item.1, item.2, false)],
+        ));
+    }
+    (count, buttons.into())
+}
+
+fn search_bar_controls<'a>(
+    state: &State,
+    ctx: &Ctx,
+    report: &Report,
+    rows: &Rows,
+    shown: &Shown,
+) -> Element<'a, Message> {
+    let (count, buttons) = fix_controls(state, ctx, report, rows, shown, None);
+    container(
+        row![
+            widgets::muted(ctx.palette, count),
+            space::horizontal(),
+            buttons
+        ]
+        .spacing(theme::S3)
+        .align_y(Alignment::Center),
+    )
+    .padding([0.0, theme::S4])
+    .into()
+}
+
+fn topic_groups<'a>(
+    state: &'a State,
+    ctx: &'a Ctx,
+    rows: &Rows,
+    shown: &Shown,
+    topic: Topic,
+    narrowed: bool,
+) -> Vec<Element<'a, Message>> {
+    let p = ctx.palette;
+    let all: Vec<String> = rows
+        .attention
+        .iter()
+        .chain(&rows.privacy)
+        .map(|a| a.id.clone())
+        .collect();
+    let chosen = selection(state, ctx, &all);
+    let restart_label = ctx.t("Restart needed");
+    let choice_label = ctx.t("Your choice");
+    let rows_of = |list: &[&Att], extra: bool| -> Vec<Element<'a, Message>> {
+        list.iter()
+            .map(|a| {
+                attention_row(
+                    state,
+                    ctx,
+                    a,
+                    chosen.contains(&a.id),
+                    &restart_label,
+                    &choice_label,
+                    extra,
+                )
+            })
+            .collect()
+    };
+    let look: Vec<&Other> = shown
+        .others
+        .iter()
+        .copied()
+        .filter(|o| o.bucket == Bucket::Look)
+        .collect();
     let mut groups = Vec::new();
+    if shown.attention.is_empty()
+        && shown.privacy.is_empty()
+        && look.is_empty()
+        && ctx.checking.is_none()
+        && !narrowed
+    {
+        groups.push(widgets::inline_notice(
+            p,
+            Tone::Good,
+            ctx.t("Nothing needs fixing right now"),
+        ));
+    }
     if !shown.attention.is_empty() {
         let visible = widgets::limited(
             &shown.attention,
@@ -1569,66 +2095,20 @@ fn attention_groups<'a>(
         groups.push(widgets::group(
             p,
             ctx.t("Needs your attention"),
-            Some(count.clone()),
-            trailing.take().map(Into::into),
+            None,
+            None,
             list,
         ));
     }
-    for title in ["Privacy extras", "AI features", "Less clutter"] {
-        let list: Vec<&Att> = shown
-            .privacy
-            .iter()
-            .copied()
-            .filter(|a| advice::extra_section(&a.id).unwrap_or("Privacy extras") == title)
-            .collect();
-        if list.is_empty() {
-            continue;
-        }
-        let note = ctx.t("Optional. Not part of your protection score.");
-        let subtitle = if trailing.is_some() {
-            format!("{note} · {count}")
-        } else {
-            note
-        };
+    if !shown.privacy.is_empty() {
         groups.push(widgets::group(
             p,
-            ctx.t(title),
-            Some(subtitle),
-            trailing.take().map(Into::into),
-            rows_of(&list, true),
+            ctx.t("Optional"),
+            Some(ctx.t("Not part of your protection score. Nothing here is chosen for you.")),
+            None,
+            rows_of(&shown.privacy, true),
         ));
     }
-    groups
-}
-
-/// The "Worth a look" group and the collapsed groups for checks that need no action from the user.
-fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, shown: &Shown) -> Vec<Element<'a, Message>> {
-    let p = ctx.palette;
-    let narrowed = searching(state);
-    let bucket = |b: Bucket| -> Vec<&Other> {
-        shown
-            .others
-            .iter()
-            .copied()
-            .filter(|o| o.bucket == b)
-            .collect()
-    };
-    let collapsed = |list: Vec<&Other>, title: String, open: bool, toggle: Msg| {
-        let mut items = column![].spacing(theme::S1);
-        for o in &list {
-            items = items.push(other_row(state, ctx, o));
-        }
-        widgets::collapsible(
-            p,
-            title,
-            Some(count_text(ctx, list.len())),
-            open,
-            Message::Fixes(toggle),
-            items,
-        )
-    };
-    let mut groups = Vec::new();
-    let look = bucket(Bucket::Look);
     if !look.is_empty() {
         groups.push(widgets::group(
             p,
@@ -1640,34 +2120,62 @@ fn other_groups<'a>(state: &'a State, ctx: &'a Ctx, shown: &Shown) -> Vec<Elemen
             look.iter().map(|o| other_row(state, ctx, o)).collect(),
         ));
     }
-    let cant = bucket(Bucket::Unavailable);
-    if !cant.is_empty() {
-        groups.push(collapsed(
-            cant,
-            ctx.t("Can't check right now"),
-            state.open_cant || narrowed,
-            Msg::ToggleCant,
-        ));
+    if !shown.protected.is_empty() {
+        groups.push(protected_group(state, ctx, rows, shown, topic, narrowed));
     }
-    let managed = bucket(Bucket::Managed);
-    if !managed.is_empty() {
-        groups.push(collapsed(
-            managed,
-            ctx.t("Managed elsewhere"),
-            state.open_managed || narrowed,
-            Msg::ToggleManaged,
-        ));
+    if let Some(group) = more_group(state, ctx, shown, topic, narrowed) {
+        groups.push(group);
     }
-    let info = bucket(Bucket::GoodToKnow);
-    if !info.is_empty() {
-        groups.push(collapsed(
-            info,
-            ctx.t("Good to know"),
-            state.open_info || narrowed,
-            Msg::ToggleInfo,
+    if topic == Topic::Clutter && !narrowed {
+        groups.push(widgets::row_item(
+            p,
+            Some(Icon::Apps),
+            ctx.t("More in Clean up apps"),
+            Some(ctx.t("Remove apps you don't use.")),
+            widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
+            Some(Message::Navigate(crate::gui::Page::Debloat)),
         ));
     }
     groups
+}
+
+fn more_group<'a>(
+    state: &State,
+    ctx: &Ctx,
+    shown: &Shown,
+    topic: Topic,
+    narrowed: bool,
+) -> Option<Element<'a, Message>> {
+    let p = ctx.palette;
+    let mut total = 0;
+    let mut body = column![].spacing(theme::S1);
+    for (bucket, title) in [
+        (Bucket::Unavailable, "Can't check right now"),
+        (Bucket::Managed, "Managed elsewhere"),
+        (Bucket::GoodToKnow, "Good to know"),
+    ] {
+        let list: Vec<&&Other> = shown.others.iter().filter(|o| o.bucket == bucket).collect();
+        if list.is_empty() {
+            continue;
+        }
+        total += list.len();
+        body = body.push(
+            container(widgets::section_label(p, ctx.t(title))).padding([theme::S2, theme::S4]),
+        );
+        for o in list {
+            body = body.push(other_row(state, ctx, o));
+        }
+    }
+    (total > 0).then(|| {
+        widgets::collapsible(
+            p,
+            ctx.t("More"),
+            Some(count_text(ctx, total)),
+            narrowed || state.open_more.contains(&topic),
+            Message::Fixes(Msg::ToggleMore(topic)),
+            body,
+        )
+    })
 }
 
 fn protected_group<'a>(
@@ -1675,10 +2183,15 @@ fn protected_group<'a>(
     ctx: &Ctx,
     rows: &Rows,
     shown: &Shown,
+    topic: Topic,
+    narrowed: bool,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
-    let narrowed = searching(state);
-    let undoable: Vec<&Prot> = rows.protected.iter().filter(|r| r.undoable).collect();
+    let undoable: Vec<&Prot> = rows
+        .protected
+        .iter()
+        .filter(|r| r.undoable && r.topic == topic)
+        .collect();
     let chosen: Vec<String> = undoable
         .iter()
         .filter(|r| state.undo_selected.contains(&r.id))
@@ -1686,6 +2199,7 @@ fn protected_group<'a>(
         .collect();
     let n = chosen.len();
     let tag = ctx.t("Changed by Secblitz");
+    let open = narrowed || protected_open(state, topic, rows.protected_count(topic));
     let visible = widgets::limited(
         &shown.protected,
         FIRST_ROWS,
@@ -1693,7 +2207,7 @@ fn protected_group<'a>(
     );
     let mut list = column![].spacing(theme::S1);
     let offers_undo = shown.protected.iter().any(|r| r.undoable);
-    if offers_undo && (state.open_protected || narrowed) {
+    if offers_undo {
         list = list
             .push(widgets::muted(
                 p,
@@ -1755,13 +2269,21 @@ fn protected_group<'a>(
             (
                 Icon::X,
                 ctx.t("Select none"),
-                Message::Fixes(Msg::UndoSelectNone),
+                Message::Fixes(if narrowed {
+                    Msg::UndoSelectNone
+                } else {
+                    Msg::UndoSelectNoneTopic(topic)
+                }),
             )
         } else {
             (
                 Icon::Check,
                 ctx.t("Select all"),
-                Message::Fixes(Msg::UndoSelectAll),
+                Message::Fixes(if narrowed {
+                    Msg::UndoSelectAll
+                } else {
+                    Msg::UndoSelectTopic(topic)
+                }),
             )
         };
         row![
@@ -1782,8 +2304,8 @@ fn protected_group<'a>(
         p,
         ctx.t("Protected"),
         Some(summary),
-        state.open_protected || narrowed,
-        Message::Fixes(Msg::ShowProtected),
+        open,
+        Message::Fixes(Msg::ShowProtected(topic)),
         trailing,
         list,
     )
@@ -1952,6 +2474,22 @@ mod tests {
         assert_eq!(
             other_page(Bucket::Managed, ("Windows updates", true), None, a.step),
             None
+        );
+    }
+
+    #[test]
+    fn protected_settings_start_folded_away_only_when_there_are_many() {
+        let mut state = State::default();
+        for count in 0..=FEW_PROTECTED {
+            assert!(protected_open(&state, Topic::Windows, count), "{count}");
+        }
+        assert!(!protected_open(&state, Topic::Windows, FEW_PROTECTED + 1));
+        flip_topic(&mut state.flipped_protected, Topic::Windows);
+        assert!(!protected_open(&state, Topic::Windows, 1));
+        assert!(protected_open(&state, Topic::Windows, 30));
+        assert!(
+            protected_open(&state, Topic::Network, 1),
+            "other topics keep their own state"
         );
     }
 
