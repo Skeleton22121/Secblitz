@@ -10,12 +10,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use super::activity::{self, Writes};
 use super::adapters;
-use super::config::{self, ErrorCode, State, Status};
+use super::config::{self, ErrorCode, RecentList, State, Status};
 use super::fetch;
 use super::lists::{self, SOURCES};
 use super::matcher::Filter;
 use super::server::{self, upstream_addrs, BindError, Shared};
+use super::store;
 
 const TICK: Duration = Duration::from_millis(200);
 const CONFIG_EVERY: Duration = Duration::from_secs(2);
@@ -29,6 +31,9 @@ pub struct Paths {
     pub config: PathBuf,
     pub status: PathBuf,
     pub lists: PathBuf,
+    pub recent: PathBuf,
+    pub stats: PathBuf,
+    pub detail: PathBuf,
 }
 
 impl Paths {
@@ -37,6 +42,9 @@ impl Paths {
             config: config::config_path()?,
             status: config::status_path()?,
             lists: config::lists_dir()?,
+            recent: config::recent_path()?,
+            stats: config::stats_path()?,
+            detail: config::stats_detail_path()?,
         })
     }
 }
@@ -228,6 +236,24 @@ fn same_apart_from_counts(a: &Status, b: &Status) -> bool {
     strip(a) == strip(b)
 }
 
+fn save_json<T: serde::Serialize>(path: &std::path::Path, value: &T) {
+    if let Ok(bytes) = serde_json::to_vec(value) {
+        let _ = store::write_private(path, &bytes);
+    }
+}
+
+fn write_activity(paths: &Paths, writes: Writes) {
+    if let Some(recent) = &writes.recent {
+        save_json(&paths.recent, recent);
+    }
+    if let Some(stats) = &writes.stats {
+        save_json(&paths.stats, stats);
+    }
+    if let Some(detail) = &writes.detail {
+        save_json(&paths.detail, detail);
+    }
+}
+
 struct Listeners {
     threads: Vec<JoinHandle<()>>,
 }
@@ -276,6 +302,12 @@ pub fn serve(
             .stats
             .resume(previous.day, previous.blocked, server::unix_now());
         shared.stats.resume_dangerous_at(previous.dangerous_at);
+    }
+    shared
+        .activity
+        .resume(activity::load_detail(&paths.detail), server::unix_now());
+    if paths.recent.exists() {
+        save_json(&paths.recent, &RecentList::default());
     }
     let meta: SharedMeta = Arc::new(Mutex::new(Meta::default()));
     let background = Background {
@@ -338,6 +370,14 @@ pub fn serve(
 
         let now = server::unix_now();
         let (day, blocked) = shared.stats.snapshot(now);
+        let paused = shared
+            .config
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .paused(now);
+        if !paused {
+            write_activity(&paths, shared.activity.take_writes(now, false));
+        }
         let status = {
             let m = lock(&meta);
             let last_error = if port_in_use {
@@ -382,6 +422,9 @@ pub fn serve(
     status.listening = false;
     status.written_at = server::unix_now();
     let _ = config::save_status(&paths.status, &status);
+    let mut last = shared.activity.take_writes(server::unix_now(), true);
+    last.recent = paths.recent.exists().then(RecentList::default);
+    write_activity(&paths, last);
     if let Some(l) = listeners {
         for t in l.threads {
             let _ = t.join();
@@ -501,6 +544,9 @@ mod tests {
             config: dir.join("config.json"),
             status: dir.join("status.json"),
             lists: dir.join("lists"),
+            recent: dir.join("recent.json"),
+            stats: dir.join("stats.json"),
+            detail: dir.join("stats-detail.json"),
         }
     }
 
@@ -614,6 +660,128 @@ mod tests {
         handle.join().unwrap();
         assert!(started.elapsed() < Duration::from_secs(3));
         assert!(!load_status(&status_path).unwrap().listening);
+    }
+
+    fn ask_for(name: &str, id: u16, port: u16) {
+        let mut query = vec![
+            (id >> 8) as u8,
+            id as u8,
+            0x01,
+            0x00,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        for label in name.split('.') {
+            query.push(label.len() as u8);
+            query.extend_from_slice(label.as_bytes());
+        }
+        query.extend_from_slice(&[0, 0, 1, 0, 1]);
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client.send_to(&query, ("127.0.0.1", port)).unwrap();
+        let mut buf = [0u8; 512];
+        client.recv(&mut buf).unwrap();
+    }
+
+    #[test]
+    fn blocked_sites_reach_the_files_and_are_cleared_when_the_service_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        config::save_config(
+            &p.config,
+            &config::Config {
+                ads: true,
+                ..config::Config::default()
+            },
+        )
+        .unwrap();
+        fetch::store(&p.lists, "adguard-dns", "||ads.example^\n").unwrap();
+        let port = free_port();
+        let addrs = vec![SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port)];
+        let stop = Arc::new(AtomicBool::new(false));
+        let (status_path, recent_path, stats_path, detail_path) = (
+            p.status.clone(),
+            p.recent.clone(),
+            p.stats.clone(),
+            p.detail.clone(),
+        );
+        let handle = {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || serve(p, &addrs, false, &stop).unwrap())
+        };
+        wait_for("a ready status", || {
+            load_status(&status_path).filter(|s| s.listening && s.state == State::Ready)
+        });
+        ask_for("cdn.ads.example", 1, port);
+        let recent = wait_for("the recent list", || {
+            config::load_recent(&recent_path).filter(|r| !r.items.is_empty())
+        });
+        assert_eq!(recent.items[0].name, "cdn.ads.example");
+        let status = wait_for("the count", || {
+            load_status(&status_path).filter(|s| s.blocked[0] == 1)
+        });
+        assert_eq!(status.dangerous_at, None);
+        assert_eq!(status.domains, [1, 1, 0, 0, 0]);
+        let stats = wait_for("the statistics", || config::load_stats(&stats_path));
+        assert_eq!(stats.days[0].blocked, [1, 0, 0, 0, 0]);
+        assert_eq!(stats.top[0].site, "ads.example");
+
+        stop.store(true, Ordering::Release);
+        handle.join().unwrap();
+        assert_eq!(config::load_recent(&recent_path).unwrap().items, []);
+        let detail = activity::load_detail(&detail_path);
+        assert_eq!(detail.days[0].blocked, [1, 0, 0, 0, 0]);
+        assert_eq!(detail.days[0].sites, [("ads.example".to_string(), 1)]);
+    }
+
+    #[test]
+    fn counts_and_old_names_are_picked_up_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        let now = server::unix_now();
+        let saved = activity::Detail {
+            days: vec![activity::DetailDay {
+                day: now / 86_400,
+                blocked: [4, 0, 0, 0, 0],
+                sites: vec![("ads.example".to_string(), 4)],
+            }],
+        };
+        save_json(&p.detail, &saved);
+        save_json(
+            &p.recent,
+            &config::RecentList {
+                items: vec![config::RecentItem {
+                    name: "left.over.example".into(),
+                    kind: crate::filter::matcher::Kind::Ads,
+                    at: now,
+                }],
+            },
+        );
+        let port = free_port();
+        let addrs = vec![SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port)];
+        let stop = Arc::new(AtomicBool::new(false));
+        let (status_path, recent_path, stats_path) =
+            (p.status.clone(), p.recent.clone(), p.stats.clone());
+        let handle = {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || serve(p, &addrs, false, &stop).unwrap())
+        };
+        wait_for("a listening status", || {
+            load_status(&status_path).filter(|s| s.listening)
+        });
+        assert_eq!(config::load_recent(&recent_path).unwrap().items, []);
+        stop.store(true, Ordering::Release);
+        handle.join().unwrap();
+        let stats = config::load_stats(&stats_path).unwrap();
+        assert_eq!(stats.days[0].blocked, [4, 0, 0, 0, 0]);
     }
 
     #[test]

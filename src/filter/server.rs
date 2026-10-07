@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rand::rngs::SysRng;
 use rand::TryRng;
 
+use super::activity::Activity;
 use super::config::{Config, Lookups};
 use super::dns::{self, Query};
 use super::matcher::{Filter, HashSet64, Kind};
@@ -106,6 +107,7 @@ pub struct Shared {
     pub allow: RwLock<HashSet64>,
     pub upstream: RwLock<Vec<SocketAddr>>,
     pub stats: Stats,
+    pub activity: Activity,
     /// How lookups leave the PC, for the status file.
     pub lookups: RwLock<Lookups>,
     /// Set when every upstream server failed, so the loop refreshes them early.
@@ -120,6 +122,7 @@ impl Shared {
             config: RwLock::new(config),
             upstream: RwLock::new(upstream),
             stats: Stats::default(),
+            activity: Activity::default(),
             lookups: RwLock::new(Lookups::default()),
             upstream_failed: AtomicBool::new(false),
         }
@@ -160,6 +163,7 @@ pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action
     let kind = filter.decide_allowing(&q.question.name, on, &read(&shared.allow));
     if let Some(kind) = kind {
         shared.stats.record(kind, now);
+        shared.activity.record(&q.question.name, kind, now);
         let reply = dns::blocked_reply(packet, &q);
         return Some((q, Action::Reply(reply)));
     }
@@ -864,6 +868,47 @@ mod tests {
         assert!(blocked_kind(&shared, "ads.example", 1000));
         shared.set_config(family_on());
         assert!(blocked_kind(&shared, "evil.example", 1000));
+    }
+
+    #[test]
+    fn blocks_are_remembered_for_the_app() {
+        let shared = Shared::new(family_filter(), family_on(), vec![]);
+        let now = 40 * SECONDS_PER_DAY + 10;
+        blocked_kind(&shared, "ads.example", now);
+        blocked_kind(&shared, "evil.example", now + 1);
+        assert_eq!(shared.stats.dangerous_at(), Some(now + 1));
+        let recent = shared.activity.recent_now(now + 2);
+        let seen: Vec<_> = recent
+            .items
+            .iter()
+            .map(|i| (i.name.as_str(), i.kind))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("evil.example", Kind::Dangerous),
+                ("ads.example", Kind::Ads)
+            ]
+        );
+        assert_eq!(
+            shared.activity.history_now(now + 2).days[0].blocked,
+            [1, 0, 1, 0, 0]
+        );
+    }
+
+    #[test]
+    fn nothing_is_remembered_while_paused() {
+        let config = Config {
+            paused_until: Some(5000),
+            ..family_on()
+        };
+        let shared = Shared::new(family_filter(), config, vec![]);
+        assert!(!blocked_kind(&shared, "evil.example", 1000));
+        assert!(shared.activity.recent_now(1000).items.is_empty());
+        assert!(shared.activity.history_now(1000).days.is_empty());
+        assert_eq!(shared.stats.dangerous_at(), None);
+        assert!(blocked_kind(&shared, "evil.example", 5000));
+        assert_eq!(shared.activity.recent_now(5000).items.len(), 1);
     }
 
     #[test]

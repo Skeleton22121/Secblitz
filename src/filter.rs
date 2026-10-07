@@ -1,6 +1,7 @@
 //! Web protection core: DNS packets, block-list parsing and matching, and the
 //! config/status files shared with the app. Portable, so tests run on any host.
 
+pub mod activity;
 pub mod adapters;
 pub mod config;
 pub mod control;
