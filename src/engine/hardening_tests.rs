@@ -47,6 +47,13 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "task:\\Vendor\\Sync": 1,
         }});
     }
+    if spec.source == Source::CfaAllowedApps {
+        return json!({"items": {
+            "app:C:\\Tools\\PhotoTool.exe": 0,
+            "app:D:\\Games\\Save Helper\\helper.exe": 0,
+            "app:C:\\Program Files\\Sync\\sync.exe": 1,
+        }});
+    }
     if spec.source == Source::StaleAccounts {
         return json!({"items": {
             "S-1-5-21-1111111111-2222222222-3333333333-1001": 1,
@@ -97,6 +104,26 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
     json!({ "items": items })
 }
 
+fn write_watch_record(dir: &TempDir, started: u64) {
+    let app = dir.path().join("App");
+    let _ = fs::create_dir(&app);
+    fs::write(app.join("cfa-watch.json"), json!({"started": started}).to_string()).unwrap();
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// Full protection is only offered after a week of watching.
+fn watched_for_a_week(dir: &TempDir, id: &str) {
+    if id == cfa::BLOCK {
+        write_watch_record(dir, now_secs() - cfa::WATCH_SECONDS - 60);
+    }
+}
+
 fn hardening_safe_state(spec: &Spec) -> Value {
     let unsafe_state = hardening_unsafe_state(spec);
     let mut safe = spec.derive_target(&unsafe_state).unwrap();
@@ -125,6 +152,7 @@ fn every_hardening_control_audits_applies_and_undoes_exactly() {
         let id = spec.id;
         let before = hardening_unsafe_state(spec);
         let (dir, state, mut e) = fixture(id, before.clone());
+        watched_for_a_week(&dir, id);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
         assert_eq!(e.audit().unwrap().results[0].detail, "Eligible", "{id}");
 
@@ -736,4 +764,100 @@ fn a_chosen_fix_that_drifted_to_a_value_of_another_kind_is_left_alone() {
     let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
     assert_ne!(report.results[0].status, CheckStatus::Applied);
     assert_eq!(state.borrow().writes.len(), writes);
+}
+
+#[test]
+fn full_folder_protection_waits_for_a_week_of_watching() {
+    let id = cfa::BLOCK;
+    let watching = json!({"items": {"EnableControlledFolderAccess": 2}});
+
+    let (dir, state, mut e) = fixture(id, json!({"items": {"EnableControlledFolderAccess": 0}}));
+    let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::NOT_WATCHED));
+    assert!(!dir.path().join("App").exists());
+    let applied = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(applied.results[0].status, CheckStatus::Skipped);
+    assert!(state.borrow().writes.is_empty());
+
+    let (dir, state, mut e) = fixture(id, watching.clone());
+    let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::STILL_WATCHING));
+    assert!(dir.path().join("App/cfa-watch.json").is_file());
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS + 3600);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped);
+    write_watch_record(&dir, now_secs() + 3600);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped);
+    assert!(state.borrow().writes.is_empty());
+
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS - 5);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    let applied = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(applied.results[0].status, CheckStatus::Applied);
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"EnableControlledFolderAccess": 1}})
+    );
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], watching);
+}
+
+#[test]
+fn the_watch_week_starts_when_watching_is_applied_and_ends_when_it_is_undone() {
+    let id = cfa::WATCH;
+    let before = json!({"items": {"EnableControlledFolderAccess": 0}});
+    let (dir, state, mut e) = fixture(id, before.clone());
+    let record = dir.path().join("App/cfa-watch.json");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    assert!(!record.exists());
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"EnableControlledFolderAccess": 2}})
+    );
+    let started: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert!(now_secs().abs_diff(started["started"].as_u64().unwrap()) < 60);
+    e.revert(|_| {}).unwrap();
+    assert!(!record.exists());
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn the_watch_week_counts_from_a_recorded_start_with_injected_time() {
+    use cfa::{verdict, Verdict::*, NOT_WATCHED, STILL_WATCHING, WATCH_SECONDS};
+    let t = 10_000_000;
+    assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS), Offer);
+    assert_eq!(verdict(Some(t), Some(4), t + WATCH_SECONDS + 1), Offer);
+    assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS - 1), Wait(STILL_WATCHING));
+    assert_eq!(verdict(Some(t), Some(2), t), Wait(STILL_WATCHING));
+    assert_eq!(verdict(Some(t + 5), Some(2), t), Wait(STILL_WATCHING));
+    assert_eq!(verdict(None, Some(2), t), StartClock);
+    assert_eq!(verdict(None, Some(4), t), StartClock);
+    assert_eq!(verdict(None, Some(0), t), Wait(NOT_WATCHED));
+    assert_eq!(verdict(None, None, t), Wait(NOT_WATCHED));
+}
+
+#[test]
+fn allowed_apps_are_added_one_by_one_and_undo_removes_exactly_those() {
+    let id = "defender.cfa_allowed_apps";
+    let a = "app:C:\\Tools\\PhotoTool.exe";
+    let b = "app:D:\\Games\\helper.exe";
+    let mine = "app:C:\\Program Files\\Sync\\sync.exe";
+    let before = json!({"items": {a: 0, b: 0, mine: 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(state.borrow().values[id], json!({"items": {a: 1, b: 1, mine: 1}}));
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    // An allowed app the person removed by hand is not written back by undo.
+    state.borrow_mut().values.insert(
+        id.into(),
+        json!({"items": {a: 1, b: 0, mine: 1, "app:C:\\New\\other.exe": 0}}),
+    );
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    state
+        .borrow_mut()
+        .values
+        .insert(id.into(), json!({"items": {a: 1, b: 1, mine: 1}}));
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().writes.last().unwrap().1, json!({"items": {a: 0, b: 0, mine: 1}}));
 }

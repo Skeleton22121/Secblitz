@@ -5,6 +5,7 @@
 mod apply;
 mod audit;
 mod catalog;
+pub(crate) mod cfa;
 mod fsio;
 mod journal;
 mod recovery;
@@ -242,7 +243,9 @@ impl Engine {
     }
 
     pub(super) fn observe(&mut self, id: &str) -> Result<Observation> {
-        Self::validated(id, self.backend.observe(id)?)
+        let mut obs = Self::validated(id, self.backend.observe(id)?)?;
+        self.cfa_gate(id, &mut obs);
+        Ok(obs)
     }
 
     fn validated(id: &str, obs: Observation) -> Result<Observation> {
@@ -267,7 +270,11 @@ impl Engine {
         observed
             .into_iter()
             .zip(ids)
-            .map(|(obs, id)| Self::validated(id, obs?))
+            .map(|(obs, id)| {
+                let mut obs = Self::validated(id, obs?)?;
+                self.cfa_gate(id, &mut obs);
+                Ok(obs)
+            })
             .collect()
     }
 

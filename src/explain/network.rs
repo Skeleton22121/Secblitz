@@ -17,6 +17,21 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "A program or an ad could quietly connect to a known scam site and download something harmful.",
             change: "Nothing you'll notice most days. A game, VPN or work tool may be blocked by mistake and need to be allowed.",
         },
+        "defender.cfa_watch" => Explainer {
+            what: "Quietly watches your Documents, Pictures and other personal folders and notes which apps change your files. It blocks nothing.",
+            risk: "Without a watch you can't tell which apps change your files, so switching on full protection could surprise you.",
+            change: "Nothing you'll notice. After a week Secblitz can offer full protection, with the list of apps it saw.",
+        },
+        "defender.cfa_block" => Explainer {
+            what: "Stops apps that Windows doesn't trust from changing your Documents, Pictures and other personal folders.",
+            risk: "Ransomware locks your photos and documents and demands money. This stops it from scrambling them.",
+            change: "An app you use may be blocked from saving files until you allow it. You see those apps first, and you can undo this.",
+        },
+        "defender.cfa_allowed_apps" => Explainer {
+            what: "Lists apps that changed your personal folders while Windows was watching, so you can let them keep working.",
+            risk: "A trusted app you use could be stopped from saving your work once full protection is on.",
+            change: "The listed apps can change your files once you agree. Only apps that really exist on your PC are added, and undo removes them.",
+        },
         "defender.cloud_block_level" => Explainer {
             what: "Makes Defender stricter about files it has never seen before by asking Microsoft's cloud to judge them.",
             risk: "A brand-new harmful file could be let through because nothing had flagged it yet.",
@@ -64,6 +79,9 @@ mod tests {
         "defender.asr.office",
         "defender.asr.ransomware_usb",
         "defender.network_protection",
+        "defender.cfa_watch",
+        "defender.cfa_block",
+        "defender.cfa_allowed_apps",
         "defender.cloud_block_level",
         "net.stack_hardening",
         "net.netbios",
