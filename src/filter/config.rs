@@ -58,9 +58,11 @@ impl Config {
         self.any_on() || self.private_lookups
     }
 
-    /// The config as it must be once the service has started: a pause that
-    /// lasts "until restart" is over, because the service only starts again
-    /// when the PC does. `None` when nothing changes.
+    pub fn private_active(&self, now: u64) -> bool {
+        self.private_lookups && !self.paused(now)
+    }
+
+    /// Ends an "until restart" pause, since the service only starts again with the PC.
     pub fn after_service_start(&self) -> Option<Config> {
         self.paused_boot.is_some().then(|| Config {
             paused_boot: None,

@@ -304,6 +304,7 @@ pub fn serve(
         config,
         upstream_addrs(&network),
     ));
+    shared.set_local_suffixes(adapters::dns_suffixes());
     if let Some(previous) = config::load_status(&paths.status) {
         shared
             .stats
@@ -368,6 +369,7 @@ pub fn serve(
                 .upstream
                 .write()
                 .unwrap_or_else(PoisonError::into_inner) = upstream_addrs(&network);
+            shared.set_local_suffixes(adapters::dns_suffixes());
             upstream_checked = Instant::now();
             upstream_timer.reset();
         }
@@ -405,10 +407,7 @@ pub fn serve(
                 domains: m.domains,
                 last_error,
                 written_at: now,
-                lookups: *shared
-                    .lookups
-                    .read()
-                    .unwrap_or_else(PoisonError::into_inner),
+                lookups: shared.lookups(now),
                 dangerous_at: shared.stats.dangerous_at(),
             }
         };

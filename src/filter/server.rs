@@ -6,7 +6,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, U
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand::rngs::SysRng;
 use rand::TryRng;
@@ -14,6 +14,7 @@ use rand::TryRng;
 use super::activity::Activity;
 use super::config::{Config, Lookups};
 use super::dns::{self, Query};
+use super::doh::{self, Doh, Fallback};
 use super::matcher::{Filter, HashSet64, Kind};
 use super::safe_search;
 
@@ -109,8 +110,9 @@ pub struct Shared {
     pub upstream: RwLock<Vec<SocketAddr>>,
     pub stats: Stats,
     pub activity: Activity,
-    /// How lookups leave the PC, for the status file.
-    pub lookups: RwLock<Lookups>,
+    pub doh: Doh,
+    pub fallback: Fallback,
+    pub local_suffixes: RwLock<Vec<String>>,
     /// Set when every upstream server failed, so the loop refreshes them early.
     pub upstream_failed: AtomicBool,
 }
@@ -124,14 +126,38 @@ impl Shared {
             upstream: RwLock::new(upstream),
             stats: Stats::default(),
             activity: Activity::default(),
-            lookups: RwLock::new(Lookups::default()),
+            doh: Doh::quad9(),
+            fallback: Fallback::default(),
+            local_suffixes: RwLock::new(Vec::new()),
             upstream_failed: AtomicBool::new(false),
         }
     }
 
     pub fn set_config(&self, config: Config) {
         *self.allow.write().unwrap_or_else(PoisonError::into_inner) = allowed(&config);
-        *self.config.write().unwrap_or_else(PoisonError::into_inner) = config;
+        let mut current = self.config.write().unwrap_or_else(PoisonError::into_inner);
+        // A fresh start, perhaps on another network.
+        if config.private_lookups && !current.private_lookups {
+            self.fallback.worked();
+        }
+        *current = config;
+    }
+
+    pub fn set_local_suffixes(&self, suffixes: Vec<String>) {
+        *self
+            .local_suffixes
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = suffixes;
+    }
+
+    pub fn lookups(&self, now: u64) -> Lookups {
+        if !read(&self.config).private_active(now) {
+            Lookups::Plain
+        } else if self.fallback.active() {
+            Lookups::PrivateFallback
+        } else {
+            Lookups::Private
+        }
     }
 }
 
@@ -292,13 +318,38 @@ pub fn forward(
         .unwrap_or_else(|| dns::servfail_reply(packet, q))
 }
 
-/// The alias answer for a search site: the addresses come from asking the
-/// PC's own servers for the safe search name.
-fn safe_search_answer(packet: &[u8], q: &Query, target: &str, shared: &Shared) -> Vec<u8> {
+/// With private lookups on, non-local names go to Quad9 encrypted. If that fails, all lookups go plain for a while
+/// (captive portals may refuse it). Local names and everything with private lookups off go to the network's servers.
+fn lookup(packet: &[u8], q: &Query, shared: &Shared, via: Via) -> Option<Vec<u8>> {
+    if read(&shared.config).private_active(unix_now())
+        && !doh::is_local_name(&q.question.name, &read(&shared.local_suffixes))
+        && shared.fallback.may_try(Instant::now())
+    {
+        match shared.doh.ask(packet, q) {
+            Some(reply) => {
+                shared.fallback.worked();
+                return Some(fit_for(reply, packet, q, via));
+            }
+            None => shared.fallback.failed(Instant::now()),
+        }
+    }
     let upstream = read(&shared.upstream).clone();
+    forward_checked(packet, q, &upstream, UPSTREAM_TIMEOUT, via)
+}
+
+/// Cut to what a UDP client said it can take, so it asks again over TCP.
+fn fit_for(reply: Vec<u8>, packet: &[u8], q: &Query, via: Via) -> Vec<u8> {
+    if via == Via::Udp && reply.len() > dns::udp_limit(packet, q) {
+        dns::truncated_copy(&reply)
+    } else {
+        reply
+    }
+}
+
+fn safe_search_answer(packet: &[u8], q: &Query, target: &str, shared: &Shared) -> Vec<u8> {
     let ask = dns::build_query(random_id(), target, q.question.qtype);
     let found = dns::parse_query(&ask)
-        .and_then(|asked| forward_checked(&ask, &asked, &upstream, UPSTREAM_TIMEOUT, Via::Tcp))
+        .and_then(|asked| lookup(&ask, &asked, shared, Via::Tcp))
         .and_then(|reply| dns::parse_addresses(&reply, q.question.qtype));
     match found {
         Some(addresses) => dns::safe_search_reply(packet, q, target, &addresses),
@@ -314,13 +365,10 @@ fn answer(packet: &[u8], shared: &Shared, via: Via) -> Option<Vec<u8>> {
     Some(match action {
         Action::Reply(reply) => reply,
         Action::SafeSearch(target) => safe_search_answer(packet, &q, target, shared),
-        Action::Forward => {
-            let upstream = read(&shared.upstream).clone();
-            forward_checked(packet, &q, &upstream, UPSTREAM_TIMEOUT, via).unwrap_or_else(|| {
-                shared.upstream_failed.store(true, Ordering::Release);
-                dns::servfail_reply(packet, &q)
-            })
-        }
+        Action::Forward => lookup(packet, &q, shared, via).unwrap_or_else(|| {
+            shared.upstream_failed.store(true, Ordering::Release);
+            dns::servfail_reply(packet, &q)
+        }),
     })
 }
 
