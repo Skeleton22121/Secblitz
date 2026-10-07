@@ -8,6 +8,9 @@ mod checks;
 #[cfg(any(windows, test))]
 #[path = "diagnostics/parse.rs"]
 mod parse;
+#[path = "diagnostics/renewal.rs"]
+mod renewal;
+pub use renewal::{Blocker, Renewal};
 #[path = "diagnostics/rules.rs"]
 mod rules;
 #[cfg(test)]

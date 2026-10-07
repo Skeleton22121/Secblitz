@@ -147,7 +147,7 @@ probe_ids! {
     Vpn => "VpnClient/Get-VpnConnection -AllUserConnection: status only",
     Permissions => "permissions::audit: bounded fixed-service broad-principal DACL audit",
     OsSupport => "HKLM Windows version values: DisplayVersion, build and edition id only",
-    SecureBootCerts => "System event ids 1795-1798/1801/1808, Secure Boot servicing status and db certificate presence (no firmware data emitted)",
+    SecureBootCerts => "System event ids, Secure Boot servicing values, the renewal task state, db certificate presence, virtual PC, BitLocker and other-system hints (no firmware data or event text emitted)",
     DefenderProtection => "Defender/Get-MpComputerStatus, Get-MpThreat, Get-MpThreatDetection and exclusion counts only (no paths)",
     SmartScreen => "HKLM SmartScreen, Smart App Control and browser safe-browsing policy indicators",
     UpdatePolicy => "HKLM Windows Update policy and pause values, service start types, pending restart and uptime",
@@ -356,6 +356,14 @@ facts!(SecureBootCerts {
     servicing_status: String,
     ca2023_in_db: bool,
     secure_boot_enabled: bool,
+    maker_blocked_event: bool,
+    available_updates: u32,
+    servicing_error: u32,
+    capable: u32,
+    task_state: String,
+    is_vm: bool,
+    bitlocker_on: bool,
+    other_os: bool,
 });
 facts!(DefenderProtection {
     running_mode: String,

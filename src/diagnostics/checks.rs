@@ -166,33 +166,19 @@ pub(super) fn os_support_at(v: &OsSupport, today: Option<i64>) -> Vec<Assessment
 }
 
 pub(super) fn secure_boot_certs(v: &SecureBootCerts) -> Vec<Assessment> {
+    use super::{Blocker, Renewal};
     let id = "boot.secure_boot_certs";
-    if v.secure_boot_enabled.known() == Some(&false) {
-        return vec![a(id, Informational, "Secure Boot is off or unavailable, so the certificate renewal does not apply. Nothing is written to firmware.")];
-    }
-    let done = v.update_completed_event.known() == Some(&true)
-        || v.servicing_status.known().map(String::as_str) == Some("Updated")
-        || v.ca2023_in_db.known() == Some(&true);
-    let pending = v.update_error_event.known() == Some(&true)
-        || matches!(
-            v.servicing_status.known().map(String::as_str),
-            Some("NotStarted" | "InProgress")
-        )
-        || (v.update_completed_event.known() == Some(&false)
-            && v.ca2023_in_db.known() == Some(&false));
-    let status = if done {
-        Healthy
-    } else if pending {
-        Attention
-    } else {
-        Unknown
-    };
-    let detail = match status {
-        Healthy => "The 2023 Secure Boot certificate update is reported as complete.",
-        Attention if v.update_error_event.known() == Some(&true) => "Windows logged a failed or blocked Secure Boot certificate update. Install all Windows updates and check the PC maker's firmware guidance; nothing is written by this check.",
-        Attention if v.update_staged_event.known() == Some(&true) => "The Secure Boot certificate update is staged but not complete. Restart after installing Windows updates; nothing is written by this check.",
-        Attention => "No sign that the 2011 Secure Boot certificates were replaced by the 2023 ones. Install all Windows updates and check the PC maker's firmware guidance; back up the BitLocker recovery key first. Nothing is written by this check.",
-        _ => "Secure Boot certificate renewal state could not be read.",
+    let (status, detail) = match Renewal::of(v) {
+        Renewal::NotApplicable => (Informational, "Secure Boot is off or unavailable, so the certificate renewal does not apply."),
+        Renewal::Done => (Healthy, "The 2023 Secure Boot certificate update is reported as complete."),
+        Renewal::VirtualPc => (Informational, "This is a virtual PC. The certificate renewal belongs to the program that runs it, so Secblitz leaves it alone."),
+        Renewal::Started => (Attention, "The Secure Boot certificate renewal has started. It finishes after the next restart."),
+        Renewal::Offer { .. } => (Attention, "The 2011 Secure Boot certificates have not been replaced by the 2023 ones. Secblitz can start the renewal after you agree; it cannot be undone."),
+        Renewal::Blocked(Blocker::MakerUpdate) => (Attention, "Windows logged a failed or blocked Secure Boot certificate update. The PC maker may need to release a firmware update first."),
+        Renewal::Blocked(Blocker::TaskOff) => (Attention, "The Windows job that renews the Secure Boot certificates is missing or switched off. Install all Windows updates, then check again."),
+        Renewal::Blocked(Blocker::OtherSystem) => (Attention, "Another operating system is in the startup list, so Secblitz does not renew the Secure Boot certificates for you."),
+        Renewal::Blocked(Blocker::NotChecked) => (Attention, "No sign that the 2011 Secure Boot certificates were replaced by the 2023 ones, and the renewal could not be checked safely. Install all Windows updates and check the PC maker's firmware guidance."),
+        Renewal::Unknown => (Unknown, "Secure Boot certificate renewal state could not be read."),
     };
     vec![a(id, status, detail)]
 }
@@ -478,7 +464,7 @@ pub(super) fn documentation(id: &str) -> Option<&'static str> {
 pub(super) fn guidance(id: &str) -> Option<&'static str> {
     Some(match id {
         "os.feature_release_support" => "Install the newest Windows release through Windows Update after a backup; never silently. Skip when on a metered connection or with little free disk space.",
-        "boot.secure_boot_certs" => "Install all pending Windows updates, then check the PC maker's firmware update page. Keep the BitLocker recovery key safe first. This tool never writes firmware or certificate triggers.",
+        "boot.secure_boot_certs" => "Install all pending Windows updates, then check the PC maker's firmware update page. Keep the BitLocker recovery key safe first. Secblitz can start the renewal on a PC that allows it, only after you agree, and it cannot be undone.",
         "defender.tamper_protection" => "Open Windows Security, Virus and threat protection settings, and turn Tamper Protection on. If a work or school account controls it, ask them.",
         "defender.threats" => "Open Windows Security, Protection history, and follow the steps for each active item. Do not delete files by hand.",
         "defender.scan_age" => "Run a quick scan from Windows Security. This tool never starts a full scan on its own.",
@@ -649,6 +635,14 @@ mod tests {
             servicing_status: known("Absent".into()),
             ca2023_in_db: known(false),
             secure_boot_enabled: known(true),
+            maker_blocked_event: known(false),
+            available_updates: known(0),
+            servicing_error: known(0),
+            capable: known(0),
+            task_state: known("Ready".into()),
+            is_vm: known(false),
+            bitlocker_on: known(false),
+            other_os: known(false),
         };
         let status = |v: &SecureBootCerts| secure_boot_certs(v)[0].status;
         assert_eq!(status(&base), Attention);
