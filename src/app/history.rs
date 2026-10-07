@@ -267,17 +267,18 @@ mod tests {
     #[test]
     fn timeline_is_newest_first_grouped_by_day() {
         let d = 86_400;
+        let noon = 10 * d + d / 2;
         let entries = vec![
-            e(100, Kind::Check, 1, 3, 0),
-            e(d + 50, Kind::Fix, 3, 3, 2),
-            e(d + 10, Kind::Check, 1, 3, 0),
+            e(noon, Kind::Check, 1, 3, 0),
+            e(noon + d + 50, Kind::Fix, 3, 3, 2),
+            e(noon + d + 10, Kind::Check, 1, 3, 0),
         ];
         let days = timeline(&entries);
         assert_eq!(days.len(), 2);
-        assert_eq!(days[0].day, 1);
+        assert_eq!(days[0].day, local_day(noon) + 1);
         assert_eq!(days[0].items[0].kind, Kind::Fix);
         assert_eq!(days[0].items[1].kind, Kind::Check);
-        assert_eq!(days[1].day, 0);
+        assert_eq!(days[1].day, local_day(noon));
         assert!(timeline(&[]).is_empty());
     }
 
