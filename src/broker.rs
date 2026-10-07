@@ -39,6 +39,7 @@ pub enum Request {
     OpenReportProblem,
     OpenSuggestFeature,
     OpenPrivacyPolicy,
+    OpenDownloadPage,
     UserSetting(Setting, Op),
     AppUpdatesScan,
     AppUpdateQuery(u16),
@@ -140,7 +141,8 @@ impl Request {
             | Request::UserSetting(_, Op::Query)
             | Request::OpenReportProblem
             | Request::OpenSuggestFeature
-            | Request::OpenPrivacyPolicy => true,
+            | Request::OpenPrivacyPolicy
+            | Request::OpenDownloadPage => true,
             Request::UserSetting(_, Op::Apply | Op::Undo)
             | Request::InstallBitwarden
             | Request::BlockSuggestedApps
@@ -209,6 +211,7 @@ impl Request {
             Request::OpenReportProblem => Action::OpenReportProblem,
             Request::OpenSuggestFeature => Action::OpenSuggestFeature,
             Request::OpenPrivacyPolicy => Action::OpenPrivacyPolicy,
+            Request::OpenDownloadPage => Action::OpenDownloadPage,
             Request::InstallBitwarden
             | Request::BlockSuggestedApps
             | Request::ReinstallStoreApp(_)
@@ -258,6 +261,7 @@ impl Request {
             Request::AppInstallerStatus => (36, 0),
             Request::OpenPrivacyPolicy => (37, 0),
             Request::OpenTaskbar => (38, 0),
+            Request::OpenDownloadPage => (41, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -326,6 +330,7 @@ impl Request {
             36 => Request::AppInstallerStatus,
             37 => Request::OpenPrivacyPolicy,
             38 => Request::OpenTaskbar,
+            41 => Request::OpenDownloadPage,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -663,6 +668,7 @@ mod tests {
             Request::OpenReportProblem,
             Request::OpenSuggestFeature,
             Request::OpenPrivacyPolicy,
+            Request::OpenDownloadPage,
             Request::AppUpdatesScan,
             Request::AppUpdateQuery(0),
             Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
@@ -748,6 +754,7 @@ mod tests {
             Request::OpenReportProblem,
             Request::OpenSuggestFeature,
             Request::OpenPrivacyPolicy,
+            Request::OpenDownloadPage,
         ];
         for request in all() {
             if request.opens_window() && !feedback.contains(&request) {
@@ -781,10 +788,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 41, 42, 100, 255] {
+        for kind in [0u8, 42, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17, 41]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }

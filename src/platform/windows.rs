@@ -66,6 +66,15 @@ fn windows_dir() -> Result<PathBuf> {
     Ok(p)
 }
 
+#[cfg(target_arch = "x86_64")]
+pub fn x64_on_arm() -> bool {
+    use windows_sys::Win32::System::SystemInformation::IMAGE_FILE_MACHINE_ARM64;
+    let (mut process, mut native) = (0u16, 0u16);
+    // SAFETY: both out-pointers are valid for the call and the handle is the current process.
+    let ok = unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) };
+    ok != 0 && native == IMAGE_FILE_MACHINE_ARM64
+}
+
 pub fn is_elevated() -> Result<bool> {
     unsafe {
         let mut token = null_mut();

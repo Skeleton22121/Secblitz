@@ -214,6 +214,19 @@ pub fn backend() -> Result<Box<dyn Backend>> {
     }
 }
 
+/// This x64 build is running through emulation on a PC with an ARM processor,
+/// where the native arm64 build is available.
+pub fn x64_on_arm() -> bool {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::x64_on_arm()
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        false
+    }
+}
+
 pub fn is_elevated() -> Result<bool> {
     #[cfg(windows)]
     {
