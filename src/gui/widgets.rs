@@ -2,6 +2,7 @@
 
 pub mod anim;
 pub mod appear;
+pub mod bars;
 pub mod chart;
 pub mod controls;
 pub mod cursor;
