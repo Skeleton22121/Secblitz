@@ -15,7 +15,7 @@ use crate::i18n::Lang;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
-use pages::{debloat, fixes, fixflow, history, home, settings, tools, web};
+use pages::{app_access, debloat, fixes, fixflow, history, home, settings, tools, web};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 use std::path::PathBuf;
@@ -239,6 +239,7 @@ pub enum Message {
     Tools(tools::Msg),
     History(history::Msg),
     Settings(settings::Msg),
+    AppAccess(app_access::Msg),
     PageOpened(crate::guide::Page, bool),
     WindowFocus(bool),
 }
@@ -295,6 +296,7 @@ pub struct App {
     pub tools: tools::State,
     pub history: history::State,
     pub settings: settings::State,
+    pub app_access: app_access::State,
     toast_gen: u32,
     toast_leaving: bool,
     entered: Option<std::time::Instant>,
@@ -379,6 +381,7 @@ impl App {
             tools: Default::default(),
             history: Default::default(),
             settings: Default::default(),
+            app_access: Default::default(),
             toast_gen: 0,
             toast_leaving: false,
             entered: None,
@@ -607,6 +610,7 @@ impl App {
                 }
                 settings::update(&mut self.settings, m, &mut self.ctx)
             }
+            Message::AppAccess(m) => app_access::update(&mut self.app_access, m, &mut self.ctx),
         }
     }
 

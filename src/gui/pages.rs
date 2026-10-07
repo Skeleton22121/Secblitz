@@ -1,3 +1,4 @@
+pub mod app_access;
 pub mod debloat;
 pub mod fixes;
 pub mod fixflow;

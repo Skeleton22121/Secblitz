@@ -1413,3 +1413,172 @@ fn a_setting_secblitz_cannot_fix_is_something_to_look_at_not_to_fix() {
         "nothing to fix means no topic is opened for the person"
     );
 }
+
+fn access_entry(
+    name: &str,
+    in_use: bool,
+    last_used: Option<u64>,
+    allowed: bool,
+) -> access_model::Entry {
+    access_model::Entry {
+        key: format!("Vendor.{}_8wekyb3d8bbwe", name.replace(' ', "")),
+        name: name.into(),
+        allowed,
+        in_use,
+        last_used,
+    }
+}
+
+use crate::app::app_access as access_model;
+
+fn access_listing(capability: access_model::Capability) -> access_model::Listing {
+    let now = app::history::now();
+    access_model::Listing {
+        capability,
+        master: true,
+        apps: vec![
+            access_entry("Windows Camera", true, Some(now), true),
+            access_entry("Skype", false, Some(now - 7200), false),
+            access_entry(
+                "A very long app name that goes on and on and on forever",
+                false,
+                None,
+                true,
+            ),
+        ],
+        desktop_allowed: true,
+        desktop: vec![
+            access_entry("Zoom", false, Some(now - 90), true),
+            access_entry("Firefox", false, Some(now - 90_000), true),
+            access_entry("OBS Studio", false, None, true),
+            access_entry("Discord", false, None, true),
+            access_entry("Teams", false, None, true),
+        ],
+    }
+}
+
+fn access(app: &mut App, msg: app_access::Msg) {
+    drop(app.update(Message::AppAccess(msg)));
+}
+
+#[test]
+fn the_app_access_panel_loads_lazily_and_shows_what_it_read() {
+    use crate::broker::Reply;
+    use access_model::Capability;
+    let mut app = app();
+    app.ctx.helper = Helper::Ready;
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "idle"
+    );
+    drop(app_access::view(&app.app_access, &app.ctx));
+    access(
+        &mut app,
+        app_access::Msg::Listed(Capability::Camera, Ok(Reply::Failed)),
+    );
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "failed"
+    );
+    drop(app_access::view(&app.app_access, &app.ctx));
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "listed"
+    );
+    access(&mut app, app_access::Msg::Select(Capability::Location));
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Location),
+        "loading"
+    );
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Location, Err("x".into())),
+    );
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Location),
+        "failed"
+    );
+    drop(app_access::view(&app.app_access, &app.ctx));
+}
+
+#[test]
+fn only_one_app_access_switch_changes_at_a_time() {
+    use crate::broker::Reply;
+    use access_model::{Capability, Target};
+    let mut app = app();
+    app.ctx.helper = Helper::Ready;
+    access(&mut app, app_access::Msg::Toggle(Target::Master, false));
+    assert!(
+        !app_access::is_changing(&app.app_access),
+        "nothing to switch before the list is read"
+    );
+    access(
+        &mut app,
+        app_access::Msg::Read(Capability::Camera, Ok(access_listing(Capability::Camera))),
+    );
+    access(&mut app, app_access::Msg::Toggle(Target::App(1), true));
+    assert!(app_access::is_changing(&app.app_access));
+    drop(app_access::view(&app.app_access, &app.ctx));
+    access(&mut app, app_access::Msg::Toggle(Target::Master, false));
+    access(
+        &mut app,
+        app_access::Msg::Changed(Capability::Camera, Ok(Reply::Done)),
+    );
+    assert!(!app_access::is_changing(&app.app_access));
+    assert_eq!(
+        app_access::shown_as(&app.app_access, Capability::Camera),
+        "reloading"
+    );
+    access(&mut app, app_access::Msg::Toggle(Target::Master, false));
+    access(
+        &mut app,
+        app_access::Msg::Changed(Capability::Camera, Err("unavailable".into())),
+    );
+    assert!(!app_access::is_changing(&app.app_access));
+}
+
+#[test]
+fn the_app_access_panel_lays_out_in_every_language() {
+    use access_model::Capability;
+    let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        theme::REGULAR,
+        14.0.into(),
+        Some("tiny-skia"),
+    ))
+    .expect("tiny-skia renderer");
+    let mut app = app();
+    app.ctx.helper = Helper::Ready;
+    for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
+        app.ctx.lang = lang;
+        for capability in Capability::ALL {
+            let mut listing = access_listing(capability);
+            for master in [true, false] {
+                listing.master = master;
+                access(&mut app, app_access::Msg::Select(capability));
+                access(
+                    &mut app,
+                    app_access::Msg::Read(capability, Ok(listing.clone())),
+                );
+                let mut element = app_access::view(&app.app_access, &app.ctx);
+                let mut tree = Tree::new(&element);
+                let node = element.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &Limits::new(iced::Size::ZERO, iced::Size::new(640.0, 900.0)),
+                );
+                assert!(node.size().width > 0.0 && node.size().height > 0.0);
+            }
+            access(
+                &mut app,
+                app_access::Msg::Read(capability, Ok(access_model::Listing::empty(capability))),
+            );
+            drop(app_access::view(&app.app_access, &app.ctx));
+        }
+    }
+    app.ctx.helper = Helper::Reopen;
+    drop(app_access::view(&app.app_access, &app.ctx));
+}
