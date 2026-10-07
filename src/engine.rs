@@ -23,6 +23,11 @@ use fsio::metadata_safe;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, fs::File, path::PathBuf};
 
+/// The rule an audit uses to judge one setting, for callers without the journal.
+pub fn assessment(id: &str, o: &Observation) -> Result<CheckStatus> {
+    catalog::assessment_status(id, o)
+}
+
 const SCHEMA: u32 = 1;
 // Exact service descriptor envelopes can exceed 4 KiB. The descriptor parser
 // imposes its own bound; the complete WAL remains capped at 1 MiB.

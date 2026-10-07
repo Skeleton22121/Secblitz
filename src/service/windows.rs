@@ -36,7 +36,8 @@ const NAME: &str = "SecblitzMonitor";
 const ACCOUNT: &str = r"NT AUTHORITY\LocalService";
 const INTERVAL: Duration = Duration::from_secs(15 * 60);
 const BUDGET: Duration = Duration::from_secs(5 * 60);
-const REPORT_LIMIT: usize = 64 * 1024;
+const REPORT_LIMIT: usize = 256 * 1024;
+const MAX_CONTROLS: usize = 256;
 const RX: u32 = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
 const RW: u32 = FILE_GENERIC_READ | FILE_GENERIC_WRITE;
 const DIRECTORY_SD: &str = "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;LS)";
@@ -1114,14 +1115,14 @@ fn service_main(_: Vec<OsString>) {
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            let (bytes, summary) = snapshot?;
+            let (bytes, judged) = snapshot?;
             ensure!(bytes.len() <= REPORT_LIMIT, "Monitor report exceeded limit");
             report.seek(SeekFrom::Start(0))?;
             report.set_len(0)?;
             report.write_all(&bytes)?;
             report.sync_all()?;
             if let Some(dir) = &status_dir {
-                let _ = crate::status::write_to(dir, &summary);
+                update_status(dir, &judged);
             }
             let remaining = INTERVAL.saturating_sub(started.elapsed());
             let _ = receiver.recv_timeout(remaining);
@@ -1133,17 +1134,38 @@ fn service_main(_: Vec<OsString>) {
     let _ = set_status(&handle, ServiceState::Stopped, 0, failed);
 }
 
+/// Settings the monitor could judge with the audit's own rule.
+#[derive(Default)]
+struct Judged {
+    unsafe_now: Vec<String>,
+    safe_now: Vec<String>,
+}
+
+fn update_status(dir: &Path, judged: &Judged) {
+    let Some(app) = crate::status::read_from(dir) else {
+        return;
+    };
+    let changed = crate::status::read_changed_from(dir).unwrap_or_default();
+    let merged = app
+        .clone()
+        .with_monitor(&judged.unsafe_now, &judged.safe_now, &changed);
+    // The app may have saved a newer check while this scan ran.
+    if merged != app && crate::status::read_from(dir).as_ref() == Some(&app) {
+        let _ = crate::status::write_to(dir, &merged);
+    }
+}
+
 fn short(s: &str) -> String {
     s.chars().take(512).collect()
 }
-fn scan(stop: &AtomicBool) -> Result<(Vec<u8>, crate::status::Status)> {
+fn scan(stop: &AtomicBool) -> Result<(Vec<u8>, Judged)> {
     use serde_json::json;
     let start = Instant::now();
     let mut rows = Vec::new();
     let mut findings = Vec::new();
     let mut readiness = None;
     let mut incomplete = false;
-    let mut items: Vec<(String, crate::status::Item)> = Vec::new();
+    let mut judged = Judged::default();
     match crate::platform::backend().map(crate::permissions::with_permissions) {
         Err(e) => {
             incomplete = true;
@@ -1154,25 +1176,29 @@ fn scan(stop: &AtomicBool) -> Result<(Vec<u8>, crate::status::Status)> {
                 readiness = Some(backend.readiness());
             }
             let controls = backend.controls();
-            incomplete |= controls.len() > 64;
-            for control in controls.into_iter().take(64) {
+            incomplete |= controls.len() > MAX_CONTROLS;
+            for control in controls.into_iter().take(MAX_CONTROLS) {
                 if stop.load(Ordering::Acquire) || start.elapsed() >= BUDGET {
                     incomplete = true;
                     break;
                 }
                 let row = match backend.observe(&control.id) {
                     Ok(o) => {
-                        items.push((
-                            control.id.clone(),
-                            crate::status::classify(&control.id, &control.target, &o),
-                        ));
+                        match crate::engine::assessment(&control.id, &o) {
+                            Ok(crate::model::CheckStatus::Attention) => {
+                                judged.unsafe_now.push(control.id.clone())
+                            }
+                            Ok(crate::model::CheckStatus::Compliant) => {
+                                judged.safe_now.push(control.id.clone())
+                            }
+                            _ => {}
+                        }
                         json!({"id":short(&control.id), "status":"observed", "eligible":o.eligible,
                         "value":short(&o.value.to_string()), "detail":short(&o.reason),
                         "effective":o.effective, "authority":o.authority})
                     }
                     Err(e) => {
                         incomplete = true;
-                        items.push((control.id.clone(), crate::status::Item::Unknown));
                         json!({"id":short(&control.id), "status":"unknown", "error":short(&e.to_string())})
                     }
                 };
@@ -1211,14 +1237,13 @@ fn scan(stop: &AtomicBool) -> Result<(Vec<u8>, crate::status::Status)> {
             Ok(())
         }
     }
-    let summary = crate::status::summarize(&items, !incomplete, crate::status::now());
     let mut out = Bounded(Vec::new());
     let snapshot = json!({"schema":1, "unix_time":SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         "incomplete":incomplete, "observations":rows, "findings":findings, "readiness":readiness});
     if serde_json::to_writer(&mut out, &snapshot).is_err() {
-        return Ok((b"{\"schema\":1,\"incomplete\":true,\"status\":\"unknown\",\"error\":\"report exceeded 64 KiB\"}".to_vec(), summary));
+        return Ok((b"{\"schema\":1,\"incomplete\":true,\"status\":\"unknown\",\"error\":\"report exceeded 256 KiB\"}".to_vec(), judged));
     }
-    Ok((out.0, summary))
+    Ok((out.0, judged))
 }
 
 #[cfg(test)]

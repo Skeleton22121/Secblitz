@@ -1,5 +1,4 @@
 //! Tiny protection summary for the tray (`status.json`). Written by the monitor service and the elevated GUI, read by the unelevated tray. Holds only counts, ids and a timestamp.
-use crate::model::{Authority, EffectiveFirewall, InboundAction, Observation};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: u32 = 1;
@@ -46,6 +45,59 @@ impl Status {
         self
     }
 
+    /// The monitor's update to the app's last check. It runs with fewer rights than the app,
+    /// so it only judges settings Secblitz fixed: unsafe again means switched back, safe
+    /// again clears it. Everything else stays as the app last saw it.
+    pub fn with_monitor(
+        mut self,
+        unsafe_now: &[String],
+        safe_now: &[String],
+        changed: &[String],
+    ) -> Self {
+        let scored = |id: &String| crate::advice::extra_section(id).is_none();
+        let mut reverted: Vec<String> = self
+            .reverted
+            .iter()
+            .filter(|id| !safe_now.contains(id))
+            .cloned()
+            .collect();
+        for id in changed
+            .iter()
+            .filter(|id| unsafe_now.contains(id) && scored(id))
+        {
+            if !reverted.contains(id) {
+                reverted.push(id.clone());
+            }
+        }
+        let had_attention = !self.attention.is_empty();
+        for id in self.reverted.iter().filter(|id| safe_now.contains(id)) {
+            if let Some(i) = self.attention.iter().position(|a| a == id) {
+                self.attention.remove(i);
+                self.protected = (self.protected + 1).min(self.total);
+            }
+        }
+        let mut added = false;
+        for id in &reverted {
+            if !self.attention.contains(id) && self.attention.len() < 64 {
+                self.attention.push(id.clone());
+                self.protected = self.protected.saturating_sub(1);
+                added = true;
+            }
+        }
+        reverted.retain(|id| self.attention.contains(id));
+        self.reverted = reverted;
+        if added {
+            self.state = State::Attention;
+        } else if had_attention && self.attention.is_empty() && self.state == State::Attention {
+            self.state = if self.protected == self.total {
+                State::Ok
+            } else {
+                State::Unknown
+            };
+        }
+        self
+    }
+
     /// A stale or future-dated status becomes `Unknown`, so the tray never shows "protected" from old or forged data.
     pub fn fresh(mut self, now: u64) -> Self {
         let stale = now.saturating_sub(self.t) > MAX_AGE;
@@ -78,34 +130,6 @@ pub enum Item {
     Protected,
     Attention,
     Unknown,
-}
-
-/// Firewall controls also need local authority and matching effective evidence.
-pub fn classify(id: &str, target: &serde_json::Value, o: &Observation) -> Item {
-    if id.starts_with("firewall.") && !crate::hardening::is_hardening_check_id(id) {
-        if o.authority != Some(Authority::Local) || !o.eligible {
-            return Item::Attention;
-        }
-        let ok = match (o.effective, id.ends_with(".enabled")) {
-            (Some(EffectiveFirewall::Enabled(on)), true) => on && o.value.as_bool() == Some(true),
-            (Some(EffectiveFirewall::Inbound(a)), false) => {
-                a == InboundAction::Block && (o.value == "Block" || o.value == "NotConfigured")
-            }
-            _ => false,
-        };
-        return if ok { Item::Protected } else { Item::Attention };
-    }
-    if id.starts_with("permissions.service.") {
-        return match crate::permissions::repair_target(id, &o.value) {
-            Ok(t) if o.eligible && t == o.value => Item::Protected,
-            _ => Item::Attention,
-        };
-    }
-    if o.value == *target {
-        Item::Protected
-    } else {
-        Item::Attention
-    }
 }
 
 /// An incomplete scan never reports "ok".
@@ -323,13 +347,15 @@ pub fn read_notify() -> Notify {
 }
 
 pub fn read() -> Option<Status> {
-    let p = path().ok()?;
-    if std::fs::metadata(&p).ok()?.len() > LIMIT as u64 {
-        return None;
-    }
-    Status::parse(&std::fs::read(p).ok()?)
-        .ok()
-        .map(|s| s.fresh(now()))
+    read_from(&dir().ok()?).map(|s| s.fresh(now()))
+}
+
+pub fn read_from(dir: &std::path::Path) -> Option<Status> {
+    use std::io::Read;
+    let file = std::fs::File::open(dir.join("status.json")).ok()?;
+    let mut bytes = Vec::new();
+    file.take(LIMIT as u64 + 1).read_to_end(&mut bytes).ok()?;
+    Status::parse(&bytes).ok()
 }
 
 /// A status older than this is no longer evidence of anything.
@@ -340,7 +366,6 @@ pub const MAX_FUTURE: u64 = 5 * 60;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn stale_or_future_status_becomes_unknown() {
@@ -402,34 +427,56 @@ mod tests {
     }
 
     #[test]
-    fn classify_matches_target() {
-        let obs = |value| Observation {
-            value,
-            eligible: true,
-            reason: String::new(),
-            effective: None,
-            authority: None,
-            ..Observation::default()
-        };
+    fn monitor_marks_switched_back_and_clears_it_when_safe_again() {
+        let app = st(State::Ok, 10, 10, &[]);
+        let changed = ids(&["uac.enabled", "net.llmnr", "privacy.online_speech"]);
+        let unsafe_now = ids(&["uac.enabled", "privacy.online_speech", "smb.other"]);
+        let s = app.clone().with_monitor(&unsafe_now, &[], &changed);
+        assert_eq!(s.reverted, ids(&["uac.enabled"]));
+        assert_eq!(s.attention, ids(&["uac.enabled"]));
         assert_eq!(
-            classify("defender.realtime", &json!(false), &obs(json!(false))),
-            Item::Protected
+            (s.state, s.protected, s.total, s.t),
+            (State::Attention, 9, 10, app.t)
         );
+        assert_eq!(s.clone().with_monitor(&unsafe_now, &[], &changed), s);
+        let unknown = s.clone().with_monitor(&[], &[], &[]);
+        assert_eq!(unknown, s, "unreadable now is not fixed");
+        let back = s.with_monitor(&[], &ids(&["uac.enabled"]), &changed);
+        assert_eq!(back, app);
+    }
+
+    #[test]
+    fn monitor_leaves_the_apps_own_findings_alone() {
+        let app = st(
+            State::Attention,
+            8,
+            10,
+            &["finding.device-encryption", "net.llmnr"],
+        );
+        let s = app.clone().with_monitor(
+            &[],
+            &ids(&["net.llmnr", "uac.enabled"]),
+            &ids(&["uac.enabled"]),
+        );
+        assert_eq!(s, app, "only settings it marked itself are cleared");
+        let s = app
+            .clone()
+            .with_monitor(&ids(&["uac.enabled"]), &[], &ids(&["uac.enabled"]));
         assert_eq!(
-            classify("defender.realtime", &json!(false), &obs(json!(true))),
-            Item::Attention
+            s.attention,
+            ids(&["finding.device-encryption", "net.llmnr", "uac.enabled"])
         );
-        let mut fw = obs(json!(true));
+        assert_eq!((s.protected, s.reverted.len()), (7, 1));
+        let s = s.with_monitor(&[], &ids(&["uac.enabled"]), &ids(&["uac.enabled"]));
+        assert_eq!(s, app);
+        let mut unknown = st(State::Unknown, 9, 10, &[]);
+        unknown = unknown.with_monitor(&ids(&["a.b"]), &[], &ids(&["a.b"]));
+        assert_eq!(unknown.state, State::Attention);
         assert_eq!(
-            classify("firewall.public.enabled", &json!(true), &fw),
-            Item::Attention
+            unknown.with_monitor(&[], &ids(&["a.b"]), &[]).state,
+            State::Unknown
         );
-        fw.authority = Some(Authority::Local);
-        fw.effective = Some(EffectiveFirewall::Enabled(true));
-        assert_eq!(
-            classify("firewall.public.enabled", &json!(true), &fw),
-            Item::Protected
-        );
+        assert!(Status::parse(&bytes(&s)).is_ok());
     }
 
     #[test]
@@ -458,6 +505,29 @@ mod tests {
         let s = st(State::Attention, 1, 4, &["a.one", "b.two"]).with_changed(&ids(&["b.two"]));
         assert_eq!(s.reverted, ids(&["b.two"]));
         assert_eq!(Status::parse(&bytes(&s)).unwrap(), s);
+    }
+
+    #[test]
+    fn the_monitor_marks_reverted_from_the_apps_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_from(dir.path()).is_none());
+        write_to(dir.path(), &st(State::Ok, 3, 3, &[])).unwrap();
+        let unsafe_now = ids(&["b.two"]);
+        let merge = || {
+            let changed = read_changed_from(dir.path()).unwrap_or_default();
+            read_from(dir.path())
+                .unwrap()
+                .with_monitor(&unsafe_now, &[], &changed)
+        };
+        assert!(merge().reverted.is_empty());
+        write_changed_to(dir.path(), &ids(&["b.two", "z.gone"])).unwrap();
+        assert_eq!(merge().reverted, ids(&["b.two"]));
+        std::fs::write(
+            dir.path().join("changed.json"),
+            b"{\"schema\":1,\"ids\":[\"a b\"]}",
+        )
+        .unwrap();
+        assert!(merge().reverted.is_empty());
     }
 
     #[test]
