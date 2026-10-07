@@ -32,7 +32,9 @@ impl Topic {
     pub fn of(id: &str) -> Topic {
         let head = id.split_once('.').map_or(id, |(head, _)| head);
         match (head, id) {
-            (_, "smartscreen.apps" | "net.hosts_file") | ("defender", _) => Topic::Threats,
+            (_, "smartscreen.apps" | "net.hosts_file") | ("defender" | "clickfix", _) => {
+                Topic::Threats
+            }
             ("uac" | "accounts" | "lsa" | "wdigest" | "ntlm" | "session", _) => Topic::SignIn,
             (
                 "firewall" | "net" | "tls" | "smb" | "smb1" | "remote_desktop"
@@ -168,6 +170,7 @@ mod tests {
             ("smb.shares_exposed", Network),
             ("printer.point_and_print", Windows),
             ("autorun.disabled", Windows),
+            ("clickfix.run_box", Threats),
             ("wsh.disabled", Windows),
             ("update.auto_policy_disabled", Windows),
             ("update.store_autoupdate_policy", Windows),

@@ -1408,4 +1408,17 @@ pub(super) static SPECS: &[Spec] = &[
         keys: &[set("Enabled", "", &[1], false, Some(1), 1)],
         gate: NO_GATE,
     },
+    Spec {
+        id: "clickfix.run_box",
+        title: "Turn off the Run box",
+        description: "Turn off the Run box (Win+R and Run in the Start menu) for every account on this PC by setting NoRun=1. Task Manager, Command Prompt and everything else still work. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: true,
+        ask: true,
+        keys: &[set("NoRun", EXPLORER, &[1], false, Some(1), 1)],
+        gate: Gate {
+            areas: &["ADMX_StartMenu"],
+            ..NO_GATE
+        },
+    },
 ];

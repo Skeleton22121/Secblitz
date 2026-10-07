@@ -2149,6 +2149,25 @@ fn topic_groups<'a>(
             Some(Message::Navigate(crate::gui::Page::Debloat)),
         ));
     }
+    if topic == Topic::Ai && !narrowed && ctx.copilot_installed {
+        groups.push(widgets::row_item_tinted(
+            p,
+            Some(Icon::Apps),
+            None,
+            ctx.t("The Copilot app is installed"),
+            Some(ctx.t("You can remove it in Clean up apps and bring it back later.")),
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Open Clean up apps"),
+                None,
+                Some(Message::OpenCleanUp(
+                    crate::gui::pages::debloat::COPILOT_APP,
+                )),
+            ),
+            None,
+        ));
+    }
     groups
 }
 

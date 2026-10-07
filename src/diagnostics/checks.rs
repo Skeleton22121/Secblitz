@@ -450,6 +450,24 @@ pub(super) fn autostart(v: &Autostart) -> Vec<Assessment> {
     vec![a("persistence.run_and_tasks", status, "Counts only. Start-up entries (Run keys, Startup folders, non-Microsoft scheduled tasks) are flagged when the program sits in Temp, Downloads, Public or the Roaming folder root and is not signed, or when a command hides an encoded script or downloads from the internet. Names and paths are never collected.")]
 }
 
+pub(super) fn run_history(v: &RunHistory) -> Vec<Assessment> {
+    let counts = [
+        v.encoded_command.known(),
+        v.web_script.known(),
+        v.mshta.known(),
+        v.download_tool.known(),
+        v.hidden_window.known(),
+    ];
+    let status = match v.suspicious_entries.known() {
+        Some(n) if *n > 0 => Attention,
+        Some(0) if v.entries_checked.known().is_some() && counts.iter().all(Option::is_some) => {
+            Healthy
+        }
+        _ => Unknown,
+    };
+    vec![a("clickfix.run_history", status, "Counts only. The Run box history of the signed-in user is sorted into fixed kinds of commands that fake check pages ask people to paste: encoded or hidden PowerShell, text run as code, mshta and download helpers. Command text is never kept and nothing is deleted.")]
+}
+
 pub(super) fn documentation(id: &str) -> Option<&'static str> {
     Some(match id {
         "os.feature_release_support" => "https://learn.microsoft.com/lifecycle/products/windows-11-home-and-pro",
@@ -471,6 +489,7 @@ pub(super) fn documentation(id: &str) -> Option<&'static str> {
         "net.dns_encryption" => "https://learn.microsoft.com/windows-server/networking/dns/doh-client-support",
         "net.wifi_security" => "https://learn.microsoft.com/windows/win32/api/wlanapi/ns-wlanapi-wlan_security_attributes",
         "persistence.run_and_tasks" => "https://learn.microsoft.com/windows/win32/setupapi/run-and-runonce-registry-keys",
+        "clickfix.run_history" => "https://www.microsoft.com/security/blog/2025/08/21/think-before-you-clickfix-analyzing-the-clickfix-social-engineering-technique/",
         _ => return None,
     })
 }
@@ -499,6 +518,7 @@ pub(super) fn guidance(id: &str) -> Option<&'static str> {
         "net.dns_encryption" => "Open Settings, Network and internet, your connection, DNS server assignment, and choose encrypted lookups. Your DNS servers are never changed by this tool.",
         "net.wifi_security" => "Change the Wi-Fi security on your router to WPA2 or WPA3 (AES). On a public network, avoid banking and passwords.",
         "persistence.run_and_tasks" => "Secblitz can switch off flagged start-up items and scheduled tasks without deleting them, and undo it exactly. Otherwise open Task Manager, Startup apps, and switch off ones you do not know.",
+        "clickfix.run_history" => "Run a full virus scan, then change your passwords from another device. This check never deletes the Run history.",
         "accounts.stale_enabled" => "Review old accounts in Settings and remove the ones nobody uses.",
         "smb.shares_exposed" | "smb.server_encryption" => "Stop sharing folders you do not need and avoid Everyone access. Encryption can break older devices.",
         "firewall.user_dir_inbound_allow" => "Secblitz can switch off (not delete) those inbound allow rules and undo it exactly. Otherwise review them in Windows Security and remove ones you do not recognise. Multiplayer games may need some.",
@@ -700,6 +720,7 @@ mod tests {
             "net.dns_encryption",
             "net.wifi_security",
             "persistence.run_and_tasks",
+            "clickfix.run_history",
             "smb.shares_exposed",
             "smb.server_encryption",
             "firewall.user_dir_inbound_allow",

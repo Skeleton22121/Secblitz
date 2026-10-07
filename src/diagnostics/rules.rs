@@ -377,6 +377,7 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::DnsEncryption(v) => out.extend(super::checks::dns_encryption(v)),
         Evidence::WifiSecurity(v) => out.extend(super::checks::wifi_security(v)),
         Evidence::Autostart(v) => out.extend(super::checks::autostart(v)),
+        Evidence::RunHistory(v) => out.extend(super::checks::run_history(v)),
     }
     // A healthy subset must not turn a partially unreadable probe into Healthy.
     // Walk the typed serialization (never raw/native input) so newly added facts

@@ -137,6 +137,11 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "Malware often hides in a folder like Temp or Downloads and starts again every time you turn your PC on.",
             change: "They stop starting with Windows. Nothing is deleted, and you can turn them back on by undoing this.",
         },
+        "clickfix.run_history" => Explainer {
+            what: "This looks at the commands recently typed into the Run box and counts the ones that match a known trick.",
+            risk: "Fake check pages tell you to paste a command into the Run box. It can install a program that steals your passwords.",
+            change: "Nothing changes. If something matches, scan your PC and change your passwords from another device. Your Run history is not deleted.",
+        },
         _ => return None,
     })
 }
@@ -173,6 +178,7 @@ mod tests {
         "net.dns_encryption",
         "net.wifi_security",
         "persistence.run_and_tasks",
+        "clickfix.run_history",
     ];
 
     #[test]

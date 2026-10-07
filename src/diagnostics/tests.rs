@@ -967,7 +967,11 @@ fn new_probes_have_compiled_branches_and_read_only_privacy_boundaries() {
         include_str!("common.ps1"),
         include_str!("probes.ps1")
     );
-    let native = [ProbeId::WindowsHello, ProbeId::WifiSecurity];
+    let native = [
+        ProbeId::WindowsHello,
+        ProbeId::WifiSecurity,
+        ProbeId::RunHistory,
+    ];
     for &id in &ProbeId::ALL[23..] {
         assert_eq!(
             script.contains(&format!("'{id:?}' {{")),
@@ -1024,6 +1028,7 @@ fn every_new_probe_has_a_launcher_module_entry_and_unique_source() {
         "DnsEncryption",
         "WifiSecurity",
         "Autostart",
+        "RunHistory",
     ] {
         assert!(launcher.contains(&format!("ProbeId::{id}")), "{id}");
     }
@@ -1196,6 +1201,43 @@ fn autostart_counts_flag_risky_entries_and_need_complete_evidence() {
         Status::Unknown
     );
     assert_eq!(status_of(&fixture(unreadable, 1, 0), id), Status::Attention);
+}
+
+#[test]
+fn run_history_counts_flag_tricks_and_need_complete_evidence() {
+    let id = "clickfix.run_history";
+    let fixture = |checked: Value, suspicious: Value| {
+        assessed(
+            ProbeId::RunHistory,
+            json!({
+                "entries_checked":checked,"suspicious_entries":suspicious,
+                "encoded_command":k(0),"web_script":k(0),"mshta":k(0),
+                "download_tool":k(0),"hidden_window":k(0)
+            }),
+        )
+    };
+    assert_eq!(status_of(&fixture(k(0), k(0)), id), Status::Healthy);
+    assert_eq!(status_of(&fixture(k(9), k(0)), id), Status::Healthy);
+    assert_eq!(status_of(&fixture(k(9), k(2)), id), Status::Attention);
+    let unreadable = json!({"state":"Unknown","value":"Unavailable"});
+    assert_eq!(
+        status_of(&fixture(unreadable.clone(), k(0)), id),
+        Status::Unknown
+    );
+    assert_eq!(
+        status_of(&fixture(k(9), unreadable.clone()), id),
+        Status::Unknown
+    );
+    assert_eq!(status_of(&fixture(unreadable, k(1)), id), Status::Attention);
+    assert!(parse::decode(
+        ProbeId::RunHistory,
+        br#"{"entries_checked":{"state":"Known","value":1},"command":"powershell -enc AAAA"}"#
+    )
+    .is_err());
+    let flagged = fixture(k(9), k(2));
+    let detail = &assessment(&flagged, id).detail;
+    assert!(detail.contains("never kept") && !detail.contains("AAAA"));
+    assert_eq!(ProbeId::RunHistory.scope(), Scope::OriginalUser);
 }
 
 #[test]

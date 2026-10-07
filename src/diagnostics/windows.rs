@@ -194,6 +194,10 @@ fn require_original_user() -> ProbeResult<()> {
     if bytes as usize != size_of::<TOKEN_ELEVATION>() || elevation.TokenIsElevated != 0 {
         return Err(UnknownReason::OriginalUserNotVerified);
     }
+    require_shell_user()
+}
+fn require_shell_user() -> ProbeResult<()> {
+    let current = token(unsafe { GetCurrentProcess() })?;
     let shell = unsafe { GetShellWindow() };
     if shell.is_null() {
         return Err(UnknownReason::OriginalUserNotVerified);
@@ -557,6 +561,67 @@ fn proxy() -> Evidence {
     Evidence::Proxy(Proxy { default_mode })
 }
 
+const RUN_HISTORY_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU";
+
+fn run_history() -> ProbeResult<Evidence> {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegEnumValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
+    };
+    const NOT_FOUND: u32 = 2;
+    const NO_MORE_ITEMS: u32 = 259;
+    const MAX_VALUES: u32 = 256;
+    let path: Vec<u16> = RUN_HISTORY_KEY.encode_utf16().chain(Some(0)).collect();
+    let mut key: HKEY = null_mut();
+    let opened = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, KEY_READ, &mut key) };
+    let mut entries = Vec::new();
+    if opened == 0 {
+        let mut data = vec![0u8; 65536];
+        let mut outcome = Err(UnknownReason::OutputLimit);
+        for index in 0..MAX_VALUES {
+            let mut name = [0u16; 256];
+            let mut name_len = name.len() as u32;
+            let mut kind = 0u32;
+            let mut data_len = data.len() as u32;
+            let status = unsafe {
+                RegEnumValueW(
+                    key,
+                    index,
+                    name.as_mut_ptr(),
+                    &mut name_len,
+                    null(),
+                    &mut kind,
+                    data.as_mut_ptr(),
+                    &mut data_len,
+                )
+            };
+            if status == NO_MORE_ITEMS {
+                outcome = Ok(());
+                break;
+            }
+            if status != 0 {
+                outcome = Err(UnknownReason::Unavailable);
+                break;
+            }
+            let name = String::from_utf16_lossy(&name[..name_len as usize]);
+            if kind == REG_SZ && !name.eq_ignore_ascii_case("MRUList") {
+                let units: Vec<u16> = data[..data_len as usize]
+                    .chunks_exact(2)
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .take_while(|unit| *unit != 0)
+                    .collect();
+                entries.push(String::from_utf16_lossy(&units));
+            }
+        }
+        unsafe { RegCloseKey(key) };
+        outcome?;
+    } else if opened != NOT_FOUND {
+        return Err(UnknownReason::Unavailable);
+    }
+    Ok(Evidence::RunHistory(super::runbox::summarize(
+        entries.iter().map(String::as_str),
+    )))
+}
+
 type AuditReceiver = mpsc::Receiver<ProbeResult<Evidence>>;
 static AUDIT: OnceLock<Mutex<Option<AuditReceiver>>> = OnceLock::new();
 static PROXY: OnceLock<Mutex<Option<AuditReceiver>>> = OnceLock::new();
@@ -784,6 +849,7 @@ pub(super) fn collect(context: &Context) -> Vec<Diagnostic> {
             ProbeId::WifiSecurity => {
                 native_bounded(&WIFI, timeout.min(Duration::from_secs(3)), wifi)
             }
+            ProbeId::RunHistory => require_shell_user().and_then(|()| run_history()),
             _ => match &root {
                 Ok(root) => run(root, id, timeout).and_then(|bytes| match id {
                     ProbeId::WinRe => Ok(Evidence::WinRe(parse::winre(&bytes))),

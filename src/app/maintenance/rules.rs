@@ -28,6 +28,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "net.dns_encryption" => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         "persistence.run_and_tasks" => "Open Task Manager, Startup apps, and switch off ones you don't know.",
+        "clickfix.run_history" => "Something typed into the Run box looks like a fake check page trick. Run a full virus scan and change your passwords from another device.",
         "winre.enabled" => "Recovery tools are off. They help if Windows stops starting. Ask someone you trust to turn them back on.",
         _ => return None,
     })
@@ -85,7 +86,7 @@ pub fn rule_restart(rule_id: &str) -> bool {
 }
 
 pub fn rule_scan(rule_id: &str) -> bool {
-    rule_id == "defender.scan_age"
+    matches!(rule_id, "defender.scan_age" | "clickfix.run_history")
 }
 
 pub fn rule_remove_threats(rule_id: &str) -> bool {

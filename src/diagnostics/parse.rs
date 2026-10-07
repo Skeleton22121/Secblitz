@@ -58,6 +58,7 @@ pub(super) fn decode(id: ProbeId, bytes: &[u8]) -> Result<Evidence, UnknownReaso
         ProbeId::DnsEncryption => parse!(DnsEncryption),
         ProbeId::WifiSecurity => parse!(WifiSecurity),
         ProbeId::Autostart => parse!(Autostart),
+        ProbeId::RunHistory => parse!(RunHistory),
     }
 }
 
