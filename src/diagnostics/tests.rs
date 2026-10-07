@@ -668,7 +668,9 @@ fn scripts_preserve_read_only_and_privacy_boundaries() {
     let launcher = include_str!("windows.rs");
     assert!(launcher.contains("CREATE_SUSPENDED"));
     assert!(launcher.contains("CREATE_UNICODE_ENVIRONMENT"));
-    assert!(launcher.contains("limits.basic.active_processes = 1"));
+    assert!(launcher.contains(
+        "limits.basic.active_processes = if id == ProbeId::SecureBootCerts { 2 } else { 1 }"
+    ));
     assert!(!launcher.contains("std::env::var"));
     assert!(launcher.contains("elevation.TokenIsElevated != 0"));
     assert!(launcher.contains("EqualSid"));
@@ -952,12 +954,102 @@ fn os_support_and_secure_boot_certificate_probes_parse_end_to_end() {
         ProbeId::SecureBootCerts,
         json!({
             "update_completed_event":k(true),"update_staged_event":k(false),"update_error_event":k(false),
-            "servicing_status":k("Updated"),"ca2023_in_db":k(true),"secure_boot_enabled":k(true)
+            "servicing_status":k("Updated"),"ca2023_in_db":k(true),"secure_boot_enabled":k(true),
+            "maker_blocked_event":k(false),"available_updates":k(0),"servicing_error":k(0),"capable":k(2),
+            "task_state":k("Ready"),"is_vm":k(false),"bitlocker_on":k(true),"other_os":k(false)
         }),
     );
     assert_eq!(p.status, Status::Healthy);
     let p = assessed(ProbeId::SecureBootCerts, json!({"servicing_status":k(7)}));
     assert_eq!(p.status, Status::Unknown);
+}
+
+#[test]
+fn secure_boot_renewal_facts_parse_and_drive_the_offer() {
+    use super::Renewal;
+    let facts = |extra: Value| {
+        let mut base = json!({
+            "update_completed_event":k(false),"update_staged_event":k(true),"update_error_event":k(false),
+            "servicing_status":k("NotStarted"),"ca2023_in_db":k(false),"secure_boot_enabled":k(true),
+            "maker_blocked_event":k(false),"available_updates":k(0),"servicing_error":k(0),"capable":k(0),
+            "task_state":k("Ready"),"is_vm":k(false),"bitlocker_on":k(false),"other_os":k(false)
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            base[key] = value.clone();
+        }
+        base
+    };
+    let renewal = |value: Value| {
+        let p = assessed(ProbeId::SecureBootCerts, value);
+        let Some(Evidence::SecureBootCerts(v)) = &p.evidence else {
+            panic!("facts did not parse");
+        };
+        Renewal::of(v)
+    };
+    assert_eq!(
+        renewal(facts(json!({}))),
+        Renewal::Offer { bitlocker: false }
+    );
+    assert_eq!(
+        renewal(facts(json!({"bitlocker_on":k(true)}))),
+        Renewal::Offer { bitlocker: true }
+    );
+    assert_eq!(
+        renewal(facts(json!({"available_updates":k(22852)}))),
+        Renewal::Started
+    );
+    assert_eq!(
+        renewal(facts(json!({"servicing_status":k("InProgress")}))),
+        Renewal::Started
+    );
+    assert_eq!(renewal(facts(json!({"is_vm":k(true)}))), Renewal::VirtualPc);
+    assert_eq!(
+        renewal(facts(json!({"servicing_status":k("Updated")}))),
+        Renewal::Done
+    );
+    let p = assessed(ProbeId::SecureBootCerts, facts(json!({"is_vm":k(true)})));
+    assert_eq!(p.status, Status::Informational);
+    let p = assessed(ProbeId::SecureBootCerts, facts(json!({})));
+    assert_eq!(p.status, Status::Attention);
+    // A wrong type is unreadable, never coerced into an offer.
+    for wrong in [
+        json!({"available_updates":k("0")}),
+        json!({"available_updates":k(-1)}),
+        json!({"task_state":k(1)}),
+        json!({"is_vm":k("false")}),
+        json!({"other_os":k(0)}),
+        json!({"maker_blocked_event":k(Value::Null)}),
+    ] {
+        assert_eq!(
+            renewal(facts(wrong.clone())),
+            Renewal::Blocked(super::Blocker::NotChecked),
+            "{wrong}"
+        );
+    }
+    let p = d(ProbeId::SecureBootCerts, facts(json!({"surprise":k(true)})));
+    assert!(p.evidence.is_none());
+}
+
+#[test]
+fn the_secure_boot_probe_reads_ids_and_values_never_event_text() {
+    let script = include_str!("probes.ps1");
+    let start = script.find("'SecureBootCerts' {").unwrap();
+    let end = script[start..].find("'DefenderProtection' {").unwrap();
+    let branch = &script[start..start + end];
+    assert!(!branch.contains(".Message"));
+    assert!(
+        branch.contains("bcdedit")
+            || include_str!("../platform/secureboot.ps1").contains("bcdedit.exe")
+    );
+    for write in [
+        "Set-ItemProperty",
+        "New-ItemProperty",
+        "SetValue",
+        "Start-ScheduledTask",
+        "Set-",
+    ] {
+        assert!(!branch.contains(write), "{write}");
+    }
 }
 
 #[test]

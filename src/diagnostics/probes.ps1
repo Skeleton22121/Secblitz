@@ -215,23 +215,33 @@ try {
         'SecureBootCerts' {
             Load 'SecureBoot'
             Load 'Microsoft.PowerShell.Diagnostics'
+            Load 'CimCmdlets'
+            Load 'ScheduledTasks'
             # Event ids only: message text can carry firmware or device details and is never read.
             $ids = $null
             try {
-                $rows = @()
-                try { $rows = @(Get-WinEvent -FilterHashtable @{LogName='System';Id=@(1795,1796,1797,1798,1801,1808);StartTime=[DateTime]::Now.AddDays(-400)} -MaxEvents 64) }
-                catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw } }
-                $ids = @($rows | ForEach-Object { [int]$_.Id })
+                $ids = @()
+                $start = [DateTime]::Now.AddDays(-400)
+                $query = {
+                    param($wanted, $max)
+                    try { @(Get-WinEvent -FilterHashtable @{LogName='System';Id=$wanted;StartTime=$start} -MaxEvents $max | ForEach-Object { [int]$_.Id }) }
+                    catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw }; @() }
+                }
+                # Failure and done ids get their own newest-event query so a busy 1801 cannot push them out of the cap.
+                foreach ($id in @(1032,1795,1796,1802,1803,1799,1808)) { $ids += @(& $query @($id) 1) }
+                $ids += @(& $query @(1797,1798,1801) 256)
             } catch { $ids = $null }
             $sb = $false
             try { $sb = [bool](Confirm-SecureBootUEFI) } catch { $sb = $false }
             $flag = { param($wanted) if ($null -eq $ids) { return (Unknown) }; $hit = $false; foreach ($i in $ids) { if ($i -in $wanted) { $hit = $true } }; return (Known $hit) }
+            $secureBoot = 'SYSTEM\CurrentControlSet\Control\SecureBoot'
             @{
-                update_completed_event=(& $flag @(1808))
+                update_completed_event=(& $flag @(1808,1799))
                 update_staged_event=(& $flag @(1801))
                 update_error_event=(& $flag @(1795,1796,1797,1798))
+                maker_blocked_event=(& $flag @(1032,1795,1796,1802,1803))
                 servicing_status=(Fact {
-                    $v = HklmValue 'SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing' 'UEFICA2023Status'
+                    $v = HklmValue "$secureBoot\Servicing" 'UEFICA2023Status'
                     if ($null -eq $v) { return 'Absent' }
                     if ($v -isnot [string]) { throw 'Wrong registry type' }
                     if ($v -cin @('NotStarted','InProgress','Updated')) { return $v }
@@ -243,6 +253,35 @@ try {
                     [Text.Encoding]::ASCII.GetString($db.Bytes).Contains('Windows UEFI CA 2023')
                 })
                 secure_boot_enabled=(Known $sb)
+                available_updates=(Fact { $v = HklmDword $secureBoot 'AvailableUpdates'; if ($null -eq $v) { return 0 }; if ($v -lt 0) { throw 'Unknown value' }; $v })
+                servicing_error=(Fact { $v = HklmDword "$secureBoot\Servicing" 'UEFICA2023Error'; if ($null -eq $v) { return 0 }; if ($v -lt 0) { throw 'Unknown value' }; $v })
+                capable=(Fact { $v = HklmDword "$secureBoot\Servicing" 'WindowsUEFICA2023Capable'; if ($null -eq $v) { return 0 }; if ($v -lt 0) { throw 'Unknown value' }; $v })
+                task_state=(Fact {
+                    $task = @(Get-ScheduledTask -TaskPath '\Microsoft\Windows\PI\' -TaskName 'Secure-Boot-Update' -ErrorAction SilentlyContinue)
+                    if ($task.Count -eq 0) { return 'Missing' }
+                    if ([string]$task[0].State -ceq 'Disabled') { return 'Disabled' }
+                    return 'Ready'
+                })
+                is_vm=(Fact {
+                    $rows = @(Cim 'Win32_ComputerSystem')
+                    if ($rows.Count -ne 1) { throw 'Ambiguous computer system' }
+                    SbIsVirtualMachine ([string]$rows[0].Manufacturer) ([string]$rows[0].Model)
+                })
+                bitlocker_on=(Fact {
+                    $drive = [IO.Path]::GetPathRoot($env:SystemRoot).TrimEnd('\')
+                    $volume = @()
+                    try { $volume = @(Get-CimInstance -Namespace 'root\CIMV2\Security\MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -Filter "DriveLetter='$drive'" -OperationTimeoutSec 5) }
+                    catch { if ($_.Exception.NativeErrorCode -ne 'InvalidNamespace') { throw } }
+                    if ($volume.Count -eq 0) { return $false }
+                    if ($volume.Count -ne 1) { throw 'Ambiguous system drive' }
+                    $p = Invoke-CimMethod -InputObject $volume[0] -MethodName GetProtectionStatus -OperationTimeoutSec 5
+                    if ($p.ReturnValue -ne 0 -or $p.ProtectionStatus -notin @(0,1)) { throw 'Unknown protection state' }
+                    $p.ProtectionStatus -eq 1
+                })
+                other_os=(Fact {
+                    if (-not $sb -or ($null -ne $ids -and (1808 -in $ids -or 1799 -in $ids))) { return $false }
+                    SbHasOtherBootLoader (SbFirmwareBootLines)
+                })
             }
         }
         'DefenderProtection' {

@@ -277,10 +277,10 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
         let script = format!(
             "$probe='{id:?}'\n{}\n{}\n{}",
             include_str!("common.ps1"),
-            if id == ProbeId::BrowserExtensions {
-                include_str!("browsers.ps1")
-            } else {
-                ""
+            match id {
+                ProbeId::BrowserExtensions => include_str!("browsers.ps1"),
+                ProbeId::SecureBootCerts => include_str!("../platform/secureboot.ps1"),
+                _ => "",
             },
             include_str!("probes.ps1")
         );
@@ -308,6 +308,12 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
                 .map_err(because(UnknownReason::Unavailable))?,
             );
         }
+        if id == ProbeId::SecureBootCerts {
+            pins.extend(
+                crate::operations::pin_system_executable(&root.join("System32/bcdedit.exe"))
+                    .map_err(because(UnknownReason::Unavailable))?,
+            );
+        }
         if id == ProbeId::Management {
             pins.extend(
                 crate::operations::pin_system_executable(
@@ -330,7 +336,8 @@ fn run(root: &Path, id: ProbeId, timeout: Duration) -> ProbeResult<Vec<u8>> {
     let job = Handle(job);
     let mut limits: ExtendedLimits = unsafe { zeroed() };
     limits.basic.flags = 0x2000 | 0x8 | 0x100; // KILL_ON_JOB_CLOSE | ACTIVE_PROCESS | PROCESS_MEMORY
-    limits.basic.active_processes = 1;
+                                               // The Secure Boot probe lists firmware boot entries with the inbox bcdedit.exe.
+    limits.basic.active_processes = if id == ProbeId::SecureBootCerts { 2 } else { 1 };
     limits.process_memory = 512 * 1024 * 1024;
     check(unsafe {
         SetInformationJobObject(
@@ -505,7 +512,12 @@ fn modules(id: ProbeId) -> Vec<&'static str> {
         ProbeId::DefenderHealth | ProbeId::DefenderPolicy | ProbeId::DefenderProtection => {
             &["Defender"]
         }
-        ProbeId::SecureBootCerts => &["SecureBoot", "Microsoft.PowerShell.Diagnostics"],
+        ProbeId::SecureBootCerts => &[
+            "SecureBoot",
+            "Microsoft.PowerShell.Diagnostics",
+            "CimCmdlets",
+            "ScheduledTasks",
+        ],
         ProbeId::UpdatePolicy | ProbeId::Persistence => &["CimCmdlets"],
         ProbeId::LegacyFeatures => &["CimCmdlets"],
         ProbeId::AccountHygiene => &["Microsoft.PowerShell.LocalAccounts"],

@@ -296,6 +296,7 @@ static SECURE_BOOT_CERTS: Guide = g(
         "Select Check for updates and install everything offered.",
         "Restart when Windows asks. You may need to do this more than once.",
         "Then look for a startup (BIOS) update on your PC maker's website.",
+        "Your PC maker may need to release one before the renewal can finish.",
     ],
 );
 static RUN_HISTORY: Guide = g(

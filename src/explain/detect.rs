@@ -10,7 +10,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "boot.secure_boot_certs" => Explainer {
             what: "This checks that your PC's startup security has received the newer certificates from Microsoft.",
             risk: "Old startup certificates expire, and a PC without the new ones may stop getting startup security fixes.",
-            change: "Install all Windows updates and check your PC maker's website. This app never changes your PC's startup settings.",
+            change: "If Secblitz offers Renew now on the Tools page, it can't be undone and finishes after a restart. Otherwise install Windows updates.",
         },
         "defender.tamper_protection" => Explainer {
             what: "Tamper Protection stops harmful programs from switching off your virus protection.",

@@ -1091,6 +1091,11 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
             ctx.t("Remove"),
             (!threats_busy && !ctx.busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
         ),
+        logic::TipAction::StartRenewal { bitlocker } => secondary(
+            p,
+            ctx.t("Renew now"),
+            (!ctx.busy).then_some(Msg::Ask(Sheet::Renewal { bitlocker })),
+        ),
         logic::TipAction::Scan => secondary(
             p,
             ctx.t("Scan now"),
@@ -1354,6 +1359,23 @@ pub(super) fn sheet_copy(sheet: Sheet) -> SheetCopy {
             ],
             "Remove them",
         ),
+        Sheet::Renewal { bitlocker } => (
+            Icon::ShieldCheck,
+            "Renew your PC's startup security?",
+            if bitlocker {
+                &[
+                    "This can't be undone.",
+                    "It finishes the next time you restart your PC. Secblitz never restarts your PC for you.",
+                    "Your PC may ask for your BitLocker recovery key once after the restart. Make sure you can find it before you continue.",
+                ]
+            } else {
+                &[
+                    "This can't be undone.",
+                    "It finishes the next time you restart your PC. Secblitz never restarts your PC for you.",
+                ]
+            },
+            "Renew now",
+        ),
         Sheet::DefenderUpdate => (
             Icon::Download,
             "Update virus protection?",
@@ -1483,6 +1505,15 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             .align_y(Alignment::Center),
         );
     }
+    if sheet == (Sheet::Renewal { bitlocker: true }) {
+        content = content.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Find my recovery key"),
+            Some(Icon::ExternalLink),
+            Some(tools(Msg::OpenRecoveryKey)),
+        ));
+    }
     if sheet == Sheet::InstallUpdates {
         if let Updates::Found(found) = &state.updates {
             for item in install_updates_extra(state, ctx, found) {
@@ -1512,4 +1543,52 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
         .spacing(theme::S6)
         .width(Length::Fill)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Lang;
+
+    fn renewal_sheet(lang: Lang, bitlocker: bool) -> (String, Vec<String>, String) {
+        let (app, _) = crate::gui::App::new(crate::gui::Options {
+            lang,
+            broker: None,
+            start: None,
+        });
+        let (_, title, lines, confirm) =
+            sheet_text(&app.tools, &app.ctx, Sheet::Renewal { bitlocker });
+        (title, lines, confirm)
+    }
+
+    #[test]
+    fn the_renewal_sheet_says_it_cannot_be_undone_and_needs_a_restart_before_the_yes() {
+        let (_, lines, confirm) = renewal_sheet(Lang::En, false);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("can't be undone"));
+        assert!(lines[1].contains("restart") && lines[1].contains("never restarts"));
+        assert_eq!(confirm, "Renew now");
+        assert!(lines.iter().all(|l| !l.contains('\u{2014}')));
+    }
+
+    #[test]
+    fn the_recovery_key_line_shows_only_when_bitlocker_is_on() {
+        let (_, plain, _) = renewal_sheet(Lang::En, false);
+        let (_, locked, _) = renewal_sheet(Lang::En, true);
+        assert_eq!(locked.len(), plain.len() + 1);
+        assert!(locked[2].contains("BitLocker recovery key"));
+    }
+
+    #[test]
+    fn every_language_has_the_three_lines() {
+        for lang in [Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
+            let (en_title, en, _) = renewal_sheet(Lang::En, true);
+            let (title, lines, _) = renewal_sheet(lang, true);
+            assert_ne!(title, en_title, "{lang:?}");
+            assert_eq!(lines.len(), 3);
+            for (line, english) in lines.iter().zip(&en) {
+                assert_ne!(line, english, "{lang:?}");
+            }
+        }
+    }
 }

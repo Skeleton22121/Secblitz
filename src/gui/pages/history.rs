@@ -159,6 +159,7 @@ fn kind_icon(kind: Kind) -> (Icon, Tone) {
         Kind::Debloat => (Icon::Package, Tone::Neutral),
         Kind::Restore => (Icon::Refresh, Tone::Good),
         Kind::Recovery => (Icon::Refresh, Tone::Neutral),
+        Kind::SecureBootRenewal => (Icon::ShieldCheck, Tone::Neutral),
     }
 }
 
