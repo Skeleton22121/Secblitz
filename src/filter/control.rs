@@ -54,7 +54,7 @@ pub enum Desired {
     NoRule,
 }
 
-/// The rule exists only while a switch is on, the service is running and its
+/// The rule exists only while a switch or private lookups are on and the service is running, fresh and listening. A pause keeps it.
 /// status is fresh and says it is listening. A pause keeps the rule: the
 /// service then forwards everything.
 pub fn desired(
@@ -66,7 +66,7 @@ pub fn desired(
 ) -> Desired {
     let answering =
         service == ServiceState::Running && status.is_some_and(|s| s.listening && fresh(s, now));
-    if config.any_on() && answering {
+    if config.needs_service() && answering {
         Desired::Rule(rule_servers(network))
     } else {
         Desired::NoRule
@@ -169,7 +169,7 @@ pub fn run_all(steps: Vec<Box<dyn FnOnce() -> anyhow::Result<()> + '_>>) -> anyh
 #[cfg(windows)]
 mod glue {
     use super::*;
-    use crate::filter::{adapters, config, routing, scm};
+    use crate::filter::{adapters, config, routing, scm, service};
     use anyhow::{Context, Result};
     use std::time::Instant;
 
@@ -219,49 +219,61 @@ mod glue {
     pub fn apply_switches(new: Config) -> Result<()> {
         crate::platform::require_admin(NEEDS_ADMIN)?;
         scm::ensure_dirs()?;
-        if new.any_on() && scm::state()? == ServiceState::NotInstalled {
+        if new.needs_service() && scm::state()? == ServiceState::NotInstalled {
             scm::install()?;
         }
         config::save_config(&config::config_path()?, &new)?;
-        if new.any_on() {
+        if new.needs_service() {
             scm::set_enabled(true)?;
             // If it never starts listening (port taken), reconcile leaves
             // the rule out and the page explains it from the status file.
             wait_until_listening(Duration::from_secs(10));
-            reconcile()
+            reconcile()?;
+            settle();
+            Ok(())
         } else {
             routing::remove_rule()?;
             scm::set_enabled(false)
         }
     }
 
-    fn rewrite(edit: impl FnOnce(Config) -> Config) -> Result<()> {
+    /// The service reads the config every couple of seconds and Windows caches answers, so a change shows once both catch up.
+    fn settle() {
+        std::thread::sleep(service::CONFIG_EVERY + Duration::from_secs(1));
+        routing::flush_cache();
+    }
+
+    fn rewrite(edit: impl FnOnce(Config) -> Result<Config>) -> Result<()> {
         crate::platform::require_admin(NEEDS_ADMIN)?;
         let path = config::config_path()?;
-        config::save_config(&path, &edit(config::load_config(&path)))
+        config::save_config(&path, &edit(config::load_config(&path))?)?;
+        settle();
+        Ok(())
     }
 
     pub fn pause_for(duration: Duration) -> Result<()> {
-        rewrite(|c| paused_config(c, unix_now(), duration))
+        rewrite(|c| Ok(paused_config(c, unix_now(), duration)))
     }
 
     pub fn pause_until_restart() -> Result<()> {
-        rewrite(|c| paused_until_restart_config(c, config::boot_time(unix_now())))
+        rewrite(|c| {
+            Ok(paused_until_restart_config(
+                c,
+                config::boot_time(unix_now()),
+            ))
+        })
     }
 
     pub fn resume() -> Result<()> {
-        rewrite(resumed_config)
+        rewrite(|c| Ok(resumed_config(c)))
     }
 
     pub fn allow_site(name: &str) -> Result<()> {
-        crate::platform::require_admin(NEEDS_ADMIN)?;
-        let path = config::config_path()?;
-        let updated = allowed_config(config::load_config(&path), name)?;
-        config::save_config(&path, &updated)
+        rewrite(|c| allowed_config(c, name))
     }
 
     pub fn remove_allowed(name: &str) -> Result<()> {
-        rewrite(|c| disallowed_config(c, name))
+        rewrite(|c| Ok(disallowed_config(c, name)))
     }
 
     /// Rule first, then the service, then the files. The reconcile task
@@ -387,6 +399,19 @@ mod tests {
         ] {
             assert_eq!(desired(&on(), run, s.as_ref(), &net, now), Desired::NoRule);
         }
+    }
+
+    #[test]
+    fn private_lookups_alone_keep_the_rule() {
+        let s = status(true, 100);
+        let only_private = Config {
+            private_lookups: true,
+            ..Config::default()
+        };
+        assert!(matches!(
+            desired(&only_private, ServiceState::Running, Some(&s), &[], 100),
+            Desired::Rule(_)
+        ));
     }
 
     #[test]

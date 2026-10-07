@@ -143,8 +143,8 @@ impl Key {
     }
 }
 
-/// also empties on its own within a minute (blocked answers live 60 s).
-fn flush_cache() {
+/// Empties the Windows lookup cache so earlier filter answers are asked for again.
+pub fn flush_cache() {
     unsafe {
         let module = LoadLibraryExW(
             wide("dnsapi.dll").as_ptr(),

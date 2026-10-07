@@ -185,7 +185,7 @@ pub fn plan() -> Result<Plan> {
             .map(|p| suggested::recorded(&p))
             .unwrap_or(false),
         web_on: secblitz::filter::config::config_path()
-            .is_ok_and(|p| secblitz::filter::config::load_config(&p).any_on()),
+            .is_ok_and(|p| secblitz::filter::config::load_config(&p).needs_service()),
     })
 }
 

@@ -13,8 +13,8 @@ pub const TYPE_SVCB: u16 = 64;
 pub const TYPE_HTTPS: u16 = 65;
 const TYPE_CNAME: u16 = 5;
 const CLASS_IN: u16 = 1;
-const TTL: u32 = 60;
-/// Safe search answers are reused by Windows for at most this long.
+/// Short, so an allowed site or an ended pause reaches browsers within seconds.
+const TTL: u32 = 10;
 const SAFE_SEARCH_TTL: u32 = 300;
 const MAX_ADDRESSES: usize = 8;
 const MAX_ANSWERS: u16 = 32;
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(&a[..2], &[0xC0, 0x0C]);
         assert_eq!(be16(a, 2), 1);
         assert_eq!(be16(a, 4), 1);
-        assert_eq!(u32::from_be_bytes([a[6], a[7], a[8], a[9]]), 60);
+        assert_eq!(u32::from_be_bytes([a[6], a[7], a[8], a[9]]), TTL);
         assert_eq!(be16(a, 10), 4);
         assert_eq!(&a[12..], &[0, 0, 0, 0]);
     }

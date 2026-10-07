@@ -169,7 +169,7 @@ pub(super) fn web_protection_off() -> bool {
     let Ok(path) = config_path() else {
         return true;
     };
-    if !load_config(&path).any_on() {
+    if !load_config(&path).needs_service() {
         return true;
     }
     secblitz::filter::control::apply_switches(Config::default()).is_ok()
