@@ -3,6 +3,7 @@
 
 pub mod activity;
 pub mod adapters;
+pub mod companies;
 pub mod config;
 pub mod control;
 pub mod dns;
