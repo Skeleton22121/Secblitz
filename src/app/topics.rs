@@ -77,9 +77,8 @@ impl Topic {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counts {
-    /// Fixes to make and things to look at that were never fixed.
     pub to_fix: usize,
-    /// Settings Secblitz fixed that are no longer on.
+    pub to_look: usize,
     pub switched_back: usize,
     pub options: usize,
 }
@@ -88,6 +87,7 @@ pub struct Counts {
 pub enum Line {
     ToFix(usize),
     SwitchedBack(usize),
+    ToLookAt(usize),
     Options(usize),
     AllSet,
     Checking,
@@ -99,6 +99,7 @@ impl Line {
             None => Line::Checking,
             Some(c) if c.to_fix > 0 => Line::ToFix(c.to_fix),
             Some(c) if c.switched_back > 0 => Line::SwitchedBack(c.switched_back),
+            Some(c) if c.to_look > 0 => Line::ToLookAt(c.to_look),
             Some(c) if c.options > 0 => Line::Options(c.options),
             Some(_) => Line::AllSet,
         }
@@ -109,24 +110,9 @@ impl Line {
     }
 }
 
-/// Settings Secblitz fixed that the last check found unprotected again.
-pub fn switched_back(report: &Report, available: &[String]) -> Vec<String> {
-    flow::candidates(report, available)
-        .into_iter()
-        .filter(|id| report.results.iter().any(|r| r.id == *id && r.undoable))
-        .collect()
-}
-
-/// The fixes that start ticked: every recommended one and every switched back one.
+/// Optional settings that were switched back are tagged but left for the person to tick.
 pub fn default_selection(report: &Report, available: &[String]) -> Vec<String> {
-    let back = switched_back(report, available);
-    let mut ids = flow::recommended(report, available);
-    for id in back {
-        if !ids.contains(&id) {
-            ids.push(id);
-        }
-    }
-    ids
+    flow::recommended(report, available)
 }
 
 pub fn first_needing_action(lines: impl Fn(Topic) -> Line) -> Option<Topic> {
@@ -349,12 +335,20 @@ mod tests {
                 to_fix,
                 switched_back,
                 options,
+                ..Counts::default()
             })
         };
         assert_eq!(Line::of(None), Line::Checking);
         assert_eq!(Line::of(c(2, 1, 3)), Line::ToFix(2));
         assert_eq!(Line::of(c(0, 1, 3)), Line::SwitchedBack(1));
         assert_eq!(Line::of(c(0, 0, 3)), Line::Options(3));
+        let look = Some(Counts {
+            to_look: 2,
+            options: 3,
+            ..Counts::default()
+        });
+        assert_eq!(Line::of(look), Line::ToLookAt(2));
+        assert!(!Line::ToLookAt(2).needs_action());
         assert_eq!(Line::of(c(0, 0, 0)), Line::AllSet);
         assert!(Line::ToFix(1).needs_action() && Line::SwitchedBack(1).needs_action());
         assert!(!Line::Options(1).needs_action());
@@ -397,26 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_is_switched_back_only_when_secblitz_changed_it_and_it_is_off_again() {
-        let (r, available) = report(&[
-            ("defender.pua", CheckStatus::Attention, true),
-            ("defender.script_nis", CheckStatus::Attention, false),
-            ("wsh.disabled", CheckStatus::Compliant, true),
-            ("net.llmnr", CheckStatus::Applied, true),
-            ("privacy.advertising_id", CheckStatus::Attention, true),
-        ]);
-        assert_eq!(
-            switched_back(&r, &available),
-            ["defender.pua", "privacy.advertising_id"]
-        );
-        assert!(
-            switched_back(&r, &[]).is_empty(),
-            "only settings that can be fixed"
-        );
-    }
-
-    #[test]
-    fn switched_back_settings_start_ticked_with_the_recommended_ones() {
+    fn only_recommended_settings_start_ticked_even_when_switched_back() {
         let (r, available) = report(&[
             ("defender.pua", CheckStatus::Attention, true),
             ("defender.script_nis", CheckStatus::Attention, false),
@@ -427,8 +402,8 @@ mod tests {
         assert!(ticked.contains(&"defender.pua".to_owned()));
         assert!(ticked.contains(&"defender.script_nis".to_owned()));
         assert!(
-            ticked.contains(&"privacy.advertising_id".to_owned()),
-            "a switched back choice was already chosen once"
+            !ticked.contains(&"privacy.advertising_id".to_owned()),
+            "a switched back optional setting is not ticked for the person"
         );
         assert!(
             !ticked.contains(&"privacy.clipboard_sync".to_owned()),

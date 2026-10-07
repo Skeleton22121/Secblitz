@@ -197,12 +197,12 @@ impl Rows {
                 .iter()
                 .filter(fix)
                 .filter(|r| !back(r))
-                .count()
-                + self
-                    .others
-                    .iter()
-                    .filter(|o| o.topic == topic && o.bucket == Bucket::Look)
-                    .count(),
+                .count(),
+            to_look: self
+                .others
+                .iter()
+                .filter(|o| o.topic == topic && o.bucket == Bucket::Look)
+                .count(),
             switched_back: self
                 .attention
                 .iter()
@@ -679,7 +679,6 @@ fn candidates(ctx: &Ctx) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The fixes that start chosen: the recommended ones and the ones switched back.
 fn starting_choice(ctx: &Ctx) -> Vec<String> {
     ctx.report
         .as_deref()
@@ -991,7 +990,11 @@ pub fn tile_lines(state: &State, ctx: &Ctx) -> Vec<(Topic, Line)> {
     .unwrap_or_default()
 }
 
-/// The ids the "switched back" banner would put back.
+#[cfg(test)]
+pub fn first_topic_for_test(state: &State, ctx: &Ctx) -> Option<Topic> {
+    with_rows(state, ctx, Rows::first_topic_to_act_on).flatten()
+}
+
 #[cfg(test)]
 pub fn chosen_in_topic(state: &State, ctx: &Ctx, topic: Topic) -> Vec<String> {
     with_rows(state, ctx, |rows| chosen_in(state, ctx, rows, Some(topic))).unwrap_or_default()
@@ -1719,6 +1722,7 @@ fn line_text(ctx: &Ctx, line: Line) -> String {
     match line {
         Line::ToFix(n) => ctx.t("{n} to fix").replace("{n}", &n.to_string()),
         Line::SwitchedBack(n) => ctx.t("{n} switched back").replace("{n}", &n.to_string()),
+        Line::ToLookAt(n) => ctx.t("{n} to look at").replace("{n}", &n.to_string()),
         Line::Options(1) => ctx.t("1 option"),
         Line::Options(n) => ctx.t("{n} options").replace("{n}", &n.to_string()),
         Line::AllSet => ctx.t("All set"),
@@ -1730,7 +1734,7 @@ fn line_tone(line: Line) -> Tone {
     match line {
         Line::ToFix(_) | Line::SwitchedBack(_) => Tone::Warn,
         Line::AllSet => Tone::Good,
-        Line::Options(_) | Line::Checking => Tone::Neutral,
+        Line::ToLookAt(_) | Line::Options(_) | Line::Checking => Tone::Neutral,
     }
 }
 

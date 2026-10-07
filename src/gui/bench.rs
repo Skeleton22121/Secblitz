@@ -1210,22 +1210,48 @@ fn a_setting_secblitz_fixed_that_is_off_again_is_counted_and_chosen() {
     let mut app = app();
     report_with(
         &mut app,
-        &["net.llmnr", "privacy.advertising_id", "wsh.disabled"],
-        &["net.llmnr", "privacy.advertising_id"],
+        &[
+            "net.llmnr",
+            "privacy.advertising_id",
+            "wsh.disabled",
+            "defender.pua",
+            "autorun.disabled",
+        ],
+        &[
+            "net.llmnr",
+            "privacy.advertising_id",
+            "defender.pua",
+            "autorun.disabled",
+        ],
     );
     let mut back = fixes::banner_ids(&app.fixes, &app.ctx);
     back.sort();
-    assert_eq!(back, ["net.llmnr", "privacy.advertising_id"]);
+    assert_eq!(
+        back,
+        [
+            "autorun.disabled",
+            "defender.pua",
+            "net.llmnr",
+            "privacy.advertising_id"
+        ]
+    );
     assert_eq!(line_of(&app, Topic::Network), Line::SwitchedBack(1));
     assert_eq!(line_of(&app, Topic::Privacy), Line::SwitchedBack(1));
     assert_eq!(line_of(&app, Topic::Windows), Line::ToFix(1));
     drop(app.update(Message::Fixes(fixes::Msg::Expand("x".into()))));
     let chosen = fixes::selected_ids(&app.fixes);
-    assert!(chosen.contains(&"net.llmnr".to_owned()));
-    assert!(
-        chosen.contains(&"privacy.advertising_id".to_owned()),
-        "a setting that was fixed before is chosen again"
-    );
+    for id in ["defender.pua", "net.llmnr"] {
+        assert!(
+            chosen.contains(&id.to_owned()),
+            "{id} is recommended, so it is chosen again"
+        );
+    }
+    for id in ["autorun.disabled", "privacy.advertising_id"] {
+        assert!(
+            !chosen.contains(&id.to_owned()),
+            "{id} is a choice, so it is not chosen for the person even when it was fixed before"
+        );
+    }
     drop(app.update(Message::Fixes(fixes::Msg::SelectNone)));
     drop(app.update(Message::Fixes(fixes::Msg::PutBack)));
     let mut chosen = fixes::selected_ids(&app.fixes);
@@ -1364,4 +1390,26 @@ fn every_topic_lays_out_in_two_and_four_columns() {
             assert!(node.size().height > 0.0, "{topic:?} {width}");
         }
     }
+}
+
+#[test]
+fn a_setting_secblitz_cannot_fix_is_something_to_look_at_not_to_fix() {
+    let mut app = app();
+    with_report(&mut app, |r| {
+        for o in &mut r.results {
+            o.status = if o.id == "autorun.disabled" {
+                CheckStatus::Review
+            } else {
+                CheckStatus::Compliant
+            };
+            o.undoable = false;
+        }
+    });
+    assert_eq!(line_of(&app, Topic::Windows), Line::ToLookAt(1));
+    assert!(!line_of(&app, Topic::Windows).needs_action());
+    assert_eq!(
+        fixes::first_topic_for_test(&app.fixes, &app.ctx),
+        None,
+        "nothing to fix means no topic is opened for the person"
+    );
 }
