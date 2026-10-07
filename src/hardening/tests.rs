@@ -1758,9 +1758,9 @@ fn every_browser_control_says_before_the_person_agrees_that_browsers_show_a_mana
 }
 
 #[test]
-fn the_run_box_switch_sets_one_machine_wide_value_and_needs_no_restart() {
+fn the_run_box_switch_sets_one_machine_wide_value_and_asks_to_sign_out() {
     let s = spec("clickfix.run_box").unwrap();
-    assert!(s.ask && !s.reboot && !s.dynamic());
+    assert!(s.ask && s.reboot && !s.dynamic());
     assert_eq!(s.source, Source::Registry);
     assert_eq!(s.keys.len(), 1);
     let k = &s.keys[0];

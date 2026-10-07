@@ -18,7 +18,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead."
         }
         "clickfix.run_box" => {
-            "Win+R and Run in the Start menu stop working for everyone on this PC. Everything else still opens normally."
+            "Win+R and Run in the Start menu stop working for everyone on this PC. Needs a sign out or restart."
         }
         "wifi.risky_profiles" => {
             "Saved risky Wi-Fi networks stop joining by themselves. You can still connect by hand."
