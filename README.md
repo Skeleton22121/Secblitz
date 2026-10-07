@@ -7,9 +7,9 @@
 
 Secblitz maximizes Windows security and privacy by fixing security holes and misconfigurations in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.
 
-[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.9.1-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.9.2-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![Version 0.9.1](https://img.shields.io/badge/version-0.9.1-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
+![Version 0.9.2](https://img.shields.io/badge/version-0.9.2-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
@@ -38,12 +38,12 @@ Secblitz is not an antivirus. It turns on and configures the protection built in
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.9.1-windows-x64-setup.exe) (9.5 MB) and run it. Secblitz asks for administrator permission because it reads and changes system settings.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.9.2-windows-x64-setup.exe) (9.5 MB) and run it. Secblitz asks for administrator permission because it reads and changes system settings.
 
 The installer is not code-signed yet, so Windows may show an unknown publisher warning. Choose **More info**, then **Run anyway**. To check the file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
 ```powershell
-Get-FileHash .\secblitz-0.9.1-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\secblitz-0.9.2-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Tested on Windows 11, 64-bit. Windows 10 is not tested.

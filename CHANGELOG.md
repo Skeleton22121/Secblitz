@@ -9,6 +9,11 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-07
+
+### Changed
+- The portable version is on GitHub, linked from the download page.
+
 ## [0.9.1] - 2026-10-07
 
 ### Added
