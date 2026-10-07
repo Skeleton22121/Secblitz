@@ -716,6 +716,7 @@ fn a_chosen_fix_that_was_switched_back_is_written_again_and_undo_keeps_the_origi
     let journal = e.load().unwrap();
     assert_eq!(journal.len(), 1, "no second record of the same change");
     assert_eq!(journal[0].entries[0].before, before);
+    drop(journal);
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
 
     assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
