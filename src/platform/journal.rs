@@ -257,6 +257,40 @@ fn secure_tree(
     Ok(())
 }
 
+fn private_descriptor() -> Result<Local> {
+    let sddl = wide("O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")?;
+    let mut descriptor = null_mut();
+    ensure!(
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                null_mut(),
+            )
+        } != 0,
+        "Cannot construct journal security descriptor"
+    );
+    Ok(Local(descriptor))
+}
+
+/// Creates a new folder only SYSTEM and Administrators can open. Fails if it already exists.
+pub fn create_private_dir(path: &Path) -> Result<()> {
+    let descriptor = private_descriptor()?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: 0,
+    };
+    let path_w = wide(path)?;
+    ensure!(
+        unsafe { CreateDirectoryW(path_w.as_ptr(), &attributes) } != 0,
+        "Cannot create protected folder (Windows error {})",
+        unsafe { GetLastError() }
+    );
+    Ok(())
+}
+
 /// Returned paths are safe only while normal Windows ACL enforcement applies.
 /// The caller must write journal/lock files under this directory, never follow
 /// user-provided paths, and use atomic create/replace operations for new files.
@@ -321,20 +355,7 @@ pub fn state_dir() -> Result<PathBuf> {
         held.push(h);
     }
     let path = base.join("Secblitz");
-    let sddl = wide("O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")?;
-    let mut descriptor = null_mut();
-    ensure!(
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl.as_ptr(),
-                1,
-                &mut descriptor,
-                null_mut(),
-            )
-        } != 0,
-        "Cannot construct journal security descriptor"
-    );
-    let descriptor = Local(descriptor);
+    let descriptor = private_descriptor()?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: descriptor.0,
@@ -370,6 +391,7 @@ pub fn state_dir() -> Result<PathBuf> {
     let opaque = [
         path.join("App").join(crate::platform::APP_BACKUPS),
         path.join(crate::platform::UPDATES),
+        path.join(crate::engine::recover::DAMAGED),
     ];
     let foreign = path.join(crate::platform::WEB_PROTECTION);
     secure_tree(&path, &opaque, &foreign, &mut entries, 0)?;

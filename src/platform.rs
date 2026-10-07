@@ -297,6 +297,19 @@ pub fn state_dir() -> Result<PathBuf> {
     }
 }
 
+/// A new folder inside the state folder that only SYSTEM and Administrators can open.
+pub fn create_private_dir(path: &std::path::Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        windows::create_private_dir(path)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::create_dir(path)?;
+        Ok(())
+    }
+}
+
 /// A machine registry DWORD repair; `target` is the value the control restores.
 struct RegistryRepair {
     id: &'static str,
