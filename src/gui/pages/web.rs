@@ -5,7 +5,7 @@ use crate::gui::pages::home;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::hairline::{web_globe, Plate};
 use crate::gui::widgets::{self, progress, ButtonKind};
-use crate::gui::{blocking, Ctx, Message};
+use crate::gui::{blocking, Ctx, Message, Page};
 use crate::i18n::Lang;
 use iced::widget::canvas::Cache;
 use iced::widget::{column, container, row, text_input};
@@ -18,6 +18,7 @@ use secblitz::filter::config::{
     MAX_ALLOWED, STATS_DAYS,
 };
 use secblitz::filter::control::{self, ServiceState};
+use secblitz::filter::gaps::Gap;
 use secblitz::filter::matcher::Kind;
 use std::time::{Duration, Instant};
 
@@ -192,6 +193,26 @@ pub enum Line {
     PausedUntilRestart,
     GettingReady,
     NotWorking,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Coverage {
+    Everything,
+    Gaps(Vec<Gap>),
+}
+
+/// `None` unless protection is on and the service could check the PC, so
+/// neither claim is made on a guess.
+fn coverage(snapshot: &Snapshot, line: Line) -> Option<Coverage> {
+    if line != Line::On {
+        return None;
+    }
+    let gaps = snapshot.status.as_ref()?.gaps.as_ref()?;
+    Some(if gaps.is_empty() {
+        Coverage::Everything
+    } else {
+        Coverage::Gaps(gaps.clone())
+    })
 }
 
 pub fn status_line(
@@ -912,9 +933,21 @@ fn line_text(ctx: &Ctx, line: Line) -> String {
     }
 }
 
-fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
+fn on_title(coverage: Option<&Coverage>) -> &'static str {
+    match coverage {
+        Some(Coverage::Everything) => "Web protection covers everything",
+        Some(Coverage::Gaps(_)) => "Web protection is on, but some sites can get around it",
+        None => "Web protection is on",
+    }
+}
+
+fn hero_text(ctx: &Ctx, line: Line, coverage: Option<&Coverage>) -> (String, Option<String>) {
     match line {
-        Line::On => (ctx.t("Web protection is on"), None),
+        Line::On => (
+            ctx.t(on_title(coverage)),
+            matches!(coverage, Some(Coverage::Gaps(_)))
+                .then(|| ctx.t("See below for what can get around it.")),
+        ),
         Line::GettingReady => (
             ctx.t("Getting block lists ready"),
             Some(ctx.t("Blocking starts as soon as the lists are ready.")),
@@ -1156,7 +1189,7 @@ fn hero<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
         labels: web_globe::Labels::new(|k| ctx.t(k)),
     }
     .view();
-    let (title, sub) = hero_text(ctx, line);
+    let (title, sub) = hero_text(ctx, line, coverage(snapshot, line).as_ref());
     let mut words = column![widgets::h2(p, title)].spacing(theme::S1);
     if let Some(sub) = sub {
         words = words.push(widgets::muted(p, sub));
@@ -1299,6 +1332,51 @@ fn private_row<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
     )
 }
 
+fn gap_text(gap: Gap) -> (Icon, &'static str, &'static str) {
+    match gap {
+        Gap::BrowserSecureDns => (
+            Icon::Globe,
+            "A browser uses its own private lookups",
+            "Sites it opens this way skip Web protection. The fix is in Protection, under Browsers use Web protection.",
+        ),
+        Gap::OtherDnsRule => (
+            Icon::AlertTriangle,
+            "Another program redirects your lookups",
+            "A VPN, security tool or work setting on this PC sends all lookups somewhere else, so Web protection may not see them.",
+        ),
+        Gap::Vpn => (
+            Icon::Lock,
+            "Your VPN app uses its own lookups",
+            "Web protection can't see those sites. Turn on your VPN's own blocking, or switch off the VPN when you don't need it.",
+        ),
+    }
+}
+
+fn gaps_group<'a>(ctx: &'a Ctx, gaps: &[Gap]) -> El<'a> {
+    let p = ctx.palette;
+    let rows = gaps
+        .iter()
+        .map(|gap| {
+            let (glyph, title, detail) = gap_text(*gap);
+            let trailing: El<'a> = if *gap == Gap::BrowserSecureDns {
+                widgets::link(p, ctx.t("Open Protection"), Message::Navigate(Page::Fixes))
+            } else {
+                column![].into()
+            };
+            widgets::row_item_tinted(
+                p,
+                Some(glyph),
+                Some(Tone::Warn),
+                ctx.t(title),
+                Some(ctx.t(detail)),
+                trailing,
+                None,
+            )
+        })
+        .collect();
+    widgets::group(p, ctx.t("What can get around it"), None, None, rows)
+}
+
 fn overview<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
     let p = ctx.palette;
     let mut page = column![hero(state, ctx, snapshot)].spacing(theme::S8);
@@ -1312,6 +1390,9 @@ fn overview<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
                     &format_clock(ctx.lang, history::local_seconds(at)),
                 ),
         ));
+    }
+    if let Some(Coverage::Gaps(gaps)) = coverage(snapshot, current_line(snapshot)) {
+        page = page.push(gaps_group(ctx, &gaps));
     }
     if snapshot.installed {
         page = page.push(private_row(ctx, snapshot));
@@ -1677,6 +1758,58 @@ mod tests {
             recent: Vec::new(),
             stats: None,
         }
+    }
+
+    #[test]
+    fn coverage_is_claimed_only_when_the_pc_was_checked() {
+        let with = |gaps: Option<Vec<Gap>>| {
+            snapshot(config(true), Some(Status { gaps, ..healthy() }), true)
+        };
+        let line = |s: &Snapshot| current_line(s);
+        let clear = with(Some(Vec::new()));
+        assert_eq!(coverage(&clear, line(&clear)), Some(Coverage::Everything));
+        let some = with(Some(vec![Gap::Vpn]));
+        assert_eq!(
+            coverage(&some, line(&some)),
+            Some(Coverage::Gaps(vec![Gap::Vpn]))
+        );
+        let unknown = with(None);
+        assert_eq!(coverage(&unknown, line(&unknown)), None);
+        assert_eq!(coverage(&clear, Line::NotWorking), None);
+        assert_eq!(coverage(&clear, Line::GettingReady), None);
+        assert_eq!(coverage(&clear, Line::Paused(NOW)), None);
+    }
+
+    #[test]
+    fn the_headline_follows_the_coverage() {
+        let title = |c: Option<Coverage>| on_title(c.as_ref());
+        assert_eq!(title(None), "Web protection is on");
+        assert_eq!(
+            title(Some(Coverage::Everything)),
+            "Web protection covers everything"
+        );
+        assert_eq!(
+            title(Some(Coverage::Gaps(vec![Gap::OtherDnsRule]))),
+            "Web protection is on, but some sites can get around it"
+        );
+    }
+
+    #[test]
+    fn every_gap_has_words_and_a_changed_gap_redraws_the_page() {
+        for gap in [Gap::BrowserSecureDns, Gap::OtherDnsRule, Gap::Vpn] {
+            let (_, title, detail) = gap_text(gap);
+            assert!(!title.is_empty() && !detail.is_empty() && !detail.contains('\u{2014}'));
+        }
+        let a = snapshot(config(true), Some(healthy()), true);
+        let b = snapshot(
+            config(true),
+            Some(Status {
+                gaps: Some(vec![Gap::Vpn]),
+                ..healthy()
+            }),
+            true,
+        );
+        assert!(!same_look(&a, &b));
     }
 
     #[test]

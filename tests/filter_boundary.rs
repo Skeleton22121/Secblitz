@@ -352,6 +352,7 @@ fn a_status_file_is_written_in_the_shape_the_app_reads() {
         written_at: 77,
         lookups: Default::default(),
         dangerous_at: Some(70),
+        gaps: Some(vec![secblitz::filter::gaps::Gap::Vpn]),
     };
     save_status(&path, &s).unwrap();
     let text = fs::read_to_string(&path).unwrap();
