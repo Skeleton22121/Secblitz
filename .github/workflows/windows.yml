@@ -78,6 +78,18 @@ jobs:
       - name: Test setup failure exit codes with isolated harnesses
         shell: powershell
         run: ./installer/test-setup-exit.ps1 -IsccPath "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+      - name: Remove the state folder the elevated unit tests created
+        shell: powershell
+        run: |
+          $app = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Secblitz'
+          $data = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Secblitz'
+          if ((Test-Path -LiteralPath $app) -or (Get-Service SecblitzMonitor -ErrorAction SilentlyContinue)) {
+            throw 'Secblitz is installed on this runner before the lifecycle test.'
+          }
+          if (Test-Path -LiteralPath $data) {
+            Get-ChildItem -LiteralPath $data -Force | ForEach-Object { Write-Host "Removing $($_.FullName)" }
+            Remove-Item -LiteralPath $data -Recurse -Force
+          }
       - name: Test running monitor upgrade and uninstall preservation
         shell: powershell
         run: |
