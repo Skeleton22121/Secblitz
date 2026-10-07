@@ -220,10 +220,16 @@ try {
             # Event ids only: message text can carry firmware or device details and is never read.
             $ids = $null
             try {
-                $rows = @()
-                try { $rows = @(Get-WinEvent -FilterHashtable @{LogName='System';Id=@(1032,1795,1796,1797,1798,1799,1801,1802,1803,1808);StartTime=[DateTime]::Now.AddDays(-400)} -MaxEvents 256) }
-                catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw } }
-                $ids = @($rows | ForEach-Object { [int]$_.Id })
+                $ids = @()
+                $start = [DateTime]::Now.AddDays(-400)
+                $query = {
+                    param($wanted, $max)
+                    try { @(Get-WinEvent -FilterHashtable @{LogName='System';Id=$wanted;StartTime=$start} -MaxEvents $max | ForEach-Object { [int]$_.Id }) }
+                    catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw }; @() }
+                }
+                # Failure and done ids get their own newest-event query so a busy 1801 cannot push them out of the cap.
+                foreach ($id in @(1032,1795,1796,1802,1803,1799,1808)) { $ids += @(& $query @($id) 1) }
+                $ids += @(& $query @(1797,1798,1801) 256)
             } catch { $ids = $null }
             $sb = $false
             try { $sb = [bool](Confirm-SecureBootUEFI) } catch { $sb = $false }

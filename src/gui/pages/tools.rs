@@ -203,6 +203,7 @@ pub struct State {
     scan: Run<Result<(), String>>,
     threats: Run<Result<actions::ThreatRemoval, String>>,
     renewing: bool,
+    renewal_unconfirmed: bool,
     defender: Run<Result<(), String>>,
     repair: Repair,
     updates: Updates,
@@ -242,6 +243,7 @@ impl Default for State {
             scan: Run::Idle,
             threats: Run::Idle,
             renewing: false,
+            renewal_unconfirmed: false,
             defender: Run::Idle,
             repair: Repair::Idle,
             updates: Updates::Idle,
@@ -416,7 +418,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::RenewalDone(r) => {
             ctx.busy = false;
             state.renewing = false;
-            record_renewal(ctx, &r);
+            if matches!(r, Ok(actions::RenewalOutcome::Started { .. })) {
+                record_renewal(ctx);
+            }
+            state.renewal_unconfirmed = r.is_err();
             let (words, tone) = match &r {
                 Ok(outcome) => (
                     crate::app::maintenance::renewal_result_text(*outcome),
@@ -426,7 +431,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                     },
                 ),
                 Err(_) => (
-                    "We couldn't confirm that the renewal started. Check again in a few minutes.",
+                    "The renewal may have started, but we couldn't confirm it. Check the tip again in a few minutes.",
                     Tone::Warn,
                 ),
             };
@@ -456,6 +461,14 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Tone::Warn,
         )),
         Msg::TipsRefreshed(report) => {
+            if std::mem::take(&mut state.renewal_unconfirmed)
+                && report
+                    .tips
+                    .iter()
+                    .any(|t| t.renewal == Some(secblitz::diagnostics::Renewal::Started))
+            {
+                record_renewal(ctx);
+            }
             if matches!(state.tips, Tips::Done(_)) {
                 state.tips = Tips::Done(report);
             }
@@ -758,10 +771,7 @@ impl State {
     }
 }
 
-fn record_renewal(ctx: &Ctx, result: &Result<actions::RenewalOutcome, String>) {
-    if !matches!(result, Ok(actions::RenewalOutcome::Started { .. })) {
-        return;
-    }
+fn record_renewal(ctx: &Ctx) {
     if let Some(dir) = &ctx.state_dir {
         let score = ctx.score().unwrap_or_default();
         let _ = crate::app::history::record(
