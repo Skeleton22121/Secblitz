@@ -21,6 +21,8 @@ pub enum ToolsTab {
 }
 
 impl ToolsTab {
+    pub const ALL: [Self; 4] = [Self::Tips, Self::Viruses, Self::Updates, Self::Account];
+
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "tips" => Self::Tips,

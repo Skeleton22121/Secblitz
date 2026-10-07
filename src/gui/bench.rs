@@ -723,6 +723,53 @@ fn every_tools_tab_draws_in_every_language_with_work_finished() {
 }
 
 #[test]
+fn the_tools_tabs_fit_the_narrowest_window_in_every_language_with_work_on_every_tab() {
+    // Measure with the app's own fonts, not whatever this system falls back to.
+    for bytes in theme::FONT_FILES {
+        iced::advanced::graphics::text::font_system()
+            .write()
+            .expect("font system")
+            .load_font(std::borrow::Cow::Borrowed(bytes));
+    }
+    let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        theme::REGULAR,
+        14.0.into(),
+        Some("tiny-skia"),
+    ))
+    .expect("tiny-skia renderer");
+    let mut app = app();
+    // Window minus the 232 px sidebar, the 40 px page padding on both sides and a scrollbar.
+    let room = (theme::WINDOW_MIN_WIDTH - 232.0 - 2.0 * theme::S10 - 16.0).min(PAGE_MAX_WIDTH);
+    for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
+        app.ctx.lang = lang;
+        let options = TOOLS_TABS.map(|t| {
+            (
+                t,
+                format!("{}{}", tools::tab_name(&app.ctx, t), tools::BUSY_MARK),
+            )
+        });
+        let mut element = widgets::segmented(app.ctx.palette, &options, ToolsTab::Tips, |_| {
+            Message::Toast(String::new(), Tone::Good)
+        });
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &Limits::new(iced::Size::ZERO, iced::Size::INFINITE),
+        );
+        assert!(
+            node.size().width > 200.0,
+            "{lang:?}: the tabs were not measured"
+        );
+        assert!(
+            node.size().width <= room,
+            "{lang:?}: tabs are {} wide, {room} is free",
+            node.size().width
+        );
+    }
+}
+
+#[test]
 fn picking_a_tools_tab_changes_only_that_choice() {
     let mut app = app();
     app.ctx.lang = Lang::De;

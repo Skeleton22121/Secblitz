@@ -34,13 +34,7 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let tab = ctx.prefs.tools_tab;
     let tabs = widgets::segmented(
         p,
-        &[
-            ToolsTab::Tips,
-            ToolsTab::Viruses,
-            ToolsTab::Updates,
-            ToolsTab::Account,
-        ]
-        .map(|t| (t, tab_label(state, ctx, t))),
+        &ToolsTab::ALL.map(|t| (t, tab_label(state, ctx, t))),
         tab,
         |t| tools(Msg::SetTab(t)),
     );
@@ -64,17 +58,24 @@ fn page<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
 }
 
 pub fn tab_label(state: &State, ctx: &Ctx, tab: ToolsTab) -> String {
-    let name = ctx.t(match tab {
-        ToolsTab::Tips => "Health tips",
-        ToolsTab::Viruses => "Viruses",
-        ToolsTab::Updates => "Updates and repair",
-        ToolsTab::Account => "Account and passwords",
-    });
+    let name = tab_name(ctx, tab);
     if state.tab_busy(tab) {
-        format!("{name} \u{2022}")
+        format!("{name}{BUSY_MARK}")
     } else {
         name
     }
+}
+
+pub const BUSY_MARK: &str = " \u{2022}";
+
+/// Kept to one short word or two so the four tabs fit the narrowest window in every language.
+pub fn tab_name(ctx: &Ctx, tab: ToolsTab) -> String {
+    ctx.t(match tab {
+        ToolsTab::Tips => "Tips",
+        ToolsTab::Viruses => "Viruses",
+        ToolsTab::Updates => "Updates",
+        ToolsTab::Account => "Account",
+    })
 }
 
 fn tips_tab<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {

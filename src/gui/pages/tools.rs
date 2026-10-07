@@ -17,9 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(test)]
-pub use view::tab_label;
 pub use view::{modal, view};
+#[cfg(test)]
+pub use view::{tab_label, tab_name, BUSY_MARK};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sheet {
