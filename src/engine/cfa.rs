@@ -21,17 +21,15 @@ pub(crate) const STILL_WATCHING: &str =
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Verdict {
     Offer,
-    StartClock,
     Wait(&'static str),
 }
 
-/// Whether full protection may be offered. `started` is the recorded start of watching; `mode` is what Defender reports now (2 and 4 are the watch-only modes). A start that lies in the future is a wrong clock and never counts.
+/// Whether full protection may be offered. `started` is the recorded start of watching; `mode` is what Defender reports now. Only mode 2, which watches everything full protection would block, counts as watching.
 pub(crate) fn verdict(started: Option<u64>, mode: Option<u64>, now: u64) -> Verdict {
-    match started {
-        Some(at) if at <= now && now - at >= WATCH_SECONDS => Verdict::Offer,
-        Some(_) => Verdict::Wait(STILL_WATCHING),
-        None if matches!(mode, Some(2 | 4)) => Verdict::StartClock,
-        None => Verdict::Wait(NOT_WATCHED),
+    match (started, mode) {
+        (Some(at), Some(2)) if at <= now && now - at >= WATCH_SECONDS => Verdict::Offer,
+        (Some(_), Some(2)) => Verdict::Wait(STILL_WATCHING),
+        _ => Verdict::Wait(NOT_WATCHED),
     }
 }
 
@@ -79,11 +77,6 @@ impl Engine {
         let now = now();
         match verdict(self.cfa_started(), mode, now) {
             Verdict::Offer => {}
-            Verdict::StartClock => {
-                self.cfa_write(now);
-                obs.eligible = false;
-                obs.reason = STILL_WATCHING.into();
-            }
             Verdict::Wait(reason) => {
                 obs.eligible = false;
                 obs.reason = reason.into();

@@ -1460,6 +1460,31 @@ function HCfaPickApps($paths, $allowed) {
     $keys = @($count.Keys | Where-Object { HCfaFileExists $first[$_] } | Sort-Object @{ Expression = { -$count[$_] } }, @{ Expression = { $_ } })
     return @($keys | Select-Object -First $hCfaMaxApps | ForEach-Object { $first[$_] })
 }
+# The path with who published the program, so an unknown or unsigned one stands out.
+function HCfaSignerNote([string]$path) {
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $path
+        $status = [string]$sig.Status
+        if ($status -ceq 'NotSigned') {
+            if ($path -match '(?i)\\(temp|downloads|appdata)\\') { return 'not signed, in a temporary or download folder' }
+            return 'not signed'
+        }
+        if ($status -ceq 'Valid' -and $null -ne $sig.SignerCertificate) {
+            $who = HClean ([string]$sig.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false))
+            if ($who.Length -gt 0) { return ('by ' + $who) }
+        }
+        return 'signature not valid'
+    } catch { return '' }
+}
+function HCfaLabel([string]$path) {
+    $note = HCfaSignerNote $path
+    if ($note.Length -eq 0) { return $path }
+    if ($note.Length -gt 50) { $note = $note.Substring(0, 50) }
+    $tail = ' (' + $note + ')'
+    $room = 120 - $tail.Length
+    $shown = if ($path.Length -gt $room) { $path.Substring(0, $room - 3) + '...' } else { $path }
+    return ($shown + $tail)
+}
 function HReadCfaApps() {
     $allowed = HCfaAllowedMap
     $out = @{}
@@ -1481,7 +1506,7 @@ function HReadCfaApps() {
         $seen[$name.ToLowerInvariant()] = $true
         $out[$name] = 0
     }
-    foreach ($name in @($out.Keys)) { if ($out[$name] -eq 0) { HLabel $name $name.Substring(4) } }
+    foreach ($name in @($out.Keys)) { if ($out[$name] -eq 0) { HLabel $name (HCfaLabel $name.Substring(4)) } }
     if ($out.Count -gt 256) { throw 'Too many apps to handle at once' }
     return $out
 }
@@ -1495,11 +1520,15 @@ function HSetCfaApp([string]$name, $v) {
         if ($null -eq (HStateGet $name) -and !$script:hCfaSeen.ContainsKey($path.ToLowerInvariant())) { throw 'An app to allow was not seen changing your files' }
         if (!(HCfaFileExists $path)) { throw 'An app to allow could not be found' }
         HStateSet $name @{ path = $path }
-        try { Add-MpPreference -ControlledFolderAccessAllowedApplications $path } catch { HStateRemove $name; throw }
+        try {
+            Add-MpPreference -ControlledFolderAccessAllowedApplications $path
+            if (!(HCfaAllowedMap).ContainsKey($path.ToLowerInvariant())) { throw 'Windows did not accept the change. Tamper Protection may be on.' }
+        } catch { HStateRemove $name; throw }
     } else {
         # Only an app Secblitz allowed is ever taken off the list.
         if ($null -eq (HStateGet $name)) { throw 'Unknown hardening item' }
         Remove-MpPreference -ControlledFolderAccessAllowedApplications $path
+        if ((HCfaAllowedMap).ContainsKey($path.ToLowerInvariant())) { throw 'Windows did not accept the change. Tamper Protection may be on.' }
         HStateRemove $name
     }
 }

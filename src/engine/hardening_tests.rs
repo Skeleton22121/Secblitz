@@ -150,7 +150,10 @@ fn hardening_safe_state(spec: &Spec) -> Value {
 fn every_hardening_control_audits_applies_and_undoes_exactly() {
     for spec in hardening::all() {
         let id = spec.id;
-        let before = hardening_unsafe_state(spec);
+        let mut before = hardening_unsafe_state(spec);
+        if id == cfa::BLOCK {
+            before["items"]["EnableControlledFolderAccess"] = json!(2);
+        }
         let (dir, state, mut e) = fixture(id, before.clone());
         watched_for_a_week(&dir, id);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
@@ -781,8 +784,11 @@ fn full_folder_protection_waits_for_a_week_of_watching() {
 
     let (dir, state, mut e) = fixture(id, watching.clone());
     let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::NOT_WATCHED));
+    assert!(!dir.path().join("App").exists());
+    write_watch_record(&dir, now_secs() - 60);
+    let r = e.audit().unwrap().results.remove(0);
     assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::STILL_WATCHING));
-    assert!(dir.path().join("App/cfa-watch.json").is_file());
     write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS + 3600);
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped);
     write_watch_record(&dir, now_secs() + 3600);
@@ -826,12 +832,13 @@ fn the_watch_week_counts_from_a_recorded_start_with_injected_time() {
     use cfa::{verdict, Verdict::*, NOT_WATCHED, STILL_WATCHING, WATCH_SECONDS};
     let t = 10_000_000;
     assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS), Offer);
-    assert_eq!(verdict(Some(t), Some(4), t + WATCH_SECONDS + 1), Offer);
+    assert_eq!(verdict(Some(t), Some(4), t + WATCH_SECONDS + 1), Wait(NOT_WATCHED));
+    assert_eq!(verdict(Some(t), Some(0), t + WATCH_SECONDS + 1), Wait(NOT_WATCHED));
     assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS - 1), Wait(STILL_WATCHING));
     assert_eq!(verdict(Some(t), Some(2), t), Wait(STILL_WATCHING));
     assert_eq!(verdict(Some(t + 5), Some(2), t), Wait(STILL_WATCHING));
-    assert_eq!(verdict(None, Some(2), t), StartClock);
-    assert_eq!(verdict(None, Some(4), t), StartClock);
+    assert_eq!(verdict(None, Some(2), t), Wait(NOT_WATCHED));
+    assert_eq!(verdict(None, Some(4), t), Wait(NOT_WATCHED));
     assert_eq!(verdict(None, Some(0), t), Wait(NOT_WATCHED));
     assert_eq!(verdict(None, None, t), Wait(NOT_WATCHED));
 }

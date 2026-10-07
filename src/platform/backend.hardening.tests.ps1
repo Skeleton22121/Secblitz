@@ -840,6 +840,17 @@ Assert (([datetime]::Now - $script:cfaQuery.StartTime).TotalDays -lt 7.1 -and ([
 Assert ($script:hLabels.Count -eq 2 -and $script:hLabels['app:C:\Tools\Edit.exe'] -ceq 'C:\Tools\Edit.exe') 'each flagged app is named by its path'
 $labels = @(HLabelList $r)
 Assert ($labels.Count -eq 2 -and $labels[0].kind -ceq 'app' -and $labels[0].name -ceq 'C:\Tools\Edit.exe') 'flagged apps are shown as apps'
+# Each app is shown with who published it; an unsigned one in a download folder is called out.
+function Get-AuthenticodeSignature { param($LiteralPath); $script:cfaSig[$LiteralPath] }
+$script:cfaSig = @{
+    'C:\Users\a\Downloads\x.exe' = [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+    'C:\Tools\Edit.exe' = [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+    'C:\Tools\Bad.exe' = [pscustomobject]@{ Status = 'HashMismatch'; SignerCertificate = $null }
+}
+Assert ((HCfaLabel 'C:\Users\a\Downloads\x.exe') -ceq 'C:\Users\a\Downloads\x.exe (not signed, in a temporary or download folder)') 'unsigned download is called out'
+Assert ((HCfaLabel 'C:\Tools\Edit.exe') -ceq 'C:\Tools\Edit.exe (not signed)') 'unsigned app is named'
+Assert ((HCfaLabel 'C:\Tools\Bad.exe') -ceq 'C:\Tools\Bad.exe (signature not valid)') 'broken signature is named'
+Remove-Item function:Get-AuthenticodeSignature
 $script:hCfaEvents = @()
 Assert ((HReadCfaApps).Count -eq 0) 'no events, nothing to offer'
 $script:hCfaAllowed = @('N/A: Must be an administrator to view exclusions')
@@ -861,6 +872,20 @@ $r = HReadCfaApps
 Assert ($r['app:C:\Tools\PhotoTool.exe'] -eq 1 -and $r['app:C:\Tools\Edit.exe'] -eq 1 -and $r.Count -eq 2) 'allowed apps read 1'
 HWrite (Input '{"items":{"app:C:\\Tools\\PhotoTool.exe":0,"app:C:\\Tools\\Edit.exe":0}}')
 Assert (@($script:hCfaAllowed).Count -eq 1 -and $script:hCfaAllowed[0] -ceq 'D:\Apps\sync.exe' -and $script:cfaState.Count -eq 0) 'undo removes exactly the apps Secblitz added'
+# Windows can ignore the change without an error (Tamper Protection): nothing is recorded as done.
+function Add-MpPreference { param($ControlledFolderAccessAllowedApplications) }
+$script:hCfaSeen['c:\tools\phototool.exe'] = $true
+Reject { HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 1 } 'Tamper Protection'
+Assert (!$script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'a refused allow is not recorded'
+function Add-MpPreference { param($ControlledFolderAccessAllowedApplications); $script:hCfaAllowed = @($script:hCfaAllowed) + @($ControlledFolderAccessAllowedApplications) }
+HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 1
+Assert ($script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'an accepted allow is recorded'
+function Remove-MpPreference { param($ControlledFolderAccessAllowedApplications) }
+Reject { HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 0 } 'Tamper Protection'
+Assert ($script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'a refused removal keeps the record'
+function Remove-MpPreference { param($ControlledFolderAccessAllowedApplications); $script:hCfaAllowed = @($script:hCfaAllowed | Where-Object { $_ -ne $ControlledFolderAccessAllowedApplications }) }
+HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 0
+Assert (!$script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'an accepted removal clears the record'
 Reject { HSetCfaApp 'app:D:\Apps\sync.exe' 0 } 'Unknown hardening item'
 Reject { HSetCfaApp 'app:C:\Windows\System32\cmd.exe' 1 } 'Unknown hardening item'
 Reject { HSetCfaApp 'app:C:\Tools\*.exe' 1 } 'Unknown hardening item'
