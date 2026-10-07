@@ -65,14 +65,26 @@ def expected_files(site, version):
     }
 
 
+def first_difference(deployed, served, context=80):
+    """Where a served text page stops matching, so edge rewriting shows in the log."""
+    at = next((i for i, (a, b) in enumerate(zip(deployed, served)) if a != b), min(len(deployed), len(served)))
+    start = max(0, at - context // 4)
+    return (f"first difference at byte {at}: deployed {deployed[start:at + context]!r}, "
+            f"served {served[start:at + context]!r}")
+
+
 def check_origin(origin, files, fetcher, attempts, delay, sleep=time.sleep):
     problems = {}
     for path, local in files.items():
-        want = hashlib.sha256(local.read_bytes()).hexdigest()
+        deployed = local.read_bytes()
+        want = hashlib.sha256(deployed).hexdigest()
         for attempt in range(1, attempts + 1):
             try:
-                got = hashlib.sha256(fetcher(origin + path)).hexdigest()
+                served = fetcher(origin + path)
+                got = hashlib.sha256(served).hexdigest()
                 error = None if got == want else f"served SHA-256 {got}, deployed {want}"
+                if error and not path.startswith("/downloads/"):
+                    error += "; " + first_difference(deployed, served)
             except LiveError as err:
                 error = str(err)
             if error is None:

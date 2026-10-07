@@ -418,6 +418,9 @@ class AssembleTests(unittest.TestCase):
             self.assertEqual(live.main(feed_args, lambda url: served[url], lambda _: None), 1)
         self.assertIn("DOES NOT MATCH", err.getvalue())
         self.assertIn(setup_url, err.getvalue())
+        self.assertIn("first difference at byte 0: deployed b'{", err.getvalue())
+        self.assertEqual(live.first_difference(b"<p>a</p>", b"<p>b</p>", 4),
+                         "first difference at byte 3: deployed b'>a</p', served b'>b</p'")
 
     def shown_before(self):
         return bump.site_version((REPO / "README.md").read_text(encoding="utf-8"))
