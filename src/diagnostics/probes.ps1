@@ -189,7 +189,8 @@ try {
                 if ($rows.Count -eq 0) { [uint64]0 } else { [uint64](UnixTime $rows[0].TimeCreated) }
             }
             $oneDrive = Fact {
-                $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders', $false)
+                $sid = InteractiveSid
+                $key = [Microsoft.Win32.Registry]::Users.OpenSubKey($sid + '\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders', $false)
                 if ($null -eq $key) { throw 'Folders unreadable' }
                 try {
                     $covered = 0
@@ -200,7 +201,26 @@ try {
                     $covered
                 } finally { $key.Dispose() }
             }
-            @{shadow_copy_count=$shadows;success_events=$events;file_history_last_unix_seconds=$fileHistory;onedrive_folders=$oneDrive}
+            $fileHistoryDrive = Fact {
+                $sid = InteractiveSid
+                $profileKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $sid, $false)
+                if ($null -eq $profileKey) { throw 'Profile unreadable' }
+                try { $profilePath = $profileKey.GetValue('ProfileImagePath', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } finally { $profileKey.Dispose() }
+                if ($profilePath -isnot [string] -or $profilePath -cnotmatch '^[A-Za-z]:\\') { throw 'Profile unreadable' }
+                $config = [IO.Path]::Combine($profilePath, 'AppData\Local\Microsoft\Windows\FileHistory\Configuration\Config1.xml')
+                if (![IO.File]::Exists($config)) { throw 'File History not set up' }
+                $m = [regex]::Match([IO.File]::ReadAllText($config), '<TargetUrl>([^<]{1,260})</TargetUrl>')
+                if (!$m.Success) { throw 'Target unreadable' }
+                $target = $m.Groups[1].Value.Trim()
+                $volumes = @(Cim 'Win32_Volume' | Select-Object -First 64)
+                $hit = $null
+                if ($target -match '^([A-Za-z]:)') { $hit = @($volumes | Where-Object { $_.DriveLetter -ieq $Matches[1] }) }
+                elseif ($target -match '(?i)Volume\{[0-9a-f-]{36}\}') { $id = $Matches[0]; $hit = @($volumes | Where-Object { [string]$_.DeviceID -like "*$id*" }) }
+                else { throw 'Target is not a local drive' }
+                if ($hit.Count -ne 1) { throw 'Drive not connected' }
+                [int]$hit[0].DriveType -eq 2
+            }
+            @{shadow_copy_count=$shadows;success_events=$events;file_history_last_unix_seconds=$fileHistory;onedrive_folders=$oneDrive;file_history_drive_removable_connected=$fileHistoryDrive}
         }
         'Adapters' {
             Load 'NetAdapter'

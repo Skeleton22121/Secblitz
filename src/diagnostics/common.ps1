@@ -22,6 +22,18 @@ function Known($value) {
 function Fact([scriptblock]$read) {
     try { return (Known (& $read)) } catch { return (Unknown) }
 }
+# The signed-in person, found from their desktop. The account running this may be SYSTEM or another administrator whose settings are not theirs.
+function InteractiveSid {
+    Load 'CimCmdlets'
+    $sids = @()
+    foreach ($p in @(Get-CimInstance -ClassName Win32_Process -Filter "Name='explorer.exe'" -OperationTimeoutSec 5 | Select-Object -First 16)) {
+        $owner = Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -OperationTimeoutSec 5
+        if ($null -ne $owner -and $owner.ReturnValue -eq 0 -and [string]$owner.Sid -cmatch '^S-1-5-21(-[0-9]{1,10}){4}$') { $sids += [string]$owner.Sid }
+    }
+    $sids = @($sids | Select-Object -Unique)
+    if ($sids.Count -ne 1) { throw 'Signed-in user unknown' }
+    return $sids[0]
+}
 function Prop($object, [string]$name) {
     if ($null -eq $object -or $null -eq $object.PSObject.Properties[$name]) { return (Unknown) }
     return (Known $object.$name)

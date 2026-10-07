@@ -316,7 +316,8 @@ facts!(Backup {
     shadow_copy_count: u32,
     success_events: Inventory<BackupEvent>,
     file_history_last_unix_seconds: u64,
-    onedrive_folders: u32
+    onedrive_folders: u32,
+    file_history_drive_removable_connected: bool
 });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

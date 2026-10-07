@@ -167,6 +167,7 @@ pub(super) struct BackupSources<'a> {
     pub shadow_copies: Option<u32>,
     pub file_history_last: Option<u64>,
     pub onedrive_folders: Option<u32>,
+    pub file_history_drive_plugged_in: Option<bool>,
 }
 
 fn days_ago(days: u64) -> String {
@@ -213,10 +214,15 @@ pub(super) fn backup_coverage(src: &BackupSources, now: Option<u64>) -> (Status,
         Some(n) => format!(" OneDrive backs up {n} of Documents, Pictures and Desktop."),
         None => String::new(),
     };
+    let unplug = if src.file_history_drive_plugged_in == Some(true) {
+        " Unplug your backup drive when it's not backing up. Ransomware can scramble a drive that stays plugged in."
+    } else {
+        ""
+    };
     seen.sort();
     if let Some((days, name)) = seen.first() {
         let line = format!(
-            "Last backup: {} ({name}).{onedrive} {shadows}",
+            "Last backup: {} ({name}).{onedrive} {shadows}{unplug}",
             days_ago(*days)
         );
         let note = " What it covers and whether a restore works are not tested.";
@@ -229,7 +235,7 @@ pub(super) fn backup_coverage(src: &BackupSources, now: Option<u64>) -> (Status,
     if src.onedrive_folders.is_some_and(|n| n > 0) {
         return (
             Status::Informational,
-            format!("No backup time could be read.{onedrive} {shadows}"),
+            format!("No backup time could be read.{onedrive} {shadows}{unplug}"),
         );
     }
     let unreadable = src.events.is_none() && src.file_history_last.is_none();
@@ -241,7 +247,7 @@ pub(super) fn backup_coverage(src: &BackupSources, now: Option<u64>) -> (Status,
     }
     (
         Status::Attention,
-        format!("No backup found. If you use a backup drive, plug it in so Windows can finish a backup.{onedrive} Backup tools other than Windows Backup, File History and OneDrive are not checked. {shadows}"),
+        format!("No backup found.{onedrive} Backup tools other than Windows Backup, File History and OneDrive are not checked. {shadows}{unplug}"),
     )
 }
 
@@ -400,6 +406,10 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
                     shadow_copies: v.shadow_copy_count.known().copied(),
                     file_history_last: v.file_history_last_unix_seconds.known().copied(),
                     onedrive_folders: v.onedrive_folders.known().copied(),
+                    file_history_drive_plugged_in: v
+                        .file_history_drive_removable_connected
+                        .known()
+                        .copied(),
                 },
                 super::now(),
             );
