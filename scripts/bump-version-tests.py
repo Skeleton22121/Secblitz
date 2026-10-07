@@ -173,6 +173,15 @@ class BumpTests(unittest.TestCase):
         self.assertNotIn(f'"secblitz-{self.shown}-windows-x64.exe"', stage)
         self.assertEqual(stage.count(f"secblitz-{self.shown}-windows-x64-setup.exe"), 1)
 
+    def test_arm64_downloads_become_history_from_the_first_arm64_release(self):
+        text = (self.root / "scripts/stage-pages.py").read_text()
+        before = bump.add_historical(text, "0.10.0")
+        self.assertNotIn("0.10.0-windows-arm64", before)
+        after = bump.add_historical(text, "0.11.0")
+        self.assertIn('"secblitz-0.11.0-windows-x64-setup.exe",', after)
+        self.assertIn('"secblitz-0.11.0-windows-arm64-setup.exe",', after)
+        self.assertEqual(bump.add_historical(after, "0.11.0"), after)
+
     def test_site_only_changes_just_the_site_files(self):
         if self.shown == self.old:
             for rel in ("README.md", "website/index.html", "website/structured.json"):
@@ -342,6 +351,9 @@ class AssembleTests(unittest.TestCase):
         self.setup = self.assets / f"secblitz-{self.version}-windows-x64-setup.exe"
         self.setup.write_bytes(fake_pe(0x8664, b"s" * 5000))
         (self.assets / f"secblitz-{self.version}-windows-x64.exe").write_bytes(fake_pe(0x8664, b"p" * 7000))
+        self.setup_arm = self.assets / f"secblitz-{self.version}-windows-arm64-setup.exe"
+        self.setup_arm.write_bytes(fake_pe(0xAA64, b"a" * 5200))
+        (self.assets / f"secblitz-{self.version}-windows-arm64.exe").write_bytes(fake_pe(0xAA64, b"q" * 7000))
         (self.assets / "SHA256SUMS").write_text("unused here\n")
         self.sign()
         spec = importlib.util.spec_from_file_location("stage_copy", self.root / "scripts/stage-pages.py")
@@ -357,11 +369,12 @@ class AssembleTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def sign(self):
-        done = self.subprocess.run([self.sys.executable, str(self.root / "scripts/sign-release.py"), "--key", str(self.key),
-                                    "--public-key", str(self.root / "assets/update-public-key.hex"),
-                                    "--version", self.version, "--installer", str(self.setup),
-                                    "--output", str(self.assets / "stable.json")], capture_output=True, text=True)
-        self.assertEqual(done.returncode, 0, done.stderr)
+        for arch, setup, feed in (("x64", self.setup, "stable.json"), ("arm64", self.setup_arm, "stable-arm64.json")):
+            done = self.subprocess.run([self.sys.executable, str(self.root / "scripts/sign-release.py"), "--key", str(self.key),
+                                        "--public-key", str(self.root / "assets/update-public-key.hex"),
+                                        "--version", self.version, "--installer", str(setup), "--arch", arch,
+                                        "--output", str(self.assets / feed)], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
 
     def assemble(self):
         return self.subprocess.run([self.sys.executable, str(self.root / "scripts/assemble-site.py"),
@@ -383,11 +396,17 @@ class AssembleTests(unittest.TestCase):
         page = (self.out / "index.html").read_text()
         digest = hashlib.sha256(self.setup.read_bytes()).hexdigest()
         self.assertIn(f'<code id="sha">{digest}</code>', page)
+        arm_digest = hashlib.sha256(self.setup_arm.read_bytes()).hexdigest()
+        self.assertIn(f'<code id="sha-arm64">{arm_digest}</code>', page)
+        self.assertIn(f"downloads/secblitz-{self.version}-windows-arm64-setup.exe", page)
+        self.assertEqual((self.out / "releases/stable-arm64.json").read_bytes(), (self.assets / "stable-arm64.json").read_bytes())
         self.assertIn(f"downloads/secblitz-{self.version}-windows-x64-setup.exe", page)
         self.assertEqual((self.out / "releases/stable.json").read_bytes(), (self.assets / "stable.json").read_bytes())
         names = {p.name for p in (self.out / "downloads").iterdir()}
         self.assertIn(f"secblitz-{self.version}-windows-x64-setup.exe", names)
+        self.assertIn(f"secblitz-{self.version}-windows-arm64-setup.exe", names)
         self.assertNotIn(f"secblitz-{self.version}-windows-x64.exe", names)  # too big for Pages; on GitHub only
+        self.assertNotIn(f"secblitz-{self.version}-windows-arm64.exe", names)
         self.assertIn(f"secblitz-{self.shown_before()}-windows-x64-setup.exe", names)  # the replaced version stays
 
     def test_live_check_compares_bytes_and_fails_loudly(self):
@@ -400,6 +419,8 @@ class AssembleTests(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             self.assertEqual(live.main(args, lambda url: served[url], sleeps.append), 0)
             setup_url = f"https://secblitz.test/downloads/secblitz-{self.version}-windows-x64-setup.exe"
+            self.assertIn("/releases/stable-arm64.json", files)
+            self.assertIn(f"/downloads/secblitz-{self.version}-windows-arm64-setup.exe", files)
             served[setup_url] = b"old"
             self.assertEqual(live.main(args, lambda url: served[url], sleeps.append), 1)
             self.assertEqual(len(sleeps), 2)
@@ -424,6 +445,23 @@ class AssembleTests(unittest.TestCase):
 
     def shown_before(self):
         return bump.site_version((REPO / "README.md").read_text(encoding="utf-8"))
+
+    def test_arm64_feed_is_checked_against_the_arm64_installer(self):
+        command = [self.sys.executable, str(self.root / "scripts/prepare-pages.py"), "--verify-feed",
+                   str(self.assets / "stable-arm64.json"), "--installer-directory", str(self.assets),
+                   "--expected-version", self.version, "--arch", "arm64"]
+        self.assertEqual(self.subprocess.run(command, capture_output=True, text=True).returncode, 0)
+        command[command.index("--arch") + 1] = "x64"
+        self.assertNotEqual(self.subprocess.run(command, capture_output=True, text=True).returncode, 0)
+
+    def test_arm64_feed_for_other_installer_bytes_is_refused(self):
+        self.setup_arm.write_bytes(fake_pe(0xAA64, b"changed after signing"))
+        self.assertNotEqual(self.assemble().returncode, 0)
+        self.assertFalse(self.out.exists())
+
+    def test_missing_arm64_release_file_is_refused(self):
+        (self.assets / "stable-arm64.json").unlink()
+        self.assertNotEqual(self.assemble().returncode, 0)
 
     def test_feed_for_other_installer_bytes_is_refused(self):
         self.setup.write_bytes(fake_pe(0x8664, b"changed after signing"))
