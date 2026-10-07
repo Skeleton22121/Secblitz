@@ -525,6 +525,11 @@ mod tests {
     fn optional_switches_sit_in_their_own_groups_and_never_count_against_the_score() {
         for (id, section) in [
             ("privacy.recall", "Privacy extras"),
+            ("privacy.start_web_search", "Privacy extras"),
+            ("privacy.online_speech", "Privacy extras"),
+            ("privacy.typing_inking", "Privacy extras"),
+            ("privacy.lock_screen_notifications", "Privacy extras"),
+            ("privacy.signin_email", "Privacy extras"),
             ("ai.click_to_do", "AI features"),
             ("ai.paint", "AI features"),
             ("ai.notepad", "AI features"),

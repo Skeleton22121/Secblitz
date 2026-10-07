@@ -22,6 +22,11 @@ const IDS: &[&str] = &[
     "privacy.diagnostic_data_level",
     "privacy.delivery_optimization",
     "privacy.clipboard_sync",
+    "privacy.start_web_search",
+    "privacy.online_speech",
+    "privacy.typing_inking",
+    "privacy.lock_screen_notifications",
+    "privacy.signin_email",
     "ai.click_to_do",
     "ai.paint",
     "ai.notepad",
@@ -102,6 +107,31 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Windows can copy what you cut or copy on one device to your other devices that use the same account.",
             "Anything you copy, like a password or a card number, can turn up on another device you forgot about.",
             "Copying and pasting works as usual on this PC. It just no longer appears on your other devices.",
+        ),
+        "privacy.start_web_search" => e(
+            "Windows can send what you type in Start to Bing and show web results next to your own files and apps.",
+            "What you type to find a file or app can leave your PC, and web results can crowd out what you wanted.",
+            "Search shows only things on your PC. Restart your PC to apply it. Not for Windows Home. You can undo this.",
+        ),
+        "privacy.online_speech" => e(
+            "Online speech recognition sends what you say to Microsoft so Windows can turn your voice into text.",
+            "Your voice leaves your PC, and an online service may keep recordings of it to improve itself.",
+            "Nobody can turn it on, so voice typing and dictation stop working. Not for Windows Home. You can undo this.",
+        ),
+        "privacy.typing_inking" => e(
+            "Windows can send samples of what you type and write by hand to Microsoft to improve its suggestions.",
+            "Small pieces of your writing leave your PC, even though they are meant to be kept anonymous.",
+            "Windows stops sending samples. Typing and handwriting still work. Not for Windows Home. You can undo this.",
+        ),
+        "privacy.lock_screen_notifications" => e(
+            "While your PC is locked, messages and alerts from your apps can show up on the lock screen.",
+            "Someone standing near your PC could read your messages, codes and reminders without signing in.",
+            "Your lock screen stays quiet. You still see notifications after you sign in. Not for Windows Home. You can undo this.",
+        ),
+        "privacy.signin_email" => e(
+            "Windows can show your email address on the sign-in screen, even before anyone has signed in.",
+            "Anyone who walks past your PC or looks at a screen share could learn your email address.",
+            "Nobody can turn that on, so the sign-in screen shows only your name or picture. Not for Windows Home. You can undo this.",
         ),
         "ai.click_to_do" => e(
             "Click to Do lets you pick text or pictures on your screen and send them to AI tools for quick actions.",

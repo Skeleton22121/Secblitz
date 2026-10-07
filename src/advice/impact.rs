@@ -97,6 +97,13 @@ pub fn control_impact(id: &str) -> &'static str {
             "Your PC sending files to unknown computers over your connection"
         }
         "privacy.clipboard_sync" => "What you copy showing up on your other devices",
+        "privacy.start_web_search" => "What you type in Start search being sent to the web",
+        "privacy.online_speech" => "Your voice being sent to an online service",
+        "privacy.typing_inking" => "Samples of what you type and write being sent to Microsoft",
+        "privacy.lock_screen_notifications" => {
+            "Anyone nearby reading your messages on the lock screen"
+        }
+        "privacy.signin_email" => "Your email address showing on the sign-in screen",
         "ai.click_to_do" => "Windows offering to pass what is on your screen to AI tools",
         "ai.paint" => "Your drawings being sent to online AI tools",
         "ai.notepad" => "What you type in Notepad being sent to online AI tools",

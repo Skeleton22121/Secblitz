@@ -90,6 +90,21 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "privacy.delivery_optimization" => {
             "Updates still come from Microsoft. This PC just stops sharing them with others."
         }
+        "privacy.start_web_search" => {
+            "Start search shows only things on this PC. Needs a restart."
+        }
+        "privacy.online_speech" => {
+            "Voice typing and dictation stop working. Nothing else changes."
+        }
+        "privacy.typing_inking" => {
+            "Windows stops sending what you type and write. Suggestions may improve more slowly."
+        }
+        "privacy.lock_screen_notifications" => {
+            "Messages no longer show on the lock screen. You still see them after you sign in."
+        }
+        "privacy.signin_email" => {
+            "The sign-in screen no longer shows your email address."
+        }
         "privacy.clipboard_sync" => {
             "What you copy stays on this PC and no longer appears on your other devices."
         }

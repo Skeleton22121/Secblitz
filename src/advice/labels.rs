@@ -66,6 +66,11 @@ pub fn control_label(id: &str) -> &'static str {
         "privacy.diagnostic_data_level" => "Diagnostic data",
         "privacy.delivery_optimization" => "Update sharing",
         "privacy.clipboard_sync" => "Clipboard sync",
+        "privacy.start_web_search" => "Web results in Start search",
+        "privacy.online_speech" => "Online speech recognition",
+        "privacy.typing_inking" => "Sending typing and handwriting",
+        "privacy.lock_screen_notifications" => "Messages on the lock screen",
+        "privacy.signin_email" => "Email address on the sign-in screen",
         "ai.click_to_do" => "Click to Do",
         "ai.paint" => "AI tools in Paint",
         "ai.notepad" => "AI tools in Notepad",
@@ -197,6 +202,11 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "privacy.diagnostic_data_level"
         | "privacy.delivery_optimization"
         | "privacy.clipboard_sync"
+        | "privacy.start_web_search"
+        | "privacy.online_speech"
+        | "privacy.typing_inking"
+        | "privacy.lock_screen_notifications"
+        | "privacy.signin_email"
         | "ai.click_to_do"
         | "ai.paint"
         | "ai.notepad"
