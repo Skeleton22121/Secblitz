@@ -153,25 +153,27 @@ pub fn dangerous_at(bytes: &[u8]) -> Option<u64> {
 
 #[derive(Debug, Default)]
 pub struct Dangerous {
-    seen: Option<u64>,
+    started: bool,
+    seen: u64,
     shown: Option<u64>,
 }
 
 impl Dangerous {
-    /// True when a notice should appear now. The first reading only sets the
-    /// starting point, so old blocks never trigger a notice at sign-in.
+    /// The first reading only sets the starting point, so old blocks do not notify at sign-in.
     pub fn observe(&mut self, at: Option<u64>, now: u64, allowed: bool) -> bool {
-        let Some(at) = at.filter(|at| *at <= now.saturating_add(DANGEROUS_FUTURE)) else {
-            return false;
-        };
-        let Some(seen) = self.seen else {
-            self.seen = Some(at);
-            return false;
-        };
-        if at <= seen {
+        let at = at.filter(|at| *at <= now.saturating_add(DANGEROUS_FUTURE));
+        if !self.started {
+            self.started = true;
+            self.seen = at.unwrap_or(0);
             return false;
         }
-        self.seen = Some(at);
+        let Some(at) = at else {
+            return false;
+        };
+        if at <= self.seen {
+            return false;
+        }
+        self.seen = at;
         let spaced = self
             .shown
             .is_none_or(|last| now.saturating_sub(last) >= DANGEROUS_GAP);
@@ -457,7 +459,6 @@ mod tests {
     #[test]
     fn the_dangerous_notice_waits_for_a_new_block_and_a_quiet_ten_minutes() {
         let mut d = Dangerous::default();
-        assert!(!d.observe(None, 1000, true));
         assert!(
             !d.observe(Some(900), 1000, true),
             "first reading is the start"
@@ -470,6 +471,17 @@ mod tests {
         assert!(d.observe(Some(1400), 1120 + DANGEROUS_GAP, true));
         assert!(!d.observe(None, 5000, true));
         assert!(!d.observe(Some(1000), 5000, true), "older times never show");
+    }
+
+    #[test]
+    fn the_first_block_after_a_quiet_start_is_announced() {
+        let mut d = Dangerous::default();
+        assert!(!d.observe(None, 1000, true));
+        assert!(!d.observe(None, 1060, true));
+        assert!(d.observe(Some(1100), 1120, true));
+        let mut forged = Dangerous::default();
+        assert!(!forged.observe(Some(u64::MAX), 1000, true));
+        assert!(forged.observe(Some(1100), 1120, true));
     }
 
     #[test]
