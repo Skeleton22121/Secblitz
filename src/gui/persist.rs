@@ -106,7 +106,10 @@ fn write_in_order(job: impl FnOnce() + Send + 'static) {
 pub fn save_prefs(prefs: app::settings::Prefs) -> impl std::future::Future<Output = bool> {
     let (tx, rx) = futures::channel::oneshot::channel();
     write_in_order(move || {
-        let _ = tx.send(app::settings::save(&prefs).is_ok());
+        let saved = app::settings::save(&prefs).is_ok();
+        // The tray cannot read these preferences, so it gets its own copy.
+        let _ = secblitz::status::write_notify(&prefs.notify());
+        let _ = tx.send(saved);
     });
     async move { rx.await.unwrap_or(true) }
 }

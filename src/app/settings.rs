@@ -37,7 +37,7 @@ impl ToolsSection {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prefs {
     #[serde(default)]
     pub theme: ThemeChoice,
@@ -47,9 +47,34 @@ pub struct Prefs {
     pub tools_open: Vec<ToolsSection>,
     #[serde(default)]
     pub protection_topic: Option<super::topics::Topic>,
+    #[serde(default = "on")]
+    pub notify_reverted: bool,
+    #[serde(default = "on")]
+    pub notify_dangerous: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs {
+            theme: ThemeChoice::default(),
+            lang: None,
+            tools_open: Vec::new(),
+            protection_topic: None,
+            notify_reverted: true,
+            notify_dangerous: true,
+        }
+    }
 }
 
 impl Prefs {
+    pub fn notify(&self) -> secblitz::status::Notify {
+        secblitz::status::Notify::new(self.notify_reverted, self.notify_dangerous)
+    }
+
     pub fn tools_section_open(&self, section: ToolsSection) -> bool {
         self.tools_open.contains(&section)
     }
@@ -94,6 +119,12 @@ pub fn parse(bytes: &[u8]) -> Prefs {
         .and_then(|v| v.as_str())
         .filter(|code| crate::i18n::Lang::parse(code).is_some())
         .map(str::to_owned);
+    for (key, slot) in [
+        ("notify_reverted", &mut prefs.notify_reverted),
+        ("notify_dangerous", &mut prefs.notify_dangerous),
+    ] {
+        *slot = map.get(key).and_then(|v| v.as_bool()).unwrap_or(true);
+    }
     if let Some(items) = map.get("tools_open").and_then(|v| v.as_array()) {
         for section in items
             .iter()
@@ -414,6 +445,8 @@ mod tests {
             lang: Some("de".into()),
             tools_open: vec![ToolsSection::Passwords, ToolsSection::Windows],
             protection_topic: Some(crate::app::topics::Topic::Browsers),
+            notify_reverted: false,
+            notify_dangerous: true,
         };
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
@@ -445,6 +478,21 @@ mod tests {
             assert_eq!(p.lang.as_deref(), Some("fr"), "{bad}");
         }
         assert_eq!(parse(b"{}").protection_topic, None);
+    }
+
+    #[test]
+    fn notices_are_on_unless_switched_off() {
+        let p = Prefs::default();
+        assert!(p.notify_reverted && p.notify_dangerous);
+        let old = parse(br#"{"theme":"dark","lang":"es"}"#);
+        assert!(old.notify_reverted && old.notify_dangerous);
+        let off = parse(br#"{"notify_reverted":false,"notify_dangerous":false}"#);
+        assert!(!off.notify_reverted && !off.notify_dangerous);
+        assert_eq!(off.notify(), secblitz::status::Notify::new(false, false));
+        let one = parse(br#"{"notify_reverted":false}"#);
+        assert!(!one.notify_reverted && one.notify_dangerous);
+        let junk = parse(br#"{"notify_reverted":"no","notify_dangerous":0}"#);
+        assert!(junk.notify_reverted && junk.notify_dangerous);
     }
 
     #[test]

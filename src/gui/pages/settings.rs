@@ -148,6 +148,8 @@ pub enum Msg {
     },
     SetTheme(ThemeChoice),
     SetLang(LangItem),
+    SetNotifyReverted(bool),
+    SetNotifyDangerous(bool),
     Ask(bool),
     AskTray(bool),
     CancelConfirm,
@@ -220,6 +222,14 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::SetLang(LangItem(lang)) => {
             ctx.lang = lang;
             ctx.prefs.lang = Some(lang.code().to_owned());
+            save_prefs(ctx)
+        }
+        Msg::SetNotifyReverted(on) => {
+            ctx.prefs.notify_reverted = on;
+            save_prefs(ctx)
+        }
+        Msg::SetNotifyDangerous(on) => {
+            ctx.prefs.notify_dangerous = on;
             save_prefs(ctx)
         }
         Msg::Ask(on) => {
@@ -506,6 +516,40 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     }
     let protection = widgets::group(p, t("Background protection"), None, None, rows);
 
+    let needs_background = matches!(state.background, Remote::Ready(false));
+    let notifications = widgets::group(
+        p,
+        t("Notifications"),
+        None,
+        None,
+        vec![
+            widgets::row_item(
+                p,
+                Some(Icon::Bell),
+                t("Tell me when a setting is switched back"),
+                needs_background.then(|| t("Needs background checks, above.")),
+                widgets::switch(
+                    p,
+                    ctx.prefs.notify_reverted,
+                    Some(|v| Message::Settings(Msg::SetNotifyReverted(v))),
+                ),
+                None,
+            ),
+            widgets::row_item(
+                p,
+                Some(Icon::ShieldAlert),
+                t("Tell me when a dangerous website is blocked"),
+                None,
+                widgets::switch(
+                    p,
+                    ctx.prefs.notify_dangerous,
+                    Some(|v| Message::Settings(Msg::SetNotifyDangerous(v))),
+                ),
+                None,
+            ),
+        ],
+    );
+
     let (status, line): (Element<'a, Message>, String) = match &state.update {
         Remote::Loading | Remote::Ready(UpdateView::Checking) => {
             (busy(p, state, t("Checking…")), t("Looking for updates."))
@@ -673,6 +717,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         widgets::page_header(p, t("Settings"), Some(t("Make Secblitz work your way."))),
         appearance,
         protection,
+        notifications,
         updates,
         feedback,
         removal,
