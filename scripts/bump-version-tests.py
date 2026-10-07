@@ -407,6 +407,13 @@ class AssembleTests(unittest.TestCase):
                 return b"old" if url.endswith("stable.json") and len(calls) == 1 else files["/releases/stable.json"].read_bytes() if url.endswith("stable.json") else served[url]
             served[setup_url] = files[f"/downloads/secblitz-{self.version}-windows-x64-setup.exe"].read_bytes()
             self.assertEqual(live.main(args, flaky, lambda _: None), 0)
+            legacy = {"https://legacy.test" + path: data for path, data in
+                      ((p, l.read_bytes()) for p, l in files.items()) if path != "/"}
+            served.update(legacy)
+            feed_args = args + ["--feed-origin", "https://legacy.test"]
+            self.assertEqual(live.main(feed_args, lambda url: served[url], lambda _: None), 0)
+            served["https://legacy.test/releases/stable.json"] = b"old"
+            self.assertEqual(live.main(feed_args, lambda url: served[url], lambda _: None), 1)
         self.assertIn("DOES NOT MATCH", err.getvalue())
         self.assertIn(setup_url, err.getvalue())
 

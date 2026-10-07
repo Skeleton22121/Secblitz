@@ -2,13 +2,17 @@
 """After a deploy, prove the live website serves exactly the bytes that were deployed.
 
     verify-live-site.py --site dist/pages --version 0.8.1 [--origin https://example.org ...]
+        [--feed-origin https://legacy.example ...]
 
 Fetches, from the live origin (default: the update origin compiled into the app,
 assets/update-origin.txt), the signed feed (releases/stable.json), the download
 page (/) and the setup, and compares the SHA-256 of each with
 the staged file that was deployed. A fresh deploy can take a short while to
 reach every edge, so a mismatch is retried (--attempts, --delay) and only then
-fails, loudly, with exit code 1. Read only: no credentials, no writes.
+fails, loudly, with exit code 1. A --feed-origin, such as a legacy update host
+whose front page redirects to the main site, is checked only for the files
+installed copies download from it: the feed and the setup.
+Read only: no credentials, no writes.
 Standard library only.
 """
 import argparse
@@ -86,6 +90,7 @@ def main(argv=None, fetcher=fetch, sleep=time.sleep):
     parser.add_argument("--site", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--origin", action="append", default=[], help="live origin to check (repeatable)")
+    parser.add_argument("--feed-origin", action="append", default=[], help="origin that serves only the feed and downloads (repeatable)")
     parser.add_argument("--attempts", type=int, default=30)
     parser.add_argument("--delay", type=float, default=10)
     args = parser.parse_args(argv)
@@ -98,9 +103,12 @@ def main(argv=None, fetcher=fetch, sleep=time.sleep):
     if not origins:
         origins = [gate.origin_value((ROOT / "assets/update-origin.txt").read_text(encoding="utf-8").strip())]
     files = expected_files(args.site, args.version)
+    feed_files = {path: local for path, local in files.items() if path != "/"}
     failures = []
     for origin in origins:
         failures += check_origin(origin, files, fetcher, args.attempts, args.delay, sleep)
+    for origin in (gate.origin_value(o) for o in args.feed_origin):
+        failures += check_origin(origin, feed_files, fetcher, args.attempts, args.delay, sleep)
     if failures:
         print("LIVE SITE DOES NOT MATCH THE DEPLOYED FILES:", file=sys.stderr)
         for failure in failures:

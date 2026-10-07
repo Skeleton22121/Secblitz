@@ -119,9 +119,9 @@ The only place the Cloudflare secrets exist.
   is not `main`. A deploy to any other branch name becomes a preview, not the
   live site, and the live check at the end then fails.
 - Optional variable `SITE_EXTRA_ORIGINS`: more hostnames that must serve the same
-  files after a deploy, separated by spaces, for example the legacy feed host
-  `https://beacons.lol`. The app's own update origin (`assets/update-origin.txt`)
-  is always checked.
+  update feed and setup after a deploy, separated by spaces, for example the
+  legacy feed host `https://beacons.lol` (its front page may redirect). The app's
+  own update origin (`assets/update-origin.txt`) is always checked in full.
 
 ### Cloudflare token
 

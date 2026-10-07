@@ -258,11 +258,12 @@ jobs:
       - name: Compare the live site with what was deployed
         env:
           VERSION: ${{ needs.verify.outputs.version }}
-          # Optional: more hostnames that must serve the same files, separated by spaces
-          # (for example the legacy feed host). The app's own update origin is always checked.
+          # Optional: more hostnames that must serve the same update feed and setup,
+          # separated by spaces (for example the legacy feed host, whose front page
+          # redirects to the main site). The app's own update origin is always checked in full.
           EXTRA_ORIGINS: ${{ vars.SITE_EXTRA_ORIGINS }}
         run: |
           set -euo pipefail
           args=(--origin "$(tr -d '[:space:]' < assets/update-origin.txt)")
-          for origin in $EXTRA_ORIGINS; do args+=(--origin "$origin"); done
+          for origin in $EXTRA_ORIGINS; do args+=(--feed-origin "$origin"); done
           python3 scripts/verify-live-site.py --site dist/pages --version "$VERSION" "${args[@]}"
