@@ -1,4 +1,5 @@
 //! UI-independent application layer shared by the GUI.
+pub mod app_access;
 pub mod flow;
 pub mod history;
 pub mod last_check;
