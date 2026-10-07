@@ -28,8 +28,9 @@ const TOTAL_TIMEOUT: Duration = Duration::from_millis(2500);
 const IDLE_CONNECTION: Duration = Duration::from_secs(30);
 /// A reused connection is quick or dead (Wi-Fi switch, sleep, NAT timeout), so the first try is short.
 const WARM_FIRST_TRY: Duration = Duration::from_millis(1000);
-const PING_EVERY: Duration = Duration::from_secs(15);
-const PING_REPLY_WITHIN: Duration = Duration::from_secs(5);
+/// Keeps a NAT or firewall from dropping an idle connection.
+const KEEPALIVE_AFTER: Duration = Duration::from_secs(10);
+const KEEPALIVE_EVERY: Duration = Duration::from_secs(5);
 const MAX_REPLY: usize = 64 * 1024;
 pub const FALLBACK_FOR: Duration = Duration::from_secs(120);
 const PROBE_LEASE: Duration = Duration::from_secs(5);
@@ -169,9 +170,8 @@ fn build(pinned: bool) -> Option<Client> {
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
         .pool_idle_timeout(IDLE_CONNECTION)
-        .http2_keep_alive_interval(PING_EVERY)
-        .http2_keep_alive_timeout(PING_REPLY_WITHIN)
-        .http2_keep_alive_while_idle(true);
+        .tcp_keepalive(KEEPALIVE_AFTER)
+        .tcp_keepalive_interval(KEEPALIVE_EVERY);
     if pinned {
         builder = builder.https_only(true).resolve_to_addrs(HOST, &PINNED);
     }
