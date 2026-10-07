@@ -221,6 +221,8 @@ pub struct BlockHistory {
     pub days: Vec<DayCount>,
     #[serde(default)]
     pub top: Vec<TopSite>,
+    #[serde(default)]
+    pub top_companies: Vec<TopSite>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]

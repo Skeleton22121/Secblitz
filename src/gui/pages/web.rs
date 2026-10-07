@@ -13,7 +13,6 @@ use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Pixels, Subscription, Task,
 };
 use secblitz::explain;
-use secblitz::filter::companies;
 use secblitz::filter::config::{
     self, BlockHistory, Config, ErrorCode, Lookups, RecentItem, State as ListState, Status,
     MAX_ALLOWED, STATS_DAYS,
@@ -187,6 +186,7 @@ pub enum Msg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Line {
     Off,
+    PrivateOnly,
     On,
     Paused(u64),
     PausedUntilRestart,
@@ -200,8 +200,19 @@ pub fn status_line(
     service: ServiceState,
     now: u64,
 ) -> Line {
-    if !config.any_on() {
+    if !config.needs_service() {
         return Line::Off;
+    }
+    if !config.any_on() {
+        let working = service == ServiceState::Running
+            && status.is_some_and(|s| {
+                config::fresh(s, now) && s.last_error != Some(ErrorCode::PortInUse)
+            });
+        return if working {
+            Line::PrivateOnly
+        } else {
+            Line::NotWorking
+        };
     }
     if let Some(until) = config.paused_until.filter(|t| *t > now) {
         return Line::Paused(until);
@@ -236,7 +247,7 @@ pub enum StatusAction {
 
 pub fn status_action(line: Line) -> Option<StatusAction> {
     match line {
-        Line::Off => None,
+        Line::Off | Line::PrivateOnly => None,
         Line::Paused(_) | Line::PausedUntilRestart => Some(StatusAction::Resume),
         Line::NotWorking => Some(StatusAction::Retry),
         Line::On | Line::GettingReady => Some(StatusAction::Pause),
@@ -258,7 +269,7 @@ pub fn guard_of(line: Line) -> web_globe::Guard {
         Line::On => Guard::On,
         Line::GettingReady => Guard::Starting,
         Line::Paused(_) | Line::PausedUntilRestart => Guard::Paused,
-        Line::Off => Guard::Off,
+        Line::Off | Line::PrivateOnly => Guard::Off,
         Line::NotWorking => Guard::Broken,
     }
 }
@@ -343,20 +354,14 @@ pub fn daily_totals(
         .collect()
 }
 
-/// The most blocked companies, counted together across their sites. A site
-/// nobody knows stands for itself.
 pub fn top_companies(stats: Option<&BlockHistory>, limit: usize) -> Vec<(String, u64)> {
-    let mut out: Vec<(String, u64)> = Vec::new();
-    for site in stats.map_or(&[][..], |s| &s.top[..]) {
-        let name = companies::display_name(&site.site);
-        match out.iter_mut().find(|(n, _)| *n == name) {
-            Some((_, count)) => *count += site.count,
-            None => out.push((name, site.count)),
-        }
-    }
-    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    out.truncate(limit);
-    out
+    stats.map_or_else(Vec::new, |s| {
+        s.top_companies
+            .iter()
+            .take(limit)
+            .map(|c| (c.site.clone(), c.count))
+            .collect()
+    })
 }
 
 pub fn is_allowed(name: &str, allowed: &[String]) -> bool {
@@ -888,6 +893,7 @@ fn count_fn(lang: Lang) -> &'static dyn Fn(u64) -> String {
 fn line_text(ctx: &Ctx, line: Line) -> String {
     match line {
         Line::Off => ctx.t("Off"),
+        Line::PrivateOnly => ctx.t("Only private lookups are on"),
         Line::On => ctx.t("On"),
         Line::Paused(until) => ctx.t("Paused until {time}").replace(
             "{time}",
@@ -915,6 +921,10 @@ fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
         Line::Off => (
             ctx.t("Web protection is off"),
             Some(ctx.t("Ads, trackers and dangerous websites can load.")),
+        ),
+        Line::PrivateOnly => (
+            ctx.t("Only private lookups are on"),
+            Some(ctx.t("Blocking is not turned on.")),
         ),
         Line::NotWorking => (ctx.t("Not working right now"), None),
     }
@@ -1016,7 +1026,7 @@ fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
         ),
         Switch::PrivateLookups => (
             Icon::Lock,
-            ctx.t("Private internet lookups"),
+            ctx.t("Private lookups through Secblitz"),
             ctx.t(
                 "Keeps the websites you visit private from your internet provider and public Wi-Fi.",
             ),
@@ -1395,7 +1405,7 @@ fn recent_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<E
     if items.is_empty() {
         let line = current_line(snapshot);
         let note = match line {
-            Line::Off => "Web protection is off, so nothing is being blocked.",
+            Line::Off | Line::PrivateOnly => "Web protection is off, so nothing is being blocked.",
             Line::Paused(_) | Line::PausedUntilRestart => {
                 "Web protection is paused, so nothing is being blocked."
             }
@@ -1741,6 +1751,42 @@ mod tests {
     }
 
     #[test]
+    fn only_private_lookups_is_its_own_state() {
+        let only = Config {
+            private_lookups: true,
+            ..config(false)
+        };
+        let running = ServiceState::Running;
+        assert_eq!(
+            status_line(&only, Some(&healthy()), running, NOW),
+            Line::PrivateOnly
+        );
+        assert_eq!(status_action(Line::PrivateOnly), None);
+        assert_eq!(guard_of(Line::PrivateOnly), web_globe::Guard::Off);
+        for service in [
+            ServiceState::Stopped,
+            ServiceState::NotInstalled,
+            ServiceState::Other,
+        ] {
+            assert_eq!(
+                status_line(&only, Some(&healthy()), service, NOW),
+                Line::NotWorking
+            );
+        }
+        assert_eq!(status_line(&only, None, running, NOW), Line::NotWorking);
+        let port = Status {
+            listening: false,
+            last_error: Some(ErrorCode::PortInUse),
+            ..healthy()
+        };
+        assert_eq!(
+            status_line(&only, Some(&port), running, NOW),
+            Line::NotWorking
+        );
+        assert_eq!(status_action(Line::NotWorking), Some(StatusAction::Retry));
+    }
+
+    #[test]
     fn paused_until_restart_shows_as_paused() {
         let until_restart = Config {
             paused_boot: Some(config::boot_time(NOW)),
@@ -1948,6 +1994,7 @@ mod tests {
                     count: *count,
                 })
                 .collect(),
+            top_companies: Vec::new(),
         }
     }
 
@@ -1983,19 +2030,22 @@ mod tests {
     }
 
     #[test]
-    fn most_blocked_joins_sites_of_one_company_and_keeps_unknown_ones() {
-        let stats = history_of(
-            &[],
-            &[
-                ("doubleclick.net", 120),
-                ("example.org", 150),
-                ("googlesyndication.com", 80),
-                ("facebook.net", 60),
-                ("a.example", 1),
-                ("b.example", 1),
-                ("c.example", 1),
-            ],
-        );
+    fn most_blocked_lists_companies_in_the_saved_order_up_to_the_limit() {
+        let mut stats = history_of(&[], &[]);
+        stats.top_companies = [
+            ("Google", 200),
+            ("example.org", 150),
+            ("Meta", 60),
+            ("a.example", 1),
+            ("b.example", 1),
+            ("c.example", 1),
+        ]
+        .iter()
+        .map(|(site, count)| TopSite {
+            site: site.to_string(),
+            count: *count,
+        })
+        .collect();
         let top = top_companies(Some(&stats), 5);
         assert_eq!(
             top,

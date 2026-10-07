@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use super::companies;
 use super::config::{
     read_capped, BlockHistory, DayCount, RecentItem, RecentList, TopSite, MAX_RECENT_ITEMS,
     RECENT_SECONDS, STATS_DAYS, TOP_SITES,
@@ -268,16 +269,30 @@ fn history_of(h: &History) -> BlockHistory {
             *total.entry(site).or_default() += n;
         }
     }
-    let mut top: Vec<TopSite> = total
+    let mut by_company: HashMap<String, u64> = HashMap::new();
+    for (site, count) in &total {
+        *by_company.entry(companies::display_name(site)).or_default() += count;
+    }
+    let top = ranked(
+        total.into_iter().map(|(s, c)| (s.to_string(), c)),
+        TOP_SITES,
+    );
+    let top_companies = ranked(by_company, TOP_SITES);
+    BlockHistory {
+        days,
+        top,
+        top_companies,
+    }
+}
+
+fn ranked(counts: impl IntoIterator<Item = (String, u64)>, limit: usize) -> Vec<TopSite> {
+    let mut out: Vec<TopSite> = counts
         .into_iter()
-        .map(|(site, count)| TopSite {
-            site: site.to_string(),
-            count,
-        })
+        .map(|(site, count)| TopSite { site, count })
         .collect();
-    top.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.site.cmp(&b.site)));
-    top.truncate(TOP_SITES);
-    BlockHistory { days, top }
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.site.cmp(&b.site)));
+    out.truncate(limit);
+    out
 }
 
 fn detail_of(h: &History) -> Detail {
@@ -486,6 +501,26 @@ mod tests {
         assert!(detail.days[0].sites.len() <= SITES_PER_DAY);
         assert_eq!(detail.days[0].blocked[0], 300);
         assert!(serde_json::to_vec(&w.stats.unwrap()).unwrap().len() < 4096);
+    }
+
+    #[test]
+    fn companies_are_counted_across_all_their_sites() {
+        let a = Activity::default();
+        let now = 80 * DAY + 50;
+        for i in 0..(TOP_SITES as u64 + 5) {
+            a.record(&format!("x.site{i}.example"), Kind::Ads, now);
+        }
+        for name in [
+            "doubleclick.net",
+            "googlesyndication.com",
+            "google-analytics.com",
+        ] {
+            a.record(name, Kind::Ads, now);
+        }
+        let h = a.history_now(now + 1);
+        assert_eq!(h.top_companies.len(), TOP_SITES);
+        assert_eq!(h.top_companies[0].site, "Google");
+        assert_eq!(h.top_companies[0].count, 3);
     }
 
     #[test]
