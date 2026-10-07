@@ -4,7 +4,7 @@
 use std::net::{IpAddr, Ipv6Addr};
 
 const MAX_SERVERS: usize = 4;
-const MAX_SUFFIXES: usize = 16;
+const MAX_SUFFIXES: usize = 32;
 
 /// The old Windows default DNS addresses `fec0:0:0:ffff::1` to `::3`, which
 /// appear on adapters that have no real IPv6 DNS server.
@@ -58,6 +58,14 @@ pub fn usable_suffixes(found: impl IntoIterator<Item = String>) -> Vec<String> {
     out
 }
 
+pub fn split_search_list(list: &str) -> Vec<String> {
+    list.split([',', ';', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 fn is_name_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
 }
@@ -84,6 +92,7 @@ mod imp {
         SOCKET_ADDRESS,
     };
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 
     /// SAFETY contract: `address` comes from a successful GetAdaptersAddresses
     /// call whose buffer is still alive.
@@ -178,21 +187,64 @@ mod imp {
         String::from_utf16(&units).ok()
     }
 
+    fn registry_text(key: &str, value: &str) -> Option<String> {
+        let key: Vec<u16> = key.encode_utf16().chain([0]).collect();
+        let value: Vec<u16> = value.encode_utf16().chain([0]).collect();
+        let mut buf = [0u16; 1024];
+        let mut bytes = std::mem::size_of_val(&buf) as u32;
+        // SAFETY: both names are NUL-terminated; `buf` and `bytes` describe the same buffer.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        let units = (bytes as usize / 2).min(buf.len());
+        let end = buf[..units].iter().position(|c| *c == 0).unwrap_or(units);
+        String::from_utf16(&buf[..end]).ok()
+    }
+
+    fn machine_suffixes() -> Vec<String> {
+        const PARAMETERS: &str = "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters";
+        const POLICY: &str = "SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient";
+        let mut found = Vec::new();
+        for (key, value, list) in [
+            (PARAMETERS, "Domain", false),
+            (PARAMETERS, "SearchList", true),
+            (POLICY, "PrimaryDnsSuffix", false),
+            (POLICY, "SearchList", true),
+        ] {
+            if let Some(text) = registry_text(key, value) {
+                if list {
+                    found.extend(split_search_list(&text));
+                } else {
+                    found.push(text);
+                }
+            }
+        }
+        found
+    }
+
     pub fn dns_suffixes() -> Vec<String> {
         let Some(buf) = adapter_buffer() else {
             return Vec::new();
         };
-        let mut found = Vec::new();
-        // SAFETY: as in `upstream_servers`; the suffix strings live inside
-        // the same buffer and end with a NUL within their bounds.
+        let mut found = machine_suffixes();
+        // SAFETY: as in `upstream_servers`.
         unsafe {
             let mut adapter = buf.as_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
             while !adapter.is_null() {
                 let a = &*adapter;
-                if a.OperStatus == IfOperStatusUp
-                    && a.IfType != IF_TYPE_SOFTWARE_LOOPBACK
-                    && a.IfType != IF_TYPE_TUNNEL
-                {
+                // Tunnel adapters stay in: VPNs resolve company names that must not go out to the internet.
+                if a.OperStatus == IfOperStatusUp && a.IfType != IF_TYPE_SOFTWARE_LOOPBACK {
                     found.extend(wide_string(a.DnsSuffix));
                     let mut suffix = a.FirstDnsSuffix;
                     while !suffix.is_null() {
@@ -330,6 +382,20 @@ mod tests {
             .map(String::from),
         );
         assert_eq!(got, ["corp.example.com", "fritz.box", "home"]);
+    }
+
+    #[test]
+    fn search_lists_are_split_on_commas_and_spaces() {
+        assert_eq!(
+            split_search_list("corp.example.com,eu.corp.example.com; lab.local  home"),
+            [
+                "corp.example.com",
+                "eu.corp.example.com",
+                "lab.local",
+                "home"
+            ]
+        );
+        assert!(split_search_list(" , ").is_empty());
     }
 
     #[test]
