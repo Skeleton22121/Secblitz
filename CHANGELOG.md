@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-07
+
 ### Added
 - Renew your PC's startup security certificates before the old ones expire, with a clear warning that it can't be undone.
 - An optional fix that turns off the Run box, which fake "I'm not a robot" pages use to install password stealers.
