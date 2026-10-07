@@ -893,6 +893,10 @@ fn system_controls_follow_the_research_exclusions() {
         "ai.notepad",
         "debloat.widgets_policy",
         "debloat.device_companion_apps",
+        "browser.shopping_ai",
+        "browser.data_collection",
+        "browser.safety_mode",
+        "browser.dns_bypass",
     ] {
         assert!(is_ask_check_id(id), "{id} must be a choice");
     }
@@ -1477,4 +1481,278 @@ fn the_script_description_of_a_text_key_carries_the_text_rule() {
     assert_eq!(keys[2]["rule"], "set");
     assert_eq!(keys[2]["safe"], json!([1]));
     assert!(!TEXT_SPEC.script_json().contains('\''));
+}
+
+const BROWSER_EDGE: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
+const BROWSER_CHROME: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
+const BROWSER_FIREFOX: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox";
+
+#[test]
+fn browser_controls_set_exactly_the_documented_policy_values() {
+    let tracking = format!(r"{BROWSER_FIREFOX}\EnableTrackingProtection");
+    let doh = format!(r"{BROWSER_FIREFOX}\DNSOverHTTPS");
+    type Expected<'a> = (&'a str, &'a str, &'a str, Value);
+    let table: Vec<(&str, Vec<Expected>)> = vec![
+        (
+            "browser.shopping_ai",
+            vec![
+                (
+                    "EdgeShoppingAssistantEnabled",
+                    BROWSER_EDGE,
+                    "EdgeShoppingAssistantEnabled",
+                    json!(0),
+                ),
+                (
+                    "HubsSidebarEnabled",
+                    BROWSER_EDGE,
+                    "HubsSidebarEnabled",
+                    json!(0),
+                ),
+                (
+                    "ShoppingListEnabled",
+                    BROWSER_CHROME,
+                    "ShoppingListEnabled",
+                    json!(0),
+                ),
+                ("GeminiSettings", BROWSER_CHROME, "GeminiSettings", json!(1)),
+            ],
+        ),
+        (
+            "browser.data_collection",
+            vec![
+                ("DiagnosticData", BROWSER_EDGE, "DiagnosticData", json!(0)),
+                (
+                    "PersonalizationReportingEnabled",
+                    BROWSER_EDGE,
+                    "PersonalizationReportingEnabled",
+                    json!(0),
+                ),
+                (
+                    "MetricsReportingEnabled",
+                    BROWSER_CHROME,
+                    "MetricsReportingEnabled",
+                    json!(0),
+                ),
+                (
+                    "UrlKeyedAnonymizedDataCollectionEnabled",
+                    BROWSER_CHROME,
+                    "UrlKeyedAnonymizedDataCollectionEnabled",
+                    json!(0),
+                ),
+                (
+                    "PrivacySandboxAdTopicsEnabled",
+                    BROWSER_CHROME,
+                    "PrivacySandboxAdTopicsEnabled",
+                    json!(0),
+                ),
+                (
+                    "PrivacySandboxSiteEnabledAdsEnabled",
+                    BROWSER_CHROME,
+                    "PrivacySandboxSiteEnabledAdsEnabled",
+                    json!(0),
+                ),
+                (
+                    "PrivacySandboxAdMeasurementEnabled",
+                    BROWSER_CHROME,
+                    "PrivacySandboxAdMeasurementEnabled",
+                    json!(0),
+                ),
+                (
+                    "PrivacySandboxPromptEnabled",
+                    BROWSER_CHROME,
+                    "PrivacySandboxPromptEnabled",
+                    json!(0),
+                ),
+                (
+                    "DisableTelemetry",
+                    BROWSER_FIREFOX,
+                    "DisableTelemetry",
+                    json!(1),
+                ),
+                (
+                    "DisableFirefoxStudies",
+                    BROWSER_FIREFOX,
+                    "DisableFirefoxStudies",
+                    json!(1),
+                ),
+            ],
+        ),
+        (
+            "browser.safety_mode",
+            vec![
+                (
+                    "EnhanceSecurityMode",
+                    BROWSER_EDGE,
+                    "EnhanceSecurityMode",
+                    json!(1),
+                ),
+                (
+                    "FirefoxTrackingProtection",
+                    tracking.as_str(),
+                    "Value",
+                    json!(1),
+                ),
+            ],
+        ),
+        (
+            "browser.dns_bypass",
+            vec![
+                (
+                    "EdgeDnsOverHttpsMode",
+                    BROWSER_EDGE,
+                    "DnsOverHttpsMode",
+                    json!("off"),
+                ),
+                (
+                    "ChromeDnsOverHttpsMode",
+                    BROWSER_CHROME,
+                    "DnsOverHttpsMode",
+                    json!("off"),
+                ),
+                (
+                    "FirefoxDnsOverHttpsEnabled",
+                    doh.as_str(),
+                    "Enabled",
+                    json!(0),
+                ),
+                (
+                    "FirefoxDnsOverHttpsLocked",
+                    doh.as_str(),
+                    "Locked",
+                    json!(1),
+                ),
+            ],
+        ),
+    ];
+    for (id, expected) in table {
+        let s = spec(id).unwrap();
+        assert!(s.ask && !s.reboot && !s.dynamic(), "{id}");
+        assert_eq!(s.source, Source::Registry, "{id}");
+        assert_eq!(s.keys.len(), expected.len(), "{id}");
+        for (k, (name, path, value, fix)) in s.keys.iter().zip(&expected) {
+            assert_eq!(
+                (
+                    k.name,
+                    k.path,
+                    if k.value.is_empty() { k.name } else { k.value }
+                ),
+                (*name, *path, *value),
+                "{id}"
+            );
+            assert_eq!(fixed_value(k), *fix, "{id} {name}");
+            assert_eq!(safe_value(k).is_string(), fix.is_string(), "{id} {name}");
+            let absent_safe = matches!(
+                k.rule,
+                Rule::Set {
+                    absent_safe: true,
+                    ..
+                } | Rule::Text {
+                    absent_safe: true,
+                    ..
+                }
+            );
+            assert!(
+                !absent_safe,
+                "{id} {name}: not set means the browser's own choice is on"
+            );
+        }
+        let names: std::collections::HashSet<_> = s.keys.iter().map(|k| k.name).collect();
+        assert_eq!(names.len(), s.keys.len(), "{id}");
+        let nothing_set = items_of(s, &vec![Value::Null; s.keys.len()]);
+        assert!(s.any_unsafe(&nothing_set), "{id}");
+        let fixed = items_of(s, &expected.iter().map(|e| e.3.clone()).collect::<Vec<_>>());
+        assert_eq!(s.derive_target(&nothing_set).unwrap(), fixed, "{id}");
+        assert!(!s.any_unsafe(&fixed), "{id}");
+        assert_eq!(s.catalog_target(), fixed, "{id}");
+        // Never an own-key gate: Edge and Chrome policy keys hold many other values.
+        assert_eq!(s.gate.own_policy_key, "", "{id}");
+        assert!(s.gate.areas.contains(&"Edge"), "{id}");
+        for token in [
+            (CHROME_POLICY, "CloudManagementEnrollmentToken"),
+            (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+        ] {
+            assert!(s.gate.policy_values.contains(&token), "{id}");
+        }
+        assert!(s
+            .keys
+            .iter()
+            .all(|k| k.path.starts_with(r"HKLM:\SOFTWARE\Policies\")));
+    }
+}
+
+#[test]
+fn browser_lookup_texts_are_off_only_and_other_kinds_are_refused() {
+    let s = spec("browser.dns_bypass").unwrap();
+    let state = |edge: Value| {
+        json!({"items": {
+            "EdgeDnsOverHttpsMode": edge, "ChromeDnsOverHttpsMode": "off",
+            "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
+        }})
+    };
+    assert!(!s.any_unsafe(&state(json!("off"))));
+    for unsafe_text in ["automatic", "secure", "Off", "OFF", ""] {
+        let before = state(json!(unsafe_text));
+        s.validate(&before).unwrap();
+        assert!(s.any_unsafe(&before), "{unsafe_text:?}");
+        assert_eq!(s.derive_target(&before).unwrap(), state(json!("off")));
+    }
+    assert!(s.any_unsafe(&state(Value::Null)));
+    for wrong in [json!(0), json!(1), json!(true), json!(["off"])] {
+        assert!(s.validate(&state(wrong.clone())).is_err(), "{wrong}");
+    }
+    let bad_firefox = json!({"items": {
+        "EdgeDnsOverHttpsMode": "off", "ChromeDnsOverHttpsMode": "off",
+        "FirefoxDnsOverHttpsEnabled": "0", "FirefoxDnsOverHttpsLocked": 1,
+    }});
+    assert!(s.validate(&bad_firefox).is_err());
+    let by_name = |n: &str| s.keys.iter().find(|k| k.name == n).unwrap();
+    assert_eq!(by_name("EdgeDnsOverHttpsMode").value, "DnsOverHttpsMode");
+    assert_eq!(by_name("ChromeDnsOverHttpsMode").value, "DnsOverHttpsMode");
+    assert_ne!(
+        by_name("EdgeDnsOverHttpsMode").path,
+        by_name("ChromeDnsOverHttpsMode").path
+    );
+}
+
+#[test]
+fn browser_stronger_modes_accept_the_safe_levels_and_flag_the_rest() {
+    let s = spec("browser.safety_mode").unwrap();
+    let state =
+        |edge: u32| json!({"items": {"EnhanceSecurityMode": edge, "FirefoxTrackingProtection": 1}});
+    assert!(s.any_unsafe(&state(0)));
+    assert!(s.any_unsafe(&state(3)));
+    assert!(!s.any_unsafe(&state(1)));
+    assert!(!s.any_unsafe(&state(2)));
+    assert_eq!(s.derive_target(&state(0)).unwrap(), state(1));
+    assert_eq!(s.derive_target(&state(2)).unwrap(), state(2));
+    assert!(s.validate(&state(4)).is_err());
+    let d = spec("browser.data_collection").unwrap();
+    let diag = |n: u32| {
+        let mut vals: Vec<Value> = d.keys.iter().map(safe_value).collect();
+        vals[0] = json!(n);
+        items_of(d, &vals)
+    };
+    assert!(!d.any_unsafe(&diag(0)));
+    assert!(!d.any_unsafe(&diag(1)));
+    assert!(d.any_unsafe(&diag(2)));
+    assert!(d.validate(&diag(3)).is_err());
+}
+
+#[test]
+fn every_browser_control_says_before_the_person_agrees_that_browsers_show_a_managed_notice() {
+    for id in [
+        "browser.shopping_ai",
+        "browser.data_collection",
+        "browser.safety_mode",
+        "browser.dns_bypass",
+    ] {
+        let explain = crate::explain::for_check(id).unwrap();
+        for line in [explain.change, crate::advice::choice_consequence(id)] {
+            assert!(
+                line.contains("managed by your organization")
+                    && line.contains("only means a setting was made"),
+                "{id}: {line}"
+            );
+        }
+    }
 }

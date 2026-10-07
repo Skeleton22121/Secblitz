@@ -48,6 +48,27 @@ const fn set(
     }
 }
 
+const fn text(
+    name: &'static str,
+    path: &'static str,
+    safe: &'static [&'static str],
+    absent_safe: bool,
+    fix: Option<&'static str>,
+) -> Key {
+    Key {
+        name,
+        path,
+        value: "",
+        rule: Rule::Text {
+            safe,
+            absent_safe,
+            fix,
+        },
+        max: 256,
+        allowed: &[],
+    }
+}
+
 pub(super) const LSA: &str = r"HKLM:\SYSTEM\CurrentControlSet\Control\Lsa";
 pub(super) const PNP: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint";
 pub(super) const WU: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate";
@@ -174,6 +195,17 @@ pub(super) const TERMINAL_SERVICES_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
 pub(super) const EDGE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
 pub(super) const CHROME_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
+const FIREFOX_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox";
+const FIREFOX_TRACKING_POLICY: &str =
+    r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\EnableTrackingProtection";
+const FIREFOX_DOH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS";
+
+const BROWSER_MANAGEMENT: &[(&str, &str)] = &[
+    (CHROME_POLICY, "CloudManagementEnrollmentToken"),
+    (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+];
+
+const BROWSER_AREAS: &[&str] = &["Browser", "Edge", "ADMX_MicrosoftEdge"];
 
 pub(super) const TCPIP: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
 pub(super) const TCPIP6: &str = r"HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters";
@@ -1258,6 +1290,111 @@ pub(super) static SPECS: &[Spec] = &[
                 (CHROME_POLICY, "CloudManagementEnrollmentToken"),
                 (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
             ],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "browser.shopping_ai",
+        title: "Shopping and AI sidebars in your browsers",
+        description: "Set the Edge policies EdgeShoppingAssistantEnabled and HubsSidebarEnabled to 0 and the Chrome policies ShoppingListEnabled to 0 and GeminiSettings to 1. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            set("EdgeShoppingAssistantEnabled", EDGE_POLICY, &[0], false, Some(0), 1),
+            set("HubsSidebarEnabled", EDGE_POLICY, &[0], false, Some(0), 1),
+            set("ShoppingListEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("GeminiSettings", CHROME_POLICY, &[1], false, Some(1), 1),
+        ],
+        gate: Gate {
+            areas: BROWSER_AREAS,
+            pattern: "Shopping|HubsSidebar|Gemini",
+            policy_values: BROWSER_MANAGEMENT,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "browser.data_collection",
+        title: "Usage data your browsers send",
+        description: "Turn off the browsers' own data collection with the Edge policies DiagnosticData and PersonalizationReportingEnabled, the Chrome policies MetricsReportingEnabled, UrlKeyedAnonymizedDataCollectionEnabled and the four PrivacySandbox ad policies, and the Firefox policies DisableTelemetry and DisableFirefoxStudies. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1, 2],
+                ..set("DiagnosticData", EDGE_POLICY, &[0, 1], false, Some(0), 2)
+            },
+            set("PersonalizationReportingEnabled", EDGE_POLICY, &[0], false, Some(0), 1),
+            set("MetricsReportingEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("UrlKeyedAnonymizedDataCollectionEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("PrivacySandboxAdTopicsEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("PrivacySandboxSiteEnabledAdsEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("PrivacySandboxAdMeasurementEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("PrivacySandboxPromptEnabled", CHROME_POLICY, &[0], false, Some(0), 1),
+            set("DisableTelemetry", FIREFOX_POLICY, &[1], false, Some(1), 1),
+            set("DisableFirefoxStudies", FIREFOX_POLICY, &[1], false, Some(1), 1),
+        ],
+        gate: Gate {
+            areas: BROWSER_AREAS,
+            pattern: "DiagnosticData|PersonalizationReporting|MetricsReporting|UrlKeyedAnonymized|PrivacySandbox|Telemetry",
+            policy_values: BROWSER_MANAGEMENT,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "browser.safety_mode",
+        title: "Stronger protection in your browsers",
+        description: "Set the Edge policy EnhanceSecurityMode to 1 (balanced) and the Firefox policy EnableTrackingProtection to on. Chrome's warnings are handled by the browser warnings control. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            Key {
+                allowed: &[0, 1, 2, 3],
+                ..set("EnhanceSecurityMode", EDGE_POLICY, &[1, 2], false, Some(1), 3)
+            },
+            Key {
+                value: "Value",
+                ..set("FirefoxTrackingProtection", FIREFOX_TRACKING_POLICY, &[1], false, Some(1), 1)
+            },
+        ],
+        gate: Gate {
+            areas: BROWSER_AREAS,
+            pattern: "EnhanceSecurityMode|TrackingProtection",
+            policy_values: BROWSER_MANAGEMENT,
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "browser.dns_bypass",
+        title: "Browsers use Web protection",
+        description: "Set the Edge and Chrome policy DnsOverHttpsMode to off and the Firefox policy DNSOverHTTPS to disabled and locked, so the browsers use the PC's own lookups, which Web protection filters, instead of their own private lookups. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[
+            Key {
+                value: "DnsOverHttpsMode",
+                ..text("EdgeDnsOverHttpsMode", EDGE_POLICY, &["off"], false, Some("off"))
+            },
+            Key {
+                value: "DnsOverHttpsMode",
+                ..text("ChromeDnsOverHttpsMode", CHROME_POLICY, &["off"], false, Some("off"))
+            },
+            Key {
+                value: "Enabled",
+                ..set("FirefoxDnsOverHttpsEnabled", FIREFOX_DOH_POLICY, &[0], false, Some(0), 1)
+            },
+            Key {
+                value: "Locked",
+                ..set("FirefoxDnsOverHttpsLocked", FIREFOX_DOH_POLICY, &[1], false, Some(1), 1)
+            },
+        ],
+        gate: Gate {
+            areas: BROWSER_AREAS,
+            pattern: "DnsOverHttps|DNSOverHTTPS",
+            policy_values: BROWSER_MANAGEMENT,
             ..NO_GATE
         },
     },

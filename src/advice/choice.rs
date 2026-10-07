@@ -154,6 +154,18 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "smartscreen.browser_policy" => {
             "Edge and Chrome will warn you about dangerous websites again."
         }
+        "browser.shopping_ai" => {
+            "Shopping and AI panels go away. Browsers will say they are managed by your organization, which only means a setting was made."
+        }
+        "browser.data_collection" => {
+            "Browsers stop sending usage data. They will say they are managed by your organization, which only means a setting was made."
+        }
+        "browser.safety_mode" => {
+            "Stronger protection turns on. Browsers will say they are managed by your organization, which only means a setting was made."
+        }
+        "browser.dns_bypass" => {
+            "Browsers use Web protection. They will say they are managed by your organization, which only means a setting was made."
+        }
         _ => "",
     }
 }

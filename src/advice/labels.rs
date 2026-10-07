@@ -90,6 +90,10 @@ pub fn control_label(id: &str) -> &'static str {
         "smb.shares_exposed" => "Folders shared with everyone",
         "smartscreen.browser_policy" => "Browser warnings about dangerous sites",
         "recovery.winre_enabled" => "Windows recovery tools",
+        "browser.shopping_ai" => "Shopping and AI sidebars in your browsers",
+        "browser.data_collection" => "Usage data your browsers send",
+        "browser.safety_mode" => "Stronger protection in your browsers",
+        "browser.dns_bypass" => "Browsers use Web protection",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -219,6 +223,10 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "accounts.stale_enabled"
         | "smb.shares_exposed"
         | "smartscreen.browser_policy"
+        | "browser.shopping_ai"
+        | "browser.data_collection"
+        | "browser.safety_mode"
+        | "browser.dns_bypass"
         | "recovery.winre_enabled" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,

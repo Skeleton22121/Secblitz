@@ -476,6 +476,8 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("debloat.widgets_policy", json!({"AllowNewsAndInterests": null})),
         ("debloat.device_companion_apps", json!({"PreventDeviceMetadataFromNetwork": null})),
         ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
+        ("browser.shopping_ai", json!({"EdgeShoppingAssistantEnabled": null, "HubsSidebarEnabled": null, "ShoppingListEnabled": null, "GeminiSettings": null})),
+        ("browser.dns_bypass", json!({"EdgeDnsOverHttpsMode": null, "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": null, "FirefoxDnsOverHttpsLocked": null})),
     ] {
         let (_dir, _state, mut e) = fixture(id, json!({ "items": items }));
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
@@ -567,5 +569,127 @@ fn handled_item_controls_do_not_offer_a_fix_for_items_already_changed_or_handled
             assert_ne!(report.results[0].status, CheckStatus::Applied, "{id} {value}");
             assert!(state.borrow().writes.is_empty(), "{id} {value}");
         }
+    }
+}
+
+#[test]
+fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_set() {
+    let id = "browser.dns_bypass";
+    let before = json!({"items": {
+        "EdgeDnsOverHttpsMode": "secure",
+        "ChromeDnsOverHttpsMode": null,
+        "FirefoxDnsOverHttpsEnabled": 1,
+        "FirefoxDnsOverHttpsLocked": null,
+    }});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {
+            "EdgeDnsOverHttpsMode": "off",
+            "ChromeDnsOverHttpsMode": "off",
+            "FirefoxDnsOverHttpsEnabled": 0,
+            "FirefoxDnsOverHttpsLocked": 1,
+        }})
+    );
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    // Somebody changes a text after the fix: undo must not overwrite it.
+    let mut drifted = state.borrow().values[id].clone();
+    drifted["items"]["EdgeDnsOverHttpsMode"] = json!("automatic");
+    state.borrow_mut().values.insert(id.into(), drifted);
+    let writes = state.borrow().writes.len();
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(state.borrow().writes.len(), writes);
+    let mut back = state.borrow().values[id].clone();
+    back["items"]["EdgeDnsOverHttpsMode"] = json!("off");
+    state.borrow_mut().values.insert(id.into(), back);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn a_browser_setting_of_the_wrong_kind_is_never_offered_or_replaced() {
+    let id = "browser.dns_bypass";
+    for items in [
+        json!({"EdgeDnsOverHttpsMode": 0, "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": "secure", "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": "1", "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": "line\nbreak", "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
+    ] {
+        let (_dir, state, mut e) = fixture(id, json!({ "items": items }));
+        let audited = e.audit().unwrap();
+        assert_ne!(audited.results[0].status, CheckStatus::Attention, "{items}");
+        let applied = e.apply_selected(&[id.into()], |_| {});
+        assert!(
+            applied.is_err() || applied.unwrap().results[0].status != CheckStatus::Applied,
+            "{items}"
+        );
+        assert!(state.borrow().writes.is_empty(), "{items}");
+        assert!(e.history().unwrap().is_empty(), "{items}");
+    }
+}
+
+#[test]
+fn journal_images_of_text_settings_keep_the_exact_text_and_refuse_the_wrong_kind() {
+    let id = "browser.dns_bypass";
+    let items = |edge: Value| {
+        json!({"items": {
+            "EdgeDnsOverHttpsMode": edge,
+            "ChromeDnsOverHttpsMode": null,
+            "FirefoxDnsOverHttpsEnabled": 1,
+            "FirefoxDnsOverHttpsLocked": null,
+        }})
+    };
+    let (_dir, _state, mut e) = fixture(id, items(Value::Null));
+    for ok in ["automatic", "Gr\u{fc}\u{df}e", "https://dns.example/q{?dns}", ""] {
+        let tx = prepare(&mut e, 1, id, items(json!(ok)));
+        let name = tx.name.clone();
+        drop(tx);
+        let loaded = e.load().unwrap();
+        let found = loaded.iter().find(|t| t.name == name).unwrap();
+        assert_eq!(found.entries[0].before, items(json!(ok)), "{ok:?}");
+        drop(loaded);
+        std::fs::remove_file(e.dir.join(format!("{name}.jsonl"))).unwrap();
+    }
+    let header = |name: &str| {
+        String::from_utf8(
+            record_bytes(&Record::Header {
+                schema: SCHEMA,
+                machine: "machine-a".into(),
+                transaction: name.into(),
+                sequence: 1,
+            })
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let rest = r#""ChromeDnsOverHttpsMode":null,"FirefoxDnsOverHttpsEnabled":1,"FirefoxDnsOverHttpsLocked":null"#;
+    for (i, edge) in [
+        r#"0"#,
+        r#"1"#,
+        r#"true"#,
+        r#"["off"]"#,
+        r#""one\ntwo""#,
+        r#""off","EdgeDnsOverHttpsMode":"off""#,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let line = format!(
+            r#"{{"kind":"prepare","id":"{id}","before":{{"items":{{"EdgeDnsOverHttpsMode":{edge},{rest}}}}}}}"#
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let state = Rc::new(RefCell::new(FakeState::default()));
+        state.borrow_mut().values.insert(id.into(), items(Value::Null));
+        let name = format!("{:020}-00000000-0000-4000-8000-00000000000{i}", 1);
+        std::fs::write(
+            dir.path().join(format!("{name}.jsonl")),
+            format!("{}{line}\n", header(&name)),
+        )
+        .unwrap();
+        assert!(
+            Engine::open(dir.path().into(), backend(&state, &[id], "machine-a")).is_err(),
+            "accepted journal line {line}"
+        );
     }
 }

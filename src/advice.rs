@@ -15,7 +15,7 @@ use reasons::{managed, not_offered, repair_help};
 /// The optional group a choice belongs to. These never count against the score.
 pub fn extra_section(id: &str) -> Option<&'static str> {
     Some(match id.split_once('.')?.0 {
-        "privacy" => "Privacy extras",
+        "privacy" | "browser" => "Privacy extras",
         "ai" => "AI features",
         "debloat" => "Less clutter",
         _ => return None,
@@ -537,6 +537,10 @@ mod tests {
             ("ai.notepad", "AI features"),
             ("debloat.widgets_policy", "Less clutter"),
             ("debloat.device_companion_apps", "Less clutter"),
+            ("browser.shopping_ai", "Privacy extras"),
+            ("browser.data_collection", "Privacy extras"),
+            ("browser.safety_mode", "Privacy extras"),
+            ("browser.dns_bypass", "Privacy extras"),
         ] {
             assert_eq!(extra_section(id), Some(section), "{id}");
             let a = for_control(id, &CheckStatus::Attention, "Eligible");

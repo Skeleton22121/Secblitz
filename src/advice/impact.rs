@@ -134,6 +134,16 @@ pub fn control_impact(id: &str) -> &'static str {
         "accounts.stale_enabled" => "Forgotten accounts letting someone sign in unseen",
         "smb.shares_exposed" => "Someone on your network opening or changing your shared files",
         "smartscreen.browser_policy" => "Scam and virus websites opening with no warning",
+        "browser.shopping_ai" => {
+            "Shopping and AI tools in your browsers seeing the pages you visit"
+        }
+        "browser.data_collection" => {
+            "Your browsers reporting how you use them and what you look at"
+        }
+        "browser.safety_mode" => "Harmful sites and trackers getting more room in your browsers",
+        "browser.dns_bypass" => {
+            "Ads, trackers and dangerous sites slipping past Web protection in your browsers"
+        }
         "recovery.winre_enabled" => {
             "Being stuck without a way to repair Windows if it stops starting"
         }

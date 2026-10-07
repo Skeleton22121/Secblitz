@@ -34,6 +34,10 @@ const IDS: &[&str] = &[
     "debloat.device_companion_apps",
     "defender.exclusions_risky",
     "recovery.winre_enabled",
+    "browser.shopping_ai",
+    "browser.data_collection",
+    "browser.safety_mode",
+    "browser.dns_bypass",
 ];
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
@@ -157,6 +161,26 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "When you plug in a new mouse, keyboard or monitor, Windows can look up its picture and suggest the maker's extra app.",
             "Those suggestions can put extra apps on your PC that you never asked for.",
             "Device pictures and details stop downloading, so devices may show a plain icon. They still work. You can undo this.",
+        ),
+        "browser.shopping_ai" => e(
+            "Edge and Chrome can show shopping helpers, such as price tracking and coupons, and AI side panels you never asked for.",
+            "Shopping helpers send the pages you visit to online services, and AI side panels can read what you view when you use them.",
+            "Shopping helpers and side panels turn off. Browsers will then say they are managed by your organization, which only means a setting was made for this whole PC.",
+        ),
+        "browser.data_collection" => e(
+            "Your browsers can send Microsoft, Google and Mozilla details about how you use them and what interests you.",
+            "Those details can include the sites you visit, and they are used to tailor ads and services to you.",
+            "Browsers stop sending that usage data. They will then say they are managed by your organization, which only means a setting was made for this whole PC.",
+        ),
+        "browser.safety_mode" => e(
+            "Edge and Firefox have stronger modes that make it harder for harmful sites and trackers to attack your browser or follow you.",
+            "Without them, a harmful site has more room to attack your browser, and trackers can follow you from site to site.",
+            "A few sites may load a little slower. Browsers will say they are managed by your organization, which only means a setting was made for this whole PC.",
+        ),
+        "browser.dns_bypass" => e(
+            "Browsers can look up website addresses by their own private route, which skips the filtering Web protection does for the whole PC.",
+            "Ads, trackers and dangerous sites that Web protection blocks can still open in your browsers.",
+            "Browsers use your PC's own lookups, so Web protection filters them. They will say they are managed by your organization, which only means a setting was made.",
         ),
         "defender.exclusions_risky" => e(
             "Your antivirus keeps a list of places and programs it was told to skip, and some entries cover far too much.",
