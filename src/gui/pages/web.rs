@@ -307,6 +307,7 @@ pub enum LookupState {
     Off,
     Private,
     Paused,
+    PausedWithBlocking,
     GettingReady,
     NotRunning,
 }
@@ -314,6 +315,9 @@ pub enum LookupState {
 pub fn private_state(config: &Config, status: Option<&Status>, now: u64) -> LookupState {
     if !config.private_lookups {
         return LookupState::Off;
+    }
+    if config.paused(now) {
+        return LookupState::PausedWithBlocking;
     }
     match status.filter(|s| config::fresh(s, now)).map(|s| s.lookups) {
         None => LookupState::NotRunning,
@@ -934,8 +938,9 @@ fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
 fn private_text(ctx: &Ctx, state: LookupState) -> String {
     match state {
         LookupState::Off => ctx.t("Your internet lookups are not private."),
-        LookupState::Private => ctx.t("Your lookups are private"),
+        LookupState::Private => ctx.t("Your internet lookups are private."),
         LookupState::Paused => ctx.t("Private lookups are paused: this network blocks them"),
+        LookupState::PausedWithBlocking => ctx.t("Private lookups are paused too"),
         LookupState::GettingReady => ctx.t("Private lookups are getting ready"),
         LookupState::NotRunning => ctx.t("Private lookups aren't running right now"),
     }
@@ -2195,6 +2200,14 @@ mod tests {
             LookupState::GettingReady
         );
         assert_eq!(private_state(&on, None, NOW), LookupState::NotRunning);
+        let paused = Config {
+            paused_until: Some(NOW + 60),
+            ..on.clone()
+        };
+        assert_eq!(
+            private_state(&paused, Some(&status(Lookups::Plain)), NOW),
+            LookupState::PausedWithBlocking
+        );
         let stale = Status {
             written_at: NOW - 500,
             ..status(Lookups::Private)
