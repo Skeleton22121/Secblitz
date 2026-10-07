@@ -1086,18 +1086,26 @@ fn busy(path: &Path, root: &Path) -> Result<bool> {
 }
 /// `(busy, tray pids)`. Tray agents (command line exactly `secblitz.exe tray`)
 /// never make the app busy; they are returned so an update can ask them to exit
-/// before installing. An unreadable command line is conservatively busy.
+/// before installing. The monitor and web protection services never make it busy
+/// either: the installer stops and restarts them. An unreadable command line is
+/// conservatively busy.
 fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
     use windows_service::{
         service::ServiceAccess,
         service_manager::{ServiceManager, ServiceManagerAccess},
     };
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    let monitor_pid = match manager.open_service("SecblitzMonitor", ServiceAccess::QUERY_STATUS) {
-        Ok(s) => s.query_status()?.process_id,
-        Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1060) => None,
-        Err(e) => return Err(e.into()),
+    let service_pid = |name: &str| -> Result<Option<u32>> {
+        match manager.open_service(name, ServiceAccess::QUERY_STATUS) {
+            Ok(s) => Ok(s.query_status()?.process_id),
+            Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1060) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     };
+    let service_pids = [
+        service_pid("SecblitzMonitor")?,
+        service_pid(crate::filter::SERVICE_NAME)?,
+    ];
     let snapshot = unsafe { CreateToolhelp32Snapshot(2, 0) }; // TH32CS_SNAPPROCESS
     ensure!(
         snapshot != INVALID_HANDLE_VALUE,
@@ -1137,7 +1145,7 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
     );
     let mut trays = Vec::new();
     for id in candidates {
-        if id == std::process::id() || Some(id) == monitor_pid {
+        if id == std::process::id() || service_pids.contains(&Some(id)) {
             continue;
         }
         let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, id) };
