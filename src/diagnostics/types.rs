@@ -140,7 +140,7 @@ probe_ids! {
     BrowserExtensions => "Verified original desktop user's bounded Chrome/Edge manifests and Firefox extensions.json",
     Storage => "Storage/Get-PhysicalDisk and Get-StorageReliabilityCounter",
     Ntfs => "Win32_Volume: fixed-volume filesystem/dirty bit/capacity",
-    Backup => "Win32_ShadowCopy and bounded Microsoft-Windows-Backup success event metadata",
+    Backup => "Win32_ShadowCopy, bounded Microsoft-Windows-Backup and File History event metadata, and OneDrive folder redirection",
     Adapters => "NetAdapter/Get-NetAdapter: operational state only",
     Dns => "DnsClient/Get-DnsClientServerAddress: configured server counts only",
     Proxy => "WinHTTP/WinHttpGetDefaultProxyConfiguration: access type only",
@@ -312,7 +312,12 @@ facts!(Volume {
     capacity_bytes: u64,
     free_bytes: u64
 });
-facts!(Backup { shadow_copy_count: u32, success_events: Inventory<BackupEvent> });
+facts!(Backup {
+    shadow_copy_count: u32,
+    success_events: Inventory<BackupEvent>,
+    file_history_last_unix_seconds: u64,
+    onedrive_folders: u32
+});
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupEvent {

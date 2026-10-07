@@ -179,7 +179,28 @@ try {
                 $items = @($rows | Select-Object -First 64 | ForEach-Object { @{date_unix_seconds=(UnixTime $_.TimeCreated)} })
                 Items $items ($rows.Count -gt 64)
             }
-            @{shadow_copy_count=$shadows;success_events=$events}
+            $fileHistory = Fact {
+                Load 'Microsoft.PowerShell.Diagnostics'
+                $log = Get-WinEvent -ListLog 'Microsoft-Windows-FileHistory-Core/WHC' -ErrorAction Stop
+                if (!$log.IsEnabled -and $log.RecordCount -eq 0) { throw 'File History log unavailable' }
+                $rows = @()
+                try { $rows = @(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-FileHistory-Core/WHC';Id=201;StartTime=[DateTime]::Now.AddDays(-400)} -MaxEvents 1) }
+                catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw } }
+                if ($rows.Count -eq 0) { [uint64]0 } else { [uint64](UnixTime $rows[0].TimeCreated) }
+            }
+            $oneDrive = Fact {
+                $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders', $false)
+                if ($null -eq $key) { throw 'Folders unreadable' }
+                try {
+                    $covered = 0
+                    foreach ($name in @('Personal','My Pictures','Desktop')) {
+                        $value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                        if ($value -is [string] -and $value -match '(?i)(^|[\\/%])OneDrive') { $covered++ }
+                    }
+                    $covered
+                } finally { $key.Dispose() }
+            }
+            @{shadow_copy_count=$shadows;success_events=$events;file_history_last_unix_seconds=$fileHistory;onedrive_folders=$oneDrive}
         }
         'Adapters' {
             Load 'NetAdapter'
