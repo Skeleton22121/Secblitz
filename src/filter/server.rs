@@ -25,6 +25,7 @@ const MAX_TCP_CONNECTIONS: usize = 32;
 const TCP_IDLE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(500);
 pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
 const SECONDS_PER_DAY: u64 = 86_400;
 
 pub const FALLBACK_UPSTREAM: [IpAddr; 2] = [
@@ -56,7 +57,7 @@ impl Stats {
         if kind == Kind::Dangerous {
             self.dangerous_at.store(now, Ordering::Relaxed);
         }
-        let today = now / SECONDS_PER_DAY;
+        let today = crate::clock::local_day(now);
         let seen = self.day.load(Ordering::Relaxed);
         if seen != today
             && self
@@ -74,7 +75,7 @@ impl Stats {
     /// Picks up today's counts from before a restart (the last status file),
     /// so "blocked today" does not drop to zero after a crash or a reboot.
     pub fn resume(&self, day: u64, counts: [u64; 5], now: u64) {
-        if day != now / SECONDS_PER_DAY {
+        if day != crate::clock::local_day(now) {
             return;
         }
         self.day.store(day, Ordering::Relaxed);
@@ -92,7 +93,7 @@ impl Stats {
     }
 
     pub fn snapshot(&self, now: u64) -> (u64, [u64; 5]) {
-        let today = now / SECONDS_PER_DAY;
+        let today = crate::clock::local_day(now);
         if self.day.load(Ordering::Relaxed) != today {
             return (today, [0; 5]);
         }
@@ -808,14 +809,15 @@ mod tests {
 
     #[test]
     fn counts_resume_only_for_the_same_day() {
-        let now = 20_000 * SECONDS_PER_DAY + 3_600;
+        let now = 20_000 * SECONDS_PER_DAY + SECONDS_PER_DAY / 2;
+        let today = crate::clock::local_day(now);
         let stats = Stats::default();
-        stats.resume(20_000, [5, 6, 7, 8, 9], now);
+        stats.resume(today, [5, 6, 7, 8, 9], now);
         stats.record(Kind::Ads, now);
-        assert_eq!(stats.snapshot(now), (20_000, [6, 6, 7, 8, 9]));
+        assert_eq!(stats.snapshot(now), (today, [6, 6, 7, 8, 9]));
         let fresh = Stats::default();
-        fresh.resume(19_999, [5, 6, 7, 8, 9], now);
-        assert_eq!(fresh.snapshot(now), (20_000, [0, 0, 0, 0, 0]));
+        fresh.resume(today - 1, [5, 6, 7, 8, 9], now);
+        assert_eq!(fresh.snapshot(now), (today, [0, 0, 0, 0, 0]));
     }
 
     #[test]
@@ -882,17 +884,18 @@ mod tests {
     #[test]
     fn blocked_counts_reset_on_new_day() {
         let stats = Stats::default();
-        let day0 = 10 * SECONDS_PER_DAY + 5;
+        let day0 = 10 * SECONDS_PER_DAY + SECONDS_PER_DAY / 2;
+        let d = crate::clock::local_day(day0);
         stats.record(Kind::Ads, day0);
         stats.record(Kind::Ads, day0 + 1);
         stats.record(Kind::Dangerous, day0 + 2);
-        assert_eq!(stats.snapshot(day0 + 3), (10, [2, 0, 1, 0, 0]));
+        assert_eq!(stats.snapshot(day0 + 3), (d, [2, 0, 1, 0, 0]));
         // Tomorrow, before anything is blocked: nothing counted yet.
-        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (11, [0; 5]));
+        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (d + 1, [0; 5]));
         stats.record(Kind::Tracking, day0 + SECONDS_PER_DAY);
         assert_eq!(
             stats.snapshot(day0 + SECONDS_PER_DAY),
-            (11, [0, 1, 0, 0, 0])
+            (d + 1, [0, 1, 0, 0, 0])
         );
     }
 

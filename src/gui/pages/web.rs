@@ -294,7 +294,7 @@ fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 5]> {
     if !snapshot.config.any_on() || !config::fresh(status, snapshot.now) {
         return None;
     }
-    Some(if status.day == snapshot.now / SECONDS_PER_DAY {
+    Some(if status.day == history::local_day(snapshot.now) {
         status.blocked
     } else {
         [0; 5]
@@ -586,7 +586,7 @@ fn same_look(a: &Snapshot, b: &Snapshot) -> bool {
         && a.recent == b.recent
         && a.stats == b.stats
         && dangerous_today(a) == dangerous_today(b)
-        && a.now / SECONDS_PER_DAY == b.now / SECONDS_PER_DAY
+        && history::local_day(a.now) == history::local_day(b.now)
         && a.recent
             .iter()
             .map(|i| minutes_ago(a.now, i.at))
@@ -625,7 +625,7 @@ fn take_snapshot(state: &mut State, snapshot: Snapshot) -> Task<Message> {
     note_look(state, &snapshot, Instant::now());
     state.days = daily_totals(
         snapshot.stats.as_ref(),
-        snapshot.now / SECONDS_PER_DAY,
+        history::local_day(snapshot.now),
         blocked_today(&snapshot).map(|c| c.iter().sum::<u64>()),
     );
     state.snapshot = Some(snapshot);

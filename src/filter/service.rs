@@ -755,7 +755,7 @@ mod tests {
         let now = server::unix_now();
         let saved = activity::Detail {
             days: vec![activity::DetailDay {
-                day: now / 86_400,
+                day: crate::clock::local_day(now),
                 blocked: [4, 0, 0, 0, 0],
                 sites: vec![("ads.example".to_string(), 4)],
             }],

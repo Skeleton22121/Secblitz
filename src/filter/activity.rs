@@ -12,6 +12,7 @@ use super::config::{
 };
 use super::matcher::Kind;
 
+#[cfg(test)]
 const SECONDS_PER_DAY: u64 = 86_400;
 const SITES_TODAY: usize = 2000;
 const SITES_PER_DAY: usize = 100;
@@ -165,7 +166,7 @@ impl Activity {
             }
             h.days.insert(d.day, day);
         }
-        h.roll(now / SECONDS_PER_DAY);
+        h.roll(crate::clock::local_day(now));
         h.dirty = !h.days.is_empty();
     }
 
@@ -185,7 +186,7 @@ impl Activity {
             r.items.truncate(MAX_RECENT_ITEMS);
             r.dirty = true;
         }
-        let today = now / SECONDS_PER_DAY;
+        let today = crate::clock::local_day(now);
         let mut h = locked(&self.history);
         let new_day = !h.days.contains_key(&today);
         h.days
@@ -219,7 +220,7 @@ impl Activity {
             }
         }
         let mut h = locked(&self.history);
-        let today = now / SECONDS_PER_DAY;
+        let today = crate::clock::local_day(now);
         h.roll(today);
         if h.dirty && (force || now.saturating_sub(h.stats_written) >= STATS_EVERY) {
             h.dirty = false;
@@ -248,7 +249,7 @@ impl Activity {
 
     pub fn history_now(&self, now: u64) -> BlockHistory {
         let mut h = locked(&self.history);
-        h.roll(now / SECONDS_PER_DAY);
+        h.roll(crate::clock::local_day(now));
         history_of(&h)
     }
 }
@@ -393,7 +394,8 @@ mod tests {
     #[test]
     fn stats_count_per_day_and_per_kind() {
         let a = Activity::default();
-        let d0 = 100 * DAY;
+        let d0 = 100 * DAY + DAY / 2;
+        let day = crate::clock::local_day(d0);
         a.record("ads.example.com", Kind::Ads, d0 + 5);
         a.record("t.example.com", Kind::Tracking, d0 + 6);
         a.record("x.other.org", Kind::Dangerous, d0 + DAY + 1);
@@ -404,11 +406,11 @@ mod tests {
             h.days,
             [
                 DayCount {
-                    day: 100,
+                    day,
                     blocked: [1, 1, 0, 0, 0]
                 },
                 DayCount {
-                    day: 101,
+                    day: day + 1,
                     blocked: [0, 0, 1, 1, 1]
                 }
             ]
@@ -431,14 +433,19 @@ mod tests {
 
     #[test]
     fn stats_roll_over_after_thirty_days() {
+        let noon = |d: u64| d * DAY + DAY / 2;
+        let day = |d: u64| crate::clock::local_day(noon(d));
         let a = Activity::default();
-        a.record("a.example.com", Kind::Ads, 10 * DAY);
-        a.record("b.example.net", Kind::Ads, 39 * DAY);
-        let h = a.history_now(39 * DAY + 1);
-        assert_eq!(h.days.iter().map(|d| d.day).collect::<Vec<_>>(), [10, 39]);
+        a.record("a.example.com", Kind::Ads, noon(10));
+        a.record("b.example.net", Kind::Ads, noon(39));
+        let h = a.history_now(noon(39) + 1);
+        assert_eq!(
+            h.days.iter().map(|d| d.day).collect::<Vec<_>>(),
+            [day(10), day(39)]
+        );
         // Day 10 is the 30th day back and still counts; day 9 would not.
-        let h = a.history_now(40 * DAY);
-        assert_eq!(h.days.iter().map(|d| d.day).collect::<Vec<_>>(), [39]);
+        let h = a.history_now(noon(40));
+        assert_eq!(h.days.iter().map(|d| d.day).collect::<Vec<_>>(), [day(39)]);
         assert_eq!(h.top.len(), 1);
         assert_eq!(h.top[0].site, "example.net");
     }
@@ -466,7 +473,7 @@ mod tests {
     #[test]
     fn per_day_site_map_is_capped_and_evicts_the_smallest() {
         let a = Activity::default();
-        let now = 60 * DAY;
+        let now = 60 * DAY + DAY / 2;
         for _ in 0..50 {
             a.record("busy.example.com", Kind::Ads, now);
         }
@@ -475,7 +482,7 @@ mod tests {
         }
         {
             let h = locked(&a.history);
-            assert!(h.days[&60].sites.len() <= SITES_TODAY);
+            assert!(h.days[&crate::clock::local_day(now)].sites.len() <= SITES_TODAY);
         }
         let h = a.history_now(now);
         assert_eq!(

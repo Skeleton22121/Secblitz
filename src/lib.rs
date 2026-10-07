@@ -3,6 +3,7 @@
 //! The library holds logic that depends on neither the GUI nor the command line: checks, fixes and undo, plain-language advice and explanations, user settings, updates and the background service. The binary crate (`main.rs`) holds the GUI, the command line, the launcher and the admin helper.
 pub mod actions;
 pub mod advice;
+pub mod clock;
 pub mod debloat;
 pub mod diagnostics;
 pub mod engine;
