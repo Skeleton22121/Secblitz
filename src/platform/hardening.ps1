@@ -1,12 +1,14 @@
 # Extended hardening controls, appended to the backend definitions (never the backend dispatcher)
 # for ids in the compiled Rust catalog. $hardeningSpecJson comes from that catalog; all state is a
-# slice {items: {key: int|null}} where null means "not configured". Writes can only move a key
+# slice {items: {key: int|string|null}}; null is "not configured", a string is a REG_SZ value (rule 'text').
+# Other kinds are never read as text or replaced. Writes can only move a key
 # between its recorded unsafe original and the fixed value (HFixOf). No native child processes,
 # except the DISM feature writes, ReAgentc.exe and netsh.exe (one adapter's random Wi-Fi address).
 $spec = ConvertFrom-Json -InputObject $hardeningSpecJson
 
 function HEq($a, $b) {
     if ($null -eq $a -or $null -eq $b) { return ($null -eq $a -and $null -eq $b) }
+    if ($a -is [string] -or $b -is [string]) { return ($a -is [string] -and $b -is [string] -and $a -ceq $b) }
     return ([int64]$a -eq [int64]$b)
 }
 function HDef([string]$name) {
@@ -33,6 +35,12 @@ function HNameOk([string]$name) {
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
+    if ($def.rule -ceq 'text') {
+        if ($null -eq $v) { return [bool]$def.absentSafe }
+        if ($v -isnot [string]) { return $false }
+        return (@($def.safe) -ccontains $v)
+    }
+    if ($v -is [string]) { return $false }
     if ($def.rule -ceq 'exposure') {
         if ($null -eq $v) { return $false }
         return !((([int]$v -band 8) -ne 0) -and (([int]$v -band 4) -ne 0))
@@ -63,6 +71,12 @@ function HReadRegistry($def) {
     $key = Get-Item -LiteralPath $def.path -ErrorAction Stop
     $vn = HValueName $def
     if ($key.GetValueNames() -notcontains $vn) { return $null }
+    if ($def.rule -ceq 'text') {
+        if ($key.GetValueKind($vn) -ne [Microsoft.Win32.RegistryValueKind]::String) { throw "$vn is not text" }
+        $text = $key.GetValue($vn)
+        if ($text -isnot [string]) { throw "$vn is not text" }
+        return $text
+    }
     if ($key.GetValueKind($vn) -ne [Microsoft.Win32.RegistryValueKind]::DWord) { throw "$vn is not a DWORD" }
     $n = [int64]$key.GetValue($vn)
     # DWORDs are unsigned: 0xFFFFFFFF reads back as -1.
@@ -369,7 +383,7 @@ function HGateCommon() {
 }
 function HRegistryPaths() {
     $paths = @()
-    foreach ($def in @($spec.keys)) { if ($def.path) { $paths += @{ path = [string]$def.path; name = [string]$def.name } } }
+    foreach ($def in @($spec.keys)) { if ($def.path) { $paths += @{ path = [string]$def.path; name = (HValueName $def) } } }
     foreach ($pv in @($spec.gate.policyValues)) { $paths += @{ path = [string]$pv.path; name = [string]$pv.name } }
     return $paths
 }
@@ -682,6 +696,14 @@ function HSetRegistry($def, $v) {
     $vn = HValueName $def
     if ($null -eq $v) { Remove-ItemProperty -LiteralPath $def.path -Name $vn -ErrorAction Stop; return }
     if (!(Test-Path -LiteralPath $def.path)) { $null = New-Item -Path $def.path -Force -ErrorAction Stop }
+    if ($def.rule -ceq 'text') {
+        if ($v -isnot [string]) { throw 'Invalid text setting' }
+        # Leave it alone unless it was read as text a moment ago.
+        $key = Get-Item -LiteralPath $def.path -ErrorAction Stop
+        if (($key.GetValueNames() -contains $vn) -and $key.GetValueKind($vn) -ne [Microsoft.Win32.RegistryValueKind]::String) { throw "$vn is not text" }
+        New-ItemProperty -LiteralPath $def.path -Name $vn -PropertyType String -Value $v -Force -ErrorAction Stop | Out-Null
+        return
+    }
     # DWORDs are unsigned; the cmdlet wants the same 32 bits as a signed int.
     $bits = [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32][int64]$v), 0)
     New-ItemProperty -LiteralPath $def.path -Name $vn -PropertyType DWord -Value $bits -Force -ErrorAction Stop | Out-Null
@@ -1675,9 +1697,15 @@ function HParseInput($inputValue) {
         if (!(HNameOk $p.Name)) { throw 'Unknown hardening item' }
         $v = $p.Value
         if ($null -ne $v) {
-            if ($v -isnot [int] -and $v -isnot [long]) { throw 'Invalid hardening value' }
-            if ($v -lt 0 -or $v -gt [int64](HDef $p.Name).max) { throw 'Hardening value out of range' }
-            $v = [int64]$v
+            $def = HDef $p.Name
+            if ($def.rule -ceq 'text') {
+                if ($v -isnot [string]) { throw 'Invalid hardening value' }
+                if ($v.Length -gt [int64]$def.max -or $v -cmatch '[\x00-\x1f\x7f-\x9f]') { throw 'Invalid hardening text' }
+            } else {
+                if ($v -isnot [int] -and $v -isnot [long]) { throw 'Invalid hardening value' }
+                if ($v -lt 0 -or $v -gt [int64]$def.max) { throw 'Hardening value out of range' }
+                $v = [int64]$v
+            }
         }
         $wanted[$p.Name] = $v
     }

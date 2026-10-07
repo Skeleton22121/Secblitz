@@ -67,7 +67,7 @@ function HLabelList($slice) {
     $out = @()
     $more = 0
     foreach ($name in @($slice.Keys | Sort-Object)) {
-        if ($null -eq $slice[$name] -or [int64]$slice[$name] -ne 1 -or !$script:hLabels.ContainsKey($name)) { continue }
+        if (!$script:hLabels.ContainsKey($name) -or $null -eq $slice[$name] -or $slice[$name] -is [string] -or [int64]$slice[$name] -ne 1) { continue }
         $kind = HLabelKind $name
         if ($kind -eq '') { continue }
         foreach ($text in @($script:hLabels[$name])) {

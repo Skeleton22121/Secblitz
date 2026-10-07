@@ -151,6 +151,55 @@ Reset $pnpJson @{ RestrictDriverInstallationToAdministrators = 1; NoWarningNoEle
 HWrite (Input '{"items":{"RestrictDriverInstallationToAdministrators":1,"NoWarningNoElevationOnInstall":null,"UpdatePromptSettings":1}}')
 Assert ($script:sets.Count -eq 1 -and $script:sets[0][0] -ceq 'NoWarningNoElevationOnInstall') 'only unsafe keys move'
 
+$gateTail = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
+$gateExempt = $gateTail.Replace('"tamperExempt":false', '"tamperExempt":true')
+$textJson = '{"id":"browser.dns_bypass","source":"Registry","dynamic":false,"reboot":false,"keys":[{"name":"EdgeMode","path":"HKLM:\\E","valueName":"DnsOverHttpsMode","rule":"text","safe":["off"],"absentSafe":false,"fix":"off","max":256},{"name":"Optional","path":"HKLM:\\E","rule":"text","safe":["a"],"absentSafe":true,"fix":null,"max":256},{"name":"Locked","path":"HKLM:\\F","valueName":"Locked","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $gateTail + '}'
+MakeSpec $textJson
+$tm = HDef 'EdgeMode'
+Assert ((HIsSafe $tm 'off') -and !(HIsSafe $tm 'OFF') -and !(HIsSafe $tm 'automatic') -and !(HIsSafe $tm '') -and !(HIsSafe $tm $null)) 'a text is safe only when it matches exactly'
+Assert (!(HIsSafe $tm 0) -and !(HIsSafe $tm 1)) 'a number is never a safe text'
+Assert (!(HIsSafe (HDef 'Locked') 'on')) 'a text is never a safe number'
+Assert ((HFixOf $tm 'automatic') -ceq 'off' -and (HFixOf $tm $null) -ceq 'off' -and (HFixOf $tm 'off') -ceq 'off' -and (HFixOf $tm 'OFF') -ceq 'off') 'text repair'
+Assert ((HIsSafe (HDef 'Optional') $null) -and $null -eq (HFixOf (HDef 'Optional') 'zzz') -and (HFixOf (HDef 'Optional') 'a') -ceq 'a') 'an unsafe optional text is removed'
+Assert ((HEq 'off' 'off') -and !(HEq 'off' 'OFF') -and !(HEq 'off' $null) -and !(HEq 'off' 1) -and !(HEq 1 'off') -and (HEq $null $null)) 'HEq compares texts exactly'
+function ParseText($json) { HParseInput (ConvertFrom-Json -InputObject $json) }
+Assert ((ParseText '{"items":{"EdgeMode":"off","Optional":null,"Locked":1}}')['EdgeMode'] -ceq 'off') 'text parse'
+Assert ($null -eq (ParseText '{"items":{"EdgeMode":null,"Optional":"a","Locked":1}}')['EdgeMode']) 'text parse null'
+Assert ((ParseText '{"items":{"EdgeMode":"https://dns.example/dns-query{?dns}","Optional":null,"Locked":1}}')['EdgeMode'] -ceq 'https://dns.example/dns-query{?dns}') 'any plain text is accepted'
+foreach ($bad in @(
+    '{"items":{"EdgeMode":0,"Optional":null,"Locked":1}}',
+    '{"items":{"EdgeMode":true,"Optional":null,"Locked":1}}',
+    '{"items":{"EdgeMode":["off"],"Optional":null,"Locked":1}}',
+    '{"items":{"EdgeMode":"off","Optional":null,"Locked":"1"}}',
+    '{"items":{"EdgeMode":"o\nff","Optional":null,"Locked":1}}',
+    '{"items":{"EdgeMode":"o\u0000ff","Optional":null,"Locked":1}}',
+    '{"items":{"EdgeMode":"o\u007fff","Optional":null,"Locked":1}}',
+    ('{"items":{"EdgeMode":"' + ('x' * 257) + '","Optional":null,"Locked":1}}')
+)) {
+    $caught = $false; try { $null = ParseText $bad } catch { $caught = $true }
+    Assert $caught "accepted $bad"
+}
+Reset $textJson @{ EdgeMode = 'automatic'; Optional = 'zzz'; Locked = 0 }
+HWrite (Input '{"items":{"EdgeMode":"off","Optional":null,"Locked":1}}')
+Assert ($script:sets.Count -eq 3 -and $script:state['EdgeMode'] -ceq 'off' -and $null -eq $script:state['Optional'] -and $script:state['Locked'] -eq 1 -and $script:preflights -eq 1) 'text repair writes the fixed texts'
+$script:preflightFails = $true
+HWrite (Input '{"items":{"EdgeMode":"automatic","Optional":"zzz","Locked":0}}')
+Assert ($script:state['EdgeMode'] -ceq 'automatic' -and $script:state['Optional'] -ceq 'zzz' -and $script:state['Locked'] -eq 0 -and $script:preflights -eq 1) 'text undo puts the exact original back without a preflight'
+Reset $textJson @{ EdgeMode = 'OFF'; Optional = $null; Locked = 1 }
+HWrite (Input '{"items":{"EdgeMode":"off","Optional":null,"Locked":1}}')
+Assert ($script:sets.Count -eq 1 -and $script:state['EdgeMode'] -ceq 'off') 'a text that differs only by case is repaired'
+Reset $textJson @{ EdgeMode = 'secure'; Optional = $null; Locked = 1 }
+Reject { HWrite (Input '{"items":{"EdgeMode":"automatic","Optional":null,"Locked":1}}') } 'changed before the write'
+Assert ($script:sets.Count -eq 0) 'undo overwrote a text changed after the fix'
+Reset $textJson @{ EdgeMode = 'automatic'; Optional = $null; Locked = 1 }; $script:ignoreWrites = $true
+Reject { HWrite (Input '{"items":{"EdgeMode":"off","Optional":null,"Locked":1}}') } 'Readback did not match'
+Reset $textJson @{ EdgeMode = 'automatic'; Optional = $null; Locked = 1 }
+Reject { HWrite (Input '{"items":{"EdgeMode":0,"Optional":null,"Locked":1}}') } 'Invalid hardening value'
+Assert ($script:sets.Count -eq 0) 'a number was written to a text setting'
+$script:hLabels = @{ EdgeMode = 'x' }; $script:hLeft = @()
+Assert (@(HLabelList @{ EdgeMode = 'automatic'; Locked = 1 }).Count -eq 0) 'text items are never listed as handled items'
+$script:hLabels = @{}
+
 # Dynamic items must still exist; new ones are left alone.
 Reset $fwJson @{ 'FPS-A' = 15; 'FPS-B' = 12; 'NETDIS-New' = 15 }
 HWrite (Input '{"items":{"FPS-A":11,"FPS-B":4}}')
@@ -166,8 +215,6 @@ Assert ($script:state['Cafe'] -eq 0 -and $script:state['Home'] -eq 0 -and $scrip
 HWrite (Input '{"items":{"Cafe":1}}')
 Assert ($script:state['Cafe'] -eq 1) 'wifi undo'
 
-$gateTail = '"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","policyValues":[]}'
-$gateExempt = $gateTail.Replace('"tamperExempt":false', '"tamperExempt":true')
 $tlsJson = '{"id":"tls.legacy_protocols","source":"Registry","dynamic":false,"reboot":true,"keys":[{"name":"ssl3.client.enabled","path":"HKLM:\\T","valueName":"Enabled","rule":"set","safe":[0],"absentSafe":false,"fix":0,"max":4294967295},{"name":"ssl3.client.default_off","path":"HKLM:\\T","valueName":"DisabledByDefault","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $gateTail + '}'
 $stackJson = '{"id":"net.stack_hardening","source":"Registry","dynamic":false,"reboot":true,"keys":[{"name":"DisableIPSourceRouting","path":"HKLM:\\T4","valueName":"DisableIPSourceRouting","rule":"set","safe":[2],"absentSafe":false,"fix":2,"max":2},{"name":"DisableIPSourceRouting6","path":"HKLM:\\T6","valueName":"DisableIPSourceRouting","rule":"set","safe":[2],"absentSafe":false,"fix":2,"max":2}],' + $gateTail + '}'
 $nbJson = '{"id":"net.netbios","source":"NetbiosAdapters","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","valueName":"*","rule":"set","safe":[2],"absentSafe":false,"fix":2,"max":2}],' + $gateTail + '}'
@@ -385,6 +432,39 @@ HSetRegistry (HDef 'ssl3.client.enabled') 4294967295
 HSetRegistry (HDef 'ssl3.client.enabled') 0
 HSetRegistry (HDef 'ssl3.client.default_off') $null
 Assert (($script:calls | ForEach-Object { "$($_[0])=$($_[1])" }) -join ',' -ceq 'Enabled=-1,Enabled=0,DisabledByDefault=removed') 'registry setter keeps the unsigned bits and value name'
+function FakeTextKey([hashtable]$values, [hashtable]$kinds) {
+    $k = [pscustomobject]@{ Values = $values; Kinds = $kinds; SubKeyCount = 0 }
+    $k | Add-Member ScriptMethod GetValueNames { return @($this.Values.Keys) }
+    $k | Add-Member ScriptMethod GetValueKind { param($n) return [Microsoft.Win32.RegistryValueKind]$this.Kinds[$n] }
+    $k | Add-Member ScriptMethod GetValue { param($n) return $this.Values[$n] }
+    return $k
+}
+MakeSpec $textJson
+$script:fakeFs = $true; $script:fakePaths = @('HKLM:\E')
+$script:fakeKey = FakeTextKey @{ DnsOverHttpsMode = 'automatic' } @{ DnsOverHttpsMode = 'String' }
+Assert ((HReadRegistry (HDef 'EdgeMode')) -ceq 'automatic') 'a text value reads back exactly'
+$script:fakeKey = FakeTextKey @{ DnsOverHttpsMode = '' } @{ DnsOverHttpsMode = 'String' }
+$emptyText = HReadRegistry (HDef 'EdgeMode')
+Assert ($emptyText -is [string] -and $emptyText.Length -eq 0) 'an empty text is not the same as an absent value'
+$script:fakeKey = FakeTextKey @{} @{}
+Assert ($null -eq (HReadRegistry (HDef 'EdgeMode'))) 'an absent text value reads as null'
+foreach ($kind in @('DWord', 'ExpandString', 'MultiString', 'Binary', 'QWord')) {
+    $script:fakeKey = FakeTextKey @{ DnsOverHttpsMode = 'off' } @{ DnsOverHttpsMode = $kind }
+    Reject { HReadRegistry (HDef 'EdgeMode') } 'is not text'
+}
+$script:calls = @()
+$script:fakeKey = FakeTextKey @{ DnsOverHttpsMode = 'automatic' } @{ DnsOverHttpsMode = 'String' }
+HSetRegistry (HDef 'EdgeMode') 'off'
+HSetRegistry (HDef 'EdgeMode') 'https://dns.example/dns-query{?dns}'
+HSetRegistry (HDef 'EdgeMode') $null
+Assert (($script:calls | ForEach-Object { "$($_[0])=$($_[1])" }) -join ',' -ceq 'DnsOverHttpsMode=off,DnsOverHttpsMode=https://dns.example/dns-query{?dns},DnsOverHttpsMode=removed') 'the text setter keeps the value name and the exact text'
+$script:calls = @()
+$script:fakeKey = FakeTextKey @{ DnsOverHttpsMode = 0 } @{ DnsOverHttpsMode = 'DWord' }
+Reject { HSetRegistry (HDef 'EdgeMode') 'off' } 'is not text'
+Reject { HSetRegistry (HDef 'EdgeMode') 5 } 'Invalid text setting'
+Assert ($script:calls.Count -eq 0) 'a value of another kind was replaced'
+$watch = @(HRegistryPaths)
+Assert (@($watch | Where-Object { $_.path -ceq 'HKLM:\E' -and $_.name -ceq 'DnsOverHttpsMode' }).Count -eq 1) 'policy checks watch the real value name'
 MakeSpec $stackJson
 Assert ((HValueName (HDef 'DisableIPSourceRouting6')) -ceq 'DisableIPSourceRouting' -and (HDef 'DisableIPSourceRouting6').path -ceq 'HKLM:\T6') 'same value name under another key'
 $script:fakePaths = @(); $script:fakeFs = $false
