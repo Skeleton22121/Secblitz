@@ -473,6 +473,7 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("ai.click_to_do", json!({"DisableClickToDo": null})),
         ("ai.paint", json!({"DisableCocreator": null, "DisableGenerativeFill": null, "DisableImageCreator": null})),
         ("ai.notepad", json!({"DisableAIFeatures": null})),
+        ("clickfix.run_box", json!({"NoRun": null})),
         ("debloat.widgets_policy", json!({"AllowNewsAndInterests": null})),
         ("debloat.device_companion_apps", json!({"PreventDeviceMetadataFromNetwork": null})),
         ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
@@ -498,6 +499,21 @@ fn optional_switches_change_only_the_chosen_setting_and_undo_restores_the_exact_
     assert_eq!(state.borrow().values[id], before);
     let done = json!({"items": {"AllowNewsAndInterests": 0}});
     let (_dir, state, mut e) = fixture("debloat.widgets_policy", done);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    assert!(state.borrow().writes.is_empty());
+}
+
+#[test]
+fn the_run_box_is_turned_off_with_one_value_and_undo_restores_the_earlier_one() {
+    let id = "clickfix.run_box";
+    for before in [json!({"items": {"NoRun": null}}), json!({"items": {"NoRun": 0}})] {
+        let (_dir, state, mut e) = fixture(id, before.clone());
+        e.apply_selected(&[id.into()], |_| {}).unwrap();
+        assert_eq!(state.borrow().values[id], json!({"items": {"NoRun": 1}}));
+        e.revert(|_| {}).unwrap();
+        assert_eq!(state.borrow().values[id], before);
+    }
+    let (_dir, state, mut e) = fixture(id, json!({"items": {"NoRun": 1}}));
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
     assert!(state.borrow().writes.is_empty());
 }

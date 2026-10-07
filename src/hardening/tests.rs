@@ -1756,3 +1756,23 @@ fn every_browser_control_says_before_the_person_agrees_that_browsers_show_a_mana
         }
     }
 }
+
+#[test]
+fn the_run_box_switch_sets_one_machine_wide_value_and_needs_no_restart() {
+    let s = spec("clickfix.run_box").unwrap();
+    assert!(s.ask && !s.reboot && !s.dynamic());
+    assert_eq!(s.source, Source::Registry);
+    assert_eq!(s.keys.len(), 1);
+    let k = &s.keys[0];
+    assert_eq!((k.name, k.path), ("NoRun", EXPLORER));
+    assert!(k.path.starts_with("HKLM:"));
+    assert!(s.any_unsafe(&items(s, &[None])));
+    assert!(s.any_unsafe(&items(s, &[Some(0)])));
+    assert!(!s.any_unsafe(&items(s, &[Some(1)])));
+    assert_eq!(
+        s.derive_target(&items(s, &[None])).unwrap(),
+        items(s, &[Some(1)])
+    );
+    assert!(s.validate(&items(s, &[Some(2)])).is_err());
+    assert!(s.gate.own_policy_key.is_empty());
+}

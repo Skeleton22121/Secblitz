@@ -33,6 +33,7 @@ pub fn control_label(id: &str) -> &'static str {
         "net.llmnr" => "Name-lookup reply blocking",
         "accounts.lockout_policy" => "Password guessing lockout",
         "autorun.disabled" => "USB stick auto-start",
+        "clickfix.run_box" => "Run box",
         "wifi.risky_profiles" => "Wi-Fi networks that join by themselves",
         "lsa.restrict_anonymous" => "Anonymous account listing",
         "remote_assistance.disabled" => "Remote Assistance invitations",
@@ -176,6 +177,7 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "net.llmnr"
         | "accounts.lockout_policy"
         | "autorun.disabled"
+        | "clickfix.run_box"
         | "wifi.risky_profiles"
         | "lsa.restrict_anonymous"
         | "remote_assistance.disabled"

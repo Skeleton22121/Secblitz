@@ -44,6 +44,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "net.llmnr" => "Someone on your network answering name lookups with wrong replies",
         "accounts.lockout_policy" => "Someone guessing your password again and again",
         "autorun.disabled" => "Harmful programs starting from a USB stick or disc",
+        "clickfix.run_box" => "A fake web page tricking you into running a harmful command",
         "wifi.risky_profiles" => "Unknown Wi-Fi hotspots connecting your PC without asking",
         "lsa.restrict_anonymous" => "Someone on the network listing your accounts and shares",
         "remote_assistance.disabled" => "Someone taking over your PC through a help invitation",
