@@ -23,7 +23,7 @@ pub fn persist(
     changed: Option<Changed>,
     cache: Cache,
 ) {
-    write_in_order(move || {
+    write_state(move || {
         if let (Some(dir), Some(entry)) = (&dir, &entry) {
             let _ = app::history::record(dir, entry);
         }
@@ -52,7 +52,7 @@ pub fn persist(
 
 pub fn forget_check(dir: Option<PathBuf>) {
     let Some(dir) = dir else { return };
-    write_in_order(move || app::last_check::forget(&dir));
+    write_state(move || app::last_check::forget(&dir));
 }
 
 type Job = Box<dyn FnOnce() + Send>;
@@ -92,6 +92,13 @@ impl Pending {
 /// Run file writes one after another on a single background thread, in the
 /// order they were queued: a later "forget" must never land before an
 /// earlier save, and history read-modify-writes must not interleave.
+// Tests drive the real app, and must leave this PC's saved state alone.
+fn write_state(job: impl FnOnce() + Send + 'static) {
+    if !cfg!(test) {
+        write_in_order(job);
+    }
+}
+
 fn write_in_order(job: impl FnOnce() + Send + 'static) {
     static QUEUE: OnceLock<Mutex<Sender<Job>>> = OnceLock::new();
     PENDING.begin();
@@ -122,14 +129,14 @@ fn mirror_notify(prefs: &app::settings::Prefs) -> bool {
 
 pub fn sync_notify(prefs: &app::settings::Prefs) {
     let prefs = prefs.clone();
-    write_in_order(move || {
+    write_state(move || {
         mirror_notify(&prefs);
     });
 }
 
 pub fn save_prefs(prefs: app::settings::Prefs) -> impl std::future::Future<Output = bool> {
     let (tx, rx) = futures::channel::oneshot::channel();
-    write_in_order(move || {
+    write_state(move || {
         let saved = app::settings::save(&prefs).is_ok();
         let _ = tx.send(saved && mirror_notify(&prefs));
     });
