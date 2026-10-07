@@ -355,6 +355,7 @@ details[open] > summary .chevron { transform: rotate(180deg); }
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--s3); align-items: center;
   margin-top: var(--s4);
 }
+.hash + p { margin-top: var(--s4); }
 .hash-label { font-weight: 600; color: var(--text); font-size: 13px; }
 .hash code {
   overflow-wrap: anywhere; font: 12.5px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;

@@ -168,7 +168,8 @@ class BumpTests(unittest.TestCase):
         self.assertIn('"softwareVersion": "9.8.7"', (self.root / "website/structured.json").read_text())
         self.assertIn('<code id="sha">' + "0" * 64 + "</code>", page)
         stage = (self.root / "scripts/stage-pages.py").read_text()
-        self.assertIn(f'"secblitz-{self.shown}-windows-x64-setup.exe", "secblitz-{self.shown}-windows-x64.exe",', stage)
+        self.assertIn(f'    "secblitz-{self.shown}-windows-x64-setup.exe",\n)', stage)
+        self.assertNotIn(f'"secblitz-{self.shown}-windows-x64.exe"', stage)
         self.assertEqual(stage.count(f"secblitz-{self.shown}-windows-x64-setup.exe"), 1)
 
     def test_site_only_changes_just_the_site_files(self):
@@ -383,7 +384,8 @@ class AssembleTests(unittest.TestCase):
         self.assertIn(f"downloads/secblitz-{self.version}-windows-x64-setup.exe", page)
         self.assertEqual((self.out / "releases/stable.json").read_bytes(), (self.assets / "stable.json").read_bytes())
         names = {p.name for p in (self.out / "downloads").iterdir()}
-        self.assertIn(f"secblitz-{self.version}-windows-x64.exe", names)
+        self.assertIn(f"secblitz-{self.version}-windows-x64-setup.exe", names)
+        self.assertNotIn(f"secblitz-{self.version}-windows-x64.exe", names)  # too big for Pages; on GitHub only
         self.assertIn(f"secblitz-{self.shown_before()}-windows-x64-setup.exe", names)  # the replaced version stays
 
     def test_live_check_compares_bytes_and_fails_loudly(self):

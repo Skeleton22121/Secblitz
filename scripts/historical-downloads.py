@@ -8,7 +8,7 @@ refuses any file whose SHA-256 is not in scripts/historical-downloads.sha256.
 
     historical-downloads.py check                 offline: manifest covers the list
     historical-downloads.py fetch --dest DIR      download and verify every listed file
-    historical-downloads.py record 0.7.0          download one version's two files from
+    historical-downloads.py record 0.7.0          download one version's listed files from
                                                   the live site and add their hashes
                                                   (run when a version becomes history,
                                                   review the diff, commit it)
@@ -131,7 +131,10 @@ def record(version, base, fetcher=download, stage=None, path=MANIFEST, verified_
         raise HistoryError("Version must be plain X.Y.Z.")
     stage = stage or load_stage()
     hashes = read_manifest(path) if path.exists() else {}
-    for name in (f"secblitz-{version}-windows-x64-setup.exe", f"secblitz-{version}-windows-x64.exe"):
+    names = [name for name in listed_names(stage) if name.startswith(f"secblitz-{version}-windows-x64")]
+    if not names:
+        raise HistoryError(f"{version} is not in the list of older downloads.")
+    for name in names:
         data = fetcher(f"{base}/downloads/{name}")
         stage.check_content(name, data)
         digest = hashlib.sha256(data).hexdigest()

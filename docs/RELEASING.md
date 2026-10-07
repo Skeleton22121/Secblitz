@@ -217,10 +217,10 @@ section, and moves **every version string and download link on the website**
 (`website/index.html`, any other text file under `website/`, structured data
 such as `softwareVersion`) and in `README.md` to the new version. It resets the
 checksum on the page to a placeholder (the real one is written at deploy time),
-and adds the version being replaced to the list of older downloads in
-`scripts/stage-pages.py` so its URLs keep working after the next deploy.
-`historical-downloads.py record-missing` reads that old version's installer and
-portable exe from the live site and pins their SHA-256 in
+and adds the setup of the version being replaced to the list of older downloads
+in `scripts/stage-pages.py` so its URL keeps working after the next deploy.
+`historical-downloads.py record-missing` reads that old version's installer
+from the live site and pins its SHA-256 in
 `scripts/historical-downloads.sha256` (the workflow does this for you).
 The workflow pins a hash only when the live site serves exactly the file of
 that version's GitHub release, which must match its `SHA256SUMS` and build
@@ -386,7 +386,7 @@ Publishing starts `publish-website.yml` on the tag.
    `wrangler pages deploy` with the Cloudflare token. This is the only step that
    sees the token.
 4. The live check (`verify-live-site.py`): fetches `/releases/stable.json`, `/`
-   (the download page), the setup and the portable exe from the live origin and
+   (the download page) and the setup from the live origin and
    compares their SHA-256 with the deployed files. A fresh deploy may need a
    short time to reach every edge, so it retries for about five minutes and then
    fails loudly, naming each file that differs.
@@ -416,6 +416,13 @@ machine. Do not leave the live feed to expire.
 Publishing is refused for any tag that is not the latest release, so a re-run on
 an old tag can never roll the website back. The verified site is kept for 30
 days, the longest an approval can wait.
+
+## The portable exe
+
+The portable exe is larger than the 25 MiB Cloudflare Pages file limit, so the
+website does not host it. It stays on the GitHub release, with its checksum and
+build attestation, and the download page links to the latest release. Portable
+files of versions before 0.9 are still on the website as older downloads.
 
 ## Reproducible build
 

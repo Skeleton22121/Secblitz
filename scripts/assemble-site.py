@@ -9,6 +9,8 @@ build attestations and the pinned update key by publish-website.yml):
     secblitz-X.Y.Z-windows-x64-setup.exe, secblitz-X.Y.Z-windows-x64.exe, SHA256SUMS, stable.json
 
 --historical holds the older downloads fetched by historical-downloads.py.
+The portable exe is larger than the Pages file limit, so it stays on the GitHub
+release and is not copied into the site.
 Steps: copy website/ into a scratch tree, add the downloads and the signed
 feed, write the real checksum and size into the page (finalize-site.py), run the
 release gate (prepare-pages.py --require-feed) and then stage-pages.py, which
@@ -67,13 +69,11 @@ def assemble(version, assets, historical, output, website=None):
         (site / "downloads").mkdir(exist_ok=True)
         for path in old.values():
             shutil.copyfile(path, site / "downloads" / path.name)
-        for name in (setup, portable):
-            shutil.copyfile(release[name], site / "downloads" / name)
+        shutil.copyfile(release[setup], site / "downloads" / setup)
         (site / "releases").mkdir(exist_ok=True)
         shutil.copyfile(release["stable.json"], site / "releases" / "stable.json")
         reference.mkdir()
         shutil.copyfile(release[setup], reference / setup)
-        shutil.copyfile(release[portable], reference / "secblitz.exe")
         run(ROOT / "scripts/finalize-site.py", "--site", site, "--version", version, "--setup", release[setup])
         run(ROOT / "scripts/prepare-pages.py", "--site", site, "--require-feed", "--expected-version", version)
         if output.exists():

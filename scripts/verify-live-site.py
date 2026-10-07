@@ -5,7 +5,7 @@
 
 Fetches, from the live origin (default: the update origin compiled into the app,
 assets/update-origin.txt), the signed feed (releases/stable.json), the download
-page (/), the setup and the portable exe, and compares the SHA-256 of each with
+page (/) and the setup, and compares the SHA-256 of each with
 the staged file that was deployed. A fresh deploy can take a short while to
 reach every edge, so a mismatch is retried (--attempts, --delay) and only then
 fails, loudly, with exit code 1. Read only: no credentials, no writes.
@@ -54,12 +54,10 @@ def fetch(url):
 
 def expected_files(site, version):
     setup = f"secblitz-{version}-windows-x64-setup.exe"
-    portable = f"secblitz-{version}-windows-x64.exe"
     return {
         "/releases/stable.json": site / "releases/stable.json",
         "/": site / "index.html",
         f"/downloads/{setup}": site / "downloads" / setup,
-        f"/downloads/{portable}": site / "downloads" / portable,
     }
 
 

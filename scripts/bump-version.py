@@ -172,14 +172,15 @@ def check_site(root, version):
 
 
 def add_historical(text, old):
-    """Add the replaced version's two downloads to HISTORICAL in stage-pages.py."""
-    setup, portable = f"secblitz-{old}-windows-x64-setup.exe", f"secblitz-{old}-windows-x64.exe"
-    if setup in text and portable in text:
+    """Add the replaced version's setup to HISTORICAL in stage-pages.py. The
+    portable exe is too big for Pages, so it is offered on GitHub only."""
+    setup = f"secblitz-{old}-windows-x64-setup.exe"
+    if f'"{setup}"' in text:
         return text
     m = re.search(r"(HISTORICAL = \(\n)(.*?)(\n\)\n)", text, re.S)
     if not m:
         raise BumpError("scripts/stage-pages.py: HISTORICAL list not found.")
-    return text[:m.end(2)] + f'\n    "{setup}", "{portable}",' + text[m.end(2):]
+    return text[:m.end(2)] + f'\n    "{setup}",' + text[m.end(2):]
 
 
 HEADING = re.compile(r"^## \[([^\]]+)\](?: - (.*))?[ \t]*$", re.M)

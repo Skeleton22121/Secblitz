@@ -120,7 +120,7 @@ def check_content(relative, data):
 def allowed_files(version):
     if not re.fullmatch(gate.VERSION, version):
         raise ValueError("expected version must be canonical X.Y.Z")
-    downloads = (*HISTORICAL, f"secblitz-{version}-windows-x64-setup.exe", f"secblitz-{version}-windows-x64.exe")
+    downloads = (*HISTORICAL, f"secblitz-{version}-windows-x64-setup.exe")
     return set(STATIC) | {"downloads/" + name for name in downloads}
 
 
@@ -178,7 +178,6 @@ def stage(source, output, version, reference_dir):
     output.parent.mkdir(parents=True, exist_ok=True)
     references = {
         f"secblitz-{version}-windows-x64-setup.exe": reference_dir / f"secblitz-{version}-windows-x64-setup.exe",
-        f"secblitz-{version}-windows-x64.exe": reference_dir / "secblitz.exe",
     }
     with tempfile.TemporaryDirectory(prefix=".pages-stage-", dir=output.parent) as temporary:
         work = Path(temporary)
@@ -208,7 +207,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=ROOT / "website")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/pages")
-    parser.add_argument("--reference-dir", type=Path, default=ROOT / "dist", help="final installer and secblitz.exe build directory")
+    parser.add_argument("--reference-dir", type=Path, default=ROOT / "dist", help="final installer build directory")
     parser.add_argument("--expected-version", required=True)
     args = parser.parse_args()
     stage(args.source, args.output, args.expected_version, args.reference_dir)
