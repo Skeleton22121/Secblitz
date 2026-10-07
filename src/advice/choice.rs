@@ -164,7 +164,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Stronger protection turns on. Browsers will say they are managed by your organization, which only means a setting was made."
         }
         "browser.dns_bypass" => {
-            "Browsers use Web protection. They will say they are managed by your organization, which only means a setting was made."
+            "Keep Web protection on. Browsers will say they are managed by your organization, which only means a setting was made."
         }
         _ => "",
     }

@@ -180,7 +180,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "browser.dns_bypass" => e(
             "Browsers can look up website addresses by their own private route, which skips the filtering Web protection does for the whole PC.",
             "Ads, trackers and dangerous sites that Web protection blocks can still open in your browsers.",
-            "Browsers use your PC's own lookups, so Web protection filters them. They will say they are managed by your organization, which only means a setting was made.",
+            "Browsers drop their own private lookups, so keep Web protection on. They will say they are managed by your organization, which only means a setting was made.",
         ),
         "defender.exclusions_risky" => e(
             "Your antivirus keeps a list of places and programs it was told to skip, and some entries cover far too much.",
