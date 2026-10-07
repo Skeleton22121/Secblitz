@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-07
+
 ### Fixed
 - Updates install on their own while Web protection is on.
 
