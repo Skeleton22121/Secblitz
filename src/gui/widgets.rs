@@ -17,6 +17,7 @@ pub mod ring;
 pub mod scan;
 pub mod search_field;
 pub mod section;
+pub mod tile;
 
 pub use controls::{checkbox, dropdown, segmented, slide_marker, switch, CheckState};
 pub use cursor::arrow;
