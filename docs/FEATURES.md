@@ -191,7 +191,7 @@ One compiled table drives the engine, wire validation and the PowerShell backend
 | `privacy.activity_history` | ask | Activity feed policies to 0; never counts against the score |
 | `privacy.advertising_id` | ask | DisabledByGroupPolicy=1; never counts against the score |
 
-Every control reuses the domain, MDM/enrollment, policy, RSOP and local-policy-artifact gates; preflight conditions (such as the LSA checks) apply to repairs only and never to undo. Not implemented because the value names are unconfirmed by official Microsoft documentation: `driver.vulnerable_blocklist`, `net.wpad`, `smartscreen.apps`, Nearby Sharing. `vbs.kernel_stack_protection` is the one exception that is shipped with an undocumented name: Microsoft Learn documents the feature but no registry values, so the `KernelShadowStacks` `Enabled` and `WasEnabledBy` names follow what Windows Security itself writes and MUST be confirmed on real hardware before release (turn the switch on in Windows Security and compare the key). If they differ, the control must go back to assessment only.
+Every control reuses the domain, MDM/enrollment, policy, RSOP and local-policy-artifact gates; preflight conditions (such as the LSA checks) apply to repairs only and never to undo. Not implemented because the value names are unconfirmed by official Microsoft documentation: `driver.vulnerable_blocklist`, `net.wpad`, `smartscreen.apps`, Nearby Sharing. `vbs.kernel_stack_protection` is the one exception that is shipped with an undocumented name: Microsoft Learn documents the feature but no registry values, so the `KernelShadowStacks` `Enabled` and `WasEnabledBy` names follow what Windows Security itself writes and MUST be confirmed on real hardware before release (turn the switch on in Windows Security and compare the key). If they differ, the control must go back to assessment only. A random Wi-Fi hardware address is not implemented: `netsh wlan set randomization` is documented, but the only ways to read the current setting back (the localized output of `netsh wlan show randomization`, or the `RandomMacState` value under `WlanSvc\Interfaces`) are not documented, so an exact undo cannot be guaranteed. The `RestrictImplicitTextCollection` and `RestrictImplicitInkCollection` values are not implemented because Microsoft documents them only for the signed-in user, not the machine.
 
 ### 19 advisory findings
 
@@ -265,6 +265,11 @@ All journaled, gated and reversible like the table above; every one is a choice 
 | `privacy.diagnostic_data_level` | AllowTelemetry 1 only (never 0) |
 | `privacy.delivery_optimization` | DODownloadMode 0 |
 | `privacy.clipboard_sync` | AllowCrossDeviceClipboard 0; not offered on Home |
+| `privacy.start_web_search` | Windows Search policy ConnectedSearchUseWeb=0; restart; not offered on Home |
+| `privacy.online_speech` | InputPersonalization policy AllowInputPersonalization=0; voice typing stops; not offered on Home |
+| `privacy.typing_inking` | TextInput policy AllowLinguisticDataCollection=0; not offered on Home |
+| `privacy.lock_screen_notifications` | System policy DisableLockScreenAppNotifications=1; not offered on Home |
+| `privacy.signin_email` | System policy BlockUserFromShowingAccountDetailsOnSignin=1; not offered on Home |
 | `ai.click_to_do` | WindowsAI DisableClickToDo=1; not offered before Windows build 26100; shares the WindowsAI key with `privacy.recall` without blocking it |
 | `ai.paint` | Paint policy DisableCocreator, DisableGenerativeFill and DisableImageCreator = 1; not offered when the Paint app is not installed |
 | `ai.notepad` | WindowsNotepad DisableAIFeatures=1; not offered when the Notepad app is not installed |
