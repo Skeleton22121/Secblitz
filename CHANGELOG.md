@@ -9,6 +9,30 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- Protection groups its settings into topic tiles that show what each topic needs.
+- A notice when Windows switches back a setting Secblitz fixed, with a way to put it back.
+- See which apps used your camera, microphone and location, and switch them off.
+- Optional browser settings for Edge, Chrome and Firefox: fewer shopping and AI panels, less usage data, stronger protection and lookups through Web protection.
+- Optional privacy switches for online speech, typing data, lock screen messages, the email on the sign-in screen and a random Wi-Fi address.
+- Web protection can block adult and gambling sites and turn on safe search.
+- Private lookups through Secblitz send website lookups encrypted to Quad9.
+- Allow a blocked site in one click from the list of recent blocks.
+- A 30-day chart of what Web protection blocked and the companies it blocked most.
+- A notice when a dangerous website is blocked.
+- Pause Web protection for 15 minutes, 1 hour or until restart.
+- Choose which notices Secblitz shows, in Settings.
+
+### Changed
+- Tools is split into tabs.
+- Web protection is split into Overview, What to block and Sites.
+- The History chart shows one point per day, and your starting point until there are two days.
+- Secblitz opens in the middle of the screen.
+
+### Fixed
+- The notification area status stays up to date while background monitoring is on.
+- Opening Secblitz while it is already open no longer asks for permission again.
+
 ## [0.8.2] - 2026-10-06
 
 ### Added
