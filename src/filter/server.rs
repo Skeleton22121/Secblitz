@@ -133,6 +133,12 @@ impl Shared {
         }
     }
 
+    #[cfg(test)]
+    pub fn with_doh(mut self, doh: Doh) -> Self {
+        self.doh = doh;
+        self
+    }
+
     pub fn set_config(&self, config: Config) {
         *self.allow.write().unwrap_or_else(PoisonError::into_inner) = allowed(&config);
         let mut current = self.config.write().unwrap_or_else(PoisonError::into_inner);
@@ -321,16 +327,20 @@ pub fn forward(
 /// With private lookups on, non-local names go to Quad9 encrypted. If that fails, all lookups go plain for a while
 /// (captive portals may refuse it). Local names and everything with private lookups off go to the network's servers.
 fn lookup(packet: &[u8], q: &Query, shared: &Shared, via: Via) -> Option<Vec<u8>> {
+    lookup_at(packet, q, shared, via, Instant::now())
+}
+
+fn lookup_at(packet: &[u8], q: &Query, shared: &Shared, via: Via, now: Instant) -> Option<Vec<u8>> {
     if read(&shared.config).private_active(unix_now())
         && !doh::is_local_name(&q.question.name, &read(&shared.local_suffixes))
-        && shared.fallback.may_try(Instant::now())
+        && shared.fallback.may_try(now)
     {
         match shared.doh.ask(packet, q) {
             Some(reply) => {
                 shared.fallback.worked();
                 return Some(fit_for(reply, packet, q, via));
             }
-            None => shared.fallback.failed(Instant::now()),
+            None => shared.fallback.failed(now),
         }
     }
     let upstream = read(&shared.upstream).clone();
@@ -1099,6 +1109,183 @@ mod tests {
         };
         let shared = Shared::new(filter, config, vec![]);
         assert!(blocked_kind(&shared, "www.bing.com", 1000));
+    }
+
+    use crate::filter::doh::mock;
+
+    const PRIVATE_IP: [u8; 4] = [5, 6, 7, 8];
+
+    fn private_on() -> Config {
+        Config {
+            private_lookups: true,
+            ..Config::default()
+        }
+    }
+
+    fn private_shared(config: Config, mock_url: &str) -> (Shared, SocketAddr) {
+        let upstream = fake_upstream();
+        let shared = Shared::new(Filter::empty(), config, vec![upstream])
+            .with_doh(Doh::plain_http(mock_url));
+        (shared, upstream)
+    }
+
+    fn answered_by(shared: &Shared, name: &str, via: Via) -> [u8; 4] {
+        last_four(&answer(&query_bytes(name, 1, 7), shared, via).unwrap())
+    }
+
+    fn hits(m: &mock::Mock) -> usize {
+        m.hits.load(Ordering::SeqCst)
+    }
+
+    fn broken() -> mock::Mock {
+        mock::serve(|_, _| {
+            Some(mock::Reply {
+                status: 503,
+                content_type: "text/plain",
+                body: Vec::new(),
+            })
+        })
+    }
+
+    #[test]
+    fn private_off_never_touches_the_encrypted_way() {
+        let m = mock::serve(mock::good(PRIVATE_IP));
+        let (shared, _) = private_shared(Config::default(), &m.url);
+        assert_eq!(answered_by(&shared, "example.com", Via::Udp), ANSWER_IP);
+        assert_eq!(hits(&m), 0);
+        assert_eq!(shared.lookups(1000), Lookups::Plain);
+    }
+
+    #[test]
+    fn private_on_sends_public_names_to_the_encrypted_way() {
+        let m = mock::serve(mock::good(PRIVATE_IP));
+        let (shared, _) = private_shared(private_on(), &m.url);
+        assert_eq!(answered_by(&shared, "example.com", Via::Udp), PRIVATE_IP);
+        assert_eq!(hits(&m), 1);
+        assert_eq!(shared.lookups(1000), Lookups::Private);
+        let reply = answer(&query_bytes("example.com", 1, 0x4242), &shared, Via::Udp).unwrap();
+        assert_eq!(&reply[..2], &[0x42, 0x42]);
+    }
+
+    #[test]
+    fn local_names_stay_on_the_network() {
+        let m = mock::serve(mock::good(PRIVATE_IP));
+        let (shared, _) = private_shared(private_on(), &m.url);
+        shared.set_local_suffixes(vec!["corp.example.com".to_string()]);
+        for name in ["printer", "nas.local", "router.lan", "pc.corp.example.com"] {
+            assert_eq!(answered_by(&shared, name, Via::Udp), ANSWER_IP, "{name}");
+        }
+        assert_eq!(hits(&m), 0);
+        assert_eq!(shared.lookups(1000), Lookups::Private);
+    }
+
+    #[test]
+    fn a_pause_sends_everything_the_plain_way() {
+        let m = mock::serve(mock::good(PRIVATE_IP));
+        let config = Config {
+            paused_until: Some(unix_now() + 600),
+            ..private_on()
+        };
+        let (shared, _) = private_shared(config, &m.url);
+        assert_eq!(answered_by(&shared, "example.com", Via::Udp), ANSWER_IP);
+        assert_eq!(hits(&m), 0);
+        assert_eq!(shared.lookups(unix_now()), Lookups::Plain);
+    }
+
+    #[test]
+    fn a_failure_answers_plain_and_the_next_lookups_skip_the_encrypted_way() {
+        let m = broken();
+        let (shared, _) = private_shared(private_on(), &m.url);
+        assert_eq!(answered_by(&shared, "example.com", Via::Udp), ANSWER_IP);
+        assert_eq!(hits(&m), 1);
+        assert_eq!(shared.lookups(1000), Lookups::PrivateFallback);
+        assert_eq!(answered_by(&shared, "example.org", Via::Udp), ANSWER_IP);
+        assert_eq!(hits(&m), 1);
+    }
+
+    #[test]
+    fn the_encrypted_way_is_tried_again_after_the_wait() {
+        let m = mock::serve(|n, r| {
+            if n == 0 {
+                Some(mock::Reply {
+                    status: 503,
+                    content_type: "text/plain",
+                    body: Vec::new(),
+                })
+            } else {
+                mock::good(PRIVATE_IP)(n, r)
+            }
+        });
+        let (shared, _) = private_shared(private_on(), &m.url);
+        let start = Instant::now();
+        let ask = |at: Instant| {
+            let packet = query_bytes("example.com", 1, 3);
+            let q = dns::parse_query(&packet).unwrap();
+            last_four(&lookup_at(&packet, &q, &shared, Via::Udp, at).unwrap())
+        };
+        assert_eq!(ask(start), ANSWER_IP);
+        assert_eq!(
+            ask(start + doh::FALLBACK_FOR - Duration::from_secs(1)),
+            ANSWER_IP
+        );
+        assert_eq!(hits(&m), 1);
+        assert_eq!(ask(start + doh::FALLBACK_FOR), PRIVATE_IP);
+        assert_eq!(hits(&m), 2);
+        assert_eq!(shared.lookups(1000), Lookups::Private);
+    }
+
+    #[test]
+    fn switching_private_lookups_off_and_on_starts_afresh() {
+        let m = broken();
+        let (shared, _) = private_shared(private_on(), &m.url);
+        answered_by(&shared, "example.com", Via::Udp);
+        assert_eq!(shared.lookups(1000), Lookups::PrivateFallback);
+        shared.set_config(Config::default());
+        assert_eq!(shared.lookups(1000), Lookups::Plain);
+        shared.set_config(private_on());
+        assert_eq!(shared.lookups(1000), Lookups::Private);
+        answered_by(&shared, "example.com", Via::Udp);
+        assert_eq!(hits(&m), 2);
+    }
+
+    #[test]
+    fn a_long_answer_is_cut_for_udp_but_not_for_tcp() {
+        let m = mock::serve(|_, r| {
+            let mut body = mock::answer_to(&r.body, PRIVATE_IP);
+            body.resize(body.len() + 700, 0);
+            Some(mock::Reply {
+                status: 200,
+                content_type: "application/dns-message",
+                body,
+            })
+        });
+        let (shared, _) = private_shared(private_on(), &m.url);
+        let packet = query_bytes("example.com", 1, 11);
+        let udp = answer(&packet, &shared, Via::Udp).unwrap();
+        assert!(dns::truncated(&udp));
+        assert_eq!(answers_in(&udp), 0);
+        assert_eq!(&udp[..2], &11u16.to_be_bytes());
+        let tcp = answer(&packet, &shared, Via::Tcp).unwrap();
+        assert!(!dns::truncated(&tcp));
+        assert_eq!(answers_in(&tcp), 1);
+        assert!(tcp.len() > 512);
+    }
+
+    #[test]
+    fn safe_search_addresses_come_through_the_encrypted_way() {
+        let m = mock::serve(mock::good(PRIVATE_IP));
+        let config = Config {
+            safe_search: true,
+            ..private_on()
+        };
+        let (shared, _) = private_shared(config, &m.url);
+        let reply = answer(&query_bytes("www.google.com", 1, 5), &shared, Via::Udp).unwrap();
+        assert_eq!(answers_in(&reply), 2);
+        assert_eq!(last_four(&reply), PRIVATE_IP);
+        assert_eq!(hits(&m), 1);
+        let seen = m.wire.lock().unwrap();
+        let asked = dns::parse_query(&seen[0].body).unwrap();
+        assert_eq!(asked.question.name, "forcesafesearch.google.com");
     }
 
     #[test]
