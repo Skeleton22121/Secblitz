@@ -384,6 +384,9 @@ jobs:
   draft-release:
     name: Create the draft GitHub Release
     needs: [verify, attest]
+    # Without SignPath the signing jobs are skipped, and a skipped job anywhere
+    # upstream skips this one unless the condition is spelled out.
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.attest.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The only job that can write to the repository.
