@@ -112,13 +112,22 @@ fn base() -> Result<PathBuf> {
     result
 }
 fn open(path: &Path, access: u32, creation: u32, sd: Option<&Local>) -> Result<File> {
+    open_shared(path, access, FILE_SHARE_READ, creation, sd)
+}
+fn open_shared(
+    path: &Path,
+    access: u32,
+    share: u32,
+    creation: u32,
+    sd: Option<&Local>,
+) -> Result<File> {
     let path = wide(path)?;
     let sa = sd.map(attributes);
     let h = unsafe {
         CreateFileW(
             path.as_ptr(),
             access,
-            FILE_SHARE_READ,
+            share,
             sa.as_ref().map_or(null(), |s| s),
             creation,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
@@ -485,12 +494,7 @@ impl Layout {
                 created.push(path.to_owned());
             }
         }
-        let f = open(
-            path,
-            READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
-            OPEN_EXISTING,
-            None,
-        )?;
+        let f = pin_status_directory(path)?;
         let i = info(&f)?;
         ensure!(
             i.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
@@ -516,6 +520,19 @@ impl Layout {
         self.held.push(f);
         Ok(())
     }
+}
+
+// A rename into a folder opens that folder for writing, so a pin that does not
+// share write blocks every status update. Withholding delete sharing is what
+// keeps the folder from being moved or replaced.
+fn pin_status_directory(path: &Path) -> Result<File> {
+    open_shared(
+        path,
+        READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        OPEN_EXISTING,
+        None,
+    )
 }
 
 /// `<Program Files>\Secblitz\Status` when the running executable is the

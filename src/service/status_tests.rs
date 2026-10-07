@@ -15,3 +15,17 @@ fn status_acl_is_exact() {
         assert!(inspect_status_descriptor(sd.0).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn status_files_can_be_replaced_while_the_folder_is_pinned() {
+    let dir = std::env::temp_dir().join(format!("secblitz-pin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pin = pin_status_directory(&dir).unwrap();
+    let summary = crate::status::summarize(&[], true, 1);
+    crate::status::write_to(&dir, &summary).unwrap();
+    crate::status::write_to(&dir, &summary).unwrap();
+    crate::status::write_changed_to(&dir, &["a.b".to_string()]).unwrap();
+    assert!(std::fs::rename(&dir, dir.with_extension("moved")).is_err());
+    drop(pin);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
