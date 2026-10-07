@@ -1,0 +1,436 @@
+//! The topics the Protection page groups its settings under.
+use super::flow;
+use secblitz::engine::Report;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Topic {
+    Threats,
+    SignIn,
+    Network,
+    Windows,
+    Browsers,
+    Privacy,
+    Ai,
+    Clutter,
+}
+
+impl Topic {
+    pub const ALL: [Topic; 8] = [
+        Topic::Threats,
+        Topic::SignIn,
+        Topic::Network,
+        Topic::Windows,
+        Topic::Browsers,
+        Topic::Privacy,
+        Topic::Ai,
+        Topic::Clutter,
+    ];
+
+    /// The topic a setting belongs to. The first rule that fits wins; unknown settings are Windows settings.
+    pub fn of(id: &str) -> Topic {
+        let head = id.split_once('.').map_or(id, |(head, _)| head);
+        match (head, id) {
+            (_, "smartscreen.apps" | "net.hosts_file") | ("defender", _) => Topic::Threats,
+            ("uac" | "accounts" | "lsa" | "wdigest" | "ntlm" | "session", _) => Topic::SignIn,
+            (
+                "firewall" | "net" | "tls" | "smb" | "smb1" | "remote_desktop" | "remote_assistance"
+                | "wifi",
+                _,
+            )
+            | (_, "printer.spooler_remote" | "services.legacy_remote") => Topic::Network,
+            ("browser", _) | (_, "smartscreen.browser_policy") => Topic::Browsers,
+            (_, "privacy.recall") | ("ai", _) => Topic::Ai,
+            ("privacy", _) => Topic::Privacy,
+            ("debloat", _) => Topic::Clutter,
+            _ => Topic::Windows,
+        }
+    }
+
+    pub fn of_finding(title: &str) -> Topic {
+        if let Some(id) = secblitz::advice::control_for_finding(title) {
+            return Topic::of(id);
+        }
+        match title {
+            "Security providers" | "Defender" | "SmartScreen" => Topic::Threats,
+            "Windows Firewall" => Topic::Network,
+            _ if title.starts_with("asr.") || title.starts_with("cfa.") => Topic::Threats,
+            _ if title.starts_with("dns.") => Topic::Network,
+            _ => Topic::of(title),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Topic::Threats => "Viruses and threats",
+            Topic::SignIn => "Sign-in",
+            Topic::Network => "Network",
+            Topic::Windows => "Windows",
+            Topic::Browsers => "Browsers",
+            Topic::Privacy => "Privacy",
+            Topic::Ai => "AI features",
+            Topic::Clutter => "Less clutter",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    /// Fixes to make and things to look at that were never fixed.
+    pub to_fix: usize,
+    /// Settings Secblitz fixed that are no longer on.
+    pub switched_back: usize,
+    pub options: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Line {
+    ToFix(usize),
+    SwitchedBack(usize),
+    Options(usize),
+    AllSet,
+    Checking,
+}
+
+impl Line {
+    pub fn of(counts: Option<Counts>) -> Line {
+        match counts {
+            None => Line::Checking,
+            Some(c) if c.to_fix > 0 => Line::ToFix(c.to_fix),
+            Some(c) if c.switched_back > 0 => Line::SwitchedBack(c.switched_back),
+            Some(c) if c.options > 0 => Line::Options(c.options),
+            Some(_) => Line::AllSet,
+        }
+    }
+
+    pub fn needs_action(self) -> bool {
+        matches!(self, Line::ToFix(_) | Line::SwitchedBack(_))
+    }
+}
+
+/// Settings Secblitz fixed that the last check found unprotected again.
+pub fn switched_back(report: &Report, available: &[String]) -> Vec<String> {
+    flow::candidates(report, available)
+        .into_iter()
+        .filter(|id| report.results.iter().any(|r| r.id == *id && r.undoable))
+        .collect()
+}
+
+/// The fixes that start ticked: every recommended one and every switched back one.
+pub fn default_selection(report: &Report, available: &[String]) -> Vec<String> {
+    let back = switched_back(report, available);
+    let mut ids = flow::recommended(report, available);
+    for id in back {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+pub fn first_needing_action(lines: impl Fn(Topic) -> Line) -> Option<Topic> {
+    Topic::ALL.into_iter().find(|t| lines(*t).needs_action())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secblitz::engine::Outcome;
+    use secblitz::model::CheckStatus;
+    use Topic::*;
+
+    #[test]
+    fn every_hardening_setting_goes_where_the_design_says() {
+        let expected: &[(&str, Topic)] = &[
+            ("defender.cloud_protection", Threats),
+            ("defender.pua", Threats),
+            ("defender.script_nis", Threats),
+            ("defender.asr.standard", Threats),
+            ("defender.asr.web_script_email", Threats),
+            ("defender.asr.office", Threats),
+            ("defender.asr.ransomware_usb", Threats),
+            ("defender.network_protection", Threats),
+            ("defender.cloud_block_level", Threats),
+            ("defender.exclusions_risky", Threats),
+            ("smartscreen.apps", Threats),
+            ("net.hosts_file", Threats),
+            ("lsa.run_as_ppl", SignIn),
+            ("lsa.restrict_anonymous", SignIn),
+            ("accounts.lockout_policy", SignIn),
+            ("accounts.builtin_administrator", SignIn),
+            ("accounts.autologon", SignIn),
+            ("accounts.stale_enabled", SignIn),
+            ("ntlm.lm_compat_level", SignIn),
+            ("ntlm.extras", SignIn),
+            ("session.lock_on_wake", SignIn),
+            ("net.public_sharing_exposure", Network),
+            ("net.llmnr", Network),
+            ("net.stack_hardening", Network),
+            ("net.netbios", Network),
+            ("net.mdns", Network),
+            ("net.wpad", Network),
+            ("wifi.risky_profiles", Network),
+            ("remote_assistance.disabled", Network),
+            ("remote_desktop.disabled", Network),
+            ("firewall.outbound_smb_internet", Network),
+            ("firewall.user_dir_inbound_allow", Network),
+            ("tls.legacy_protocols", Network),
+            ("printer.spooler_remote", Network),
+            ("services.legacy_remote", Network),
+            ("smb1.disabled", Network),
+            ("smb.shares_exposed", Network),
+            ("printer.point_and_print", Windows),
+            ("autorun.disabled", Windows),
+            ("wsh.disabled", Windows),
+            ("update.auto_policy_disabled", Windows),
+            ("update.store_autoupdate_policy", Windows),
+            ("update.paused", Windows),
+            ("driver.vulnerable_blocklist", Windows),
+            ("system.exploit_mitigations", Windows),
+            ("ps.v2_engine", Windows),
+            ("vbs.memory_integrity", Windows),
+            ("vbs.kernel_stack_protection", Windows),
+            ("services.unquoted_paths", Windows),
+            ("persistence.run_and_tasks", Windows),
+            ("recovery.winre_enabled", Windows),
+            ("smartscreen.browser_policy", Browsers),
+            ("privacy.activity_history", Privacy),
+            ("privacy.advertising_id", Privacy),
+            ("privacy.diagnostic_data_level", Privacy),
+            ("privacy.delivery_optimization", Privacy),
+            ("privacy.clipboard_sync", Privacy),
+            ("privacy.online_speech", Privacy),
+            ("privacy.typing_inking", Privacy),
+            ("privacy.lock_screen_notifications", Privacy),
+            ("privacy.signin_email", Privacy),
+            ("privacy.wifi_random_address", Privacy),
+            ("browser.shopping_ai", Browsers),
+            ("browser.data_collection", Browsers),
+            ("browser.safety_mode", Browsers),
+            ("browser.dns_bypass", Browsers),
+            ("privacy.recall", Ai),
+            ("ai.click_to_do", Ai),
+            ("ai.paint", Ai),
+            ("ai.notepad", Ai),
+            ("debloat.widgets_policy", Clutter),
+            ("debloat.device_companion_apps", Clutter),
+        ];
+        for (id, topic) in expected {
+            assert_eq!(Topic::of(id), *topic, "{id}");
+        }
+        for spec in secblitz::hardening::all() {
+            assert!(
+                expected.iter().any(|(id, _)| *id == spec.id),
+                "{} is missing from the expected list",
+                spec.id
+            );
+        }
+        for (id, _) in expected {
+            assert!(secblitz::hardening::spec(id).is_some(), "{id} is not a setting");
+        }
+    }
+
+    #[test]
+    fn the_older_settings_of_the_catalog_go_where_the_design_says() {
+        let by_family = |family: &str| -> Option<Topic> {
+            Some(match family {
+                "defender" => Threats,
+                "uac" | "lsa" | "wdigest" | "accounts" | "ntlm" | "session" => SignIn,
+                "firewall" | "net" | "tls" | "smb" | "smb1" | "wifi" => Network,
+                "installer" | "permissions" | "update" | "recovery" => Windows,
+                _ => return None,
+            })
+        };
+        let mut ids = secblitz::platform::control_ids();
+        ids.extend(secblitz::permissions::controls().into_iter().map(|c| c.id));
+        assert!(ids.len() > 60);
+        let mut seen = 0;
+        for id in ids.iter().filter(|id| secblitz::hardening::spec(id).is_none()) {
+            let family = id.split('.').next().unwrap();
+            let topic = by_family(family).unwrap_or_else(|| panic!("no expectation for {id}"));
+            assert_eq!(Topic::of(id), topic, "{id}");
+            seen += 1;
+        }
+        assert!(seen > 10, "{seen}");
+        for (id, topic) in [
+            ("defender.realtime", Threats),
+            ("firewall.public.enabled", Network),
+            ("uac.consent", SignIn),
+            ("wdigest.use_logon_credential", SignIn),
+            ("lsa.limit_blank_password_use", SignIn),
+            ("installer.always_install_elevated", Windows),
+            ("permissions.service.bits", Windows),
+        ] {
+            assert!(ids.iter().any(|i| i == id), "{id}");
+            assert_eq!(Topic::of(id), topic, "{id}");
+        }
+    }
+
+    #[test]
+    fn settings_other_work_adds_later_land_in_their_topics() {
+        for (id, topic) in [
+            ("browser.dns_bypass", Browsers),
+            ("browser.copilot_sidebar", Browsers),
+            ("privacy.online_speech", Privacy),
+            ("privacy.recall", Ai),
+            ("debloat.widgets_policy", Clutter),
+            ("wifi.random_address", Network),
+            ("smartscreen.something_new", Windows),
+            ("never.heard.of.it", Windows),
+            ("", Windows),
+        ] {
+            assert_eq!(Topic::of(id), topic, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn the_first_rule_that_fits_wins() {
+        assert_eq!(Topic::of("net.hosts_file"), Threats);
+        assert_eq!(Topic::of("net.llmnr"), Network);
+        assert_eq!(Topic::of("printer.spooler_remote"), Network);
+        assert_eq!(Topic::of("printer.point_and_print"), Windows);
+        assert_eq!(Topic::of("services.legacy_remote"), Network);
+        assert_eq!(Topic::of("services.unquoted_paths"), Windows);
+        assert_eq!(Topic::of("smartscreen.apps"), Threats);
+        assert_eq!(Topic::of("smartscreen.browser_policy"), Browsers);
+    }
+
+    #[test]
+    fn rows_named_by_a_title_find_a_topic_too() {
+        for (title, topic) in [
+            ("Remote Desktop", Network),
+            ("SMB1", Network),
+            ("Automatic logon", SignIn),
+            ("Memory integrity", Windows),
+            ("Security providers", Threats),
+            ("Defender", Threats),
+            ("SmartScreen", Threats),
+            ("Windows Firewall", Network),
+            ("Windows updates", Windows),
+            ("Device encryption", Windows),
+            ("Service permissions: BITS", Windows),
+            ("Journal recovery", Windows),
+            ("defender.mode", Threats),
+            ("asr.configured", Threats),
+            ("dns.configuration", Network),
+            ("browser.inventory", Browsers),
+            ("backup.coverage", Windows),
+        ] {
+            assert_eq!(Topic::of_finding(title), topic, "{title}");
+        }
+    }
+
+    #[test]
+    fn every_topic_has_a_name_and_a_place_in_the_list() {
+        let mut names = std::collections::HashSet::new();
+        for t in Topic::ALL {
+            assert!(names.insert(t.label()), "{t:?}");
+        }
+        assert_eq!(names.len(), 8);
+        assert_eq!(
+            serde_json::to_string(&Topic::SignIn).unwrap(),
+            "\"sign_in\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Topic>("\"ai\"").unwrap(),
+            Topic::Ai
+        );
+        assert!(serde_json::from_str::<Topic>("\"nope\"").is_err());
+    }
+
+    #[test]
+    fn a_tile_says_the_most_pressing_thing_first() {
+        let c = |to_fix, switched_back, options| {
+            Some(Counts {
+                to_fix,
+                switched_back,
+                options,
+            })
+        };
+        assert_eq!(Line::of(None), Line::Checking);
+        assert_eq!(Line::of(c(2, 1, 3)), Line::ToFix(2));
+        assert_eq!(Line::of(c(0, 1, 3)), Line::SwitchedBack(1));
+        assert_eq!(Line::of(c(0, 0, 3)), Line::Options(3));
+        assert_eq!(Line::of(c(0, 0, 0)), Line::AllSet);
+        assert!(Line::ToFix(1).needs_action() && Line::SwitchedBack(1).needs_action());
+        assert!(!Line::Options(1).needs_action());
+        assert!(!Line::AllSet.needs_action() && !Line::Checking.needs_action());
+    }
+
+    #[test]
+    fn the_first_topic_with_something_to_fix_is_found_in_tile_order() {
+        let lines = |t: Topic| match t {
+            Browsers => Line::ToFix(1),
+            Clutter => Line::SwitchedBack(2),
+            Privacy => Line::Options(4),
+            _ => Line::AllSet,
+        };
+        assert_eq!(first_needing_action(lines), Some(Browsers));
+        assert_eq!(first_needing_action(|_| Line::AllSet), None);
+        assert_eq!(first_needing_action(|_| Line::Options(2)), None);
+    }
+
+    fn outcome(id: &str, status: CheckStatus, undoable: bool) -> Outcome {
+        Outcome {
+            id: id.into(),
+            title: id.into(),
+            status,
+            undoable,
+            ..Outcome::default()
+        }
+    }
+
+    fn report(rows: &[(&str, CheckStatus, bool)]) -> (Report, Vec<String>) {
+        let report = Report {
+            results: rows
+                .iter()
+                .map(|(id, status, undoable)| outcome(id, status.clone(), *undoable))
+                .collect(),
+            ..Report::default()
+        };
+        let available = rows.iter().map(|(id, ..)| (*id).to_owned()).collect();
+        (report, available)
+    }
+
+    #[test]
+    fn a_setting_is_switched_back_only_when_secblitz_changed_it_and_it_is_off_again() {
+        let (r, available) = report(&[
+            ("defender.pua", CheckStatus::Attention, true),
+            ("defender.script_nis", CheckStatus::Attention, false),
+            ("wsh.disabled", CheckStatus::Compliant, true),
+            ("net.llmnr", CheckStatus::Applied, true),
+            ("privacy.advertising_id", CheckStatus::Attention, true),
+        ]);
+        assert_eq!(
+            switched_back(&r, &available),
+            ["defender.pua", "privacy.advertising_id"]
+        );
+        assert!(switched_back(&r, &[]).is_empty(), "only settings that can be fixed");
+    }
+
+    #[test]
+    fn switched_back_settings_start_ticked_with_the_recommended_ones() {
+        let (r, available) = report(&[
+            ("defender.pua", CheckStatus::Attention, true),
+            ("defender.script_nis", CheckStatus::Attention, false),
+            ("privacy.advertising_id", CheckStatus::Attention, true),
+            ("privacy.clipboard_sync", CheckStatus::Attention, false),
+        ]);
+        let ticked = default_selection(&r, &available);
+        assert!(ticked.contains(&"defender.pua".to_owned()));
+        assert!(ticked.contains(&"defender.script_nis".to_owned()));
+        assert!(
+            ticked.contains(&"privacy.advertising_id".to_owned()),
+            "a switched back choice was already chosen once"
+        );
+        assert!(
+            !ticked.contains(&"privacy.clipboard_sync".to_owned()),
+            "an optional setting is never ticked for the person"
+        );
+        let mut unique = ticked.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ticked.len());
+    }
+}

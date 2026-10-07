@@ -45,6 +45,8 @@ pub struct Prefs {
     pub lang: Option<String>,
     #[serde(default)]
     pub tools_open: Vec<ToolsSection>,
+    #[serde(default)]
+    pub protection_topic: Option<super::topics::Topic>,
 }
 
 impl Prefs {
@@ -103,6 +105,9 @@ pub fn parse(bytes: &[u8]) -> Prefs {
             }
         }
     }
+    prefs.protection_topic = map
+        .get("protection_topic")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
     prefs
 }
 
@@ -408,6 +413,7 @@ mod tests {
             theme: ThemeChoice::Dark,
             lang: Some("de".into()),
             tools_open: vec![ToolsSection::Passwords, ToolsSection::Windows],
+            protection_topic: Some(crate::app::topics::Topic::Browsers),
         };
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
@@ -424,6 +430,21 @@ mod tests {
         assert_eq!(p.tools_open, [ToolsSection::Apps]);
         let big = format!(r#"{{"tools_open":["apps"],"pad":"{}"}}"#, "x".repeat(9000));
         assert!(parse(big.as_bytes()).tools_open.is_empty());
+    }
+
+    #[test]
+    fn a_bad_topic_is_forgotten_and_a_good_one_kept() {
+        use crate::app::topics::Topic;
+        let p = parse(br#"{"theme":"dark","protection_topic":"sign_in"}"#);
+        assert_eq!(p.protection_topic, Some(Topic::SignIn));
+        assert_eq!(p.theme, ThemeChoice::Dark);
+        for bad in [r#""nope""#, "7", "null", "[1]", r#"{"a":1}"#] {
+            let text = format!(r#"{{"lang":"fr","protection_topic":{bad}}}"#);
+            let p = parse(text.as_bytes());
+            assert_eq!(p.protection_topic, None, "{bad}");
+            assert_eq!(p.lang.as_deref(), Some("fr"), "{bad}");
+        }
+        assert_eq!(parse(b"{}").protection_topic, None);
     }
 
     #[test]
