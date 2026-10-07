@@ -106,11 +106,17 @@ pub(super) fn deserialize_before<'de, D: serde::Deserializer<'de>>(
     ) -> std::result::Result<Option<u32>, D::Error> {
         Option::<u32>::deserialize(d)
     }
+    #[derive(Deserialize, Serialize)]
+    #[serde(untagged)]
+    enum ItemValue {
+        Number(u32),
+        Text(String),
+    }
     /// Duplicate keys are rejected here; id-specific domains are checked by the catalog.
     #[derive(Serialize)]
     #[serde(deny_unknown_fields)]
     struct Items {
-        items: std::collections::BTreeMap<String, Option<u32>>,
+        items: std::collections::BTreeMap<String, Option<ItemValue>>,
     }
     impl<'de> Deserialize<'de> for Items {
         fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
@@ -119,7 +125,7 @@ pub(super) fn deserialize_before<'de, D: serde::Deserializer<'de>>(
             struct Raw {
                 items: UniqueMap,
             }
-            struct UniqueMap(std::collections::BTreeMap<String, Option<u32>>);
+            struct UniqueMap(std::collections::BTreeMap<String, Option<ItemValue>>);
             impl<'de> Deserialize<'de> for UniqueMap {
                 fn deserialize<D: serde::Deserializer<'de>>(
                     d: D,
@@ -135,7 +141,7 @@ pub(super) fn deserialize_before<'de, D: serde::Deserializer<'de>>(
                             mut a: A,
                         ) -> std::result::Result<UniqueMap, A::Error> {
                             let mut map = std::collections::BTreeMap::new();
-                            while let Some((k, v)) = a.next_entry::<String, Option<u32>>()? {
+                            while let Some((k, v)) = a.next_entry::<String, Option<ItemValue>>()? {
                                 if map.insert(k, v).is_some() {
                                     return Err(serde::de::Error::custom(
                                         "duplicate hardening item",
