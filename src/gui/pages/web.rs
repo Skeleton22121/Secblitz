@@ -12,7 +12,7 @@ use iced::widget::{column, container, row};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task};
 use secblitz::explain;
 use secblitz::filter::config::{self, Config, ErrorCode, State as ListState, Status};
-use secblitz::filter::control::ServiceState;
+use secblitz::filter::control::{self, ServiceState};
 use std::time::{Duration, Instant};
 
 type El<'a> = Element<'a, Message>;
@@ -99,6 +99,7 @@ pub enum Line {
     Off,
     On,
     Paused(u64),
+    PausedUntilRestart,
     GettingReady,
     NotWorking,
 }
@@ -114,6 +115,9 @@ pub fn status_line(
     }
     if let Some(until) = config.paused_until.filter(|t| *t > now) {
         return Line::Paused(until);
+    }
+    if config.paused(now) {
+        return Line::PausedUntilRestart;
     }
     if service != ServiceState::Running {
         return Line::NotWorking;
@@ -143,7 +147,7 @@ pub enum StatusAction {
 pub fn status_action(line: Line) -> Option<StatusAction> {
     match line {
         Line::Off => None,
-        Line::Paused(_) => Some(StatusAction::Resume),
+        Line::Paused(_) | Line::PausedUntilRestart => Some(StatusAction::Resume),
         Line::NotWorking => Some(StatusAction::Retry),
         Line::On | Line::GettingReady => Some(StatusAction::Pause),
     }
@@ -163,7 +167,7 @@ pub fn guard_of(line: Line) -> web_globe::Guard {
     match line {
         Line::On => Guard::On,
         Line::GettingReady => Guard::Starting,
-        Line::Paused(_) => Guard::Paused,
+        Line::Paused(_) | Line::PausedUntilRestart => Guard::Paused,
         Line::Off => Guard::Off,
         Line::NotWorking => Guard::Broken,
     }
@@ -359,7 +363,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             let mut config = snapshot.config.clone();
             switch.set(&mut config, on);
-            config.paused_until = None;
+            config = control::resumed_config(config);
             start(state, Busy::Switch(switch), move || apply(config))
         }
         Msg::Pause => {
@@ -522,6 +526,7 @@ fn line_text(ctx: &Ctx, line: Line) -> String {
             "{time}",
             &format_clock(ctx.lang, history::local_seconds(until)),
         ),
+        Line::PausedUntilRestart => ctx.t("Paused until restart"),
         Line::GettingReady => ctx.t("Getting block lists ready"),
         Line::NotWorking => {
             ctx.t("Not working right now. Your internet still works, but nothing is being blocked.")
@@ -536,7 +541,7 @@ fn hero_text(ctx: &Ctx, line: Line) -> (String, Option<String>) {
             ctx.t("Getting block lists ready"),
             Some(ctx.t("Blocking starts as soon as the lists are ready.")),
         ),
-        Line::Paused(_) => (
+        Line::Paused(_) | Line::PausedUntilRestart => (
             line_text(ctx, line),
             Some(ctx.t("Nothing is being blocked for now.")),
         ),
@@ -853,6 +858,23 @@ mod tests {
             ..healthy()
         };
         assert_eq!(status_line(&on, Some(&late), running, NOW), Line::On);
+    }
+
+    #[test]
+    fn paused_until_restart_shows_as_paused() {
+        let until_restart = Config {
+            paused_boot: Some(config::boot_time(NOW)),
+            ..config(true)
+        };
+        assert_eq!(
+            status_line(&until_restart, Some(&healthy()), ServiceState::Running, NOW),
+            Line::PausedUntilRestart
+        );
+        assert_eq!(
+            status_action(Line::PausedUntilRestart),
+            Some(StatusAction::Resume)
+        );
+        assert_eq!(guard_of(Line::PausedUntilRestart), web_globe::Guard::Paused);
     }
 
     #[test]
