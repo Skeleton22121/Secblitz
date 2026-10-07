@@ -29,7 +29,7 @@ sha2 = "0.10"
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tiny-skia", "canvas", "svg", "advanced", "thread-pool", "crisp", "image-without-codecs"] }
 # Direct wgpu use is limited to the quick adapter probe in src/gui/render.rs.
 wgpu = { version = "27", default-features = false, features = ["std", "dx12", "vulkan"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "http2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Host builds/tests only; the Windows binary has no X11/Wayland code.

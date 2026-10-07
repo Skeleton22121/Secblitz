@@ -123,6 +123,7 @@ impl Doh {
     }
 }
 
+/// Quad9 answers HTTP/1.1 with an error, so the client needs HTTP/2.
 fn build(pinned: bool) -> Option<Client> {
     let mut builder = Client::builder()
         .no_proxy()
