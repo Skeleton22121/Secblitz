@@ -251,6 +251,7 @@ pub enum Message {
     AppAccess(app_access::Msg),
     PageOpened(crate::guide::Page, bool),
     WindowFocus(bool),
+    OpenRequested(String),
 }
 
 const RECHECK_WINDOW: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -318,7 +319,6 @@ pub struct App {
     warm_at: [Option<std::time::Instant>; 3],
     recheck: Recheck,
     switch_backs_seen: std::collections::HashSet<String>,
-    open_request_seen: u64,
     focused: bool,
     user: Option<String>,
 }
@@ -425,7 +425,6 @@ impl App {
             warm_at: [None; 3],
             recheck: Recheck::default(),
             switch_backs_seen: reverted.into_iter().collect(),
-            open_request_seen: now,
             focused: true,
             user,
         };
@@ -593,23 +592,26 @@ impl App {
                 self.focused = focused;
                 let idle = self.ctx.checking.is_none() && !self.ctx.busy;
                 let recheck = self.recheck.focus(focused, std::time::Instant::now(), idle);
-                let check = if recheck || (focused && idle && self.switched_back_unseen()) {
+                if recheck || (focused && idle && self.switched_back_unseen()) {
                     self.update(Message::CheckNow)
                 } else {
                     Task::none()
-                };
-                let asked = focused
-                    .then(|| app::open_request::read(app::history::now(), self.open_request_seen))
-                    .flatten();
-                match asked {
-                    Some((page, at)) => {
-                        self.open_request_seen = at;
-                        Task::batch([
-                            check,
-                            self.update(Message::Navigate(Page::open_target(&page))),
-                        ])
-                    }
-                    None => check,
+                }
+            }
+            Message::OpenRequested(page) => {
+                let show = iced::window::latest().and_then(|id| {
+                    Task::batch([
+                        iced::window::minimize(id, false),
+                        iced::window::gain_focus(id),
+                    ])
+                });
+                if page.is_empty() {
+                    show
+                } else {
+                    Task::batch([
+                        show,
+                        self.update(Message::Navigate(Page::open_target(&page))),
+                    ])
                 }
             }
             Message::DismissToast => self.begin_toast_exit(),
@@ -1238,6 +1240,7 @@ impl App {
             search_escape,
             focus,
             iced::window::close_requests().map(Message::CloseRequested),
+            open_requests(),
             entrance,
             // Frame clocks run only for the page on screen: a job started on
             // Tools must not keep the whole window redrawing from another page.
@@ -1256,6 +1259,28 @@ impl App {
             self.on_page(Page::Settings, settings::subscription(&self.settings)),
         ])
     }
+}
+
+/// Pages asked for by a second start, read on their own thread so the window
+/// only wakes when there is one.
+fn open_requests() -> Subscription<Message> {
+    Subscription::run(|| {
+        let (tx, rx) = iced::futures::channel::mpsc::unbounded();
+        std::thread::spawn(move || {
+            let mut seen = app::history::now();
+            while !tx.is_closed() {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if let Some((page, at)) = app::open_request::read(app::history::now(), seen) {
+                    seen = at;
+                    if tx.unbounded_send(page).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        rx
+    })
+    .map(Message::OpenRequested)
 }
 
 const NAV_GAP: f32 = theme::S1;

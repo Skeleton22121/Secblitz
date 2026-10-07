@@ -693,3 +693,46 @@ fn journal_images_of_text_settings_keep_the_exact_text_and_refuse_the_wrong_kind
         );
     }
 }
+
+#[test]
+fn a_chosen_fix_that_was_switched_back_is_written_again_and_undo_keeps_the_original() {
+    let id = "net.llmnr";
+    let before = json!({"items": {"EnableMulticast": null}});
+    let switched_back = json!({"items": {"EnableMulticast": 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    let fixed = state.borrow().values[id].clone();
+    state.borrow_mut().values.insert(id.into(), switched_back.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+
+    // Applying everything never rewrites what someone else changed.
+    let writes = state.borrow().writes.len();
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(state.borrow().writes.len(), writes);
+
+    let again = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(again.results[0].status, CheckStatus::Applied);
+    assert_eq!(state.borrow().values[id], fixed);
+    let journal = e.load().unwrap();
+    assert_eq!(journal.len(), 1, "no second record of the same change");
+    assert_eq!(journal[0].entries[0].before, before);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn a_chosen_fix_that_drifted_to_a_value_of_another_kind_is_left_alone() {
+    let id = "net.llmnr";
+    let (_dir, state, mut e) = fixture(id, json!({"items": {"EnableMulticast": 1}}));
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    state
+        .borrow_mut()
+        .values
+        .insert(id.into(), json!({"items": {"EnableMulticast": "1"}}));
+    let writes = state.borrow().writes.len();
+    let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_ne!(report.results[0].status, CheckStatus::Applied);
+    assert_eq!(state.borrow().writes.len(), writes);
+}

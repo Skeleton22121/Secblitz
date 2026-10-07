@@ -10,6 +10,12 @@ use anyhow::{ensure, Context, Result};
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// Controls already in the journal: settled results, and chosen ones to write again.
+struct Owned {
+    done: Vec<Outcome>,
+    again: Vec<(String, Value)>,
+}
+
 enum Preflight {
     Resolved(Outcome),
     Write {
@@ -88,11 +94,15 @@ impl Engine {
         }
         self.settle_restoring(&mut transactions, selected)?;
         self.close_finished(&mut transactions)?;
-        let mut owned = self.observe_owned(&transactions, &controls)?;
-        if owned.iter().any(|r| r.status != CheckStatus::Unchanged) {
+        let mut owned = self.observe_owned(&transactions, &controls, selected.is_some())?;
+        if owned
+            .done
+            .iter()
+            .any(|r| r.status != CheckStatus::Unchanged)
+        {
             report.skip_all(
                 &controls,
-                &mut owned,
+                &mut owned.done,
                 "Selected batch blocked by an owned control conflict or probe failure",
                 &mut callback,
             );
@@ -105,7 +115,7 @@ impl Engine {
         if blocked {
             report.skip_all(
                 &controls,
-                &mut owned,
+                &mut owned.done,
                 "Repair readiness blocks new changes",
                 &mut callback,
             );
@@ -201,13 +211,17 @@ impl Engine {
         }
     }
 
-    /// Controls whose original is already journaled are only compared, never rewritten.
+    /// Controls whose original is already journaled keep that original. A chosen
+    /// one that was switched back to an unsafe value gets its target written
+    /// again; every other drift is only reported.
     fn observe_owned(
         &mut self,
         transactions: &[Transaction],
         controls: &[Control],
-    ) -> Result<Vec<Outcome>> {
-        let mut owned = Vec::new();
+        selected: bool,
+    ) -> Result<Owned> {
+        let mut done = Vec::new();
+        let mut again = Vec::new();
         for c in controls {
             let Some(entry) = transactions
                 .iter()
@@ -227,6 +241,15 @@ impl Engine {
                         &o,
                     )
                 }
+                Ok(o)
+                    if selected
+                        && !firewall_control(&c.id)
+                        && !permission_control(&c.id)
+                        && apply_eligible(&c.id, &o) =>
+                {
+                    again.push((c.id.clone(), expected));
+                    continue;
+                }
                 Ok(o) => Self::observed_outcome(
                     c,
                     CheckStatus::Conflict,
@@ -235,15 +258,15 @@ impl Engine {
                 ),
                 Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
             };
-            owned.push(result);
+            done.push(result);
         }
-        Ok(owned)
+        Ok(Owned { done, again })
     }
 
     fn apply_controls(
         &mut self,
         controls: Vec<Control>,
-        mut owned: Vec<Outcome>,
+        mut owned: Owned,
         selected: bool,
         sequence: u64,
         report: &mut Report,
@@ -251,8 +274,13 @@ impl Engine {
     ) -> Result<()> {
         let mut tx: Option<Transaction> = None;
         for c in controls {
-            if let Some(i) = owned.iter().position(|r| r.id == c.id) {
-                report.push(owned.remove(i), callback);
+            if let Some(i) = owned.done.iter().position(|r| r.id == c.id) {
+                report.push(owned.done.remove(i), callback);
+                continue;
+            }
+            if let Some((_, expected)) = owned.again.iter().find(|(id, _)| *id == c.id) {
+                let result = self.write_again(&c, expected);
+                report.push(result, callback);
                 continue;
             }
             let result = match self.preflight(&c, selected)? {
@@ -335,6 +363,33 @@ impl Engine {
             });
         };
         Ok(Preflight::Resolved(resolved))
+    }
+
+    /// The journal already holds this control's original, so no new record is
+    /// needed: whatever happens here, undo still returns to that original.
+    fn write_again(&mut self, c: &Control, expected: &Value) -> Outcome {
+        if let Err(e) = self.backend.write(&c.id, expected) {
+            return Self::outcome(c, CheckStatus::Error, format!("{e:#}"));
+        }
+        match self.observe(&c.id) {
+            Ok(readback) if readback.value == *expected => Self::observed_outcome(
+                c,
+                CheckStatus::Applied,
+                if c.reboot {
+                    "Preference applied; restart required"
+                } else {
+                    "Preference applied"
+                },
+                &readback,
+            ),
+            Ok(readback) => Self::observed_outcome(
+                c,
+                CheckStatus::Conflict,
+                "Preference drifted; original before image retained",
+                &readback,
+            ),
+            Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
+        }
     }
 
     fn write_managed(

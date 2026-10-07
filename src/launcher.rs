@@ -248,8 +248,9 @@ mod imp {
         UI::{
             Shell::{ShellExecuteExW, ShellExecuteW, SHELLEXECUTEINFOW},
             WindowsAndMessaging::{
-                EnumWindows, GetShellWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-                IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
+                AllowSetForegroundWindow, EnumWindows, GetShellWindow, GetWindowTextW,
+                GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
+                ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
             },
         },
     };
@@ -1089,7 +1090,7 @@ mod imp {
 
     struct Search {
         exe: String,
-        found: Option<HANDLE>,
+        found: Option<(HANDLE, u32)>,
     }
 
     unsafe extern "system" fn visit(hwnd: HANDLE, param: isize) -> BOOL {
@@ -1110,11 +1111,11 @@ mod imp {
         if !same || pid == std::process::id() {
             return 1;
         }
-        search.found = Some(hwnd);
+        search.found = Some((hwnd, pid));
         0
     }
 
-    fn existing_window() -> Option<HANDLE> {
+    fn existing_window() -> Option<(HANDLE, u32)> {
         let exe = std::env::current_exe().ok()?;
         let mut search = Search {
             exe: exe.to_string_lossy().into_owned(),
@@ -1128,14 +1129,15 @@ mod imp {
 
     /// Brings the open window forward on the asked page; false when none is open.
     fn show_existing(open: Option<&str>) -> bool {
-        let Some(hwnd) = existing_window() else {
+        let Some((hwnd, pid)) = existing_window() else {
             return false;
         };
-        // Before the window gains focus, which is when it reads the request.
-        if let Some(page) = open {
-            crate::app::open_request::write(page, crate::app::history::now());
-        }
+        crate::app::open_request::write(open.unwrap_or(""), crate::app::history::now());
+        // Windows stops a process without administrator rights from restoring an
+        // administrator window, so the window restores itself and needs leave to
+        // come to the front.
         unsafe {
+            AllowSetForegroundWindow(pid);
             if IsIconic(hwnd) != 0 {
                 ShowWindow(hwnd, SW_RESTORE);
             }
