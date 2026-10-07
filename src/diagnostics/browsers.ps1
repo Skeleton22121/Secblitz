@@ -29,6 +29,39 @@ function SmallJson([string]$path) {
         } finally { $reader.Dispose() }
     } finally { $stream.Dispose() }
 }
+function CleanTitle($value) {
+    if ($value -isnot [string]) { return '' }
+    $clean = ($value -replace '[\x00-\x1f\x7f-\x9f]', ' ').Trim()
+    if ($clean.Length -gt 120) { $clean = $clean.Substring(0, 120).Trim() }
+    return $clean
+}
+function ResolveTitle($manifest, [scriptblock]$message) {
+    $raw = ''
+    if ($null -ne $manifest.PSObject.Properties['name'] -and $manifest.name -is [string]) { $raw = $manifest.name }
+    $reference = [regex]::Match($raw, '^__MSG_(?<key>[A-Za-z0-9_@]{1,64})__\z')
+    if ($reference.Success) {
+        $raw = ''
+        $locales = @()
+        if ($null -ne $manifest.PSObject.Properties['default_locale'] -and $manifest.default_locale -is [string] -and $manifest.default_locale -cmatch '^[A-Za-z0-9_-]{1,20}$') { $locales += $manifest.default_locale }
+        foreach ($fallback in @('en','en_US')) { if ($locales -cnotcontains $fallback) { $locales += $fallback } }
+        foreach ($locale in $locales) {
+            $found = & $message $locale $reference.Groups['key'].Value
+            if ($found -is [string] -and $found.Trim() -ne '') { $raw = $found; break }
+        }
+    }
+    return (CleanTitle $raw)
+}
+function ExtensionTitle([string]$versionDir, $manifest) {
+    try {
+        return (ResolveTitle $manifest ({
+            param($locale, $key)
+            try { $messages = SmallJson ([IO.Path]::Combine($versionDir,'_locales',$locale,'messages.json')) } catch { return $null }
+            $hit = @($messages.PSObject.Properties | Where-Object { $_.Name -ieq $key } | Select-Object -First 1)
+            if ($hit.Count -ne 1 -or $null -eq $hit[0].Value.PSObject.Properties['message']) { return $null }
+            return $hit[0].Value.message
+        }).GetNewClosure())
+    } catch { return '' }
+}
 function BrowserInventory {
     $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
     $roaming = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
@@ -65,7 +98,7 @@ function BrowserInventory {
                                 }
                             }
                             $broad = ($permissions -contains '<all_urls>') -or ($permissions -contains '*://*/*') -or ($permissions -contains 'https://*/*') -or ($permissions -contains 'http://*/*')
-                            $items.Add(@{browser=$spec[0];profile_index=$profiles;id=$id;version=(Text $manifest.version);enabled=@{state='Unknown';value='NotAssessed'};broad_host_access=(Known $broad);native_messaging=(Known ($permissions -contains 'nativeMessaging'))})
+                            $items.Add(@{browser=$spec[0];profile_index=$profiles;id=$id;name=(ExtensionTitle $version $manifest);version=(Text $manifest.version);enabled=@{state='Unknown';value='NotAssessed'};broad_host_access=(Known $broad);native_messaging=(Known ($permissions -contains 'nativeMessaging'))})
                         }
                     } catch { $failed = $true }
                 }
@@ -88,7 +121,9 @@ function BrowserInventory {
                         if ($items.Count -ge 512) { $truncated = $true; break }
                         if ($addon.type -cne 'extension') { continue }
                         if ($addon.id -isnot [string] -or $addon.id -cnotmatch '^[A-Za-z0-9_.@{}-]{1,160}$') { throw 'Invalid extension ID' }
-                        $items.Add(@{browser='Firefox';profile_index=$profiles;id=$addon.id;version=(Text $addon.version);enabled=(Prop $addon 'active');broad_host_access=@{state='Unknown';value='NotAssessed'};native_messaging=@{state='Unknown';value='NotAssessed'}})
+                        $title = ''
+                        if ($null -ne $addon.PSObject.Properties['defaultLocale'] -and $null -ne $addon.defaultLocale -and $null -ne $addon.defaultLocale.PSObject.Properties['name']) { $title = CleanTitle $addon.defaultLocale.name }
+                        $items.Add(@{browser='Firefox';profile_index=$profiles;id=$addon.id;name=$title;version=(Text $addon.version);enabled=(Prop $addon 'active');broad_host_access=@{state='Unknown';value='NotAssessed'};native_messaging=@{state='Unknown';value='NotAssessed'}})
                     }
                 } catch { $failed = $true }
             }
