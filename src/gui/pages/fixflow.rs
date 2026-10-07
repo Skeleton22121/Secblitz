@@ -108,6 +108,8 @@ struct PlanRow {
     name: String,
     line: Option<String>,
     restart: bool,
+    managed: bool,
+    undoable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +186,19 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     }
 }
 
+fn notices_of(id: &str) -> secblitz::hardening::Notices {
+    secblitz::hardening::spec(id).map_or(
+        secblitz::hardening::Notices {
+            managed: false,
+            restart: false,
+            undoable: true,
+        },
+        secblitz::hardening::notices,
+    )
+}
+
 fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
+    let notices = notices_of(id);
     let impact = secblitz::advice::control_impact(id);
     let items = ctx
         .report
@@ -205,7 +219,9 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         id: id.to_owned(),
         name: ctx.lang.control(id),
         line: (with_impact && !lines.is_empty()).then(|| lines.join("\n")),
-        restart: ctx.catalog.restart.iter().any(|x| x == id),
+        restart: ctx.catalog.restart.iter().any(|x| x == id) || notices.restart,
+        managed: with_impact && notices.managed,
+        undoable: !with_impact || notices.undoable,
     }
 }
 
@@ -254,6 +270,8 @@ fn undo_row(ctx: &Ctx, id: &str) -> PlanRow {
             )
         }),
         restart: ctx.catalog.restart.iter().any(|x| x == id),
+        managed: false,
+        undoable: true,
     }
 }
 
@@ -890,6 +908,16 @@ fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a
             line = line.push(info);
         }
         let mut item = column![line].spacing(theme::S2);
+        if r.managed {
+            item = item.push(note(
+                p,
+                Icon::Info,
+                ctx.t("Your browser will say 'Managed by your organization'."),
+            ));
+        }
+        if !r.undoable {
+            item = item.push(note(p, Icon::AlertTriangle, ctx.t("Can't be undone")));
+        }
         if let Some(inset) = widgets::explain::panel(ctx, "plan", &r.id, false, 0.0) {
             item = item.push(inset);
         }
@@ -978,11 +1006,13 @@ fn review_view<'a>(
                 ctx.t("Some fixes need a restart. We'll never restart without asking."),
             ));
         }
-        c = c.push(note(
-            p,
-            Icon::History,
-            ctx.t("You can undo this later from History."),
-        ));
+        if state.plan.iter().all(|r| r.undoable) {
+            c = c.push(note(
+                p,
+                Icon::History,
+                ctx.t("You can undo this later from History."),
+            ));
+        }
     }
     let confirm = widgets::action(
         p,

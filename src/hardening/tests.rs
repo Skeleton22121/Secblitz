@@ -1739,20 +1739,84 @@ fn browser_stronger_modes_accept_the_safe_levels_and_flag_the_rest() {
 }
 
 #[test]
-fn every_browser_control_says_before_the_person_agrees_that_browsers_show_a_managed_notice() {
-    for id in [
-        "browser.shopping_ai",
-        "browser.data_collection",
-        "browser.safety_mode",
-        "browser.dns_bypass",
-    ] {
-        let explain = crate::explain::for_check(id).unwrap();
-        for line in [explain.change, crate::advice::choice_consequence(id)] {
-            assert!(
-                line.contains("managed by your organization")
-                    && line.contains("only means a setting was made"),
-                "{id}: {line}"
-            );
+fn notices_follow_the_table() {
+    for s in all() {
+        let n = notices(s);
+        assert_eq!(n.restart, s.reboot, "{}", s.id);
+        assert!(n.undoable, "{}", s.id);
+    }
+    assert!(notices(spec("browser.shopping_ai").unwrap()).managed);
+    assert!(notices(spec("browser.dns_bypass").unwrap()).managed);
+    assert!(!notices(spec("smartscreen.browser_policy").unwrap()).managed);
+    assert!(!notices(spec("smb1.disabled").unwrap()).managed);
+}
+
+#[test]
+fn only_real_browser_policy_paths_count_as_managed() {
+    assert!(is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS"
+    ));
+    assert!(is_browser_policy(r"hklm:\software\policies\microsoft\edge"));
+    assert!(is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave"
+    ));
+    assert!(!is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate"
+    ));
+    assert!(!is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI"
+    ));
+    assert!(!is_browser_policy("é"));
+}
+
+fn says_restart(text: &str) -> bool {
+    let t = text.to_lowercase();
+    [
+        "needs a restart",
+        "needs restart",
+        "restart to apply",
+        "restart your pc",
+        "after a restart",
+        "after you restart",
+        "you restart",
+    ]
+    .iter()
+    .any(|p| t.contains(p))
+}
+
+fn says_managed(text: &str) -> bool {
+    text.to_lowercase().contains("managed by your organization")
+}
+
+#[test]
+fn every_fix_says_before_the_person_agrees_what_the_notices_promise() {
+    let mut problems = Vec::new();
+    for s in all() {
+        let n = notices(s);
+        let choice = crate::advice::choice_consequence(s.id);
+        let impact = crate::advice::control_impact(s.id);
+        let explain = crate::explain::for_check(s.id).unwrap();
+        let before_yes = [choice, impact, explain.change];
+        if n.managed {
+            if ![choice, explain.change]
+                .iter()
+                .all(|l| says_managed(l) && l.contains("only means a setting was made"))
+            {
+                problems.push(format!("{}: managed notice missing", s.id));
+            }
+        } else if before_yes.iter().any(|l| says_managed(l)) {
+            problems.push(format!(
+                "{}: mentions the managed notice but is not flagged",
+                s.id
+            ));
+        }
+        let mentions_restart = before_yes.iter().any(|l| says_restart(l));
+        if n.restart && !mentions_restart {
+            problems.push(format!("{}: needs a restart but never says so", s.id));
+        }
+        if !n.restart && mentions_restart {
+            problems.push(format!("{}: mentions a restart but is not flagged", s.id));
         }
     }
+    assert!(problems.is_empty(), "{problems:#?}");
 }

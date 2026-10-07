@@ -32,6 +32,27 @@ pub enum Sheet {
     Restart,
 }
 
+impl Sheet {
+    /// What each confirmation sheet must tell the person before they agree.
+    pub fn notices(self) -> secblitz::hardening::Notices {
+        let (restart, undoable) = match self {
+            Sheet::RemoveThreats | Sheet::Repair(RepairKind::Repair) | Sheet::InstallUpdates => {
+                (false, false)
+            }
+            Sheet::Restart => (true, true),
+            Sheet::Scan
+            | Sheet::DefenderUpdate
+            | Sheet::Repair(RepairKind::Check)
+            | Sheet::Bitwarden => (false, true),
+        };
+        secblitz::hardening::Notices {
+            managed: false,
+            restart,
+            undoable,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shortcut {
     WindowsUpdate,
@@ -797,6 +818,31 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
 #[cfg(test)]
 mod followup_tests {
     use super::*;
+
+    #[test]
+    fn every_sheet_says_what_its_notices_promise() {
+        let sheets = [
+            Sheet::Scan,
+            Sheet::RemoveThreats,
+            Sheet::DefenderUpdate,
+            Sheet::Repair(RepairKind::Check),
+            Sheet::Repair(RepairKind::Repair),
+            Sheet::InstallUpdates,
+            Sheet::Bitwarden,
+            Sheet::Restart,
+        ];
+        for sheet in sheets {
+            let (_, _, lines, _) = view::sheet_copy(sheet);
+            let text = lines.join(" ").to_lowercase();
+            let n = sheet.notices();
+            assert_eq!(text.contains("can't be undone"), !n.undoable, "{sheet:?}");
+            assert_eq!(
+                text.contains("restart"),
+                n.restart || sheet == Sheet::InstallUpdates,
+                "{sheet:?}"
+            );
+        }
+    }
 
     #[test]
     fn repair_bar_creeps_inside_its_step_and_never_goes_back() {
