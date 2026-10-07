@@ -2,7 +2,7 @@
 //! never blocks. The GUI submits a `Job` and receives a stream of `Event`s.
 use iced::futures::channel::mpsc as stream;
 use iced::futures::Stream;
-use secblitz::engine::{Engine, Progress, Report};
+use secblitz::engine::{Engine, ItemChoice, Progress, Report};
 use std::sync::{mpsc, Arc};
 
 pub trait Session {
@@ -22,6 +22,10 @@ pub trait Session {
     ) -> anyhow::Result<Report>;
     fn history(&mut self) -> anyhow::Result<Vec<String>>;
     fn can_start(&mut self, undo: bool) -> anyhow::Result<()>;
+    /// The items the person picked for the controls that ask; an empty choice clears them.
+    fn choose_items(&mut self, _picked: ItemChoice) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl Session for Engine {
@@ -64,16 +68,26 @@ impl Session for Engine {
     fn can_start(&mut self, undo: bool) -> anyhow::Result<()> {
         Engine::can_change(self, undo)
     }
+    fn choose_items(&mut self, picked: ItemChoice) -> anyhow::Result<()> {
+        Engine::choose_items(self, picked)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Job {
     Check,
     Apply(Vec<String>),
+    /// A fix where the person also picked items, such as browser add-ons, by control.
+    ApplyPicked {
+        ids: Vec<String>,
+        picked: ItemChoice,
+    },
     Undo,
     UndoSome(Vec<String>),
     History,
-    Preflight { undo: bool },
+    Preflight {
+        undo: bool,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -194,7 +208,7 @@ fn failed(job: &Job, message: &str) -> Event {
     let e = || -> Outcome { Err(message.to_owned()) };
     match job {
         Job::Check => Event::Checked(e()),
-        Job::Apply(ids) => Event::Applied {
+        Job::Apply(ids) | Job::ApplyPicked { ids, .. } => Event::Applied {
             attempted: ids.clone(),
             result: e(),
             verify: e(),
@@ -257,35 +271,48 @@ fn apply_in_batches(
     Ok(merged)
 }
 
+fn applied(
+    session: &mut dyn Session,
+    ids: Vec<String>,
+    picked: ItemChoice,
+    progress: &dyn Fn(Phase) -> Box<dyn FnMut(Progress<'_>)>,
+) -> Event {
+    let result = match session.choose_items(picked) {
+        Ok(()) => outcome(apply_in_batches(
+            session,
+            &ids,
+            &mut *progress(Phase::Applying),
+        )),
+        Err(e) => Err(format!("{e:#}")),
+    };
+    // Checking again looks at everything, not only what was picked.
+    let _ = session.choose_items(ItemChoice::new());
+    let verify = outcome(session.audit(&mut *progress(Phase::Verifying)));
+    Event::Applied {
+        attempted: ids,
+        result,
+        verify,
+    }
+}
+
 fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Event>) {
-    let progress = |phase: Phase| {
+    let progress = |phase: Phase| -> Box<dyn FnMut(Progress<'_>)> {
         let reply = reply.clone();
-        move |step: Progress<'_>| {
+        Box::new(move |step: Progress<'_>| {
             let _ = reply.unbounded_send(Event::Progress {
                 phase,
                 id: step.id.to_owned(),
                 status: step.step.as_str().to_owned(),
             });
-        }
+        })
     };
     let event = match job {
-        Job::Check => Event::Checked(outcome(session.audit(&mut progress(Phase::Checking)))),
-        Job::Apply(ids) => {
-            let result = outcome(apply_in_batches(
-                session,
-                &ids,
-                &mut progress(Phase::Applying),
-            ));
-            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
-            Event::Applied {
-                attempted: ids,
-                result,
-                verify,
-            }
-        }
+        Job::Check => Event::Checked(outcome(session.audit(&mut *progress(Phase::Checking)))),
+        Job::Apply(ids) => applied(session, ids, ItemChoice::new(), &progress),
+        Job::ApplyPicked { ids, picked } => applied(session, ids, picked, &progress),
         Job::Undo => {
-            let result = outcome(session.undo(&mut progress(Phase::Undoing)));
-            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
+            let result = outcome(session.undo(&mut *progress(Phase::Undoing)));
+            let verify = outcome(session.audit(&mut *progress(Phase::Verifying)));
             Event::Undone {
                 chosen: Vec::new(),
                 result,
@@ -293,8 +320,8 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
             }
         }
         Job::UndoSome(ids) => {
-            let result = outcome(session.undo_selected(&ids, &mut progress(Phase::Undoing)));
-            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
+            let result = outcome(session.undo_selected(&ids, &mut *progress(Phase::Undoing)));
+            let verify = outcome(session.audit(&mut *progress(Phase::Verifying)));
             Event::Undone {
                 chosen: ids,
                 result,
@@ -324,6 +351,8 @@ mod tests {
         log: Log,
         fail_apply: bool,
         fail_audit: bool,
+        picked: usize,
+        audited_with: Arc<std::sync::Mutex<Vec<usize>>>,
     }
 
     impl Fake {
@@ -346,7 +375,15 @@ mod tests {
         fn restart_ids(&self) -> Vec<String> {
             vec!["b".into()]
         }
+        fn choose_items(&mut self, picked: ItemChoice) -> anyhow::Result<()> {
+            self.picked = picked.values().map(Vec::len).sum();
+            if self.picked > 0 {
+                self.note(format!("choose {}", self.picked));
+            }
+            Ok(())
+        }
         fn audit(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
+            self.audited_with.lock().unwrap().push(self.picked);
             self.note("audit");
             progress(Progress::new(
                 "a",
@@ -412,20 +449,58 @@ mod tests {
     }
 
     fn worker(fail_apply: bool, fail_audit: bool) -> (Worker, Log) {
+        let (w, log, _) = worker_seeing(fail_apply, fail_audit);
+        (w, log)
+    }
+
+    fn worker_seeing(
+        fail_apply: bool,
+        fail_audit: bool,
+    ) -> (Worker, Log, Arc<std::sync::Mutex<Vec<usize>>>) {
         let log = Log::default();
         let l = log.clone();
+        let audited_with = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = audited_with.clone();
         let w = Worker::spawn(move || {
             Ok(Box::new(Fake {
                 log: l,
                 fail_apply,
                 fail_audit,
+                picked: 0,
+                audited_with: seen,
             }) as Box<dyn Session>)
         });
-        (w, log)
+        (w, log, audited_with)
     }
 
     fn collect(w: &Worker, job: Job) -> Vec<Event> {
         block_on(w.run(job).collect())
+    }
+
+    #[test]
+    fn picked_items_reach_the_fix_and_are_cleared_before_the_check_that_follows() {
+        let (w, log, audited_with) = worker_seeing(false, false);
+        let picked = ItemChoice::from([("x".to_owned(), vec!["i".to_owned(), "j".to_owned()])]);
+        let events = collect(
+            &w,
+            Job::ApplyPicked {
+                ids: vec!["x".into()],
+                picked,
+            },
+        );
+        assert_eq!(*log.lock().unwrap(), ["choose 2", "apply x", "audit"]);
+        assert_eq!(*audited_with.lock().unwrap(), [0]);
+        assert!(matches!(
+            events.last(),
+            Some(Event::Applied { attempted, result: Ok(_), verify: Ok(_) }) if attempted == &["x"]
+        ));
+    }
+
+    #[test]
+    fn a_plain_fix_picks_nothing() {
+        let (w, log) = worker(false, false);
+        collect(&w, Job::Apply(vec!["x".into()]));
+        assert_eq!(*log.lock().unwrap(), ["apply x", "audit"]);
     }
 
     #[test]

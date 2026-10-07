@@ -658,6 +658,25 @@ fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
                 ctx.t("A file that could be started instead was found. Run a virus scan from the Tools page.")
             ),
             "more" => format!("{}: {}", ctx.t("More items not listed"), item.name),
+            "addon" => {
+                let mut parts = vec![
+                    item.name.clone(),
+                    if item.key.starts_with("chromium:edge:") {
+                        "Edge"
+                    } else {
+                        "Chrome"
+                    }
+                    .to_owned(),
+                ];
+                for why in item.why.split(',') {
+                    parts.push(match why {
+                        "sites" => ctx.t("Can read every site you visit"),
+                        "programs" => ctx.t("Can talk to other programs on your PC"),
+                        _ => continue,
+                    });
+                }
+                format!("{}: {}", ctx.t("Browser add-on"), parts.join(" · "))
+            }
             kind => {
                 let kind = match kind {
                     "service" => "Background program",
