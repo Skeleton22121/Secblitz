@@ -337,6 +337,7 @@ impl App {
 
     fn new(options: Options) -> (Self, Task<Message>) {
         let prefs = app::settings::load();
+        persist::sync_notify(&prefs);
         let lang = prefs
             .lang
             .as_deref()
@@ -769,7 +770,10 @@ impl App {
                     self.ctx.state_dir.clone(),
                     entry,
                     status_of(report, &score, now),
-                    Some(app::score::changed_ids(report)),
+                    Some(persist::Changed {
+                        changed: app::score::changed_ids(report),
+                        armed: app::score::armed_ids(report),
+                    }),
                     cache,
                 );
             }
@@ -1254,7 +1258,7 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
             app::score::Verdict::Attention => secblitz::status::State::Attention,
             app::score::Verdict::Unknown => secblitz::status::State::Unknown,
         },
-        reverted: app::score::reverted_ids(report, &attention),
+        reverted: Vec::new(),
         attention,
     }
 }

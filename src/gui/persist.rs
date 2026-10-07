@@ -11,20 +11,32 @@ pub enum Cache {
     Forget,
 }
 
+pub struct Changed {
+    pub changed: Vec<String>,
+    pub armed: Vec<String>,
+}
+
 pub fn persist(
     dir: Option<PathBuf>,
     entry: Option<app::history::Entry>,
     status: secblitz::status::Status,
-    changed: Option<Vec<String>>,
+    changed: Option<Changed>,
     cache: Cache,
 ) {
     write_in_order(move || {
         if let (Some(dir), Some(entry)) = (&dir, &entry) {
             let _ = app::history::record(dir, entry);
         }
-        if let Some(changed) = &changed {
-            let _ = secblitz::status::write_changed(changed);
-        }
+        // Switched back means working at the previous check and flagged now.
+        let status = match &changed {
+            Some(now) => {
+                let mut before = secblitz::status::read_changed().unwrap_or_default();
+                before.retain(|id| now.changed.contains(id));
+                let _ = secblitz::status::write_changed(&now.armed);
+                status.with_changed(&before)
+            }
+            None => status,
+        };
         let _ = secblitz::status::write(&status);
         if let Some(dir) = &dir {
             match cache {
@@ -103,13 +115,23 @@ fn write_in_order(job: impl FnOnce() + Send + 'static) {
 }
 
 /// Saves the preferences after any earlier queued write; resolves to whether it worked.
+/// The tray cannot read these preferences, so it gets a copy next to the status file, shared by everyone on this PC.
+fn mirror_notify(prefs: &app::settings::Prefs) -> bool {
+    secblitz::status::write_notify(&prefs.notify()).is_ok()
+}
+
+pub fn sync_notify(prefs: &app::settings::Prefs) {
+    let prefs = prefs.clone();
+    write_in_order(move || {
+        mirror_notify(&prefs);
+    });
+}
+
 pub fn save_prefs(prefs: app::settings::Prefs) -> impl std::future::Future<Output = bool> {
     let (tx, rx) = futures::channel::oneshot::channel();
     write_in_order(move || {
         let saved = app::settings::save(&prefs).is_ok();
-        // The tray cannot read these preferences, so it gets its own copy.
-        let _ = secblitz::status::write_notify(&prefs.notify());
-        let _ = tx.send(saved);
+        let _ = tx.send(saved && mirror_notify(&prefs));
     });
     async move { rx.await.unwrap_or(true) }
 }

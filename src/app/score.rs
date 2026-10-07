@@ -250,7 +250,6 @@ pub fn to_check_ids(report: &Report) -> Vec<String> {
         .collect()
 }
 
-/// Settings Secblitz changed and has not undone, per the journal behind the report.
 pub fn changed_ids(report: &Report) -> Vec<String> {
     report
         .results
@@ -260,9 +259,14 @@ pub fn changed_ids(report: &Report) -> Vec<String> {
         .collect()
 }
 
-/// Items that need attention again although Secblitz had changed them.
-pub fn reverted_ids(report: &Report, attention: &[String]) -> Vec<String> {
-    secblitz::status::reverted_of(attention, &changed_ids(report))
+/// Only these can later count as switched back by Windows.
+pub fn armed_ids(report: &Report) -> Vec<String> {
+    report
+        .results
+        .iter()
+        .filter(|r| r.undoable && r.status == CheckStatus::Compliant)
+        .map(|r| r.id.clone())
+        .collect()
 }
 
 impl Score {
@@ -327,16 +331,24 @@ mod tests {
     }
 
     #[test]
-    fn a_fixed_setting_that_needs_attention_again_counts_as_switched_back() {
+    fn only_fixed_settings_seen_working_are_armed() {
         let mut fixed_then_off = out("defender.realtime", "attention");
         fixed_then_off.undoable = true;
         let mut fixed_and_on = out("uac.enabled", "compliant");
         fixed_and_on.undoable = true;
-        let never_fixed = out("firewall.public.enabled", "attention");
+        let never_fixed = out("firewall.public.enabled", "compliant");
         let r = rep(vec![fixed_then_off, fixed_and_on, never_fixed]);
-        assert_eq!(changed_ids(&r), ["defender.realtime", "uac.enabled"]);
+        assert_eq!(armed_ids(&r), ["uac.enabled"]);
         let attention = to_check_ids(&r);
-        assert_eq!(reverted_ids(&r, &attention), ["defender.realtime"]);
+        assert!(
+            secblitz::status::reverted_of(&attention, &armed_ids(&r)).is_empty(),
+            "still flagged right after a fix is not switched back"
+        );
+        assert_eq!(
+            secblitz::status::reverted_of(&attention, &["defender.realtime".to_string()]),
+            ["defender.realtime"],
+            "it was working at the previous check, now it is not"
+        );
     }
 
     #[test]

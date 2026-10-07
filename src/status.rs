@@ -267,7 +267,10 @@ pub fn write_changed(ids: &[String]) -> anyhow::Result<()> {
     write_changed_to(&writable_dir()?, ids)
 }
 
-/// None when the file is missing or unusable.
+pub fn read_changed() -> Option<Vec<String>> {
+    read_changed_from(&dir().ok()?)
+}
+
 pub fn read_changed_from(dir: &std::path::Path) -> Option<Vec<String>> {
     use std::io::Read;
     let file = std::fs::File::open(dir.join(CHANGED_FILE)).ok()?;
