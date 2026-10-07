@@ -1046,6 +1046,36 @@ fn validate_installed_health(
     }
     Ok(())
 }
+fn remove_leftover(root: &Path, name: &str) -> Result<()> {
+    let path = root.join(name);
+    if !exists_no_follow(&path)? {
+        return Ok(());
+    }
+    drop(open(&path, false, true)?);
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+// A file that cannot go now (scanner, sharing, rights) is left for the next
+// hourly check. Cleanup never changes the update status or fails the check.
+fn clean_leftovers(root: &Path, from_worker: bool) {
+    let attempt = match read_attempt(root) {
+        Ok(attempt) => attempt,
+        Err(_) => return,
+    };
+    for name in leftover_files(attempt.as_ref(), from_worker) {
+        if let Err(error) = remove_leftover(root, name) {
+            eprintln!("Update leftover {name} kept: {error:#}");
+        }
+    }
+}
+fn read_attempt(root: &Path) -> Result<Option<InstallAttempt>> {
+    if !exists_no_follow(&root.join("install-attempt.json"))? {
+        return Ok(None);
+    }
+    parse_attempt(&read_bounded(root, "install-attempt.json", ATTEMPT_LIMIT)?)
+}
 fn write_attempt(root: &Path, attempt: Option<&InstallAttempt>) -> Result<()> {
     let bytes = serde_json::to_vec(&attempt)?;
     parse_attempt(&bytes)?;
@@ -1134,6 +1164,7 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
         let name = String::from_utf16(&entry.exe[..n])?;
         if name.eq_ignore_ascii_case("secblitz.exe")
             || name.eq_ignore_ascii_case("update-installer.exe")
+            || name.eq_ignore_ascii_case("update-worker.exe")
         {
             candidates.push(entry.pid);
         }
@@ -1178,7 +1209,9 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
         unsafe {
             CloseHandle(h);
         }
-        if same(&image, &root.join("update-installer.exe")) {
+        if same(&image, &root.join("update-installer.exe"))
+            || same(&image, &root.join("update-worker.exe"))
+        {
             return Ok((true, trays));
         }
     }
@@ -1263,6 +1296,7 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
         if let Some(outcome) = recover_installation(&root, &path)? {
             return Ok(outcome);
         }
+        clean_leftovers(&root, false);
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
             .https_only(true)
@@ -1483,7 +1517,10 @@ pub(super) fn install_staged() -> Result<UpdateOutcome> {
         drop(executable);
         attempt.phase = InstallPhase::Exited;
         write_attempt(&root, Some(&attempt))?;
-        recover_installation(&root, &path)?.context("Missing completed installation attempt")
+        let outcome = recover_installation(&root, &path)?
+            .context("Missing completed installation attempt")?;
+        clean_leftovers(&root, true);
+        Ok(outcome)
     })();
     if result.is_err() {
         let _ = record(
@@ -1967,6 +2004,68 @@ mod tests {
         fs::remove_file(&symbolic).unwrap();
         drop(open(&base, false, true).unwrap());
         fs::remove_file(&base).unwrap();
+    }
+    #[test]
+    #[ignore = "requires elevated Windows runner"]
+    fn cleanup_removes_only_staged_payloads_and_tolerates_held_files() {
+        let (root, _pins) = update_root().unwrap();
+        let dir = root.join(format!("leftover-test-{}", uuid::Uuid::new_v4()));
+        let pin = protected_update_directory(&dir).unwrap();
+        let staged = [
+            "update-installer.exe",
+            "update-manifest.json",
+            "update-worker.exe",
+        ];
+        let kept = [
+            "release-floor.json",
+            "delivery-floor.json",
+            "rollout-device-id",
+            "update-status.json",
+        ];
+        for name in staged.iter().chain(&kept) {
+            replace(&dir, name, b"x").unwrap();
+        }
+        replace(&dir, "update-tmp-stranded.tmp", b"x").unwrap();
+        let lock = lock(&dir, "update.lock").unwrap().unwrap();
+
+        write_attempt(
+            &dir,
+            Some(&super::super::tests::attempt(InstallPhase::Started)),
+        )
+        .unwrap();
+        clean_leftovers(&dir, false);
+        assert!(staged.iter().all(|n| dir.join(n).exists()));
+
+        write_attempt(&dir, None).unwrap();
+        clean_leftovers(&dir, true);
+        assert!(!dir.join("update-installer.exe").exists());
+        assert!(!dir.join("update-manifest.json").exists());
+        assert!(dir.join("update-worker.exe").exists());
+
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(dir.join("update-worker.exe"))
+            .unwrap();
+        clean_leftovers(&dir, false);
+        assert!(dir.join("update-worker.exe").exists());
+        drop(held);
+        clean_leftovers(&dir, false);
+        assert!(!dir.join("update-worker.exe").exists());
+        clean_leftovers(&dir, false);
+
+        for name in kept.iter().chain(&["update-tmp-stranded.tmp"]) {
+            assert!(dir.join(name).exists(), "{name} must stay");
+        }
+        for name in kept
+            .iter()
+            .chain(&["update-tmp-stranded.tmp", "install-attempt.json"])
+        {
+            fs::remove_file(dir.join(name)).unwrap();
+        }
+        drop((lock, pin));
+        fs::remove_file(dir.join("update.lock")).unwrap();
+        fs::remove_dir(dir).unwrap();
     }
     #[test]
     #[ignore = "requires elevated Windows runner"]

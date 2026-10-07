@@ -17,6 +17,40 @@ pub(super) fn attempt(phase: InstallPhase) -> InstallAttempt {
 }
 
 #[test]
+fn leftover_files_are_only_staged_payloads_and_only_when_resolved() {
+    const PROTECTED: [&str; 6] = [
+        "release-floor.json",
+        "delivery-floor.json",
+        "rollout-device-id",
+        "update.lock",
+        "update-status.json",
+        "install-attempt.json",
+    ];
+    for phase in [InstallPhase::Started, InstallPhase::Exited] {
+        let pending = attempt(phase);
+        assert!(leftover_files(Some(&pending), true).is_empty());
+        assert!(leftover_files(Some(&pending), false).is_empty());
+    }
+    assert_eq!(
+        leftover_files(None, true),
+        ["update-installer.exe", "update-manifest.json"]
+    );
+    assert_eq!(
+        leftover_files(None, false),
+        [
+            "update-installer.exe",
+            "update-manifest.json",
+            "update-worker.exe"
+        ]
+    );
+    for from_worker in [true, false] {
+        for name in leftover_files(None, from_worker) {
+            assert!(!PROTECTED.contains(name));
+        }
+    }
+}
+
+#[test]
 fn interrupted_installation_never_replays_or_publishes_success() {
     let bytes = serde_json::to_vec(&attempt(InstallPhase::Started)).unwrap();
     let restored = parse_attempt(&bytes).unwrap().unwrap();
