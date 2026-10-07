@@ -35,18 +35,6 @@ LEGACY_ASSETS = {
     "assets/preview-541ff80cb74f.webp", "assets/home-dark-1215a72074e4.webp", "assets/preview-b081691b149a.webp",
 }
 HISTORICAL = (
-    "secblitz-0.3.0-windows-x64-setup.exe",
-    "secblitz-0.4.0-windows-x64-setup.exe", "secblitz-0.4.0-windows-x64.exe",
-    "secblitz-0.4.1-windows-x64-setup.exe", "secblitz-0.4.1-windows-x64.exe",
-    "secblitz-0.4.2-windows-x64-setup.exe", "secblitz-0.4.2-windows-x64.exe",
-    "secblitz-0.4.3-windows-x64-setup.exe", "secblitz-0.4.3-windows-x64.exe",
-    "secblitz-0.5.0-windows-x64-setup.exe", "secblitz-0.5.0-windows-x64.exe",
-    "secblitz-0.6.0-windows-x64-setup.exe", "secblitz-0.6.0-windows-x64.exe",
-    "secblitz-0.6.1-windows-x64-setup.exe", "secblitz-0.6.1-windows-x64.exe",
-    "secblitz-0.7.0-windows-x64-setup.exe", "secblitz-0.7.0-windows-x64.exe",
-    "secblitz-0.8.0-windows-x64-setup.exe", "secblitz-0.8.0-windows-x64.exe",
-    "secblitz-0.8.1-windows-x64-setup.exe", "secblitz-0.8.1-windows-x64.exe",
-    "secblitz-0.8.2-windows-x64-setup.exe", "secblitz-0.8.2-windows-x64.exe",
     "secblitz-0.9.2-windows-x64-setup.exe",
 )
 

@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 import shutil
 import tempfile
+import types
 import unittest
 
 HERE = Path(__file__).resolve().parent
@@ -227,12 +228,13 @@ class BumpTests(unittest.TestCase):
             self.assertEqual(finalize.main(["--site", str(site), "--version", self.shown, "--setup", str(setup)]), 1)
 
     def test_historical_downloads_are_pinned_and_verified(self):
-        stage = historical.load_stage()
-        names = list(stage.HISTORICAL)
+        real = historical.load_stage()
         manifest = historical.read_manifest()
-        self.assertEqual(historical.check(stage, manifest), manifest)  # the real list is fully pinned
+        self.assertEqual(historical.check(real, manifest), manifest)  # the real list is fully pinned
         with self.assertRaises(historical.HistoryError):
-            historical.check(stage, {k: v for k, v in manifest.items() if k != names[0]})
+            historical.check(real, {k: v for k, v in manifest.items() if k != real.HISTORICAL[0]})
+        names = [f"secblitz-{v}-windows-x64{kind}.exe" for v in ("0.6.1", "0.7.0") for kind in ("-setup", "")]
+        stage = types.SimpleNamespace(HISTORICAL=tuple(names), check_content=real.check_content)
         pe = (b"MZ" + b"\0" * 58 + (64).to_bytes(4, "little") + b"PE\0\0" + (0x8664).to_bytes(2, "little")
               + b"\0" * 18 + (0x20b).to_bytes(2, "little") + b"\0" * 100)
         served = {n: pe for n in names}
@@ -252,7 +254,7 @@ class BumpTests(unittest.TestCase):
         with self.assertRaises(historical.HistoryError):
             historical.download("http://insecure.test/x")
         partial = self.root / "partial.sha256"
-        keep = {n: h for n, h in manifest.items() if not n.startswith("secblitz-0.6.1-")}
+        keep = {n: h for n, h in pinned.items() if not n.startswith("secblitz-0.6.1-")}
         historical.write_manifest(keep, partial)
         self.assertEqual(historical.record_missing(base, lambda url: pe, stage, partial), ["0.6.1"])
         self.assertEqual(historical.record_missing(base, lambda url: self.fail("nothing is missing"), stage, partial), [])
