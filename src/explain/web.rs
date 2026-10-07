@@ -17,6 +17,26 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "A link in an email or message could take you to a look-alike bank page or a site that infects your PC.",
             change: "Your PC can't open websites on that list. If a safe site is blocked by mistake, pause web protection for an hour.",
         },
+        "web.adult" => Explainer {
+            what: "Secblitz keeps a list of websites meant for adults and updates it often.",
+            risk: "Children, and anyone else using this PC, can open those websites by accident or on purpose.",
+            change: "Your PC can't open websites on that list. If a safe site is blocked by mistake, allow it on the Sites tab.",
+        },
+        "web.gambling" => Explainer {
+            what: "Secblitz keeps a list of online betting and casino websites and updates it often.",
+            risk: "Gambling websites are easy to open and can lead to losing money quickly, especially for children.",
+            change: "Your PC can't open websites on that list. If a safe site is blocked by mistake, allow it on the Sites tab.",
+        },
+        "web.safe_search" => Explainer {
+            what: "Search websites can hide results meant for adults. This asks Google, Bing, YouTube and DuckDuckGo to show only family-friendly results.",
+            risk: "Searches and videos can show adult content, even when nobody was looking for it.",
+            change: "Searches on those four websites show only family-friendly results in every browser on this PC. Other search websites are not changed.",
+        },
+        "web.private_lookups" => Explainer {
+            what: "Every time you open a website, your PC first asks where it is. Normally that question can be read by your internet provider and by anyone on the same public Wi-Fi.",
+            risk: "They can see every website you visit, even when the website itself is protected.",
+            change: "The question is sent privately to Quad9, a non-profit service. If your network doesn't allow that, Secblitz goes back to the normal way so the internet keeps working.",
+        },
         _ => return None,
     })
 }
@@ -27,7 +47,15 @@ mod tests {
 
     #[test]
     fn every_switch_is_explained() {
-        for id in ["web.ads", "web.tracking", "web.dangerous"] {
+        for id in [
+            "web.ads",
+            "web.tracking",
+            "web.dangerous",
+            "web.adult",
+            "web.gambling",
+            "web.safe_search",
+            "web.private_lookups",
+        ] {
             assert!(get(id).is_some(), "{id}");
             assert!(crate::explain::for_check(id).is_some(), "{id}");
         }
