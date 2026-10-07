@@ -15,7 +15,7 @@ use super::adapters;
 use super::config::{self, ErrorCode, RecentList, State, Status};
 use super::fetch;
 use super::lists::{self, SOURCES};
-use super::matcher::Filter;
+use super::matcher::{Filter, KINDS};
 use super::server::{self, upstream_addrs, BindError, Shared};
 use super::store;
 
@@ -60,7 +60,7 @@ pub fn listen_addresses() -> Vec<SocketAddr> {
 #[derive(Default)]
 struct Meta {
     state: State,
-    domains: [u64; 5],
+    domains: [u64; KINDS],
     lists_updated: Option<u64>,
     refresh_error: Option<ErrorCode>,
 }
@@ -228,9 +228,10 @@ impl Every {
 fn same_apart_from_counts(a: &Status, b: &Status) -> bool {
     let strip = |s: &Status| Status {
         written_at: 0,
-        blocked: [0; 5],
+        blocked: [0; KINDS],
         day: 0,
         dangerous_at: None,
+        notice: None,
         ..s.clone()
     };
     strip(a) == strip(b)
@@ -310,6 +311,7 @@ pub fn serve(
             .stats
             .resume(previous.day, previous.blocked, server::unix_now());
         shared.stats.resume_dangerous_at(previous.dangerous_at);
+        shared.stats.resume_notice(previous.notice);
     }
     shared
         .activity
@@ -352,9 +354,15 @@ pub fn serve(
             let fresh = config::load_config(&paths.config);
             {
                 let before = shared.config.read().unwrap_or_else(PoisonError::into_inner);
-                lists_wanted |=
-                    (fresh.adult && !before.adult) || (fresh.gambling && !before.gambling);
+                lists_wanted |= (fresh.adult && !before.adult)
+                    || (fresh.gambling && !before.gambling)
+                    || (fresh.scam && !before.scam)
+                    || (fresh.popups && !before.popups);
             }
+            let fresh = match fresh.without_expired(server::unix_now()) {
+                Some(pruned) if config::save_config(&paths.config, &pruned).is_ok() => pruned,
+                _ => fresh,
+            };
             shared.set_config(fresh);
         }
         if lists_wanted && download && background.start(true, false) {
@@ -409,6 +417,7 @@ pub fn serve(
                 written_at: now,
                 lookups: shared.lookups(now),
                 dangerous_at: shared.stats.dangerous_at(),
+                notice: shared.stats.notice(),
             }
         };
         let changed = last_status
@@ -598,7 +607,7 @@ mod tests {
         rebuild_from_disk(&p, &shared, &meta);
         let m = lock(&meta);
         assert_eq!(m.state, State::Ready);
-        assert_eq!(m.domains, [1, 1, 2, 0, 0]);
+        assert_eq!(m.domains, [1, 1, 2, 0, 0, 0, 0]);
         assert!(m.lists_updated.is_some());
         assert!(shared
             .filter
@@ -735,16 +744,16 @@ mod tests {
             load_status(&status_path).filter(|s| s.blocked[0] == 1)
         });
         assert_eq!(status.dangerous_at, None);
-        assert_eq!(status.domains, [1, 1, 0, 0, 0]);
+        assert_eq!(status.domains, [1, 1, 0, 0, 0, 0, 0]);
         let stats = wait_for("the statistics", || config::load_stats(&stats_path));
-        assert_eq!(stats.days[0].blocked, [1, 0, 0, 0, 0]);
+        assert_eq!(stats.days[0].blocked, [1, 0, 0, 0, 0, 0, 0]);
         assert_eq!(stats.top[0].site, "ads.example");
 
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
         assert_eq!(config::load_recent(&recent_path).unwrap().items, []);
         let detail = activity::load_detail(&detail_path);
-        assert_eq!(detail.days[0].blocked, [1, 0, 0, 0, 0]);
+        assert_eq!(detail.days[0].blocked, [1, 0, 0, 0, 0, 0, 0]);
         assert_eq!(detail.days[0].sites, [("ads.example".to_string(), 1)]);
     }
 
@@ -756,7 +765,7 @@ mod tests {
         let saved = activity::Detail {
             days: vec![activity::DetailDay {
                 day: crate::clock::local_day(now),
-                blocked: [4, 0, 0, 0, 0],
+                blocked: [4, 0, 0, 0, 0, 0, 0],
                 sites: vec![("ads.example".to_string(), 4)],
             }],
         };
@@ -787,7 +796,7 @@ mod tests {
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
         let stats = config::load_stats(&stats_path).unwrap();
-        assert_eq!(stats.days[0].blocked, [4, 0, 0, 0, 0]);
+        assert_eq!(stats.days[0].blocked, [4, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

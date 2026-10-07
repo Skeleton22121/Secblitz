@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::lists::valid_hostname;
-use super::matcher::{Kind, Switches};
+use super::matcher::{Kind, Switches, KINDS};
 
 const MAX_CONFIG: u64 = 16 * 1024;
 const MAX_STATUS: u64 = 16 * 1024;
@@ -20,6 +20,8 @@ const FRESH_SECONDS: u64 = 120;
 /// holds with Fast Startup, which keeps the uptime counting across a shutdown.
 const BOOT_SLACK: u64 = 30;
 pub const MAX_ALLOWED: usize = 200;
+pub const MAX_ALLOWED_ONCE: usize = 20;
+pub const ALLOW_ONCE_SECONDS: u64 = 10 * 60;
 
 #[derive(Serialize, Deserialize, Default, Clone, PartialEq, Debug)]
 pub struct Config {
@@ -30,6 +32,10 @@ pub struct Config {
     pub adult: bool,
     #[serde(default)]
     pub gambling: bool,
+    #[serde(default)]
+    pub scam: bool,
+    #[serde(default)]
+    pub popups: bool,
     #[serde(default)]
     pub safe_search: bool,
     #[serde(default)]
@@ -42,6 +48,16 @@ pub struct Config {
     pub paused_boot: Option<u64>,
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Sites let through for a few minutes. The service drops the ones that ran out.
+    #[serde(default)]
+    pub allow_once: Vec<AllowOnce>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct AllowOnce {
+    pub site: String,
+    /// Unix seconds.
+    pub until: u64,
 }
 
 impl Config {
@@ -51,6 +67,8 @@ impl Config {
             || self.dangerous
             || self.adult
             || self.gambling
+            || self.scam
+            || self.popups
             || self.safe_search
     }
 
@@ -87,8 +105,37 @@ impl Config {
             dangerous: self.dangerous,
             adult: self.adult,
             gambling: self.gambling,
+            scam: self.scam,
+            popups: self.popups,
             safe_search: self.safe_search,
         }
+    }
+
+    /// An entry counts only while it has time left and no more than the longest
+    /// allowed stretch, so a changed file cannot let a site through for good.
+    pub fn allowed_once(&self, name: &str, now: u64) -> bool {
+        self.allow_once.iter().any(|a| {
+            a.until > now
+                && a.until - now <= ALLOW_ONCE_SECONDS
+                && (name == a.site
+                    || name
+                        .strip_suffix(a.site.as_str())
+                        .is_some_and(|p| p.ends_with('.')))
+        })
+    }
+
+    /// The config without the let-throughs that ran out, or `None` when none did.
+    pub fn without_expired(&self, now: u64) -> Option<Config> {
+        let live: Vec<AllowOnce> = self
+            .allow_once
+            .iter()
+            .filter(|a| a.until > now)
+            .cloned()
+            .collect();
+        (live.len() != self.allow_once.len()).then(|| Config {
+            allow_once: live,
+            ..self.clone()
+        })
     }
 
     pub fn sanitized(mut self) -> Config {
@@ -102,6 +149,22 @@ impl Config {
             }
         }
         self.allow = clean;
+        let mut once: Vec<AllowOnce> = Vec::new();
+        for entry in &self.allow_once {
+            let Some(site) = normalized_site(&entry.site) else {
+                continue;
+            };
+            match once.iter_mut().find(|o| o.site == site) {
+                Some(seen) => seen.until = seen.until.max(entry.until),
+                None => once.push(AllowOnce {
+                    site,
+                    until: entry.until,
+                }),
+            }
+        }
+        once.sort_by(|a, b| b.until.cmp(&a.until));
+        once.truncate(MAX_ALLOWED_ONCE);
+        self.allow_once = once;
         self
     }
 }
@@ -164,9 +227,9 @@ pub struct Status {
     pub lists_updated: Option<u64>,
     pub day: u64,
     #[serde(deserialize_with = "counters")]
-    pub blocked: [u64; 5],
+    pub blocked: [u64; KINDS],
     #[serde(deserialize_with = "counters")]
-    pub domains: [u64; 5],
+    pub domains: [u64; KINDS],
     pub last_error: Option<ErrorCode>,
     pub written_at: u64,
     #[serde(default)]
@@ -174,15 +237,26 @@ pub struct Status {
     /// Unix seconds of the last dangerous block. Never a name.
     #[serde(default)]
     pub dangerous_at: Option<u64>,
+    /// The last scam or dangerous block, with its name, for the tray notice. Other kinds never leave the service.
+    #[serde(default)]
+    pub notice: Option<Notice>,
 }
 
-/// Older files have three counters; the missing ones are zero.
-fn counters<'de, D: Deserializer<'de>>(d: D) -> Result<[u64; 5], D::Error> {
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct Notice {
+    pub kind: Kind,
+    pub site: String,
+    /// Unix seconds.
+    pub at: u64,
+}
+
+/// Older files have three to five counters; the missing ones are zero.
+pub fn counters<'de, D: Deserializer<'de>>(d: D) -> Result<[u64; KINDS], D::Error> {
     let values = Vec::<u64>::deserialize(d)?;
-    if !(3..=5).contains(&values.len()) {
+    if !(3..=KINDS).contains(&values.len()) {
         return Err(D::Error::custom("unexpected number of counters"));
     }
-    let mut out = [0; 5];
+    let mut out = [0; KINDS];
     out[..values.len()].copy_from_slice(&values);
     Ok(out)
 }
@@ -230,7 +304,7 @@ pub struct DayCount {
     /// Days since 1970-01-01.
     pub day: u64,
     #[serde(deserialize_with = "counters")]
-    pub blocked: [u64; 5],
+    pub blocked: [u64; KINDS],
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
@@ -389,6 +463,129 @@ mod tests {
             }
         );
         assert!(!Config::default().any_on());
+    }
+
+    #[test]
+    fn scam_and_popup_switches_count_as_on() {
+        for c in [
+            Config {
+                scam: true,
+                ..Config::default()
+            },
+            Config {
+                popups: true,
+                ..Config::default()
+            },
+        ] {
+            assert!(c.any_on());
+            assert!(c.needs_service());
+        }
+        let c = Config {
+            scam: true,
+            popups: true,
+            ..Config::default()
+        };
+        let on = c.active(0);
+        assert!(on.scam && on.popups && !on.ads && !on.dangerous);
+        assert!(!c.active(0).adult);
+        let paused = Config {
+            paused_until: Some(100),
+            ..c
+        };
+        assert_eq!(paused.active(50), Switches::default());
+    }
+
+    #[test]
+    fn a_config_from_before_scam_blocking_still_loads_with_them_off() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("config.json");
+        fs::write(
+            &p,
+            r#"{"ads":true,"tracking":true,"dangerous":true,"adult":true,"allow":["ok.example"]}"#,
+        )
+        .unwrap();
+        let c = load_config(&p);
+        assert!(c.ads && c.adult && !c.scam && !c.popups);
+        assert!(c.allow_once.is_empty());
+        assert_eq!(c.allow, ["ok.example"]);
+    }
+
+    fn once(site: &str, until: u64) -> AllowOnce {
+        AllowOnce {
+            site: site.into(),
+            until,
+        }
+    }
+
+    #[test]
+    fn a_let_through_covers_the_site_and_its_subdomains_until_it_runs_out() {
+        let c = Config {
+            allow_once: vec![once("shop.example", 1000 + 60)],
+            ..Config::default()
+        };
+        assert!(c.allowed_once("shop.example", 1000));
+        assert!(c.allowed_once("www.shop.example", 1000));
+        assert!(!c.allowed_once("notshop.example", 1000));
+        assert!(!c.allowed_once("example", 1000));
+        assert!(c.allowed_once("shop.example", 1059));
+        assert!(!c.allowed_once("shop.example", 1060));
+        assert!(!c.allowed_once("shop.example", 5000));
+    }
+
+    #[test]
+    fn a_let_through_longer_than_ten_minutes_is_ignored() {
+        let c = Config {
+            allow_once: vec![
+                once("fine.example", 1000 + ALLOW_ONCE_SECONDS),
+                once("forged.example", 1000 + ALLOW_ONCE_SECONDS + 1),
+                once("far.example", u64::MAX),
+            ],
+            ..Config::default()
+        };
+        assert!(c.allowed_once("fine.example", 1000));
+        assert!(!c.allowed_once("forged.example", 1000));
+        assert!(!c.allowed_once("far.example", 1000));
+    }
+
+    #[test]
+    fn expired_let_throughs_are_dropped_and_the_rest_kept() {
+        let c = Config {
+            ads: true,
+            allow: vec!["keep.example".into()],
+            allow_once: vec![once("old.example", 900), once("live.example", 1100)],
+            ..Config::default()
+        };
+        let pruned = c.without_expired(1000).unwrap();
+        assert_eq!(pruned.allow_once, [once("live.example", 1100)]);
+        assert!(pruned.ads);
+        assert_eq!(pruned.allow, c.allow);
+        assert_eq!(pruned.without_expired(1000), None);
+        assert_eq!(Config::default().without_expired(1000), None);
+        let gone = c.without_expired(1100).unwrap();
+        assert!(gone.allow_once.is_empty());
+    }
+
+    #[test]
+    fn let_throughs_are_cleaned_and_limited_when_saved() {
+        let mut entries: Vec<AllowOnce> = (0..30)
+            .map(|i| once(&format!("site{i}.example"), 1000 + i))
+            .collect();
+        entries.push(once("not a name", 5000));
+        entries.push(once("SITE3.example.", 4000));
+        let c = Config {
+            allow_once: entries,
+            ..Config::default()
+        }
+        .sanitized();
+        assert_eq!(c.allow_once.len(), MAX_ALLOWED_ONCE);
+        assert!(c.allow_once.iter().all(|a| a.site != "not a name"));
+        let site3: Vec<_> = c
+            .allow_once
+            .iter()
+            .filter(|a| a.site == "site3.example")
+            .collect();
+        assert_eq!(site3.len(), 1);
+        assert_eq!(site3[0].until, 4000);
     }
 
     #[test]
@@ -612,12 +809,17 @@ mod tests {
             state: State::NoLists,
             lists_updated: Some(7),
             day: 20000,
-            blocked: [1, 2, 3, 4, 5],
-            domains: [10, 20, 30, 40, 50],
+            blocked: [1, 2, 3, 4, 5, 6, 7],
+            domains: [10, 20, 30, 40, 50, 60, 70],
             last_error: Some(ErrorCode::PortInUse),
             written_at: 99,
             lookups: Lookups::PrivateFallback,
             dangerous_at: Some(88),
+            notice: Some(Notice {
+                kind: Kind::Scam,
+                site: "shop.example".into(),
+                at: 88,
+            }),
         };
         save_status(&p, &s).unwrap();
         assert_eq!(load_status(&p), Some(s));
@@ -640,31 +842,50 @@ mod tests {
         )
         .unwrap();
         let s = load_status(&p).unwrap();
-        assert_eq!(s.blocked, [1, 2, 3, 0, 0]);
-        assert_eq!(s.domains, [10, 20, 30, 0, 0]);
+        assert_eq!(s.blocked, [1, 2, 3, 0, 0, 0, 0]);
+        assert_eq!(s.domains, [10, 20, 30, 0, 0, 0, 0]);
         assert_eq!(s.lookups, Lookups::Plain);
         assert_eq!(s.dangerous_at, None);
+        assert_eq!(s.notice, None);
         assert!(s.listening && s.state == State::Ready);
         fs::write(
             &p,
             r#"{"listening":true,"state":"ready","lists_updated":null,"day":1,
-                "blocked":[1,2,3,4,5,6],"domains":[0,0,0],"last_error":null,"written_at":99}"#,
+                "blocked":[1,2,3,4,5,6,7,8],"domains":[0,0,0],"last_error":null,"written_at":99}"#,
         )
         .unwrap();
         assert_eq!(load_status(&p), None);
     }
 
     #[test]
-    fn new_status_has_five_counters_and_no_site_names() {
+    fn status_with_five_counters_from_0_10_still_reads() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("status.json");
+        fs::write(
+            &p,
+            r#"{"listening":true,"state":"ready","lists_updated":5,"day":20000,
+                "blocked":[1,2,3,4,5],"domains":[10,20,30,40,50],"last_error":null,
+                "written_at":99,"lookups":"private","dangerous_at":7}"#,
+        )
+        .unwrap();
+        let s = load_status(&p).unwrap();
+        assert_eq!(s.blocked, [1, 2, 3, 4, 5, 0, 0]);
+        assert_eq!(s.domains, [10, 20, 30, 40, 50, 0, 0]);
+        assert_eq!(s.dangerous_at, Some(7));
+    }
+
+    #[test]
+    fn new_status_has_seven_counters_and_names_no_site_by_default() {
         let s = Status {
-            blocked: [1, 2, 3, 4, 5],
+            blocked: [1, 2, 3, 4, 5, 6, 7],
             dangerous_at: Some(7),
             ..Status::default()
         };
         let text = serde_json::to_string(&s).unwrap();
-        assert!(text.contains("\"blocked\":[1,2,3,4,5]"));
+        assert!(text.contains("\"blocked\":[1,2,3,4,5,6,7]"));
         assert!(text.contains("\"dangerous_at\":7"));
         assert!(text.contains("\"lookups\":\"plain\""));
+        assert!(text.contains("\"notice\":null"));
     }
 
     #[test]
@@ -701,8 +922,8 @@ mod tests {
         )
         .unwrap();
         let h = load_stats(&stats).unwrap();
-        assert_eq!(h.days[0].blocked, [1, 2, 3, 4, 5]);
-        assert_eq!(h.days[1].blocked, [1, 2, 3, 0, 0]);
+        assert_eq!(h.days[0].blocked, [1, 2, 3, 4, 5, 0, 0]);
+        assert_eq!(h.days[1].blocked, [1, 2, 3, 0, 0, 0, 0]);
         assert_eq!(h.top[0].site, "doubleclick.net");
         assert_eq!(load_stats(&d.path().join("missing.json")), None);
         fs::write(&stats, "{}").unwrap();

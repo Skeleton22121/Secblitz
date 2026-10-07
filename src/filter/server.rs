@@ -12,10 +12,10 @@ use rand::rngs::SysRng;
 use rand::TryRng;
 
 use super::activity::Activity;
-use super::config::{Config, Lookups};
+use super::config::{Config, Lookups, Notice};
 use super::dns::{self, Query};
 use super::doh::{self, Doh, Fallback};
-use super::matcher::{Filter, HashSet64, Kind};
+use super::matcher::{Filter, HashSet64, Kind, KINDS};
 use super::safe_search;
 
 const MAX_PACKET: usize = 4096;
@@ -46,16 +46,24 @@ fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 
 #[derive(Default)]
 pub struct Stats {
-    pub blocked: [AtomicU64; 5],
+    pub blocked: [AtomicU64; KINDS],
     pub day: AtomicU64,
     /// Unix seconds; 0 for none.
     pub dangerous_at: AtomicU64,
+    notice: Mutex<Option<Notice>>,
 }
 
 impl Stats {
-    pub fn record(&self, kind: Kind, now: u64) {
+    pub fn record(&self, kind: Kind, name: &str, now: u64) {
         if kind == Kind::Dangerous {
             self.dangerous_at.store(now, Ordering::Relaxed);
+        }
+        if matches!(kind, Kind::Dangerous | Kind::Scam) {
+            *self.notice.lock().unwrap_or_else(PoisonError::into_inner) = Some(Notice {
+                kind,
+                site: super::activity::registrable_domain(name).to_string(),
+                at: now,
+            });
         }
         let today = crate::clock::local_day(now);
         let seen = self.day.load(Ordering::Relaxed);
@@ -74,7 +82,7 @@ impl Stats {
 
     /// Picks up today's counts from before a restart (the last status file),
     /// so "blocked today" does not drop to zero after a crash or a reboot.
-    pub fn resume(&self, day: u64, counts: [u64; 5], now: u64) {
+    pub fn resume(&self, day: u64, counts: [u64; KINDS], now: u64) {
         if day != crate::clock::local_day(now) {
             return;
         }
@@ -92,10 +100,21 @@ impl Stats {
         Some(self.dangerous_at.load(Ordering::Relaxed)).filter(|t| *t > 0)
     }
 
-    pub fn snapshot(&self, now: u64) -> (u64, [u64; 5]) {
+    pub fn resume_notice(&self, notice: Option<Notice>) {
+        *self.notice.lock().unwrap_or_else(PoisonError::into_inner) = notice;
+    }
+
+    pub fn notice(&self) -> Option<Notice> {
+        self.notice
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub fn snapshot(&self, now: u64) -> (u64, [u64; KINDS]) {
         let today = crate::clock::local_day(now);
         if self.day.load(Ordering::Relaxed) != today {
-            return (today, [0; 5]);
+            return (today, [0; KINDS]);
         }
         (
             today,
@@ -193,11 +212,21 @@ pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action
         let reply = dns::nxdomain_reply(packet, &q);
         return Some((q, Action::Reply(reply)));
     }
-    let on = read(&shared.config).active(now);
+    let (on, once) = {
+        let config = read(&shared.config);
+        (
+            config.active(now),
+            config.allowed_once(&q.question.name, now),
+        )
+    };
     let filter = Arc::clone(&read(&shared.filter));
-    let kind = filter.decide_allowing(&q.question.name, on, &read(&shared.allow));
+    let kind = if once {
+        None
+    } else {
+        filter.decide_allowing(&q.question.name, on, &read(&shared.allow))
+    };
     if let Some(kind) = kind {
-        shared.stats.record(kind, now);
+        shared.stats.record(kind, &q.question.name, now);
         shared.activity.record(&q.question.name, kind, now);
         let reply = dns::blocked_reply(packet, &q);
         return Some((q, Action::Reply(reply)));
@@ -666,7 +695,7 @@ mod tests {
         assert_eq!(&allowed[..2], &[0x22, 0x22]);
         assert_eq!(last_four(&allowed), ANSWER_IP);
 
-        assert_eq!(shared.stats.snapshot(unix_now()).1, [1, 0, 0, 0, 0]);
+        assert_eq!(shared.stats.snapshot(unix_now()).1, [1, 0, 0, 0, 0, 0, 0]);
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
     }
@@ -812,12 +841,12 @@ mod tests {
         let now = 20_000 * SECONDS_PER_DAY + SECONDS_PER_DAY / 2;
         let today = crate::clock::local_day(now);
         let stats = Stats::default();
-        stats.resume(today, [5, 6, 7, 8, 9], now);
-        stats.record(Kind::Ads, now);
-        assert_eq!(stats.snapshot(now), (today, [6, 6, 7, 8, 9]));
+        stats.resume(today, [5, 6, 7, 8, 9, 10, 11], now);
+        stats.record(Kind::Ads, "ads.example", now);
+        assert_eq!(stats.snapshot(now), (today, [6, 6, 7, 8, 9, 10, 11]));
         let fresh = Stats::default();
-        fresh.resume(today - 1, [5, 6, 7, 8, 9], now);
-        assert_eq!(fresh.snapshot(now), (today, [0, 0, 0, 0, 0]));
+        fresh.resume(today - 1, [5, 6, 7, 8, 9, 10, 11], now);
+        assert_eq!(fresh.snapshot(now), (today, [0; KINDS]));
     }
 
     #[test]
@@ -886,16 +915,16 @@ mod tests {
         let stats = Stats::default();
         let day0 = 10 * SECONDS_PER_DAY + SECONDS_PER_DAY / 2;
         let d = crate::clock::local_day(day0);
-        stats.record(Kind::Ads, day0);
-        stats.record(Kind::Ads, day0 + 1);
-        stats.record(Kind::Dangerous, day0 + 2);
-        assert_eq!(stats.snapshot(day0 + 3), (d, [2, 0, 1, 0, 0]));
+        stats.record(Kind::Ads, "a.example", day0);
+        stats.record(Kind::Ads, "a.example", day0 + 1);
+        stats.record(Kind::Dangerous, "d.example", day0 + 2);
+        assert_eq!(stats.snapshot(day0 + 3), (d, [2, 0, 1, 0, 0, 0, 0]));
         // Tomorrow, before anything is blocked: nothing counted yet.
-        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (d + 1, [0; 5]));
-        stats.record(Kind::Tracking, day0 + SECONDS_PER_DAY);
+        assert_eq!(stats.snapshot(day0 + SECONDS_PER_DAY), (d + 1, [0; KINDS]));
+        stats.record(Kind::Tracking, "t.example", day0 + SECONDS_PER_DAY);
         assert_eq!(
             stats.snapshot(day0 + SECONDS_PER_DAY),
-            (d + 1, [0, 1, 0, 0, 0])
+            (d + 1, [0, 1, 0, 0, 0, 0, 0])
         );
     }
 
@@ -909,6 +938,8 @@ mod tests {
             dangerous: cat(&["evil.example"]),
             adult: cat(&["adult.example"]),
             gambling: cat(&["bet.example"]),
+            scam: cat(&["shop.example"]),
+            popups: cat(&["popup.example"]),
             never: HashSet64::from_names(NEVER_BLOCK.iter().copied()),
             ..Filter::default()
         }
@@ -937,7 +968,7 @@ mod tests {
         for name in ["adult.example", "www.adult.example", "bet.example"] {
             assert!(blocked_kind(&shared, name, 1000), "{name}");
         }
-        assert_eq!(shared.stats.snapshot(1000).1, [0, 0, 0, 2, 1]);
+        assert_eq!(shared.stats.snapshot(1000).1, [0, 0, 0, 2, 1, 0, 0]);
         shared.set_config(Config {
             adult: false,
             ..family_on()
@@ -986,8 +1017,103 @@ mod tests {
         );
         assert_eq!(
             shared.activity.history_now(now + 2).days[0].blocked,
-            [1, 0, 1, 0, 0]
+            [1, 0, 1, 0, 0, 0, 0]
         );
+    }
+
+    fn scam_on() -> Config {
+        Config {
+            scam: true,
+            popups: true,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn scam_and_popup_switches_block_their_own_lists() {
+        let shared = Shared::new(family_filter(), scam_on(), vec![]);
+        for name in ["shop.example", "www.shop.example", "popup.example"] {
+            assert!(blocked_kind(&shared, name, 1000), "{name}");
+        }
+        assert_eq!(shared.stats.snapshot(1000).1, [0, 0, 0, 0, 0, 2, 1]);
+        shared.set_config(Config {
+            scam: false,
+            ..scam_on()
+        });
+        assert!(!blocked_kind(&shared, "shop.example", 1000));
+        assert!(blocked_kind(&shared, "popup.example", 1000));
+        shared.set_config(Config::default());
+        assert!(!blocked_kind(&shared, "popup.example", 1000));
+    }
+
+    #[test]
+    fn only_scam_and_dangerous_blocks_leave_a_site_name_for_the_tray() {
+        let shared = Shared::new(
+            family_filter(),
+            Config {
+                ads: true,
+                adult: true,
+                ..family_on()
+            },
+            vec![],
+        );
+        blocked_kind(&shared, "ads.example", 1000);
+        blocked_kind(&shared, "adult.example", 1001);
+        assert_eq!(shared.stats.notice(), None);
+        shared.set_config(Config {
+            scam: true,
+            ..family_on()
+        });
+        blocked_kind(&shared, "www.shop.example", 1002);
+        let notice = shared.stats.notice().unwrap();
+        assert_eq!(notice.kind, Kind::Scam);
+        assert_eq!(notice.site, "shop.example");
+        assert_eq!(notice.at, 1002);
+        blocked_kind(&shared, "cdn.evil.example", 1003);
+        let notice = shared.stats.notice().unwrap();
+        assert_eq!(
+            (notice.kind, notice.site.as_str()),
+            (Kind::Dangerous, "evil.example")
+        );
+        blocked_kind(&shared, "popup.example", 1004);
+        assert_eq!(shared.stats.notice().unwrap().at, 1003);
+    }
+
+    #[test]
+    fn a_let_through_opens_a_site_for_ten_minutes_only() {
+        use crate::filter::config::AllowOnce;
+        let shared = Shared::new(family_filter(), scam_on(), vec![]);
+        assert!(blocked_kind(&shared, "shop.example", 1000));
+        shared.set_config(Config {
+            allow_once: vec![AllowOnce {
+                site: "shop.example".into(),
+                until: 1000 + 600,
+            }],
+            ..scam_on()
+        });
+        assert!(!blocked_kind(&shared, "shop.example", 1000));
+        assert!(!blocked_kind(&shared, "www.shop.example", 1599));
+        assert!(blocked_kind(&shared, "popup.example", 1000));
+        assert!(blocked_kind(&shared, "shop.example", 1600));
+    }
+
+    #[test]
+    fn a_let_through_is_not_counted_as_a_block() {
+        use crate::filter::config::AllowOnce;
+        let shared = Shared::new(
+            family_filter(),
+            Config {
+                allow_once: vec![AllowOnce {
+                    site: "shop.example".into(),
+                    until: 1300,
+                }],
+                ..scam_on()
+            },
+            vec![],
+        );
+        assert!(!blocked_kind(&shared, "shop.example", 1000));
+        assert_eq!(shared.stats.snapshot(1000).1, [0; KINDS]);
+        assert_eq!(shared.stats.notice(), None);
     }
 
     #[test]
