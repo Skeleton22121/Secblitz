@@ -15,6 +15,7 @@ use super::activity::Activity;
 use super::config::{Config, Lookups};
 use super::dns::{self, Query};
 use super::matcher::{Filter, HashSet64, Kind};
+use super::safe_search;
 
 const MAX_PACKET: usize = 4096;
 const WORKERS: usize = 16;
@@ -150,6 +151,7 @@ pub fn upstream_addrs(servers: &[IpAddr]) -> Vec<SocketAddr> {
 pub enum Action {
     Reply(Vec<u8>),
     Forward,
+    SafeSearch(&'static str),
 }
 
 pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action)> {
@@ -166,6 +168,19 @@ pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action
         shared.activity.record(&q.question.name, kind, now);
         let reply = dns::blocked_reply(packet, &q);
         return Some((q, Action::Reply(reply)));
+    }
+    if on.safe_search && q.question.qclass == 1 {
+        if let Some(target) = safe_search::target_for(&q.question.name) {
+            match q.question.qtype {
+                dns::TYPE_A | dns::TYPE_AAAA => return Some((q, Action::SafeSearch(target))),
+                // Address hints would lead around safe search.
+                dns::TYPE_HTTPS | dns::TYPE_SVCB => {
+                    let reply = dns::empty_reply(packet, &q);
+                    return Some((q, Action::Reply(reply)));
+                }
+                _ => {}
+            }
+        }
     }
     Some((q, Action::Forward))
 }
@@ -277,10 +292,28 @@ pub fn forward(
         .unwrap_or_else(|| dns::servfail_reply(packet, q))
 }
 
+/// The alias answer for a search site: the addresses come from asking the
+/// PC's own servers for the safe search name.
+fn safe_search_answer(packet: &[u8], q: &Query, target: &str, shared: &Shared) -> Vec<u8> {
+    let upstream = read(&shared.upstream).clone();
+    let ask = dns::build_query(random_id(), target, q.question.qtype);
+    let found = dns::parse_query(&ask)
+        .and_then(|asked| forward_checked(&ask, &asked, &upstream, UPSTREAM_TIMEOUT, Via::Tcp))
+        .and_then(|reply| dns::parse_addresses(&reply, q.question.qtype));
+    match found {
+        Some(addresses) => dns::safe_search_reply(packet, q, target, &addresses),
+        None => {
+            shared.upstream_failed.store(true, Ordering::Release);
+            dns::servfail_reply(packet, q)
+        }
+    }
+}
+
 fn answer(packet: &[u8], shared: &Shared, via: Via) -> Option<Vec<u8>> {
     let (q, action) = decide(packet, shared, unix_now())?;
     Some(match action {
         Action::Reply(reply) => reply,
+        Action::SafeSearch(target) => safe_search_answer(packet, &q, target, shared),
         Action::Forward => {
             let upstream = read(&shared.upstream).clone();
             forward_checked(packet, &q, &upstream, UPSTREAM_TIMEOUT, via).unwrap_or_else(|| {
@@ -909,6 +942,115 @@ mod tests {
         assert_eq!(shared.stats.dangerous_at(), None);
         assert!(blocked_kind(&shared, "evil.example", 5000));
         assert_eq!(shared.activity.recent_now(5000).items.len(), 1);
+    }
+
+    fn safe_search_on() -> Config {
+        Config {
+            safe_search: true,
+            ..Config::default()
+        }
+    }
+
+    fn answers_in(reply: &[u8]) -> u16 {
+        u16::from_be_bytes([reply[6], reply[7]])
+    }
+
+    #[test]
+    fn safe_search_names_become_an_alias_with_the_targets_addresses() {
+        let upstream = fake_upstream();
+        let shared = Shared::new(Filter::empty(), safe_search_on(), vec![upstream]);
+        for (name, target) in [
+            ("www.google.com", "forcesafesearch.google.com"),
+            ("google.co.uk", "forcesafesearch.google.com"),
+            ("www.bing.com", "strict.bing.com"),
+            ("www.youtube.com", "restrictmoderate.youtube.com"),
+            ("duckduckgo.com", "safe.duckduckgo.com"),
+        ] {
+            let packet = query_bytes(name, 1, 0x3131);
+            let reply = answer(&packet, &shared, Via::Udp).unwrap();
+            assert_eq!(&reply[..2], &[0x31, 0x31], "{name}");
+            assert_eq!(reply[3] & 0x0F, 0, "{name}");
+            assert_eq!(answers_in(&reply), 2, "{name}");
+            let q = dns::parse_query(&packet).unwrap();
+            let first = &reply[q.question_end..];
+            assert_eq!(&first[2..4], &[0, 5], "{name}: first record is the alias");
+            let alias_len = u16::from_be_bytes([first[10], first[11]]) as usize;
+            let wire: Vec<u8> = dns::build_query(0, target, 1)[12..].to_vec();
+            assert_eq!(
+                &first[12..12 + alias_len],
+                &wire[..wire.len() - 4],
+                "{name}"
+            );
+            assert_eq!(last_four(&reply), ANSWER_IP, "{name}");
+        }
+    }
+
+    #[test]
+    fn safe_search_leaves_other_names_and_other_switch_states_alone() {
+        let upstream = fake_upstream();
+        let on = Shared::new(Filter::empty(), safe_search_on(), vec![upstream]);
+        for name in ["mail.google.com", "music.youtube.com", "example.com"] {
+            let reply = answer(&query_bytes(name, 1, 1), &on, Via::Udp).unwrap();
+            assert_eq!(answers_in(&reply), 1, "{name}");
+        }
+        let off = Shared::new(Filter::empty(), Config::default(), vec![upstream]);
+        let reply = answer(&query_bytes("www.google.com", 1, 1), &off, Via::Udp).unwrap();
+        assert_eq!(answers_in(&reply), 1);
+        let paused = Shared::new(
+            Filter::empty(),
+            Config {
+                paused_until: Some(5000),
+                ..safe_search_on()
+            },
+            vec![upstream],
+        );
+        assert!(matches!(
+            decide(&query_bytes("www.google.com", 1, 1), &paused, 1000),
+            Some((_, Action::Forward))
+        ));
+    }
+
+    #[test]
+    fn safe_search_hides_the_address_hints_in_https_records() {
+        let shared = Shared::new(Filter::empty(), safe_search_on(), vec![]);
+        for qtype in [dns::TYPE_HTTPS, dns::TYPE_SVCB] {
+            match decide(&query_bytes("www.google.com", qtype, 1), &shared, 1000) {
+                Some((_, Action::Reply(r))) => {
+                    assert_eq!(r[3] & 0x0F, 0);
+                    assert_eq!(answers_in(&r), 0);
+                }
+                _ => panic!("expected an empty answer"),
+            }
+        }
+        assert!(matches!(
+            decide(&query_bytes("www.google.com", 16, 1), &shared, 1000),
+            Some((_, Action::Forward))
+        ));
+    }
+
+    #[test]
+    fn safe_search_fails_with_servfail_when_nothing_answers() {
+        let closed = {
+            let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+            s.local_addr().unwrap()
+        };
+        let shared = Shared::new(Filter::empty(), safe_search_on(), vec![closed]);
+        let reply = answer(&query_bytes("www.google.com", 1, 9), &shared, Via::Udp).unwrap();
+        assert_eq!(reply[3] & 0x0F, 2);
+        assert!(shared.upstream_failed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_blocked_search_site_is_blocked_not_aliased() {
+        let mut filter = blocking(&["www.bing.com"]);
+        filter.never = HashSet64::default();
+        let config = Config {
+            ads: true,
+            safe_search: true,
+            ..Config::default()
+        };
+        let shared = Shared::new(filter, config, vec![]);
+        assert!(blocked_kind(&shared, "www.bing.com", 1000));
     }
 
     #[test]
