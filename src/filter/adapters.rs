@@ -4,6 +4,7 @@
 use std::net::{IpAddr, Ipv6Addr};
 
 const MAX_SERVERS: usize = 4;
+const MAX_SUFFIXES: usize = 16;
 
 /// The old Windows default DNS addresses `fec0:0:0:ffff::1` to `::3`, which
 /// appear on adapters that have no real IPv6 DNS server.
@@ -35,6 +36,30 @@ pub fn usable_servers(found: impl IntoIterator<Item = IpAddr>) -> Vec<IpAddr> {
         }
     }
     out
+}
+
+/// Skips a one-word suffix of up to three letters: it would be a public ending like `com` and make the internet look local.
+pub fn usable_suffixes(found: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for suffix in found {
+        let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
+        let plain = !suffix.is_empty()
+            && suffix.len() <= 253
+            && suffix
+                .split('.')
+                .all(|l| (1..=63).contains(&l.len()) && l.bytes().all(is_name_byte));
+        if plain && (suffix.contains('.') || suffix.len() > 3) && !out.contains(&suffix) {
+            out.push(suffix);
+            if out.len() == MAX_SUFFIXES {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn is_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
 }
 
 pub fn is_metered(cost: i32, over_data_limit: bool, roaming: bool) -> bool {
@@ -137,6 +162,56 @@ mod imp {
         usable_servers(found)
     }
 
+    /// SAFETY contract: `p` is null or points to a NUL-terminated UTF-16 string.
+    unsafe fn wide_string(p: *const u16) -> Option<String> {
+        if p.is_null() {
+            return None;
+        }
+        let mut units = Vec::new();
+        for i in 0..256 {
+            let c = *p.add(i);
+            if c == 0 {
+                break;
+            }
+            units.push(c);
+        }
+        String::from_utf16(&units).ok()
+    }
+
+    pub fn dns_suffixes() -> Vec<String> {
+        let Some(buf) = adapter_buffer() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        // SAFETY: as in `upstream_servers`; the suffix strings live inside
+        // the same buffer and end with a NUL within their bounds.
+        unsafe {
+            let mut adapter = buf.as_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
+            while !adapter.is_null() {
+                let a = &*adapter;
+                if a.OperStatus == IfOperStatusUp
+                    && a.IfType != IF_TYPE_SOFTWARE_LOOPBACK
+                    && a.IfType != IF_TYPE_TUNNEL
+                {
+                    found.extend(wide_string(a.DnsSuffix));
+                    let mut suffix = a.FirstDnsSuffix;
+                    while !suffix.is_null() {
+                        let s = &*suffix;
+                        let end = s
+                            .String
+                            .iter()
+                            .position(|c| *c == 0)
+                            .unwrap_or(s.String.len());
+                        found.extend(String::from_utf16(&s.String[..end]).ok());
+                        suffix = s.Next;
+                    }
+                }
+                adapter = a.Next;
+            }
+        }
+        usable_suffixes(found)
+    }
+
     type GetHint = unsafe extern "system" fn(*mut NL_NETWORK_CONNECTIVITY_HINT) -> WIN32_ERROR;
 
     pub fn metered() -> bool {
@@ -172,6 +247,10 @@ mod imp {
         Vec::new()
     }
 
+    pub fn dns_suffixes() -> Vec<String> {
+        Vec::new()
+    }
+
     pub fn metered() -> bool {
         false
     }
@@ -179,6 +258,10 @@ mod imp {
 
 pub fn upstream_servers() -> Vec<IpAddr> {
     imp::upstream_servers()
+}
+
+pub fn dns_suffixes() -> Vec<String> {
+    imp::dns_suffixes()
 }
 
 pub fn metered() -> bool {
@@ -228,6 +311,31 @@ mod tests {
     fn other_site_local_addresses_are_kept() {
         let got = usable_servers(ips(&["fec0:0:0:ffff::4", "fd00::1"]));
         assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn suffixes_are_cleaned_and_public_endings_dropped() {
+        let got = usable_suffixes(
+            [
+                "Corp.Example.COM.",
+                "fritz.box",
+                "com",
+                "lan",
+                "home",
+                "",
+                "bad name.example",
+                "fritz.box",
+                "a..b",
+            ]
+            .map(String::from),
+        );
+        assert_eq!(got, ["corp.example.com", "fritz.box", "home"]);
+    }
+
+    #[test]
+    fn suffixes_are_capped() {
+        let many = (0..40).map(|i| format!("net{i}.example"));
+        assert_eq!(usable_suffixes(many).len(), MAX_SUFFIXES);
     }
 
     #[test]
