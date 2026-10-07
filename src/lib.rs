@@ -4,6 +4,7 @@
 pub mod actions;
 pub mod advice;
 pub mod clock;
+pub mod damaged;
 pub mod debloat;
 pub mod diagnostics;
 pub mod engine;

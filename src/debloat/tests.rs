@@ -311,6 +311,30 @@ fn apps_that_are_not_installed_are_ignored() {
 }
 
 #[test]
+fn an_unreadable_removed_apps_list_is_kept_not_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(journal::FILE);
+    let kept = dir.path().join(format!("{}.damaged", journal::FILE));
+    let batch = Batch {
+        t: 1,
+        removed: Vec::new(),
+        skipped: vec![2],
+        failed: Vec::new(),
+        kept: Vec::new(),
+    };
+    let good = serde_json::to_string(&batch).unwrap();
+    std::fs::write(&path, format!("{good}\nnot json\n")).unwrap();
+    assert_eq!(journal::load_from(&path), vec![batch.clone()]);
+    assert_eq!(std::fs::read(&kept).unwrap(), std::fs::read(&path).unwrap());
+    std::fs::write(&path, b"\xff\xfe").unwrap();
+    assert!(journal::load_from(&path).is_empty());
+    assert!(!path.exists());
+    assert_eq!(std::fs::read(&kept).unwrap(), b"\xff\xfe");
+    std::fs::write(&path, format!("{good}\n")).unwrap();
+    assert_eq!(journal::load_from(&path), vec![batch]);
+}
+
+#[test]
 fn journal_round_trip_and_restore_marking() {
     let dir = std::env::temp_dir().join(format!("secblitz-debloat-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

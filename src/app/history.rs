@@ -15,6 +15,7 @@ pub enum Kind {
     UndoSome,
     Debloat,
     Restore,
+    Recovery,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +142,7 @@ pub fn label(kind: Kind, n: usize) -> &'static str {
         (Kind::Debloat, 0 | 1) => "Removed 1 app",
         (Kind::Debloat, _) => "Removed {n} apps",
         (Kind::Restore, _) => "Restored an app",
+        (Kind::Recovery, _) => "Undo history started fresh",
     }
 }
 
@@ -308,6 +310,7 @@ mod tests {
         assert_eq!(label(Kind::Debloat, 12), "Removed {n} apps");
         assert_eq!(label(Kind::Debloat, 1), "Removed 1 app");
         assert_eq!(label(Kind::Restore, 1), "Restored an app");
+        assert_eq!(label(Kind::Recovery, 0), "Undo history started fresh");
     }
 
     const DAY: u64 = 86_400;

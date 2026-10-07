@@ -31,6 +31,8 @@ pub fn friendly_problem(raw: &str) -> &'static str {
         "windows 10/11",
     ]) {
         "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
+    } else if has(&["undo history is damaged"]) {
+        "Secblitz's undo history is damaged. Open Secblitz and choose Start fresh when it asks. Secblitz keeps a copy of the damaged files."
     } else if has(&["declined", "cancel"]) {
         "Secblitz needs your permission to open. Open it again and choose Yes when Windows asks."
     } else if has(&[

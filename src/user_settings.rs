@@ -447,9 +447,13 @@ fn load_journal(path: &Path) -> Journal {
         .is_err()
         || bytes.len() as u64 > JOURNAL_LIMIT
     {
+        crate::damaged::keep(path, true);
         return Journal::default();
     }
-    serde_json::from_slice(&bytes).unwrap_or_default()
+    serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+        crate::damaged::keep(path, true);
+        Journal::default()
+    })
 }
 
 /// For cleanup after a failure: the caller's outcome stays the same, but the lost write is not silent.
@@ -1333,8 +1337,12 @@ mod tests {
 
         std::fs::write(&path, b"not json").unwrap();
         assert!(load_journal(&path).settings.is_empty());
+        let kept = path.with_file_name("user-settings.json.damaged");
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(&kept).unwrap(), b"not json");
         std::fs::write(&path, vec![b' '; (JOURNAL_LIMIT + 1) as usize]).unwrap();
         assert!(load_journal(&path).settings.is_empty());
+        assert_eq!(std::fs::metadata(&kept).unwrap().len(), JOURNAL_LIMIT + 1);
         assert!(load_journal(&path.with_file_name("missing.json"))
             .settings
             .is_empty());
