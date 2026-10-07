@@ -1,6 +1,6 @@
 //! History: score trend, compact Undo / removed-apps rows and a timeline of
 //! checks, fixes, undos and app clean-ups grouped by day.
-use crate::app::history::{self as log, Day, Entry, Kind};
+use crate::app::history::{self as log, Day, DayScore, Entry, Kind};
 use crate::app::worker::{self, Job};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
@@ -43,31 +43,34 @@ impl Default for State {
 
 #[derive(Debug)]
 struct Data {
+    scores: Vec<DayScore>,
     points: Vec<(u64, f32)>,
     latest: Option<(usize, usize)>,
     removed: usize,
     days: Vec<Day>,
 }
 
-fn trend_points(entries: &[Entry], max: usize) -> Vec<(u64, f32)> {
-    let mut times: Vec<u64> = entries
-        .iter()
-        .filter(|e| e.total > 0)
-        .map(|e| e.t)
-        .collect();
-    times.sort_unstable();
-    let skip = times.len().saturating_sub(max);
-    times
-        .into_iter()
-        .skip(skip)
-        .zip(log::trend(entries, max))
-        .collect()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Progress {
+    Nothing,
+    StartingPoint(DayScore),
+    Line,
+}
+
+fn progress(scores: &[DayScore]) -> Progress {
+    match scores {
+        [] => Progress::Nothing,
+        [only] => Progress::StartingPoint(*only),
+        _ => Progress::Line,
+    }
 }
 
 impl Data {
     fn of(entries: &[Entry], removed: usize) -> Self {
+        let scores = log::daily_scores(entries, TREND_POINTS);
         Self {
-            points: trend_points(entries, TREND_POINTS),
+            points: scores.iter().map(|s| (s.day, s.ratio())).collect(),
+            scores,
             latest: entries
                 .iter()
                 .rev()
@@ -158,6 +161,11 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+fn full_date(ctx: &Ctx, day: u64) -> String {
+    let (y, m, d) = log::civil(day);
+    format!("{} {} {}", d, ctx.t(MONTHS[(m as usize - 1) % 12]), y)
+}
+
 pub(super) fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
     if day == today {
         return ctx.t("Today");
@@ -165,23 +173,22 @@ pub(super) fn day_title(ctx: &Ctx, day: u64, today: u64) -> String {
     if day + 1 == today {
         return ctx.t("Yesterday");
     }
-    let (y, m, d) = log::civil(day);
-    format!("{} {} {}", d, ctx.t(MONTHS[(m as usize - 1) % 12]), y)
+    full_date(ctx, day)
 }
 
-fn short_date(lang: Lang, t: u64) -> String {
-    let (_, m, d) = log::civil(log::local_day(t));
+fn short_date(lang: Lang, day: u64) -> String {
+    let (_, m, d) = log::civil(day);
     format!("{} {}", d, lang.t(MONTHS[(m as usize - 1) % 12]))
 }
 
 fn date_fn(lang: Lang) -> &'static dyn Fn(u64) -> String {
     match lang {
-        Lang::En => &|t| short_date(Lang::En, t),
-        Lang::Es => &|t| short_date(Lang::Es, t),
-        Lang::Fr => &|t| short_date(Lang::Fr, t),
-        Lang::De => &|t| short_date(Lang::De, t),
-        Lang::Pt => &|t| short_date(Lang::Pt, t),
-        Lang::It => &|t| short_date(Lang::It, t),
+        Lang::En => &|day| short_date(Lang::En, day),
+        Lang::Es => &|day| short_date(Lang::Es, day),
+        Lang::Fr => &|day| short_date(Lang::Fr, day),
+        Lang::De => &|day| short_date(Lang::De, day),
+        Lang::Pt => &|day| short_date(Lang::Pt, day),
+        Lang::It => &|day| short_date(Lang::It, day),
     }
 }
 
@@ -272,6 +279,31 @@ fn timeline<'a>(state: &State, ctx: &Ctx, days: &[Day]) -> Element<'a, Message> 
     widgets::group(p, ctx.t("What happened"), None, None, rows)
 }
 
+fn starting_point<'a>(ctx: &Ctx, score: DayScore) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let all = score.protected >= score.total;
+    let big = iced::widget::text(format!("{}%", (score.ratio() * 100.0).round() as i32))
+        .size(theme::DISPLAY)
+        .font(theme::SEMIBOLD)
+        .color(if all { p.good_text } else { p.text });
+    column![
+        big,
+        widgets::body(
+            p,
+            ctx.t("{a} of {b} protected on {date}")
+                .replace("{a}", &score.protected.to_string())
+                .replace("{b}", &score.total.to_string())
+                .replace("{date}", &full_date(ctx, score.day)),
+        ),
+        widgets::muted(
+            p,
+            ctx.t("Your progress line appears after you check on another day."),
+        ),
+    ]
+    .spacing(theme::S1)
+    .into()
+}
+
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let p = ctx.palette;
     let header = widgets::page_header(
@@ -300,29 +332,29 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     };
 
     let solid = Palette::of(p.mode);
-    let trend_body: Element<'a, Message> = if data.points.is_empty() {
-        widgets::muted(
+    let shown = progress(&data.scores);
+    let trend_body: Element<'a, Message> = match shown {
+        Progress::Nothing => widgets::muted(
             p,
             ctx.t("Check your PC a few times and we'll draw how your protection changes."),
-        )
-    } else {
-        widgets::chart::trend(
+        ),
+        Progress::StartingPoint(score) => starting_point(ctx, score),
+        Progress::Line => widgets::chart::trend(
             solid,
             Tone::Good,
             &data.points,
             &state.chart,
             date_fn(ctx.lang),
             CHART_HEIGHT,
-        )
+        ),
     };
-    let summary = data
-        .latest
-        .map(|(a, b)| {
-            ctx.t("{a} of {b} protected")
-                .replace("{a}", &a.to_string())
-                .replace("{b}", &b.to_string())
-        })
-        .unwrap_or_default();
+    let summary = match (shown, data.latest) {
+        (Progress::Line, Some((a, b))) => ctx
+            .t("{a} of {b} protected")
+            .replace("{a}", &a.to_string())
+            .replace("{b}", &b.to_string()),
+        _ => String::new(),
+    };
     let trend = widgets::region(
         p,
         column![
@@ -441,15 +473,20 @@ mod tests {
         assert!(!can_undo(&s));
     }
 
-    #[test]
-    fn data_is_derived_once_from_the_log() {
-        let e = |t, kind, protected, total, n| Entry {
+    fn e(t: u64, kind: Kind, protected: usize, total: usize, n: usize) -> Entry {
+        Entry {
             t,
             kind,
             protected,
             total,
             n,
-        };
+        }
+    }
+
+    const DAY: u64 = 86_400;
+
+    #[test]
+    fn data_is_derived_once_from_the_log() {
         let d = Data::of(
             &[
                 e(1, Kind::Check, 3, 5, 0),
@@ -461,6 +498,50 @@ mod tests {
         );
         assert_eq!(d.removed, 1);
         assert_eq!(d.latest, Some((4, 5)));
-        assert_eq!(d.points.len(), 2);
+        assert_eq!(d.points.len(), 1, "four checks on one day are one point");
+        assert_eq!(d.scores[0].protected, 4);
+    }
+
+    #[test]
+    fn the_chart_card_follows_how_many_days_have_a_result() {
+        let none = Data::of(&[e(1, Kind::Debloat, 0, 0, 2)], 0);
+        assert_eq!(progress(&none.scores), Progress::Nothing);
+
+        let one_day = Data::of(
+            &[
+                e(10, Kind::Check, 3, 5, 0),
+                e(20, Kind::Check, 5, 5, 0),
+                e(30, Kind::Check, 5, 5, 0),
+            ],
+            0,
+        );
+        assert!(matches!(
+            progress(&one_day.scores),
+            Progress::StartingPoint(s) if s.protected == 5
+        ));
+
+        let two_days = Data::of(
+            &[
+                e(10, Kind::Check, 3, 5, 0),
+                e(50 * DAY, Kind::Check, 5, 5, 0),
+            ],
+            0,
+        );
+        assert_eq!(progress(&two_days.scores), Progress::Line);
+        assert_eq!(two_days.points.len(), 2);
+    }
+
+    #[test]
+    fn chart_points_hold_the_day_and_a_share() {
+        let d = Data::of(
+            &[
+                e(DAY * 3, Kind::Check, 4, 4, 0),
+                e(DAY * 9, Kind::Check, 1, 4, 0),
+            ],
+            0,
+        );
+        assert_eq!(d.points[0].1, 1.0);
+        assert_eq!(d.points[1].1, 0.25);
+        assert!(d.points[0].0 < d.points[1].0);
     }
 }

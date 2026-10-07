@@ -193,15 +193,37 @@ pub fn label(kind: Kind, n: usize) -> &'static str {
     }
 }
 
-pub fn trend(entries: &[Entry], max: usize) -> Vec<f32> {
-    let mut v: Vec<(u64, f32)> = entries
-        .iter()
-        .filter(|e| e.total > 0)
-        .map(|e| (e.t, e.protected.min(e.total) as f32 / e.total as f32))
-        .collect();
-    v.sort_by_key(|(t, _)| *t);
-    let skip = v.len().saturating_sub(max);
-    v.into_iter().skip(skip).map(|(_, r)| r).collect()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DayScore {
+    pub day: u64,
+    pub protected: usize,
+    pub total: usize,
+}
+
+impl DayScore {
+    pub fn ratio(&self) -> f32 {
+        self.protected.min(self.total) as f32 / self.total.max(1) as f32
+    }
+}
+
+pub fn daily_scores(entries: &[Entry], max_days: usize) -> Vec<DayScore> {
+    let mut scored: Vec<&Entry> = entries.iter().filter(|e| e.total > 0).collect();
+    scored.sort_by_key(|e| e.t);
+    let mut days: Vec<DayScore> = Vec::new();
+    for e in scored {
+        let score = DayScore {
+            day: local_day(e.t),
+            protected: e.protected,
+            total: e.total,
+        };
+        match days.last_mut() {
+            Some(last) if last.day == score.day => *last = score,
+            _ => days.push(score),
+        }
+    }
+    let skip = days.len().saturating_sub(max_days);
+    days.drain(..skip);
+    days
 }
 
 pub fn civil(days: u64) -> (i64, u32, u32) {
@@ -336,15 +358,71 @@ mod tests {
         assert_eq!(label(Kind::Restore, 1), "Restored an app");
     }
 
+    const DAY: u64 = 86_400;
+
     #[test]
-    fn trend_takes_newest_window_oldest_first() {
-        let entries: Vec<Entry> = (0..40u64)
-            .map(|i| e(i, Kind::Check, (i % 4) as usize, 4, 0))
+    fn many_checks_on_one_day_make_one_point_the_last_of_that_day() {
+        let entries = vec![
+            e(DAY + 300, Kind::Check, 4, 5, 0),
+            e(DAY + 100, Kind::Check, 2, 5, 0),
+            e(DAY + 200, Kind::Fix, 3, 5, 1),
+        ];
+        let scores = daily_scores(&entries, 30);
+        assert_eq!(scores.len(), 1);
+        assert_eq!(
+            (scores[0].day, scores[0].protected),
+            (local_day(DAY + 300), 4)
+        );
+    }
+
+    #[test]
+    fn days_come_oldest_first_and_far_apart_days_stay_two_points() {
+        let entries = vec![
+            e(200 * DAY + 5, Kind::Check, 5, 5, 0),
+            e(DAY + 5, Kind::Check, 1, 5, 0),
+        ];
+        let scores = daily_scores(&entries, 30);
+        assert_eq!(
+            scores.iter().map(|s| s.day).collect::<Vec<_>>(),
+            vec![local_day(DAY + 5), local_day(200 * DAY + 5)]
+        );
+    }
+
+    #[test]
+    fn only_the_newest_thirty_days_are_kept() {
+        let entries: Vec<Entry> = (0..45u64)
+            .map(|d| e(d * DAY + 10, Kind::Check, (d % 5) as usize, 5, 0))
             .collect();
-        let t = trend(&entries, 30);
-        assert_eq!(t.len(), 30);
-        assert_eq!(t[0], 10.0f32 % 4.0 / 4.0);
-        assert!(trend(&[e(1, Kind::Check, 0, 0, 0)], 30).is_empty());
+        let scores = daily_scores(&entries, 30);
+        assert_eq!(scores.len(), 30);
+        assert_eq!(scores[0].day, local_day(15 * DAY + 10));
+        assert_eq!(scores[29].day, local_day(44 * DAY + 10));
+    }
+
+    #[test]
+    fn entries_without_a_score_and_empty_logs_make_no_points() {
+        assert!(daily_scores(&[], 30).is_empty());
+        assert!(daily_scores(&[e(1, Kind::Debloat, 0, 0, 2)], 30).is_empty());
+        let mixed = vec![
+            e(DAY, Kind::Check, 3, 4, 0),
+            e(DAY + 9, Kind::Debloat, 0, 0, 1),
+        ];
+        let scores = daily_scores(&mixed, 30);
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].protected, 3);
+    }
+
+    #[test]
+    fn a_score_is_a_share_between_zero_and_one() {
+        let score = |protected, total| DayScore {
+            day: 0,
+            protected,
+            total,
+        };
+        assert_eq!(score(5, 5).ratio(), 1.0);
+        assert_eq!(score(0, 5).ratio(), 0.0);
+        assert_eq!(score(7, 5).ratio(), 1.0);
+        assert_eq!(score(1, 4).ratio(), 0.25);
     }
 
     #[test]

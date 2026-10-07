@@ -748,6 +748,41 @@ fn the_tools_tab_stays_as_left_after_leaving_the_page_and_after_a_restart() {
 }
 
 #[test]
+fn the_history_page_draws_with_no_days_one_day_two_days_and_a_month() {
+    use app::history::{Entry, Kind};
+    let check = |day: u64, protected: usize| Entry {
+        t: day * 86_400 + 43_200,
+        kind: Kind::Check,
+        protected,
+        total: 5,
+        n: 0,
+    };
+    let sets: Vec<Vec<Entry>> = vec![
+        Vec::new(),
+        vec![check(20_000, 5), check(20_000, 5)],
+        vec![check(20_000, 5), check(20_400, 2)],
+        (0..45)
+            .map(|d| check(20_000 + d, 5 - (d % 5) as usize))
+            .collect(),
+    ];
+    let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        theme::REGULAR,
+        14.0.into(),
+        Some("tiny-skia"),
+    ))
+    .expect("tiny-skia renderer");
+    let mut app = app();
+    app.page = Page::History;
+    for entries in sets {
+        drop(app.update(Message::History(history::Msg::Loaded(entries, 0))));
+        for lang in [Lang::En, Lang::De] {
+            app.ctx.lang = lang;
+            lays_out(&mut app, &renderer);
+        }
+    }
+}
+
+#[test]
 fn a_tab_shows_a_dot_while_its_work_is_running() {
     let mut app = app();
     let label = |app: &App, tab| tools::tab_label(&app.tools, &app.ctx, tab);
