@@ -583,6 +583,25 @@ fn type_into_clean_up(app: &mut App, text: &str) {
 }
 
 #[test]
+fn the_copilot_row_follows_the_app_scan_and_opens_clean_up_apps_on_it() {
+    let mut scanned = app();
+    assert!(scanned.ctx.copilot_installed);
+    drop(scanned.update(Message::Debloat(debloat::Msg::Scanned(0, Ok(Vec::new())))));
+    assert!(!scanned.ctx.copilot_installed);
+
+    let mut app = app();
+    app.page = Page::Fixes;
+    drop(app.update(Message::OpenCleanUp(debloat::COPILOT_APP)));
+    assert_eq!(app.page, Page::Debloat);
+    let names: Vec<&str> = debloat::visible_apps(&app.debloat, &app.ctx)
+        .into_iter()
+        .map(|i| secblitz::debloat::catalog()[i as usize].name)
+        .collect();
+    assert!(names.contains(&"Copilot") && !names.contains(&"Solitaire games"));
+    drop(app.view());
+}
+
+#[test]
 fn typing_in_clean_up_apps_hides_other_apps_and_finds_typos_and_package_names() {
     let mut app = app();
     app.page = Page::Debloat;

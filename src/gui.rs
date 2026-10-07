@@ -152,6 +152,7 @@ pub struct Ctx {
     pub prefs: app::settings::Prefs,
     pub toast: Option<(String, Tone)>,
     pub explain_open: Option<String>,
+    pub copilot_installed: bool,
 }
 
 impl Ctx {
@@ -220,6 +221,8 @@ impl Ctx {
 #[derive(Debug, Clone)]
 pub enum Message {
     Navigate(Page),
+    /// Opens Clean up apps already narrowed to the app with this package name.
+    OpenCleanUp(&'static str),
     CheckNow,
     Worker(worker::Event),
     ReviewFixes(Vec<String>),
@@ -400,6 +403,7 @@ impl App {
             prefs,
             toast: None,
             explain_open: None,
+            copilot_installed: false,
         };
         let mut app = App {
             page: options.start.unwrap_or_default(),
@@ -483,6 +487,11 @@ impl App {
                         iced::widget::operation::RelativeOffset::START,
                     ),
                 ])
+            }
+            Message::OpenCleanUp(family) => {
+                let shown =
+                    debloat::update(&mut self.debloat, debloat::Msg::Show(family), &mut self.ctx);
+                Task::batch([shown, self.update(Message::Navigate(Page::Debloat))])
             }
             Message::PageFrame(now) => self.step_frame(now),
             Message::HandoffLeave(start) => {
@@ -653,7 +662,10 @@ impl App {
                         self.flight[WARM_DEBLOAT] = false;
                     }
                 }
-                debloat::update(&mut self.debloat, m, &mut self.ctx)
+                let task = debloat::update(&mut self.debloat, m, &mut self.ctx);
+                self.ctx.copilot_installed =
+                    debloat::is_installed(&self.debloat, debloat::COPILOT_APP);
+                task
             }
             Message::Web(m) => web::update(&mut self.web, m, &mut self.ctx),
             Message::Tools(m) => tools::update(&mut self.tools, m, &mut self.ctx),

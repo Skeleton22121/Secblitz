@@ -164,6 +164,7 @@ pub enum Msg {
     Rescan,
     SetTab(Tab),
     Search(String),
+    Show(&'static str),
     ClearSearch,
     Toggle(u16),
     ToggleGroup(Group),
@@ -424,6 +425,14 @@ fn app_of(index: u16) -> &'static debloat::App {
     &debloat::catalog()[index as usize]
 }
 
+pub const COPILOT_APP: &str = "Microsoft.Copilot";
+
+pub fn is_installed(state: &State, family: &str) -> bool {
+    installed_indices(state)
+        .into_iter()
+        .any(|index| app_of(index).family == family)
+}
+
 fn installed_indices(state: &State) -> Vec<u16> {
     let mut v: Vec<u16> = state.installed.iter().map(|p| p.index).collect();
     v.sort_unstable();
@@ -457,6 +466,15 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::Search(text) => {
             state.search = text;
+            Task::none()
+        }
+        Msg::Show(family) => {
+            state.tab = Tab::Apps;
+            state.search = installed_indices(state)
+                .into_iter()
+                .map(app_of)
+                .find(|app| app.family == family)
+                .map_or_else(String::new, |app| app.name.to_owned());
             Task::none()
         }
         Msg::ClearSearch => {
