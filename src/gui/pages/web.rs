@@ -240,6 +240,7 @@ pub fn status_line(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusAction {
+    Choose,
     Pause,
     Resume,
     Retry,
@@ -247,7 +248,7 @@ pub enum StatusAction {
 
 pub fn status_action(line: Line) -> Option<StatusAction> {
     match line {
-        Line::Off | Line::PrivateOnly => None,
+        Line::Off | Line::PrivateOnly => Some(StatusAction::Choose),
         Line::Paused(_) | Line::PausedUntilRestart => Some(StatusAction::Resume),
         Line::NotWorking => Some(StatusAction::Retry),
         Line::On | Line::GettingReady => Some(StatusAction::Pause),
@@ -1090,6 +1091,11 @@ fn status_controls<'a>(
     let p = ctx.palette;
     let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
     let (label, kind, msg) = match status_action(line)? {
+        StatusAction::Choose => (
+            "Choose what to block",
+            ButtonKind::Primary,
+            Msg::SetTab(Tab::Block),
+        ),
         StatusAction::Resume => ("Resume now", ButtonKind::Primary, Msg::Resume),
         StatusAction::Retry => ("Try again", ButtonKind::Secondary, Msg::Retry),
         StatusAction::Pause => (
@@ -1696,7 +1702,7 @@ mod tests {
 
     #[test]
     fn status_button_fits_each_state() {
-        assert_eq!(status_action(Line::Off), None);
+        assert_eq!(status_action(Line::Off), Some(StatusAction::Choose));
         assert_eq!(status_action(Line::On), Some(StatusAction::Pause));
         assert_eq!(status_action(Line::GettingReady), Some(StatusAction::Pause));
         assert_eq!(status_action(Line::Paused(NOW)), Some(StatusAction::Resume));
@@ -1761,7 +1767,7 @@ mod tests {
             status_line(&only, Some(&healthy()), running, NOW),
             Line::PrivateOnly
         );
-        assert_eq!(status_action(Line::PrivateOnly), None);
+        assert_eq!(status_action(Line::PrivateOnly), Some(StatusAction::Choose));
         assert_eq!(guard_of(Line::PrivateOnly), web_globe::Guard::Off);
         for service in [
             ServiceState::Stopped,
