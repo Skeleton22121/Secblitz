@@ -7,9 +7,17 @@
 pub const CANARY: &str = "use-application-dns.net";
 
 const MAX_QUERY: usize = 4096;
-const TYPE_A: u16 = 1;
-const TYPE_AAAA: u16 = 28;
+pub const TYPE_A: u16 = 1;
+pub const TYPE_AAAA: u16 = 28;
+pub const TYPE_SVCB: u16 = 64;
+pub const TYPE_HTTPS: u16 = 65;
+const TYPE_CNAME: u16 = 5;
+const CLASS_IN: u16 = 1;
 const TTL: u32 = 60;
+/// Safe search answers are reused by Windows for at most this long.
+const SAFE_SEARCH_TTL: u32 = 300;
+const MAX_ADDRESSES: usize = 8;
+const MAX_ANSWERS: u16 = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Question {
@@ -131,12 +139,122 @@ pub fn blocked_reply(query: &[u8], q: &Query) -> Vec<u8> {
     out
 }
 
+pub fn empty_reply(query: &[u8], q: &Query) -> Vec<u8> {
+    reply(query, q, 0, 0)
+}
+
 pub fn nxdomain_reply(query: &[u8], q: &Query) -> Vec<u8> {
     reply(query, q, 3, 0)
 }
 
 pub fn servfail_reply(query: &[u8], q: &Query) -> Vec<u8> {
     reply(query, q, 2, 0)
+}
+
+pub fn build_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(18 + name.len());
+    out.extend_from_slice(&id.to_be_bytes());
+    out.extend_from_slice(&0x0100u16.to_be_bytes());
+    out.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 0]);
+    out.extend_from_slice(&encode_name(name));
+    out.extend_from_slice(&qtype.to_be_bytes());
+    out.extend_from_slice(&CLASS_IN.to_be_bytes());
+    out
+}
+
+fn encode_name(name: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(name.len() + 2);
+    for label in name.split('.').filter(|l| !l.is_empty()) {
+        let label = &label.as_bytes()[..label.len().min(63)];
+        out.push(label.len() as u8);
+        out.extend_from_slice(label);
+    }
+    out.push(0);
+    out
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Address {
+    pub ttl: u32,
+    pub bytes: Vec<u8>,
+}
+
+pub fn parse_addresses(reply: &[u8], qtype: u16) -> Option<Vec<Address>> {
+    let want = match qtype {
+        TYPE_A => 4,
+        TYPE_AAAA => 16,
+        _ => return None,
+    };
+    if reply.len() < 12 || be16(reply, 2) & 0x8000 == 0 || be16(reply, 2) & 0xF != 0 {
+        return None;
+    }
+    if be16(reply, 4) != 1 {
+        return None;
+    }
+    let answers = be16(reply, 6).min(MAX_ANSWERS);
+    let (_, mut at) = parse_question(reply)?;
+    let mut out = Vec::new();
+    for _ in 0..answers {
+        at = skip_name(reply, at)?;
+        let fixed = reply.get(at..at + 10)?;
+        let kind = be16(fixed, 0);
+        let class = be16(fixed, 2);
+        let ttl = u32::from_be_bytes([fixed[4], fixed[5], fixed[6], fixed[7]]);
+        let len = be16(fixed, 8) as usize;
+        at += 10;
+        let data = reply.get(at..at + len)?;
+        at += len;
+        if kind == qtype && class == CLASS_IN && len == want && out.len() < MAX_ADDRESSES {
+            out.push(Address {
+                ttl,
+                bytes: data.to_vec(),
+            });
+        }
+    }
+    Some(out)
+}
+
+fn skip_name(packet: &[u8], mut at: usize) -> Option<usize> {
+    for _ in 0..128 {
+        let len = *packet.get(at)? as usize;
+        match len {
+            0 => return Some(at + 1),
+            l if l & 0xC0 == 0xC0 => {
+                packet.get(at + 1)?;
+                return Some(at + 2);
+            }
+            l if l > 63 => return None,
+            l => at += 1 + l,
+        }
+    }
+    None
+}
+
+pub fn safe_search_reply(query: &[u8], q: &Query, target: &str, addresses: &[Address]) -> Vec<u8> {
+    let addresses = &addresses[..addresses.len().min(MAX_ADDRESSES)];
+    let mut out = reply(query, q, 0, 1 + addresses.len() as u16);
+    out.extend_from_slice(&[0xC0, 0x0C]);
+    out.extend_from_slice(&TYPE_CNAME.to_be_bytes());
+    out.extend_from_slice(&CLASS_IN.to_be_bytes());
+    out.extend_from_slice(&SAFE_SEARCH_TTL.to_be_bytes());
+    let name = encode_name(target);
+    out.extend_from_slice(&(name.len() as u16).to_be_bytes());
+    let target_at = out.len();
+    out.extend_from_slice(&name);
+    for address in addresses {
+        out.extend_from_slice(&(0xC000 | target_at as u16).to_be_bytes());
+        let kind = if address.bytes.len() == 4 {
+            TYPE_A
+        } else {
+            TYPE_AAAA
+        };
+        out.extend_from_slice(&kind.to_be_bytes());
+        out.extend_from_slice(&CLASS_IN.to_be_bytes());
+        out.extend_from_slice(&address.ttl.clamp(30, SAFE_SEARCH_TTL).to_be_bytes());
+        out.extend_from_slice(&(address.bytes.len() as u16).to_be_bytes());
+        out.extend_from_slice(&address.bytes);
+    }
+    out
 }
 
 pub fn with_id(packet: &[u8], id: u16) -> Vec<u8> {
@@ -365,6 +483,163 @@ mod tests {
         assert!(!truncated(&[1]));
     }
 
+    fn v4(a: [u8; 4]) -> Address {
+        Address {
+            ttl: 120,
+            bytes: a.to_vec(),
+        }
+    }
+
+    #[test]
+    fn built_query_parses_back() {
+        let p = build_query(0xBEEF, "forcesafesearch.google.com", TYPE_AAAA);
+        let q = parse_query(&p).unwrap();
+        assert_eq!(q.id, 0xBEEF);
+        assert_eq!(q.question.name, "forcesafesearch.google.com");
+        assert_eq!(q.question.qtype, TYPE_AAAA);
+        assert_eq!(q.question.qclass, 1);
+        assert_eq!(q.flags & 0x0100, 0x0100);
+        assert_eq!(q.question_end, p.len());
+    }
+
+    #[test]
+    fn safe_search_reply_is_a_cname_and_addresses() {
+        let (p, q) = parsed("www.google.com", TYPE_A);
+        let found = [v4([1, 2, 3, 4]), v4([5, 6, 7, 8])];
+        let r = safe_search_reply(&p, &q, "forcesafesearch.google.com", &found);
+        assert_eq!(be16(&r, 0), 0x1234);
+        assert_eq!(be16(&r, 2) & 0x8000, 0x8000);
+        assert_eq!(be16(&r, 2) & 0xF, 0);
+        assert_eq!(be16(&r, 4), 1);
+        assert_eq!(be16(&r, 6), 3);
+        assert_eq!(&r[12..q.question_end], &p[12..]);
+        let a = &r[q.question_end..];
+        assert_eq!(&a[..2], &[0xC0, 0x0C]);
+        assert_eq!(be16(a, 2), TYPE_CNAME);
+        assert_eq!(be16(a, 4), 1);
+        let cname_len = be16(a, 10) as usize;
+        let target = encode_name("forcesafesearch.google.com");
+        assert_eq!(&a[12..12 + cname_len], &target[..]);
+        let target_at = q.question_end + 12;
+        let first = &a[12 + cname_len..];
+        assert_eq!(be16(first, 0), 0xC000 | target_at as u16);
+        assert_eq!(be16(first, 2), TYPE_A);
+        let ttl = u32::from_be_bytes([first[6], first[7], first[8], first[9]]);
+        assert_eq!(ttl, 120);
+        assert_eq!(be16(first, 10), 4);
+        assert_eq!(&first[12..16], &[1, 2, 3, 4]);
+        assert_eq!(&first[16 + 12..16 + 16], &[5, 6, 7, 8]);
+        assert_eq!(first.len(), 32);
+    }
+
+    #[test]
+    fn safe_search_pointer_reaches_the_target_name() {
+        let (p, q) = parsed("www.bing.com", TYPE_A);
+        let r = safe_search_reply(&p, &q, "strict.bing.com", &[v4([9, 9, 9, 9])]);
+        let pointer_at = r.len() - 16;
+        let at = (be16(&r, pointer_at) & 0x3FFF) as usize;
+        assert_eq!(&r[at..at + 7], b"\x06strict");
+        assert!(reply_matches(&r, 0x1234, &q.question));
+    }
+
+    #[test]
+    fn safe_search_reply_without_addresses_is_just_the_alias() {
+        let (p, q) = parsed("www.google.com", TYPE_AAAA);
+        let r = safe_search_reply(&p, &q, "forcesafesearch.google.com", &[]);
+        assert_eq!(be16(&r, 6), 1);
+        assert_eq!(be16(&r, 2) & 0xF, 0);
+        let aaaa = Address {
+            ttl: 5_000,
+            bytes: vec![0x20; 16],
+        };
+        let r = safe_search_reply(&p, &q, "forcesafesearch.google.com", &[aaaa]);
+        let tail = &r[r.len() - 28..];
+        assert_eq!(be16(tail, 2), TYPE_AAAA);
+        let ttl = u32::from_be_bytes([tail[6], tail[7], tail[8], tail[9]]);
+        assert_eq!(ttl, 300);
+        assert_eq!(be16(tail, 10), 16);
+    }
+
+    fn upstream_answer(name: &str, qtype: u16, answers: &[(u16, Vec<u8>)], rcode: u8) -> Vec<u8> {
+        let mut out = vec![0xAB, 0xCD, 0x81, 0x80 | rcode, 0, 1];
+        out.extend_from_slice(&(answers.len() as u16).to_be_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.extend_from_slice(&encode_name(name));
+        out.extend_from_slice(&qtype.to_be_bytes());
+        out.extend_from_slice(&[0, 1]);
+        for (kind, data) in answers {
+            out.extend_from_slice(&[0xC0, 0x0C]);
+            out.extend_from_slice(&kind.to_be_bytes());
+            out.extend_from_slice(&[0, 1, 0, 0, 0, 60]);
+            out.extend_from_slice(&(data.len() as u16).to_be_bytes());
+            out.extend_from_slice(data);
+        }
+        out
+    }
+
+    #[test]
+    fn addresses_are_read_past_aliases() {
+        let cname = encode_name("alias.example");
+        let reply = upstream_answer(
+            "t.example",
+            TYPE_A,
+            &[
+                (TYPE_CNAME, cname),
+                (TYPE_A, vec![1, 1, 1, 1]),
+                (TYPE_A, vec![2, 2, 2, 2]),
+            ],
+            0,
+        );
+        let got = parse_addresses(&reply, TYPE_A).unwrap();
+        let bytes: Vec<&[u8]> = got.iter().map(|a| a.bytes.as_slice()).collect();
+        assert_eq!(bytes, [&[1, 1, 1, 1][..], &[2, 2, 2, 2][..]]);
+        assert_eq!(got[0].ttl, 60);
+        assert!(parse_addresses(&reply, TYPE_AAAA).unwrap().is_empty());
+        let v6 = upstream_answer("t.example", TYPE_AAAA, &[(TYPE_AAAA, vec![7; 16])], 0);
+        assert_eq!(
+            parse_addresses(&v6, TYPE_AAAA).unwrap()[0].bytes,
+            vec![7; 16]
+        );
+        assert!(parse_addresses(&v6, TYPE_A).unwrap().is_empty());
+    }
+
+    #[test]
+    fn addresses_refuse_bad_answers() {
+        let ok = upstream_answer("t.example", TYPE_A, &[(TYPE_A, vec![1, 1, 1, 1])], 0);
+        assert!(parse_addresses(&ok, TYPE_A).is_some());
+        let servfail = upstream_answer("t.example", TYPE_A, &[], 2);
+        assert_eq!(parse_addresses(&servfail, TYPE_A), None);
+        let nodata = upstream_answer("t.example", TYPE_A, &[], 0);
+        assert_eq!(parse_addresses(&nodata, TYPE_A), Some(vec![]));
+        let ask = build_query(1, "t.example", TYPE_A);
+        assert_eq!(parse_addresses(&ask, TYPE_A), None);
+        for cut in 0..ok.len() {
+            assert_eq!(parse_addresses(&ok[..cut], TYPE_A), None, "cut at {cut}");
+        }
+        let odd = upstream_answer("t.example", TYPE_A, &[(TYPE_A, vec![1, 1, 1])], 0);
+        assert!(parse_addresses(&odd, TYPE_A).unwrap().is_empty());
+        assert_eq!(parse_addresses(&ok, 15), None);
+    }
+
+    #[test]
+    fn at_most_eight_addresses() {
+        let many: Vec<(u16, Vec<u8>)> = (0..20).map(|i| (TYPE_A, vec![1, 1, 1, i])).collect();
+        let reply = upstream_answer("t.example", TYPE_A, &many, 0);
+        assert_eq!(
+            parse_addresses(&reply, TYPE_A).unwrap().len(),
+            MAX_ADDRESSES
+        );
+    }
+
+    #[test]
+    fn empty_reply_has_no_answers() {
+        let (p, q) = parsed("www.google.com", TYPE_HTTPS);
+        let r = empty_reply(&p, &q);
+        assert_eq!(be16(&r, 2) & 0xF, 0);
+        assert_eq!(be16(&r, 6), 0);
+        assert_eq!(r.len(), q.question_end);
+    }
+
     #[test]
     fn parse_never_panics() {
         let mut rng = StdRng::seed_from_u64(0x5ec0_b117);
@@ -381,7 +656,9 @@ mod tests {
             if let Some(q) = parse_query(&p) {
                 let _ = blocked_reply(&p, &q);
                 let _ = nxdomain_reply(&p, &q);
+                let _ = safe_search_reply(&p, &q, "strict.bing.com", &[]);
             }
+            let _ = parse_addresses(&p, TYPE_A);
             let q = Question {
                 name: "a.com".into(),
                 qtype: 1,

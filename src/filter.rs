@@ -10,9 +10,11 @@ pub mod lists;
 pub mod matcher;
 #[cfg(windows)]
 pub mod routing;
+pub mod safe_search;
 #[cfg(windows)]
 pub mod scm;
 pub mod server;
 pub mod service;
+pub mod store;
 
 pub const SERVICE_NAME: &str = "SecblitzFilter";
