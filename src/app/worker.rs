@@ -2,7 +2,7 @@
 //! never blocks. The GUI submits a `Job` and receives a stream of `Event`s.
 use iced::futures::channel::mpsc as stream;
 use iced::futures::Stream;
-use secblitz::engine::recover::JournalDamaged;
+use secblitz::engine::recover::{JournalDamaged, NotDamaged};
 use secblitz::engine::{Engine, Progress, Report};
 use std::sync::{mpsc, Arc};
 
@@ -222,7 +222,11 @@ where
             let _ = reply.unbounded_send(failed(&job, message));
             continue;
         }
-        match recover().and_then(|()| open()) {
+        let recovered = match recover() {
+            Err(e) if e.downcast_ref::<NotDamaged>().is_some() => Ok(()),
+            other => other,
+        };
+        match recovered.and_then(|()| open()) {
             Ok(session) => {
                 let _ = reply.unbounded_send(Event::Recovered(Ok(catalog_of(&*session))));
                 return Some(session);

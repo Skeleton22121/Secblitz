@@ -22,7 +22,7 @@ pub fn message_box(title: &str, text: &str) {
     eprintln!("{title}: {text}");
 }
 
-const DAMAGED_HISTORY: &str = "Secblitz's undo history is damaged. Close Secblitz and open it again, then choose Start fresh. Secblitz keeps a copy of the damaged files.";
+const DAMAGED_HISTORY: &str = "Secblitz's undo history is damaged. Open Home and choose Start fresh. Secblitz keeps a copy of the damaged files.";
 
 pub fn friendly_problem(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();

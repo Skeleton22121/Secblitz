@@ -354,8 +354,11 @@ pub fn start_fresh(dir: &Path, backend: Box<dyn Backend>) -> Result<StartedFresh
         }
         moved.push(name);
     }
-    sync_directory(dir)?;
-    sync_directory(&set)?;
+    for synced in [dir, set.as_path()] {
+        if let Err(e) = sync_directory(synced) {
+            eprintln!("Could not flush the fresh undo history to disk: {e:#}");
+        }
+    }
     prune(&damaged);
     eprintln!(
         "Undo history started fresh; {} files kept in {}: {}",

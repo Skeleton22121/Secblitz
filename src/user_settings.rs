@@ -445,8 +445,10 @@ fn load_journal(path: &Path) -> Journal {
         .take(JOURNAL_LIMIT + 1)
         .read_to_end(&mut bytes)
         .is_err()
-        || bytes.len() as u64 > JOURNAL_LIMIT
     {
+        return Journal::default();
+    }
+    if bytes.len() as u64 > JOURNAL_LIMIT {
         crate::damaged::keep(path, true);
         return Journal::default();
     }
