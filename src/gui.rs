@@ -721,6 +721,7 @@ impl App {
 
     fn process_worker(&mut self, event: worker::Event) -> Task<Message> {
         use worker::Event as E;
+        let mut extra = Task::none();
         match &event {
             E::Opened(Ok(catalog)) => self.ctx.catalog = catalog.clone(),
             E::Opened(Err(e)) => {
@@ -737,14 +738,15 @@ impl App {
                 self.ctx.check_error = None;
                 self.record_recovery();
                 let done = self.ctx.t(recovery::DONE);
-                let toast = self.update(Message::Toast(done, Tone::Good));
-                let warm = self.preload_all();
-                return Task::batch([toast, warm]);
+                extra = Task::batch([
+                    self.update(Message::Toast(done, Tone::Good)),
+                    self.preload_all(),
+                ]);
             }
             E::Recovered(Err(_)) => {
                 recovery::failed(&mut self.ctx);
                 let text = self.ctx.t(recovery::FAILED);
-                return self.update(Message::Toast(text, Tone::Warn));
+                extra = self.update(Message::Toast(text, Tone::Warn));
             }
             E::Progress { phase, id, status } => {
                 if matches!(phase, worker::Phase::Checking | worker::Phase::Verifying) {
@@ -810,6 +812,7 @@ impl App {
             fixflow::on_worker(&mut self.fix, &event, &mut self.ctx),
             history::on_worker(&mut self.history, &event, &mut self.ctx),
             warm,
+            extra,
         ])
     }
 
