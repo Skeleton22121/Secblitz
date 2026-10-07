@@ -835,6 +835,62 @@ fn release_floor_survives_restart_and_failed_payload_and_clock_rollback() {
 }
 
 #[test]
+fn floor_keeps_its_history_when_the_pc_switches_to_the_other_architecture() {
+    let m = verify_value(payload(), 1500).unwrap();
+    let floor = advance_floor(&m, "9.0.0", None).unwrap();
+    let mut other = floor.clone();
+    other.target = arch::OTHER_TARGET.into();
+    other.sha256 = hex::encode(Sha256::digest(b"other build"));
+    let bytes = serde_json::to_vec(&other).unwrap();
+    assert_eq!(parse_floor(&bytes).unwrap(), other);
+    let switched = advance_floor(&m, "9.0.0", Some(&other)).unwrap();
+    assert_eq!(
+        (switched.target.as_str(), switched.sha256.as_str()),
+        (arch::TARGET, m.sha256.as_str())
+    );
+    let mut older = payload();
+    older["version"] = "8.5.0".into();
+    older["filename"] = setup_filename("8.5.0").into();
+    let older = verify_value(older, 1500).unwrap();
+    assert!(advance_floor(&older, "8.0.0", Some(&other)).is_err());
+    other.target = "windows-riscv64".into();
+    assert!(parse_floor(&serde_json::to_vec(&other).unwrap()).is_err());
+}
+
+#[test]
+fn each_build_reads_only_its_own_feed_and_installer() {
+    assert!(arch::STABLE_FEED.starts_with("releases/stable"));
+    assert!(arch::CANDIDATE_FEED.starts_with("releases/candidate"));
+    assert!(arch::DELIVERY_FEED.starts_with("releases/delivery"));
+    assert!(setup_filename("9.0.0").contains(arch::SETUP_TAG));
+    let mut other = payload();
+    other["target"] = arch::OTHER_TARGET.into();
+    assert!(verify_value(other, 1500).is_err());
+    let mut foreign = payload();
+    foreign["filename"] = setup_filename("9.0.0")
+        .replace(
+            arch::SETUP_TAG,
+            if arch::SETUP_TAG == "windows-x64" {
+                "windows-arm64"
+            } else {
+                "windows-x64"
+            },
+        )
+        .into();
+    assert!(verify_value(foreign, 1500).is_err());
+    if cfg!(target_arch = "aarch64") {
+        assert_eq!(arch::STABLE_FEED, "releases/stable-arm64.json");
+    } else {
+        assert_eq!(arch::STABLE_FEED, "releases/stable.json");
+        assert_eq!(arch::TARGET, "windows-x86_64");
+        assert_eq!(
+            setup_filename("9.0.0"),
+            "secblitz-9.0.0-windows-x64-setup.exe"
+        );
+    }
+}
+
+#[test]
 fn immutable_release_allows_renewal_but_not_hash_or_metadata_rollback() {
     let m = verify_value(payload(), 1500).unwrap();
     let floor = advance_floor(&m, "9.0.0", None).unwrap();
@@ -889,7 +945,7 @@ fn release_floor_schema_is_strict_bounded_and_independent_of_wall_clock() {
         ("version", serde_json::json!("9.0.0-rc.1")),
         ("sha256", serde_json::json!("A".repeat(64))),
         ("sha256", serde_json::json!("a".repeat(63))),
-        ("target", serde_json::json!(arch::OTHER_TARGET)),
+        ("target", serde_json::json!("windows-riscv64")),
         ("published_at", serde_json::json!(-1)),
         ("expires_at", serde_json::json!(1000)),
         ("expires_at", serde_json::json!(1000 + 91 * 86400)),

@@ -30,6 +30,7 @@ mod arch {
     pub const STABLE_FEED: &str = "releases/stable-arm64.json";
     pub const CANDIDATE_FEED: &str = "releases/candidate-arm64.json";
     pub const DELIVERY_FEED: &str = "releases/delivery-arm64.json";
+    pub const DELIVERY_FLOOR: &str = "delivery-floor-arm64.json";
 }
 #[cfg(not(target_arch = "aarch64"))]
 mod arch {
@@ -40,6 +41,12 @@ mod arch {
     pub const STABLE_FEED: &str = "releases/stable.json";
     pub const CANDIDATE_FEED: &str = "releases/candidate.json";
     pub const DELIVERY_FEED: &str = "releases/delivery.json";
+    pub const DELIVERY_FLOOR: &str = "delivery-floor.json";
+}
+// The highest-seen floor is shared by both builds of one PC, so moving from the
+// x64 build to the native arm64 build keeps its history.
+fn known_target(target: &str) -> bool {
+    matches!(target, "windows-x86_64" | "windows-aarch64")
 }
 fn setup_filename(version: &str) -> String {
     format!("secblitz-{version}-{}-setup.exe", arch::SETUP_TAG)
@@ -157,7 +164,7 @@ fn parse_floor(bytes: &[u8]) -> Result<ReleaseFloor> {
     stable(&floor.version)?;
     ensure!(
         floor.schema == 1
-            && floor.target == arch::TARGET
+            && known_target(&floor.target)
             && valid_hash(&floor.sha256)
             && floor.expires_at > floor.published_at
             && floor.expires_at - floor.published_at <= 90 * 86400,
@@ -177,9 +184,9 @@ fn advance_floor(
         let version = stable(&m.version)?;
         let seen = stable(&previous.version)?;
         ensure!(version >= seen, "Previously seen release rollback rejected");
-        if version == seen {
+        if version == seen && m.target == previous.target {
             ensure!(
-                m.sha256 == previous.sha256 && m.target == previous.target,
+                m.sha256 == previous.sha256,
                 "Published release content changed"
             );
             ensure!(

@@ -353,11 +353,11 @@ fn read_bounded(root: &Path, name: &str, limit: usize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 fn read_delivery(root: &Path, origin: &reqwest::Url) -> Result<Option<delivery::Authorization>> {
-    if !exists_no_follow(&root.join("delivery-floor.json"))? {
+    if !exists_no_follow(&root.join(arch::DELIVERY_FLOOR))? {
         return Ok(None);
     }
     Ok(Some(delivery::decode(
-        &read_bounded(root, "delivery-floor.json", MANIFEST_LIMIT)?,
+        &read_bounded(root, arch::DELIVERY_FLOOR, MANIFEST_LIMIT)?,
         &key()?,
         origin,
     )?))
@@ -419,7 +419,7 @@ fn select_delivery(
     // Commit authorization before fetching the candidate: stale keys cannot be
     // revived by a failed download, crash, deletion/404, or v1 fallback.
     if previous.as_ref() != Some(&a) {
-        replace(root, "delivery-floor.json", &raw)?;
+        replace(root, arch::DELIVERY_FLOOR, &raw)?;
     }
     Ok(Some(a))
 }
