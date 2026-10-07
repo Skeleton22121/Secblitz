@@ -58,6 +58,7 @@ impl TipProfile {
                 P::UpdatePolicy,
                 P::HostsFile,
                 P::Autostart,
+                P::RunHistory,
                 P::AccountSetup,
             ],
             Self::Gaming => &[
@@ -73,6 +74,7 @@ impl TipProfile {
                 P::DefenderProtection,
                 P::UpdatePolicy,
                 P::Autostart,
+                P::RunHistory,
                 P::WifiSecurity,
             ],
             Self::Work => &[
@@ -96,6 +98,7 @@ impl TipProfile {
                 P::AccountHygiene,
                 P::FirewallRules,
                 P::Autostart,
+                P::RunHistory,
                 P::AccountSetup,
                 P::WifiSecurity,
                 P::DnsEncryption,
@@ -123,6 +126,7 @@ impl TipProfile {
                 P::Sharing,
                 P::FirewallRules,
                 P::Autostart,
+                P::RunHistory,
                 P::AccountSetup,
                 P::WindowsHello,
                 P::WifiSecurity,
@@ -174,6 +178,7 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
         P::DnsEncryption => "Private internet lookups",
         P::WifiSecurity => "Wi-Fi protection",
         P::Autostart => "Programs that start by themselves",
+        P::RunHistory => "Run box history",
     }
 }
 
@@ -199,6 +204,7 @@ pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
         P::Adapters | P::Dns | P::Proxy | P::Vpn | P::DnsEncryption => Page::Network,
         P::WifiSecurity => Page::Wifi,
         P::SmartScreen => Page::AppBrowser,
+        P::RunHistory => Page::WindowsSecurity,
         P::LegacyFeatures => Page::OptionalFeatures,
         P::FirewallRules => Page::Firewall,
         P::WindowsHello => Page::SignIn,
@@ -220,6 +226,7 @@ pub fn probe_guide(id: diag::ProbeId) -> Option<&'static crate::guide::Guide> {
         P::BitLocker => "Device encryption",
         P::SecureBoot => "Secure Boot",
         P::Management => "Management and mutation eligibility",
+        P::RunHistory => "clickfix.run_history",
         _ => return None,
     })
 }
@@ -264,6 +271,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::DnsEncryption => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         P::WifiSecurity => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         P::Autostart => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
+        P::RunHistory => "Something typed into the Run box looks like a fake check page trick. Run a full virus scan and change your passwords from another device.",
     }
 }
 
@@ -1067,6 +1075,7 @@ mod tests {
             "net.dns_encryption",
             "net.wifi_security",
             "persistence.run_and_tasks",
+            "clickfix.run_history",
             "remote.rdp",
             "smb.v1",
             "winre.enabled",

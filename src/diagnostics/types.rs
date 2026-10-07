@@ -117,7 +117,7 @@ macro_rules! probe_ids {
             pub const ALL: &'static [Self] = &[$(Self::$name),+];
             pub fn source(self) -> &'static str { match self { $(Self::$name => $source),+ } }
             pub fn scope(self) -> Scope {
-                if self == Self::BrowserExtensions { Scope::OriginalUser } else { Scope::Machine }
+                if matches!(self, Self::BrowserExtensions | Self::RunHistory) { Scope::OriginalUser } else { Scope::Machine }
             }
         }
     };
@@ -161,6 +161,7 @@ probe_ids! {
     WindowsHello => "Trusted System32/dsregcmd.exe /status: the PIN / Windows Hello set-up flag only, no other line is kept",
     DnsEncryption => "DnsClient: configured DNS server counts against registered encrypted-DNS servers (no addresses)",
     WifiSecurity => "WLAN API: security type of the connected Wi-Fi network only (no network name or address)",
+    RunHistory => "The signed-in user's Run box history (RunMRU): counts of entries that match known fake check page tricks (no command text is kept)",
     Autostart => "Run/RunOnce keys, Startup folders and non-Microsoft scheduled tasks: counts of risky unsigned entries only (no names or paths)",
 }
 
@@ -426,6 +427,15 @@ facts!(Autostart {
     risky_unsigned: u32,
     suspicious_command: u32,
 });
+facts!(RunHistory {
+    entries_checked: u32,
+    suspicious_entries: u32,
+    encoded_command: u32,
+    web_script: u32,
+    mshta: u32,
+    download_tool: u32,
+    hidden_window: u32,
+});
 facts!(Permissions { services: Inventory<PermissionFinding> });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -476,6 +486,7 @@ pub enum Evidence {
     DnsEncryption(DnsEncryption),
     WifiSecurity(WifiSecurity),
     Autostart(Autostart),
+    RunHistory(RunHistory),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
