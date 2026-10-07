@@ -7,6 +7,9 @@ name: Release
 #
 # The update-feed signing key is never used here. It stays offline.
 #
+# Both architectures (x64 and arm64) are built, signed and tested in parallel;
+# the arm64 build runs natively on a Windows on ARM runner.
+#
 # Order: check tag, website and notes -> build exe (tests first) -> sign exe
 # (SignPath, optional) -> pack setup -> sign setup (optional) -> test the
 # installer -> checksums and build attestations -> draft release. A broken
@@ -271,16 +274,180 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  build-exe-arm64:
+    name: Build the arm64 exe from source (tests first)
+    needs: verify
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Initialize arm64 MSVC tools
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: arm64
+      # No build or download cache here: a poisoned cache must never reach a release.
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --component clippy --component rustfmt --target aarch64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version --verbose
+      - name: Test, lint and build the exe
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -Stage Exe -Arch arm64
+      - name: Upload the unsigned exe
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exe-unsigned-arm64
+          path: dist/secblitz-*-windows-arm64.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-exe-arm64:
+    name: Sign the arm64 exe (SignPath)
+    needs: [verify, build-exe-arm64]
+    # Off until the owner sets the REPOSITORY variable SIGNPATH_ENABLED to true
+    # (not an environment variable: the verify job reads it once).
+    if: ${{ needs.verify.outputs.signing == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The SignPath token lives in this environment only (docs/RELEASING.md).
+    environment: signing
+    permissions:
+      contents: read
+      actions: read   # SignPath reads the uploaded artifact from this run
+    steps:
+      - name: Submit the exe to SignPath
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_EXE_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.build-exe-arm64.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-exe-arm64
+      - name: Upload the signed exe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exe-signed-arm64
+          path: signed-exe-arm64/secblitz-*-windows-arm64.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  build-setup-arm64:
+    name: Pack the arm64 setup from the (signed) exe
+    needs: [verify, build-exe-arm64, sign-exe-arm64]
+    # Runs when the exe was built and signing either succeeded or is switched off.
+    if: ${{ !cancelled() && needs.build-exe-arm64.result == 'success' && (needs.sign-exe-arm64.result == 'success' || needs.sign-exe-arm64.result == 'skipped') }}
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --target aarch64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Get the unsigned exe
+        if: ${{ needs.verify.outputs.signing != 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: exe-unsigned-arm64
+          path: dist
+      - name: Get the signed exe
+        if: ${{ needs.verify.outputs.signing == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: exe-signed-arm64
+          path: dist
+      - name: Check the exe signature
+        if: ${{ needs.verify.outputs.signing == 'true' }}
+        shell: pwsh
+        run: |
+          $exe = @(Get-ChildItem dist/secblitz-*-windows-arm64.exe)
+          if ($exe.Count -ne 1) { throw 'Expected exactly one exe.' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe[0].FullName
+          $signature | Format-List Status, StatusMessage, SignerCertificate
+          if ($signature.Status -ne 'Valid') { throw "The signed exe is not validly signed: $($signature.Status)" }
+      - name: Build the setup (Inno Setup)
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -Stage Setup -Arch arm64 -DownloadInno
+      - name: Upload the unsigned setup
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: setup-unsigned-arm64
+          path: dist/secblitz-*-windows-arm64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-setup-arm64:
+    name: Sign the arm64 setup (SignPath)
+    needs: [verify, build-setup-arm64]
+    if: ${{ needs.verify.outputs.signing == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: signing
+    permissions:
+      contents: read
+      actions: read   # SignPath reads the uploaded artifact from this run
+    steps:
+      - name: Submit the setup to SignPath
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_SETUP_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.build-setup-arm64.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-setup-arm64
+      - name: Upload the signed setup
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: setup-signed-arm64
+          path: signed-setup-arm64/secblitz-*-windows-arm64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
   test-installer:
-    name: Test the final setup (exit codes, upgrade, uninstall)
-    needs: [verify, build-setup, sign-setup]
+    name: Test the final ${{ matrix.arch }} setup (exit codes, upgrade, uninstall)
+    needs: [verify, build-setup, sign-setup, build-setup-arm64, sign-setup-arm64]
     # The tests run against the very bytes that will be released: the signed
     # setup when signing is on. A failure here stops the release before any
     # attestation or draft exists.
-    if: ${{ !cancelled() && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') }}
-    # The same runner image the installer harnesses were proven on (windows.yml).
-    runs-on: windows-2022
+    if: ${{ !cancelled() && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') && needs.build-setup-arm64.result == 'success' && (needs.sign-setup-arm64.result == 'success' || needs.sign-setup-arm64.result == 'skipped') }}
+    # The same runner images the installer harnesses were proven on (windows.yml).
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-2022
+          - arch: arm64
+            os: windows-11-arm
     permissions:
       contents: read
     steps:
@@ -291,17 +458,23 @@ jobs:
       - name: Get the final setup (signed when signing is on)
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: ${{ needs.verify.outputs.signing == 'true' && 'setup-signed' || 'setup-unsigned' }}
+          name: ${{ needs.verify.outputs.signing == 'true' && format('setup-signed{0}', matrix.arch == 'arm64' && '-arm64' || '') || format('setup-unsigned{0}', matrix.arch == 'arm64' && '-arm64' || '') }}
           path: dist
       - name: Check the setup signature (when signing is on)
         if: ${{ needs.verify.outputs.signing == 'true' }}
         shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          $setup = @(Get-ChildItem dist/secblitz-*-windows-x64-setup.exe)
+          $setup = @(Get-ChildItem "dist/secblitz-*-windows-$env:ARCH-setup.exe")
           if ($setup.Count -ne 1) { throw 'Expected exactly one setup.' }
           $signature = Get-AuthenticodeSignature -LiteralPath $setup[0].FullName
           $signature | Format-List Status, StatusMessage, SignerCertificate
           if ($signature.Status -ne 'Valid') { throw "The setup is not validly signed: $($signature.Status)" }
+      - name: Install Inno Setup where the runner image lacks it
+        if: ${{ matrix.arch == 'arm64' }}
+        shell: pwsh
+        run: ./scripts/install-inno.ps1
       - name: Check the Inno Setup compiler is on the runner
         shell: pwsh
         run: |
@@ -313,7 +486,7 @@ jobs:
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
-          foreach ($file in @('scripts/build-release.ps1', 'installer/maintenance.ps1', 'installer/test-maintenance.ps1', 'installer/test-lifecycle.ps1', 'installer/test-setup-exit.ps1')) {
+          foreach ($file in @('scripts/build-release.ps1', 'scripts/install-inno.ps1', 'installer/maintenance.ps1', 'installer/test-maintenance.ps1', 'installer/test-lifecycle.ps1', 'installer/test-setup-exit.ps1')) {
             $tokens = $null
             $parseErrors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$parseErrors)
@@ -327,15 +500,17 @@ jobs:
         run: ./installer/test-setup-exit.ps1 -IsccPath "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
       - name: Test running monitor upgrade and uninstall preservation on the final setup
         shell: powershell
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          $setup = @(Get-ChildItem dist/secblitz-*-windows-x64-setup.exe)
+          $setup = @(Get-ChildItem "dist/secblitz-*-windows-$env:ARCH-setup.exe")
           if ($setup.Count -ne 1) { throw 'Expected exactly one built installer.' }
           ./installer/test-lifecycle.ps1 -SetupPath $setup[0].FullName
 
   attest:
     name: Checksums and build provenance
-    needs: [verify, build-exe, build-setup, sign-exe, sign-setup, test-installer]
-    if: ${{ !cancelled() && needs.test-installer.result == 'success' && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') }}
+    needs: [verify, build-exe, build-setup, sign-exe, sign-setup, build-exe-arm64, build-setup-arm64, sign-exe-arm64, sign-setup-arm64, test-installer]
+    if: ${{ !cancelled() && needs.test-installer.result == 'success' && needs.build-setup.result == 'success' && (needs.sign-setup.result == 'success' || needs.sign-setup.result == 'skipped') && needs.build-setup-arm64.result == 'success' && (needs.sign-setup-arm64.result == 'success' || needs.sign-setup-arm64.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Only this job may mint attestations. It cannot write to the repository.
@@ -354,6 +529,16 @@ jobs:
         with:
           name: ${{ needs.verify.outputs.signing == 'true' && 'setup-signed' || 'setup-unsigned' }}
           path: release
+      - name: Get the arm64 exe (signed when signing is on)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.signing == 'true' && 'exe-signed-arm64' || 'exe-unsigned-arm64' }}
+          path: release
+      - name: Get the arm64 setup (signed when signing is on)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.signing == 'true' && 'setup-signed-arm64' || 'setup-unsigned-arm64' }}
+          path: release
       - name: Write SHA256SUMS
         env:
           VERSION: ${{ needs.verify.outputs.version }}
@@ -363,8 +548,11 @@ jobs:
           ls -l
           test -f "secblitz-$VERSION-windows-x64.exe"
           test -f "secblitz-$VERSION-windows-x64-setup.exe"
-          test "$(ls | wc -l)" -eq 2
-          sha256sum "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-x64-setup.exe" > SHA256SUMS
+          test -f "secblitz-$VERSION-windows-arm64.exe"
+          test -f "secblitz-$VERSION-windows-arm64-setup.exe"
+          test "$(ls | wc -l)" -eq 4
+          sha256sum "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-x64-setup.exe" \
+            "secblitz-$VERSION-windows-arm64.exe" "secblitz-$VERSION-windows-arm64-setup.exe" > SHA256SUMS
           cat SHA256SUMS
           sha256sum --check SHA256SUMS
       - name: Attest build provenance
@@ -373,6 +561,8 @@ jobs:
           subject-path: |
             release/secblitz-*-windows-x64.exe
             release/secblitz-*-windows-x64-setup.exe
+            release/secblitz-*-windows-arm64.exe
+            release/secblitz-*-windows-arm64-setup.exe
       - name: Keep the release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -419,4 +609,6 @@ jobs:
             --notes-file notes/release-notes.md \
             release/secblitz-"$VERSION"-windows-x64-setup.exe \
             release/secblitz-"$VERSION"-windows-x64.exe \
+            release/secblitz-"$VERSION"-windows-arm64-setup.exe \
+            release/secblitz-"$VERSION"-windows-arm64.exe \
             release/SHA256SUMS

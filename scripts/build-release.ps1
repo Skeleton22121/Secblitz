@@ -173,14 +173,7 @@ try {
         $IsccPath = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
     }
     if (-not (Test-Path -LiteralPath $IsccPath) -and $DownloadInno) {
-        $compilerInstaller = Join-Path $dist 'innosetup-6.4.3.exe'
-        Invoke-WebRequest 'https://files.jrsoftware.org/is/6/innosetup-6.4.3.exe' -OutFile $compilerInstaller
-        $signature = Get-AuthenticodeSignature -LiteralPath $compilerInstaller
-        if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'CN=Jordan Russell(?:,|$)') {
-            throw 'Official Inno Setup download failed publisher signature validation.'
-        }
-        $process = Start-Process -FilePath $compilerInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
-        if ($process.ExitCode -ne 0) { throw "Inno compiler installation failed: $($process.ExitCode)" }
+        & (Join-Path $PSScriptRoot 'install-inno.ps1') -DownloadDirectory $dist
     }
     if (-not (Test-Path -LiteralPath $IsccPath)) { throw 'Install official Inno Setup 6.4+ or pass -DownloadInno from an elevated build shell.' }
     $compilerArgs = @("/DAppVersion=$version", "/DSourceExe=$exe", "/DOutputPath=$dist", "/DArch=$Arch")

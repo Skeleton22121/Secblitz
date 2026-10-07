@@ -123,12 +123,13 @@ jobs:
           if ! jq -e '(.isDraft | not) and (.isPrerelease | not)' release.json > /dev/null; then
             echo "::error::The release is a draft or a pre-release. Publish it as a normal release first."; exit 1
           fi
-          # The release must carry exactly the four expected files: the setup, the
-          # portable exe, SHA256SUMS and the owner's signed update feed.
+          # The release must carry exactly the seven expected files: the setup and
+          # the portable exe for each architecture, SHA256SUMS and the owner's
+          # two signed update feeds.
           gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort > assets.list
-          printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" SHA256SUMS stable.json | LC_ALL=C sort > assets.expected
+          printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-arm64-setup.exe" "secblitz-$VERSION-windows-arm64.exe" SHA256SUMS stable.json stable-arm64.json | LC_ALL=C sort > assets.expected
           if ! diff assets.expected assets.list; then
-            echo "::error::The release files are not exactly the expected four (see the diff above). Attach the signed stable.json and nothing else."; exit 1
+            echo "::error::The release files are not exactly the expected seven (see the diff above). Attach the two signed feeds, stable.json and stable-arm64.json, and nothing else."; exit 1
           fi
           mkdir release-assets
           gh release download "$TAG" --dir release-assets
@@ -139,11 +140,11 @@ jobs:
         working-directory: release-assets
         run: |
           set -euo pipefail
-          # Exactly the two files, nothing else listed, and every hash must match.
-          expected=$(printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" | LC_ALL=C sort)
+          # Exactly the four files, nothing else listed, and every hash must match.
+          expected=$(printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-arm64-setup.exe" "secblitz-$VERSION-windows-arm64.exe" | LC_ALL=C sort)
           listed=$(awk '{print $2}' SHA256SUMS | LC_ALL=C sort)
-          if [ "$expected" != "$listed" ] || [ "$(wc -l < SHA256SUMS)" -ne 2 ]; then
-            echo "::error::SHA256SUMS must list exactly the setup and the portable exe."; exit 1
+          if [ "$expected" != "$listed" ] || [ "$(wc -l < SHA256SUMS)" -ne 4 ]; then
+            echo "::error::SHA256SUMS must list exactly the setup and the portable exe of each architecture."; exit 1
           fi
           sha256sum --check --strict SHA256SUMS
       - name: Verify the build attestations (this repository, release.yml, this tag and commit)
@@ -156,7 +157,8 @@ jobs:
         working-directory: release-assets
         run: |
           set -euo pipefail
-          for file in "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe"; do
+          for file in "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" \
+                      "secblitz-$VERSION-windows-arm64-setup.exe" "secblitz-$VERSION-windows-arm64.exe"; do
             gh attestation verify "$file" \
               --repo "$REPO" \
               --signer-workflow "$REPO/.github/workflows/release.yml" \
@@ -169,10 +171,11 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          # Checks: signature against assets/update-public-key.hex, schema and
+          # Checks, for both architectures: signature against assets/update-public-key.hex, schema and
           # target, version equals the tag, filename, size and SHA-256 equal the
           # released setup, and the feed is neither future-dated nor expired.
           python3 scripts/prepare-pages.py --verify-feed release-assets/stable.json --installer-directory release-assets --expected-version "$VERSION"
+          python3 scripts/prepare-pages.py --verify-feed release-assets/stable-arm64.json --installer-directory release-assets --expected-version "$VERSION" --arch arm64
       - name: Fetch the older downloads and check their pinned hashes
         run: python3 scripts/historical-downloads.py fetch --dest historical
       - name: Build the site to deploy

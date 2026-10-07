@@ -88,9 +88,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/verified"
           for v in $(python3 scripts/historical-downloads.py missing); do
             gh release download "v$v" --dir "$RUNNER_TEMP/verified" \
-              --pattern "secblitz-$v-windows-x64-setup.exe" --pattern SHA256SUMS --clobber
+              --pattern "secblitz-$v-windows-*-setup.exe" --pattern SHA256SUMS --clobber
             (cd "$RUNNER_TEMP/verified" && sha256sum --check --ignore-missing --strict SHA256SUMS)
-            for f in "secblitz-$v-windows-x64-setup.exe"; do
+            for f in $(cd "$RUNNER_TEMP/verified" && ls "secblitz-$v"-windows-*-setup.exe); do
               if [ "$ALLOW_UNATTESTED" = "true" ]; then
                 echo "Skipping the attestation check for $f (allowed by the owner)."
               else
