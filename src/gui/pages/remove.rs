@@ -576,6 +576,7 @@ mod tests {
             apps_store_only: store,
             suggested,
             web_on: false,
+            history_damaged: false,
         }
     }
 

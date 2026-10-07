@@ -451,6 +451,7 @@ mod tests {
                 name.as_str(),
                 "engine/journal.rs"
                     | "engine/recovery.rs"
+                    | "engine/recover.rs"
                     | "engine/fsio.rs"
                     | "platform/vbs_native.rs"
             ) {

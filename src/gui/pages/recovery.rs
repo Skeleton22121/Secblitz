@@ -45,20 +45,28 @@ pub const FAILED: &str =
     "Windows wouldn't let Secblitz move the files. Close Secblitz everywhere and try again.";
 pub const DONE: &str = "Done. Check your PC again.";
 
+/// Nothing starts without the second question: only `Confirm` can lead to `Working`.
+fn next(msg: Msg, step: Step) -> Option<Step> {
+    match (msg, step) {
+        (Msg::Review, Step::Ask | Step::Later) => Some(Step::Confirm),
+        (Msg::Back, Step::Confirm) => Some(Step::Ask),
+        (Msg::Later, Step::Ask) => Some(Step::Later),
+        (Msg::Start, Step::Confirm) => Some(Step::Working),
+        _ => None,
+    }
+}
+
 pub fn update(msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     let Some(info) = ctx.damage.as_mut() else {
         return Task::none();
     };
-    match (msg, info.step) {
-        (Msg::Review, Step::Ask | Step::Later) => info.step = Step::Confirm,
-        (Msg::Back, Step::Confirm) => info.step = Step::Ask,
-        (Msg::Later, Step::Ask) => info.step = Step::Later,
-        (Msg::Start, Step::Confirm) => {
-            info.step = Step::Working;
-            ctx.busy = true;
-            return Task::run(ctx.worker.run(Job::StartFresh), Message::Worker);
-        }
-        _ => {}
+    let Some(step) = next(msg, info.step) else {
+        return Task::none();
+    };
+    info.step = step;
+    if step == Step::Working {
+        ctx.busy = true;
+        return Task::run(ctx.worker.run(Job::StartFresh), Message::Worker);
     }
     Task::none()
 }
@@ -176,4 +184,40 @@ pub fn card<'a>(ctx: &'a Ctx, info: &DamageInfo) -> Element<'a, Message> {
         ));
     }
     widgets::region(p, content).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STEPS: [Step; 4] = [Step::Ask, Step::Confirm, Step::Working, Step::Later];
+    const MSGS: [Msg; 4] = [Msg::Review, Msg::Back, Msg::Later, Msg::Start];
+
+    #[test]
+    fn starting_needs_the_second_question() {
+        for step in STEPS {
+            let starts = next(Msg::Start, step) == Some(Step::Working);
+            assert_eq!(starts, step == Step::Confirm, "{step:?}");
+        }
+        assert_eq!(next(Msg::Review, Step::Ask), Some(Step::Confirm));
+        assert_eq!(next(Msg::Review, Step::Later), Some(Step::Confirm));
+        assert_eq!(next(Msg::Back, Step::Confirm), Some(Step::Ask));
+    }
+
+    #[test]
+    fn nothing_moves_while_working() {
+        for msg in MSGS {
+            assert_eq!(next(msg, Step::Working), None);
+        }
+    }
+
+    #[test]
+    fn a_new_card_starts_with_the_first_question() {
+        let info = DamageInfo::new(JournalDamaged {
+            kind: DamageKind::OtherPc,
+            files: 3,
+        });
+        assert_eq!(info.step, Step::Ask);
+        assert_eq!(info.files, 3);
+    }
 }

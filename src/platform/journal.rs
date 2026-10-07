@@ -283,11 +283,10 @@ pub fn create_private_dir(path: &Path) -> Result<()> {
         bInheritHandle: 0,
     };
     let path_w = wide(path)?;
-    ensure!(
-        unsafe { CreateDirectoryW(path_w.as_ptr(), &attributes) } != 0,
-        "Cannot create protected folder (Windows error {})",
-        unsafe { GetLastError() }
-    );
+    if unsafe { CreateDirectoryW(path_w.as_ptr(), &attributes) } == 0 {
+        let error = unsafe { GetLastError() };
+        bail!("Cannot create protected journal directory (Windows error {error})");
+    }
     Ok(())
 }
 

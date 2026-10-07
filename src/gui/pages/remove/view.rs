@@ -155,6 +155,13 @@ fn choose_sheet<'a>(
             ));
         }
     }
+    if plan.as_ref().is_some_and(|pl| pl.history_damaged) {
+        col = col.push(widgets::inline_notice(
+            p,
+            Tone::Warn,
+            ctx.t(crate::uninstall::HISTORY_DAMAGED),
+        ));
+    }
     col = col.push(widgets::small(p, ctx.t(STAY_NOTE)));
     if let Some(note) = web_note(plan.as_ref()) {
         col = col.push(widgets::small(p, ctx.t(note)));
