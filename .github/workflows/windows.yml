@@ -72,6 +72,15 @@ jobs:
       - name: Test installer path and ACL validation (Windows PowerShell 5.1)
         shell: powershell
         run: ./installer/test-maintenance.ps1
+      - name: Run the PowerShell fixture tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $failed = @()
+          foreach ($test in Get-ChildItem src -Recurse -Include '*.tests.ps1', '*_tests.ps1') {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $test.FullName
+            if ($LASTEXITCODE) { $failed += $test.Name }
+          }
+          if ($failed) { throw "Failed: $($failed -join ', ')" }
       - name: Test, lint, build static-CRT executable and compile installer
         shell: pwsh
         run: ./scripts/build-release.ps1 -DownloadInno

@@ -43,7 +43,7 @@ $operation = $null
 foreach ($node in $ast.EndBlock.Statements) {
     if ($node -is [System.Management.Automation.Language.AssignmentStatementAst]) { . ([scriptblock]::Create($node.Extent.Text)) }
     elseif ($node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'RenewalRefusal') { . ([scriptblock]::Create($node.Extent.Text)) }
-    elseif ($node -is [System.Management.Automation.Language.TryStatementAst]) { $operation = [scriptblock]::Create($node.Extent.Text) }
+    elseif ($node -is [System.Management.Automation.Language.TryStatementAst]) { $operation = [scriptblock]::Create((($node.Body.Statements | ForEach-Object { $_.Extent.Text }) -join "`n")) }
 }
 Assert ($null -ne $operation) 'The operation was not found'
 $text = Get-Content -LiteralPath $script -Raw
