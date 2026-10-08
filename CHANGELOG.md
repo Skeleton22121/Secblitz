@@ -25,7 +25,6 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ### Changed
 - The app uses the Lexend font, which is easier to read.
-- The list of apps that may use your camera, microphone and location shows who published each app.
 - Web protection also turns off Brave's own private lookups.
 
 ### Fixed
