@@ -1459,7 +1459,7 @@ pub(super) static SPECS: &[Spec] = &[
             allowed: &[0, 1, 2, 3, 4],
             ..set("EnableControlledFolderAccess", "", &[1, 2, 3, 4], false, Some(2), 4)
         }],
-        gate: NO_GATE,
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
     },
     Spec {
         id: "defender.cfa_block",
@@ -1472,7 +1472,7 @@ pub(super) static SPECS: &[Spec] = &[
             allowed: &[0, 1, 2, 3, 4],
             ..set("EnableControlledFolderAccess", "", &[1, 3], false, Some(1), 4)
         }],
-        gate: NO_GATE,
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
     },
     Spec {
         id: "defender.cfa_allowed_apps",
@@ -1482,6 +1482,6 @@ pub(super) static SPECS: &[Spec] = &[
         reboot: false,
         ask: true,
         keys: &[set("*", "", &[1], false, Some(1), 1)],
-        gate: NO_GATE,
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
     },
 ];

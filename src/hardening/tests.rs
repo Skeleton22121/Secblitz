@@ -1976,7 +1976,13 @@ fn folder_protection_controls_set_only_the_documented_modes() {
     assert_eq!(block.derive_target(&state(2)).unwrap(), state(1));
     assert_eq!(block.derive_target(&state(4)).unwrap(), state(1));
     assert_eq!(watch.derive_target(&state(3)).unwrap(), state(3));
-    assert!(!watch.gate.tamper_exempt && !block.gate.tamper_exempt);
+    assert!(watch.gate.tamper_exempt && block.gate.tamper_exempt);
+    assert!(
+        spec("defender.cfa_allowed_apps")
+            .unwrap()
+            .gate
+            .tamper_exempt
+    );
 }
 
 #[test]
