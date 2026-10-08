@@ -9,7 +9,7 @@ Secblitz maximizes Windows security and privacy by fixing security holes and mis
 
 [**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.11.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![Version 0.11.0](https://img.shields.io/badge/version-0.11.0-18181B) ![Windows 11, 64-bit](https://img.shields.io/badge/Windows%2011-64--bit-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
+![Version 0.11.0](https://img.shields.io/badge/version-0.11.0-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
@@ -38,7 +38,7 @@ Secblitz is not an antivirus. It turns on and configures the protection built in
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.11.0-windows-x64-setup.exe) (9.5 MB) and run it. Secblitz asks for administrator permission because it reads and changes system settings.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.11.0-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-0.11.0-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
 
 The installer is not code-signed yet, so Windows may show an unknown publisher warning. Choose **More info**, then **Run anyway**. To check the file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
@@ -46,7 +46,9 @@ The installer is not code-signed yet, so Windows may show an unknown publisher w
 Get-FileHash .\secblitz-0.11.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-Tested on Windows 10 (version 22H2) and Windows 11, 64-bit.
+Tested on Windows 10 (version 22H2) and Windows 11, on regular and ARM PCs.
+
+Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to a newer version. Download and run the installer once; your settings, history and undo stay.
 
 ## Build from source
 
