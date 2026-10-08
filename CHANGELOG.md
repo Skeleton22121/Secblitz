@@ -55,6 +55,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - A virus scan now shows that it is scanning while it runs and says when it has finished.
 - Background checks start again on their own if they stop unexpectedly.
 - Installing a new version or removing Secblitz while it is open now closes it first, so nothing is left behind.
+- Fixes, undo and updates are no longer held back while Windows Defender or Windows Update works in the background.
 
 ## [0.9.3] - 2026-10-07
 

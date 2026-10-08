@@ -966,3 +966,25 @@ fn non_windows_production_entrypoints_never_create_fake_state() {
     assert!(start(Uuid::new_v4()).is_err());
     assert!(resume(Uuid::new_v4()).is_err());
 }
+
+#[test]
+fn only_repair_tools_secblitz_starts_hold_back_its_other_changes() {
+    for name in ["dism.exe", "dismhost.exe", "sfc.exe"] {
+        assert!(
+            may_be_own_repair(name) && blocks_repair_start(name),
+            "{name}"
+        );
+    }
+    for name in ["usoclient.exe", "mousocoreworker.exe"] {
+        assert!(
+            blocks_repair_start(name) && !may_be_own_repair(name),
+            "{name}"
+        );
+    }
+    for name in ["mpcmdrun.exe", "tiworker.exe", "msmpeng.exe"] {
+        assert!(
+            !blocks_repair_start(name) && !may_be_own_repair(name),
+            "{name}"
+        );
+    }
+}

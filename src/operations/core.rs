@@ -372,6 +372,19 @@ impl State {
     }
 }
 
+/// Windows' own repair and update workers, which a repair must not overlap. Defender's
+/// command-line tool is not one: it can stay running for hours without scanning, and a scan
+/// in progress is read from Defender itself.
+pub(super) fn blocks_repair_start(name: &str) -> bool {
+    may_be_own_repair(name) || matches!(name, "usoclient.exe" | "mousocoreworker.exe")
+}
+
+/// Only the repair tools Secblitz starts can mean one of its repairs is still running, so only
+/// they hold back fixes, undo and updates.
+pub(super) fn may_be_own_repair(name: &str) -> bool {
+    matches!(name, "dism.exe" | "dismhost.exe" | "sfc.exe")
+}
+
 pub(super) fn update_idle(bytes: &[u8], machine: &str) -> Result<()> {
     ensure!(
         bytes.len() <= MAX_STATE_BYTES,
