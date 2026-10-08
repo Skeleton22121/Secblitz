@@ -662,12 +662,13 @@ fn check_sddl(sddl: &str) -> Result<Vec<String>> {
 }
 
 /// A package's own recorded permissions, safe to put back for `family`:
-/// any app-only condition must name exactly this family.
+/// any app-only condition must name exactly this family. Windows writes the
+/// name in capitals on folders it registers, and compares it either way.
 pub fn own_sddl(sddl: &str, family: &str) -> Result<String> {
     ensure!(valid_family(family), "Unexpected family");
     let names = check_sddl(sddl)?;
     ensure!(
-        names.iter().all(|n| n == family),
+        names.iter().all(|n| n.eq_ignore_ascii_case(family)),
         "Permissions name another app"
     );
     Ok(sddl.to_owned())
@@ -679,11 +680,14 @@ pub fn template_sddl(template: &str, from_family: &str, to_family: &str) -> Resu
     ensure!(valid_family(to_family), "Unexpected family");
     let names = check_sddl(template)?;
     ensure!(
-        !names.is_empty() && names.iter().all(|n| n == from_family),
+        !names.is_empty() && names.iter().all(|n| n.eq_ignore_ascii_case(from_family)),
         "Template does not name its app"
     );
-    let quoted = format!("\"{from_family}\"");
-    Ok(template.replace(&quoted, &format!("\"{to_family}\"")))
+    let mut out = template.to_owned();
+    for name in names {
+        out = out.replace(&format!("\"{name}\""), &format!("\"{to_family}\""));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1075,6 +1079,25 @@ mod tests {
             "x))(A;;FA;;;WD)((",
         );
         assert!(own_sddl(&sneaky, calc).is_err());
+    }
+
+    #[test]
+    fn permissions_windows_wrote_in_capitals_still_name_their_own_app() {
+        let calc = "Microsoft.WindowsCalculator_8wekyb3d8bbwe";
+        let upper = APP_FILE.replace(calc, &calc.to_ascii_uppercase());
+        assert_eq!(own_sddl(&upper, calc).unwrap(), upper);
+        assert!(own_sddl(&upper, "Microsoft.BingWeather_8wekyb3d8bbwe").is_err());
+
+        let alarms = "Microsoft.WindowsAlarms_8wekyb3d8bbwe";
+        let weather = "Microsoft.BingWeather_8wekyb3d8bbwe";
+        let out = template_sddl(
+            &DIR_SDDL.replace(alarms, &alarms.to_ascii_uppercase()),
+            alarms,
+            weather,
+        )
+        .unwrap();
+        assert!(out.contains(&format!("\"{weather}\"")));
+        assert!(!out.to_ascii_lowercase().contains("windowsalarms"));
     }
 
     #[test]
