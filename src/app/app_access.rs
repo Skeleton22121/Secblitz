@@ -360,12 +360,27 @@ fn policy_name(capability: Capability) -> &'static str {
     }
 }
 
-fn is_controlled(store: &dyn ConsentStore, capability: Capability) -> bool {
-    let device_off = store
+fn device_off(store: &dyn ConsentStore, capability: Capability) -> bool {
+    store
         .machine_string(&base_path(capability), "Value")
-        .is_some_and(|v| v.trim().eq_ignore_ascii_case("deny"));
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("deny"))
+}
+
+fn is_controlled(store: &dyn ConsentStore, capability: Capability) -> bool {
     let policy = store.machine_dword(APP_PRIVACY_POLICY, policy_name(capability));
-    device_off || matches!(policy, Some(1 | 2))
+    device_off(store, capability) || matches!(policy, Some(1 | 2))
+}
+
+/// The switch for every account and an organization's rule both outrank the person's own choice.
+fn effective_master(store: &dyn ConsentStore, capability: Capability, own: bool) -> bool {
+    if device_off(store, capability) {
+        return false;
+    }
+    match store.machine_dword(APP_PRIVACY_POLICY, policy_name(capability)) {
+        Some(1) => true,
+        Some(2) => false,
+        _ => own,
+    }
 }
 
 struct Times {
@@ -398,7 +413,7 @@ pub fn read_listing(
 ) -> Listing {
     let base = base_path(capability);
     let mut listing = Listing::empty(capability);
-    listing.master = is_allowed(store.string(&base, "Value"));
+    listing.master = effective_master(store, capability, is_allowed(store.string(&base, "Value")));
     listing.controlled = is_controlled(store, capability);
 
     for key in store.subkeys(&base, MAX_APPS * 2) {
@@ -1220,6 +1235,36 @@ mod tests {
         );
         let unknown = read_listing(&fake, CAM, None, &no_names);
         assert!(unknown.apps.iter().all(|a| a.in_use));
+    }
+
+    #[test]
+    fn the_main_switch_shows_what_windows_really_allows() {
+        let (mut fake, listing) = sample();
+        assert!(listing.master);
+        let base = base_path(CAM);
+        fake.machine_strings
+            .insert(id(&base, "Value"), "Deny".into());
+        assert!(
+            !read_listing(&fake, CAM, None, &no_names).master,
+            "off for every account"
+        );
+
+        fake.machine_strings
+            .insert(id(&base, "Value"), "Allow".into());
+        fake.machine_dwords
+            .insert(id(APP_PRIVACY_POLICY, "LetAppsAccessCamera"), 2);
+        assert!(
+            !read_listing(&fake, CAM, None, &no_names).master,
+            "forced off"
+        );
+
+        fake.strings.insert(id(&base, "Value"), "Deny".into());
+        fake.machine_dwords
+            .insert(id(APP_PRIVACY_POLICY, "LetAppsAccessCamera"), 1);
+        assert!(
+            read_listing(&fake, CAM, None, &no_names).master,
+            "forced on"
+        );
     }
 
     #[test]
