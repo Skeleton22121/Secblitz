@@ -2,6 +2,12 @@ use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 
+const ADDONS: &str = "browser.extensions_off";
+
+fn is_addon(item: &secblitz::model::ItemLabel) -> bool {
+    item.key.starts_with("chromium:chrome:") || item.key.starts_with("chromium:edge:")
+}
+
 pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
     if report
         .findings
@@ -20,6 +26,7 @@ pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
             && available.contains(&r.id)
             && advice::for_outcome(r).step == NextStep::Repair
             && !ids.contains(&r.id)
+            && (r.id != ADDONS || r.items.iter().any(is_addon))
         {
             ids.push(r.id.clone());
         }
