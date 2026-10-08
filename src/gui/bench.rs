@@ -1212,6 +1212,7 @@ fn report_with(app: &mut App, open: &[&str], changed: &[&str]) {
                 CheckStatus::Compliant
             };
             o.undoable = changed.contains(&o.id.as_str());
+            o.switched_back = o.undoable;
         }
     });
 }
@@ -1346,6 +1347,35 @@ fn a_topic_counts_only_its_own_chosen_fixes() {
         fixes::chosen_in_topic(&app.fixes, &app.ctx, Topic::Network),
         ["net.llmnr"]
     );
+}
+
+#[test]
+fn an_add_on_left_on_after_others_were_turned_off_is_not_switched_back() {
+    let mut app = app();
+    let id = "browser.extensions_off";
+    let set = |app: &mut App, undoable: bool, switched_back: bool| {
+        with_report(app, |r| {
+            for o in &mut r.results {
+                o.status = CheckStatus::Compliant;
+            }
+            let o = r.results.iter_mut().find(|o| o.id == id).expect("the spec");
+            o.status = CheckStatus::Attention;
+            o.items = vec![secblitz::model::ItemLabel {
+                kind: "addon".into(),
+                name: "Add-on".into(),
+                key: format!("chromium:edge:{}", "b".repeat(32)),
+                why: "sites".into(),
+            }];
+            o.undoable = undoable;
+            o.switched_back = switched_back;
+        });
+    };
+    set(&mut app, false, false);
+    let untouched = line_of(&app, Topic::Browsers);
+    set(&mut app, true, false);
+    assert_eq!(line_of(&app, Topic::Browsers), untouched);
+    set(&mut app, true, true);
+    assert_eq!(line_of(&app, Topic::Browsers), Line::SwitchedBack(1));
 }
 
 #[test]

@@ -387,7 +387,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         list.push(Att {
             id: id.clone(),
             topic: Topic::of(id),
-            switched_back: r.undoable,
+            switched_back: r.switched_back,
             name,
             line,
             why: ctx.t(a.next),

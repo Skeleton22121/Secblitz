@@ -777,7 +777,9 @@ fn a_chosen_fix_that_was_switched_back_is_written_again_and_undo_keeps_the_origi
     e.apply_selected(&[id.into()], |_| {}).unwrap();
     let fixed = state.borrow().values[id].clone();
     state.borrow_mut().values.insert(id.into(), switched_back.clone());
-    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    let seen = e.audit().unwrap();
+    assert_eq!(seen.results[0].status, CheckStatus::Attention);
+    assert!(seen.results[0].switched_back);
 
     // Applying everything never rewrites what someone else changed.
     let writes = state.borrow().writes.len();
@@ -839,6 +841,21 @@ fn only_the_picked_add_ons_are_turned_off_and_undo_turns_exactly_those_back_on()
     );
     let recorded = e.load().unwrap().pop().unwrap();
     assert_eq!(recorded.entries[0].before, json!({"items": {ADDON_A: 1}}));
+    drop(recorded);
+    let seen = e.audit().unwrap();
+    assert_eq!(seen.results[0].status, CheckStatus::Attention);
+    assert!(seen.results[0].undoable);
+    assert!(
+        !seen.results[0].switched_back,
+        "an add-on that was not picked is not switched back"
+    );
+    let turned_on = json!({"items": {ADDON_A: 1, ADDON_B: 1, ADDON_OLD: 0}});
+    state.borrow_mut().values.insert(id.into(), turned_on);
+    assert!(e.audit().unwrap().results[0].switched_back);
+    state
+        .borrow_mut()
+        .values
+        .insert(id.into(), json!({"items": {ADDON_A: 0, ADDON_B: 1, ADDON_OLD: 0}}));
     e.choose_items(ItemChoice::new()).unwrap();
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
     assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);

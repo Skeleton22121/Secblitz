@@ -30,6 +30,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ### Fixed
 - Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
+- A start-up program or browser add-on found after a fix is no longer shown as switched back.
 
 ## [0.10.0] - 2026-10-07
 

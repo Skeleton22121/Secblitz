@@ -1,7 +1,7 @@
 //! Read-only assessment: audit, history and findings.
 
 use super::catalog::assessment_status;
-use super::journal::{State, Transaction};
+use super::journal::{Entry, State, Transaction};
 use super::{Engine, Outcome, Progress, ProgressStep, Report, READ_BATCH};
 use crate::model::{CheckStatus, Control, Finding, Observation, Readiness};
 use anyhow::Result;
@@ -126,14 +126,23 @@ impl Engine {
     }
 
     /// Settings that can be put back one at a time: still owned, in a complete batch.
-    fn undoable_ids(transactions: &[Transaction]) -> std::collections::HashSet<&str> {
+    fn undoable_entries(transactions: &[Transaction]) -> Vec<&Entry> {
         transactions
             .iter()
             .filter(|t| !t.reverted && t.sealed && !t.reverting && !t.incomplete())
             .flat_map(|t| &t.entries)
             .filter(|e| matches!(e.state, State::Applied | State::Restoring))
-            .map(|e| e.id.as_str())
             .collect()
+    }
+
+    /// A list item found after a fix is new, not switched back: only what was recorded can be.
+    fn recorded_unsafe(id: &str, observed: &serde_json::Value, mine: &[&Entry]) -> bool {
+        match crate::hardening::spec(id) {
+            Some(s) if s.dynamic() => mine
+                .iter()
+                .any(|e| s.has_recorded_unsafe(observed, &e.before)),
+            _ => true,
+        }
     }
 
     pub fn audit(&mut self) -> Result<Report> {
@@ -160,21 +169,28 @@ impl Engine {
                 .unwrap_or_default(),
             ..Report::default()
         };
-        let undoable = Self::undoable_ids(&transactions);
+        let undoable = Self::undoable_entries(&transactions);
         let controls = self.controls.clone();
         for batch in controls.chunks(READ_BATCH) {
             let ids: Vec<&str> = batch.iter().map(|c| c.id.as_str()).collect();
             for (c, observed) in batch.iter().zip(self.observe_many(&ids)) {
+                let mine: Vec<&Entry> = undoable.iter().copied().filter(|e| e.id == c.id).collect();
+                let mut switched_back = false;
                 let mut result = match observed {
-                    Ok(o) => match assessment_status(&c.id, &o) {
-                        Ok(status) => Self::observed_outcome(c, status, &o.reason, &o),
-                        Err(e) => {
-                            Self::observed_outcome(c, CheckStatus::Error, format!("{e:#}"), &o)
+                    Ok(o) => {
+                        switched_back =
+                            !mine.is_empty() && Self::recorded_unsafe(&c.id, &o.value, &mine);
+                        match assessment_status(&c.id, &o) {
+                            Ok(status) => Self::observed_outcome(c, status, &o.reason, &o),
+                            Err(e) => {
+                                Self::observed_outcome(c, CheckStatus::Error, format!("{e:#}"), &o)
+                            }
                         }
-                    },
+                    }
                     Err(e) => Self::outcome(c, CheckStatus::Error, format!("{e:#}")),
                 };
-                result.undoable = undoable.contains(c.id.as_str());
+                result.undoable = !mine.is_empty();
+                result.switched_back = switched_back;
                 report.push(result, &mut callback);
             }
         }

@@ -147,6 +147,10 @@ pub struct Outcome {
     /// Secblitz changed this setting and can put it back on its own. Filled by a check.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub undoable: bool,
+    /// Something Secblitz changed here needs a change again. Items found after the change
+    /// do not count. Filled by a check.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub switched_back: bool,
 }
 
 /// Approval alone cannot make an ambiguous original safe, so there is deliberately no force-truncate API. Restore a verified journal backup under engine.lock instead.

@@ -548,6 +548,15 @@ impl Spec {
 
     /// Whether `observed` holds an item that still needs changing and is not part of `recorded`.
     pub fn has_unrecorded_unsafe(&self, observed: &Value, recorded: &Value) -> bool {
+        self.unsafe_item(observed, recorded, false)
+    }
+
+    /// Whether an item of `recorded` needs changing again in `observed`.
+    pub fn has_recorded_unsafe(&self, observed: &Value, recorded: &Value) -> bool {
+        self.unsafe_item(observed, recorded, true)
+    }
+
+    fn unsafe_item(&self, observed: &Value, recorded: &Value, in_record: bool) -> bool {
         let (Some(o), Some(r)) = (
             observed.get("items").and_then(Value::as_object),
             recorded.get("items").and_then(Value::as_object),
@@ -555,7 +564,7 @@ impl Spec {
             return false;
         };
         o.iter().any(|(k, v)| {
-            !r.contains_key(k)
+            r.contains_key(k) == in_record
                 && self.key(k).is_some_and(|key| {
                     Item::from_json(v).is_ok_and(|item| !item_is_safe(key.rule, &item))
                 })

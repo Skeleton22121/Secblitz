@@ -1925,6 +1925,9 @@ fn browser_add_on_targets_views_and_picks_only_touch_what_was_named() {
     assert!(s.has_unrecorded_unsafe(&seen, &before));
     assert!(!s.has_unrecorded_unsafe(&json!({"items": {ADDON_A: 1}}), &before));
     assert!(!s.has_unrecorded_unsafe(&json!({"items": {ADDON_A: 0, ADDON_B: 0}}), &before));
+    assert!(!s.has_recorded_unsafe(&seen, &json!({"items": {}})));
+    assert!(!s.has_recorded_unsafe(&json!({"items": {ADDON_A: 2, ADDON_B: 1}}), &before));
+    assert!(s.has_recorded_unsafe(&seen, &before));
     assert!(!spec("persistence.run_and_tasks").unwrap().needs_choice());
 }
 

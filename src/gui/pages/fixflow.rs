@@ -625,8 +625,10 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             result,
             verify,
         } if !*undo => {
+            let picked: Vec<String> = state.addons_picked.iter().cloned().collect();
             let summary = flow::summarize(
                 Some(attempted),
+                &picked,
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
             );
@@ -649,7 +651,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 verify.as_deref().map_err(String::as_str),
             );
             let summary = if chosen.is_empty() {
-                flow::summarize(None, result, verify)
+                flow::summarize(None, &[], result, verify)
             } else {
                 flow::summarize_chosen(chosen, result, verify)
             };
