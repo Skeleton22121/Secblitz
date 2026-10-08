@@ -66,6 +66,30 @@ fn windows_dir() -> Result<PathBuf> {
     Ok(p)
 }
 
+/// The running account's own temp folder, from its profile rather than inherited variables.
+/// Windows PowerShell 5.1 locks itself down when it cannot write its policy test file, and
+/// without TEMP it falls back to the Windows folder, which LocalService cannot write.
+pub fn own_temp_dir() -> Option<PathBuf> {
+    let mut raw = null_mut();
+    let hr = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_LocalAppData,
+            KF_FLAG_DONT_VERIFY as u32,
+            null_mut(),
+            &mut raw,
+        )
+    };
+    let path = (hr >= 0 && !raw.is_null()).then(|| {
+        let len = (0..).take_while(|&i| unsafe { *raw.add(i) } != 0).count();
+        PathBuf::from(String::from_utf16_lossy(unsafe {
+            std::slice::from_raw_parts(raw, len)
+        }))
+    });
+    unsafe { windows_sys::Win32::System::Com::CoTaskMemFree(raw.cast()) };
+    let temp = path?.join("Temp");
+    (temp.is_absolute() && temp.is_dir()).then_some(temp)
+}
+
 pub fn is_elevated() -> Result<bool> {
     unsafe {
         let mut token = null_mut();
@@ -385,7 +409,8 @@ fn run_script_in<T: DeserializeOwned>(
     // stderr rejection: real errors must not be filtered out as "progress".
     let bootstrap = "$global:ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
     let job = job(processes)?;
-    let mut child = Command::new(ps)
+    let mut command = Command::new(ps);
+    command
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -411,9 +436,11 @@ fn run_script_in<T: DeserializeOwned>(
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Start inbox Windows PowerShell")?;
+        .stderr(Stdio::piped());
+    if let Some(temp) = own_temp_dir() {
+        command.env("TEMP", &temp).env("TMP", &temp);
+    }
+    let mut child = command.spawn().context("Start inbox Windows PowerShell")?;
     // The fixed script waits on stdin before any probes. Failure to assign never
     // releases that gate. Job closure kills PowerShell and disallows descendants.
     if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) } == 0 {

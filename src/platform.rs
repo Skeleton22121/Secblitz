@@ -322,7 +322,7 @@ pub fn require_admin(what: &str) -> Result<()> {
 }
 
 #[cfg(windows)]
-pub use windows::{enclosing_job, enclosing_job_contains, EnclosingJob};
+pub use windows::{enclosing_job, enclosing_job_contains, own_temp_dir, EnclosingJob};
 
 /// Servicing never runs inside another program's job (it could be killed mid-repair); callers check first.
 pub fn ensure_own_process_tree() -> Result<()> {
