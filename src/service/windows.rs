@@ -16,7 +16,8 @@ use std::{
 use windows_service::{
     define_windows_service,
     service::{
-        ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
+        ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
+        ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
         ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
     },
     service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
@@ -684,7 +685,9 @@ pub fn install() -> Result<()> {
                 account_name: Some(ACCOUNT.into()),
                 account_password: None,
             },
+            // START: Windows requires it to set restart-on-failure actions.
             ServiceAccess::CHANGE_CONFIG
+                | ServiceAccess::START
                 | ServiceAccess::DELETE
                 | ServiceAccess::WRITE_DAC
                 | ServiceAccess::WRITE_OWNER,
@@ -746,6 +749,16 @@ pub fn install() -> Result<()> {
             error()
         );
         service.set_description("Read-only security observations every 15 minutes. No automatic remediation; latest report in Program Files/Secblitz/Monitor.")?;
+        let restart = |seconds| ServiceAction {
+            action_type: ServiceActionType::Restart,
+            delay: Duration::from_secs(seconds),
+        };
+        service.update_failure_actions(ServiceFailureActions {
+            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(24 * 60 * 60)),
+            reboot_msg: None,
+            command: None,
+            actions: Some(vec![restart(5), restart(5), restart(30)]),
+        })?;
         ensure!(
             unsafe {
                 ChangeServiceConfigW(

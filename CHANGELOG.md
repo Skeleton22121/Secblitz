@@ -38,6 +38,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - You are told when Windows switches back a virus protection setting Secblitz fixed.
 - Turning the system tray icon on or off takes effect right away instead of at the next sign-in.
 - A virus scan now shows that it is scanning while it runs and says when it has finished.
+- Background checks start again on their own if they stop unexpectedly.
 
 ## [0.9.3] - 2026-10-07
 

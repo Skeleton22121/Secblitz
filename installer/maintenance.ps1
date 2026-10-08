@@ -620,6 +620,8 @@ public static class SecblitzPaths {
         }
         ResumeMonitor {
             if ($null -ne $monitor) {
+                # An upgrade keeps the service's old settings, so restart-on-failure is set here too.
+                & ([IO.Path]::Combine([Environment]::SystemDirectory, 'sc.exe')) failure SecblitzMonitor reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
                 $controller = Get-Service -Name SecblitzMonitor
                 try {
                     if ($controller.Status -eq 'Stopped') { $controller.Start() }
