@@ -26,6 +26,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ### Fixed
 - Files left over from an update are removed once the update is confirmed.
 - Removing apps that came with Windows 10 now works.
+- White app icons on Windows 10 show on a colored tile instead of disappearing, including Maps and People.
 
 ## [0.9.3] - 2026-10-07
 

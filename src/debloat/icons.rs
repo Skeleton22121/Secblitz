@@ -19,9 +19,13 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
-pub fn logo_base(manifest_xml: &str) -> Option<String> {
+/// Windows 10's tile blue, behind white app icons whose own tile color is
+/// transparent or unknown.
+const WINDOWS_BLUE: [u8; 3] = [0x00, 0x78, 0xD4];
+
+fn visual_elements(manifest_xml: &str) -> Option<&str> {
     let mut rest = manifest_xml;
-    let tag = loop {
+    loop {
         let at = rest.find("VisualElements")?;
         let before = &rest[..at];
         let after = &rest[at + "VisualElements".len()..];
@@ -33,15 +37,89 @@ pub fn logo_base(manifest_xml: &str) -> Option<String> {
             })
             .unwrap_or(false);
         if opens && after.starts_with(|c: char| c.is_ascii_whitespace()) {
-            break &after[..after.find('>')?];
+            return Some(&after[..after.find('>')?]);
         }
         rest = after;
-    };
+    }
+}
+
+pub fn logo_base(manifest_xml: &str) -> Option<String> {
+    let tag = visual_elements(manifest_xml)?;
     let value = attribute(tag, "Square44x44Logo")?;
     let path = value.replace('\\', "/");
     let lower = path.to_ascii_lowercase();
     let base = &path[..lower.strip_suffix(".png")?.len()];
     (backup::valid_relative(&path) && backup::valid_relative(base)).then(|| base.to_string())
+}
+
+/// The app's own tile color, when the manifest names a dark enough one for a
+/// white icon to show on.
+pub fn tile_color(manifest_xml: &str) -> Option<[u8; 3]> {
+    let value = attribute(visual_elements(manifest_xml)?, "BackgroundColor")?;
+    let hex = value.trim().strip_prefix('#')?;
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    let rgb = [channel(0)?, channel(2)?, channel(4)?];
+    let luma = (299 * rgb[0] as u32 + 587 * rgb[1] as u32 + 114 * rgb[2] as u32) / 1000;
+    (luma <= 160).then_some(rgb)
+}
+
+/// Windows 10 apps often ship white icons made for a colored tile or a dark
+/// taskbar. They vanish on a light page.
+pub fn light_glyph(image: &Rgba) -> bool {
+    let (mut opaque, mut white) = (0usize, 0usize);
+    for p in image.pixels.chunks_exact(4).filter(|p| p[3] >= 128) {
+        opaque += 1;
+        if p[0].min(p[1]).min(p[2]) >= 220 {
+            white += 1;
+        }
+    }
+    opaque > 0 && white * 10 >= opaque * 9
+}
+
+/// Draw the icon on a rounded tile of `color`, the way Windows 10 shows it.
+pub fn plate(image: &Rgba, color: [u8; 3]) -> Rgba {
+    let (w, h) = (image.width as f32, image.height as f32);
+    let radius = w.min(h) * 0.2;
+    let mut pixels = Vec::with_capacity(image.pixels.len());
+    for (i, p) in image.pixels.chunks_exact(4).enumerate() {
+        let x = (i as u32 % image.width) as f32 + 0.5;
+        let y = (i as u32 / image.width) as f32 + 0.5;
+        let dx = (radius - x).max(x - (w - radius)).max(0.0);
+        let dy = (radius - y).max(y - (h - radius)).max(0.0);
+        let cover = (radius - (dx * dx + dy * dy).sqrt() + 0.5).clamp(0.0, 1.0);
+        let a = p[3] as f32 / 255.0;
+        let alpha = a + cover * (1.0 - a);
+        for c in 0..3 {
+            let over = p[c] as f32 * a + color[c] as f32 * cover * (1.0 - a);
+            pixels.push(if alpha > 0.0 {
+                (over / alpha).round() as u8
+            } else {
+                0
+            });
+        }
+        pixels.push((alpha * 255.0).round() as u8);
+    }
+    Rgba {
+        width: image.width,
+        height: image.height,
+        pixels,
+    }
+}
+
+fn encode_rgba(image: &Rgba) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, image.width, image.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().context("Save icon")?;
+    writer
+        .write_image_data(&image.pixels)
+        .context("Save icon")?;
+    writer.finish().context("Save icon")?;
+    Ok(out)
 }
 
 fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -201,23 +279,27 @@ pub fn from_package(main: &Path, resources: &[PathBuf], strict: bool) -> Result<
             folder.join(dir)
         }
     };
-    let mut names: Vec<(String, usize)> = Vec::new();
-    for (i, folder) in folders.iter().enumerate() {
-        let assets = assets_of(folder);
-        if is_dir(&assets, strict) {
-            names.extend(file_names(&assets).into_iter().map(|n| (n, i)));
+    // Some Windows 10 apps ship only high-contrast icons. The contrast-black
+    // set is a white glyph, which gets plated like any other white icon.
+    let found = ["", "contrast-black"].iter().find_map(|sub| {
+        let mut names: Vec<(String, PathBuf)> = Vec::new();
+        for folder in &folders {
+            let assets = assets_of(folder).join(sub);
+            if is_dir(&assets, strict) {
+                names.extend(file_names(&assets).into_iter().map(|n| (n, assets.clone())));
+            }
         }
-    }
-    let all: Vec<String> = names.iter().map(|(n, _)| n.clone()).collect();
-    let chosen = pick(&all, stem).context("No icon file")?;
-    let at = names
-        .iter()
-        .filter(|(n, _)| *n == chosen)
-        .map(|(_, i)| *i)
-        .min()
-        .unwrap_or(0);
-    let bytes = read_capped(&assets_of(folders[at]).join(&chosen), MAX_PNG, strict)?;
+        let all: Vec<String> = names.iter().map(|(n, _)| n.clone()).collect();
+        let chosen = pick(&all, stem)?;
+        names.into_iter().find(|(n, _)| *n == chosen)
+    });
+    let (chosen, dir) = found.context("No icon file")?;
+    let bytes = read_capped(&dir.join(&chosen), MAX_PNG, strict)?;
     let image = decode(&bytes)?;
+    if light_glyph(&image) {
+        let plated = plate(&image, tile_color(&manifest).unwrap_or(WINDOWS_BLUE));
+        return Ok((encode_rgba(&plated)?, plated));
+    }
     Ok((bytes, image))
 }
 
@@ -349,6 +431,9 @@ fn one(src: &Sources, installed: &[Installed], index: u16) -> Option<Rgba> {
         }
     }
     if let Some(icon) = src.app_dir.and_then(|d| cache_read(d, index)) {
+        if light_glyph(&icon) {
+            return Some(plate(&icon, WINDOWS_BLUE));
+        }
         return Some(icon);
     }
     let store = src.store?;
@@ -635,6 +720,136 @@ mod tests {
         assert!(installed_folders(dir.path(), "Missing.App").is_none());
     }
 
+    fn white_glyph(side: u32) -> Vec<u8> {
+        let mut px = Vec::new();
+        for y in 0..side {
+            for x in 0..side {
+                let inside =
+                    (side / 4..side * 3 / 4).contains(&x) && (side / 4..side * 3 / 4).contains(&y);
+                px.extend_from_slice(if inside {
+                    &[255, 255, 255, 255]
+                } else {
+                    &[0, 0, 0, 0]
+                });
+            }
+        }
+        encode(side, side, png::ColorType::Rgba, png::BitDepth::Eight, &px)
+    }
+
+    fn at(img: &Rgba, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * img.width + x) * 4) as usize;
+        img.pixels[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn tile_color_takes_only_dark_hex_colors() {
+        let ve = |bg: &str| {
+            format!("<uap:VisualElements BackgroundColor=\"{bg}\" Square44x44Logo=\"L.png\"/>")
+        };
+        assert_eq!(tile_color(&ve("#113768")), Some([0x11, 0x37, 0x68]));
+        assert_eq!(tile_color(&ve("transparent")), None);
+        assert_eq!(tile_color(&ve("#FFFFFF")), None);
+        assert_eq!(tile_color(&ve("#12345")), None);
+        assert_eq!(tile_color(&ve("#GG0000")), None);
+        assert_eq!(tile_color("<Package/>"), None);
+    }
+
+    #[test]
+    fn only_white_icons_count_as_light_glyphs() {
+        assert!(light_glyph(&decode(&white_glyph(8)).unwrap()));
+        assert!(!light_glyph(&decode(&tiny()).unwrap()));
+        let clear = encode(
+            1,
+            1,
+            png::ColorType::Rgba,
+            png::BitDepth::Eight,
+            &[255, 255, 255, 0],
+        );
+        assert!(!light_glyph(&decode(&clear).unwrap()));
+    }
+
+    #[test]
+    fn plate_puts_the_icon_on_a_rounded_tile() {
+        let img = plate(&decode(&white_glyph(48)).unwrap(), [0, 0x78, 0xD4]);
+        assert_eq!((img.width, img.height), (48, 48));
+        assert_eq!(at(&img, 24, 24), [255, 255, 255, 255]);
+        assert_eq!(at(&img, 24, 2), [0, 0x78, 0xD4, 255]);
+        assert_eq!(at(&img, 0, 0)[3], 0);
+        assert!(!light_glyph(&img));
+        let round_trip = decode(&encode_rgba(&img).unwrap()).unwrap();
+        assert_eq!(round_trip, img);
+    }
+
+    #[test]
+    fn white_icons_are_plated_in_the_app_tile_color() {
+        let dir = tempfile::tempdir().unwrap();
+        let glyph = white_glyph(48);
+        let manifest = "<Package><uap:VisualElements BackgroundColor=\"#113768\" Square44x44Logo=\"Assets\\W.png\"/></Package>";
+        let main = package(
+            dir.path(),
+            "A.B_1.0.0.0_x64__8wekyb3d8bbwe",
+            &[
+                ("AppxManifest.xml", manifest.as_bytes()),
+                ("Assets/W.targetsize-48_altform-unplated.png", &glyph),
+            ],
+        );
+        let (bytes, img) = from_package(&main, &[], false).unwrap();
+        assert_ne!(bytes, glyph);
+        assert_eq!(decode(&bytes).unwrap(), img);
+        assert_eq!(at(&img, 24, 2), [0x11, 0x37, 0x68, 255]);
+        let plain = package(
+            dir.path(),
+            "C.D_1.0.0.0_x64__8wekyb3d8bbwe",
+            &[
+                ("AppxManifest.xml", MANIFEST.as_bytes()),
+                ("Assets/W.targetsize-48.png", &glyph),
+            ],
+        );
+        let (_, img) = from_package(&plain, &[], false).unwrap();
+        assert_eq!(at(&img, 24, 2), [0, 0x78, 0xD4, 255]);
+    }
+
+    #[test]
+    fn apps_with_only_high_contrast_icons_use_the_white_set_on_a_tile() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut black = Vec::new();
+        for _ in 0..48 * 48 {
+            black.extend_from_slice(&[0, 0, 0, 255]);
+        }
+        let black = encode(48, 48, png::ColorType::Rgba, png::BitDepth::Eight, &black);
+        let main = package(
+            dir.path(),
+            "A.B_1.0.0.0_x64__8wekyb3d8bbwe",
+            &[
+                ("AppxManifest.xml", MANIFEST.as_bytes()),
+                ("Assets/contrast-white/W.targetsize-48.png", &black),
+                (
+                    "Assets/contrast-black/W.targetsize-48.png",
+                    &white_glyph(48),
+                ),
+            ],
+        );
+        let (_, img) = from_package(&main, &[], false).unwrap();
+        assert_eq!(at(&img, 24, 24), [255, 255, 255, 255]);
+        assert_eq!(at(&img, 24, 2), [0, 0x78, 0xD4, 255]);
+        let both = package(
+            dir.path(),
+            "C.D_1.0.0.0_x64__8wekyb3d8bbwe",
+            &[
+                ("AppxManifest.xml", MANIFEST.as_bytes()),
+                ("Assets/W.targetsize-48.png", &tiny()),
+                (
+                    "Assets/contrast-black/W.targetsize-48.png",
+                    &white_glyph(48),
+                ),
+            ],
+        );
+        assert_eq!(
+            from_package(&both, &[], false).unwrap().1.pixels,
+            [9, 8, 7, 255]
+        );
+    }
+
     #[test]
     fn junk_icon_file_is_not_used() {
         let dir = tempfile::tempdir().unwrap();
@@ -717,5 +932,19 @@ mod tests {
             app_dir: None,
         };
         assert!(load_from(&none, &installed, len).is_empty());
+    }
+
+    #[test]
+    fn a_white_icon_cached_by_an_older_version_is_plated() {
+        let state = tempfile::tempdir().unwrap();
+        let index = super::super::catalog::owner("Microsoft.BingWeather").unwrap();
+        cache_write(state.path(), index, &white_glyph(48)).unwrap();
+        let src = Sources {
+            root: None,
+            store: None,
+            app_dir: Some(state.path()),
+        };
+        let got = load_from(&src, &[], super::super::catalog().len() as u16);
+        assert_eq!(at(&got[&index], 24, 2), [0, 0x78, 0xD4, 255]);
     }
 }
