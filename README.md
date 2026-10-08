@@ -46,7 +46,7 @@ The installer is not code-signed yet, so Windows may show an unknown publisher w
 Get-FileHash .\secblitz-0.10.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-Tested on Windows 11, 64-bit. Windows 10 is not tested.
+Tested on Windows 10 (version 22H2) and Windows 11, 64-bit.
 
 ## Build from source
 
