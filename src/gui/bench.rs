@@ -103,6 +103,24 @@ fn checking_again_shows_the_whole_checking_screen_then_hands_off() {
 }
 
 #[test]
+fn a_fresh_start_checks_the_pc_instead_of_waiting_on_a_check_that_never_began() {
+    let mut app = app();
+    app.ctx.damage = Some(pages::recovery::DamageInfo::new(
+        secblitz::engine::recover::JournalDamaged {
+            kind: secblitz::engine::recover::DamageKind::Total,
+            files: 1,
+        },
+    ));
+    let catalog = app.ctx.catalog.clone();
+    drop(app.update(Message::Worker(worker::Event::Recovered(Ok(catalog)))));
+    assert!(app.ctx.damage.is_none() && app.ctx.report.is_none());
+    assert!(
+        app.ctx.checking.is_some(),
+        "the checking screen must belong to a check that is running"
+    );
+}
+
+#[test]
 fn the_check_after_a_fix_keeps_the_results_on_screen() {
     let mut app = app();
     app.ctx.checking = Some(CheckProgress {

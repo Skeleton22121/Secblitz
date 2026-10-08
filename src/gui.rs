@@ -748,11 +748,13 @@ impl App {
                 self.ctx.report = None;
                 self.ctx.checked_at = None;
                 self.ctx.check_error = None;
+                self.ctx.checking = None;
                 self.record_recovery();
                 let done = self.ctx.t(recovery::DONE);
                 extra = Task::batch([
                     self.update(Message::Toast(done, Tone::Good)),
                     self.preload_all(),
+                    self.update(Message::CheckNow),
                 ]);
             }
             E::Recovered(Err(_)) => {
