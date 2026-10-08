@@ -8,6 +8,10 @@ $result = [ordered]@{ name = $name; removed = $false; protected = $false; error 
 function Test-ProtectedText([string]$text) {
     return ($text -like '*0x80073CFA*' -or $text -like '*NonRemovable*' -or $text -like '*cannot be removed*')
 }
+function Remove-ForEveryone([string]$fullName) {
+    try { Remove-AppxPackage -AllUsers -Package $fullName; return $null }
+    catch { return $_ }
+}
 try {
     if ([string]::IsNullOrWhiteSpace($name)) { throw 'No app name' }
     $installed = @(Get-AppxPackage -AllUsers -Name $name)
@@ -15,12 +19,25 @@ try {
         if ($p.NonRemovable -or $p.IsFramework) { $result.protected = $true }
     }
     if (-not $result.protected) {
-        foreach ($p in $installed) {
-            try { Remove-AppxPackage -AllUsers -Package $p.PackageFullName }
-            catch {
-                if (Test-ProtectedText ($_.Exception.Message + ' ' + $_.FullyQualifiedErrorId)) { $result.protected = $true; break }
-                throw
+        # Windows 10 provisions inbox apps under the bundle name, so removing
+        # the main package for all users fails to deprovision it (0x80070002).
+        # Removing the bundle takes the main and resource packages with it.
+        $bundles = @(Get-AppxPackage -AllUsers -PackageTypeFilter Bundle -Name $name)
+        $windows10 = [Environment]::OSVersion.Version.Build -lt 22000
+        $targets = if ($windows10 -and $bundles.Count -gt 0) { $bundles } else { $installed }
+        foreach ($p in $targets) {
+            $failure = Remove-ForEveryone $p.PackageFullName
+            if ($null -ne $failure -and -not $p.IsBundle -and $bundles.Count -gt 0) {
+                foreach ($b in $bundles) {
+                    $failure = Remove-ForEveryone $b.PackageFullName
+                    if ($null -ne $failure) { break }
+                }
             }
+            if ($null -ne $failure) {
+                if (Test-ProtectedText ($failure.Exception.Message + ' ' + $failure.FullyQualifiedErrorId)) { $result.protected = $true; break }
+                throw $failure
+            }
+            if (@(Get-AppxPackage -AllUsers -Name $name).Count -eq 0) { break }
         }
     }
     if (-not $result.protected) {
