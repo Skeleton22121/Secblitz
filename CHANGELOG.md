@@ -36,6 +36,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Older version downloads are no longer offered on the website.
 - Secblitz is now tested on Windows 10 (version 22H2).
 - The window's title bar blends into the app, without the icon and name.
+- The Home summary is shorter: what Secblitz can fix for you, and when it last checked.
 
 ### Fixed
 - Camera, microphone and location lists show the usual names of the apps that come with Windows 10.

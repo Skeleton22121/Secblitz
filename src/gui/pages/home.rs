@@ -452,7 +452,6 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     };
     let attention = items.len().max(1);
     let fixable = split.fixable;
-    let mut notes: Vec<String> = Vec::new();
     let (tone, title, subtitle) = match verdict {
         Verdict::Protected => (
             Tone::Good,
@@ -478,26 +477,8 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
                     fixable,
                 )
             } else {
-                String::new()
+                ctx.t("Some are your choice and some need a step from you.")
             };
-            let mixed =
-                (fixable > 0) as u8 + (split.choices > 0) as u8 + (split.manual > 0) as u8 > 1;
-            if mixed && split.choices > 0 {
-                notes.push(count_text(
-                    ctx,
-                    "1 is optional: you decide on the Protection page.",
-                    "{n} are optional: you decide on the Protection page.",
-                    split.choices,
-                ));
-            }
-            if mixed && split.manual > 0 {
-                notes.push(count_text(
-                    ctx,
-                    "1 needs a step from you, such as a restart or a Windows setting.",
-                    "{n} need a step from you, such as a restart or a Windows setting.",
-                    split.manual,
-                ));
-            }
             (
                 Tone::Warn,
                 count_text(
@@ -600,11 +581,8 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     }
 
     let mut texts = column![widgets::h1(p, title)].spacing(theme::S1);
-    for line in std::iter::once(subtitle)
-        .chain(notes)
-        .filter(|l| !l.is_empty())
-    {
-        texts = texts.push(widgets::muted(p, line));
+    if !subtitle.is_empty() {
+        texts = texts.push(widgets::muted(p, subtitle));
     }
     if let Some(when) = last_checked(ctx) {
         texts = texts.push(widgets::small(p, when));
