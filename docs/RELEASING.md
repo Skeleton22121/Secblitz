@@ -140,21 +140,16 @@ Pages Direct Upload, so no Git integration is needed on Cloudflare.
 
 ### Download count
 
-`/api/downloads` (shown on the page and in the README badge) adds up whole
-downloads of the files in `/downloads/`, installs and updates, from Cloudflare's
-request analytics for secblitz.lol and beacons.lol. Requests from scripts and
-crawlers are left out. It refreshes at most every 10 minutes, when someone
-asks for the number. The downloads themselves are not touched.
+`/api/downloads` (shown on the page and in the README badge) is the total
+download count of every Secblitz installer and portable app attached to the
+GitHub releases, both x64 and ARM. Checksums and the update feed are not
+counted. It asks GitHub at most every 10 minutes, when someone asks for the
+number, and keeps the last total, so the number still shows if GitHub is
+unreachable. No token is needed.
 
 - D1 database `secblitz-downloads`, bound as `DB` in `wrangler.jsonc`. Create
-  the tables with `wrangler d1 execute secblitz-downloads --remote --file
+  the table with `wrangler d1 execute secblitz-downloads --remote --file
   deploy/downloads.sql`.
-- Pages secret `ANALYTICS_TOKEN` (production and preview): a Cloudflare token
-  with only Zone, Analytics, Read on those two zones.
-- Analytics go back about 30 days. If nobody asks for the number for longer
-  than that, the oldest unread days are lost.
-- The first row is the count from before the counter existed (6 September to
-  7 October 2026), one per address and file, without our own test downloads.
 
 ### Environment `signing` and SignPath (optional, off until you turn it on)
 
