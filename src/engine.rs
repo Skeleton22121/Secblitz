@@ -5,7 +5,7 @@
 mod apply;
 mod audit;
 mod catalog;
-pub(crate) mod cfa;
+pub mod cfa;
 mod fsio;
 mod journal;
 pub mod recover;

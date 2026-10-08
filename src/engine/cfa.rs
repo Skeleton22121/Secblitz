@@ -8,8 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) const WATCH: &str = "defender.cfa_watch";
-pub(crate) const BLOCK: &str = "defender.cfa_block";
+pub const WATCH: &str = "defender.cfa_watch";
+pub const BLOCK: &str = "defender.cfa_block";
 const MODE: &str = "EnableControlledFolderAccess";
 const RECORD: &str = "cfa-watch.json";
 pub(crate) const WATCH_SECONDS: u64 = 7 * 24 * 60 * 60;
