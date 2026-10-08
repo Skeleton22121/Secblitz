@@ -1,6 +1,22 @@
 // Included into engine::tests: exercises every extended hardening control through the real engine.
 use crate::hardening::{self, Rule, Source, Spec};
 
+const ADDON_A: &str = "chromium:chrome:abcdefghijklmnopabcdefghijklmnop";
+const ADDON_B: &str = "chromium:edge:ponmlkjihgfedcbaponmlkjihgfedcba";
+const ADDON_OLD: &str = "chromium:chrome:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn pick(e: &mut Engine, id: &str, names: &[&str]) {
+    let names = names.iter().map(|n| (*n).to_owned()).collect();
+    e.choose_items(ItemChoice::from([(id.to_owned(), names)])).unwrap();
+}
+
+fn pick_all(e: &mut Engine, spec: &Spec, state: &Value) {
+    if spec.needs_choice() {
+        let names: Vec<&str> = state["items"].as_object().unwrap().keys().map(String::as_str).collect();
+        pick(e, spec.id, &names);
+    }
+}
+
 fn hardening_unsafe_state(spec: &Spec) -> Value {
     if spec.source == Source::FirewallExposure {
         return json!({"items": {"FPS-A": 15, "FPS-B": 12, "FPS-C": 3, "NETDIS-D": 7}});
@@ -45,6 +61,13 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "run-user:Updater": 1,
             "folder-user:Helper.lnk": 1,
             "task:\\Vendor\\Sync": 1,
+        }});
+    }
+    if spec.source == Source::BrowserExtensions {
+        return json!({"items": {
+            ADDON_A: 1,
+            ADDON_B: 1,
+            ADDON_OLD: 0,
         }});
     }
     if spec.source == Source::StaleAccounts {
@@ -125,6 +148,7 @@ fn every_hardening_control_audits_applies_and_undoes_exactly() {
         let id = spec.id;
         let before = hardening_unsafe_state(spec);
         let (dir, state, mut e) = fixture(id, before.clone());
+        pick_all(&mut e, spec, &before);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
         assert_eq!(e.audit().unwrap().results[0].detail, "Eligible", "{id}");
 
@@ -161,7 +185,8 @@ fn hardening_safe_and_default_states_are_protected_and_never_written() {
     for spec in hardening::all() {
         let id = spec.id;
         let safe = hardening_safe_state(spec);
-        let (_dir, state, mut e) = fixture(id, safe);
+        let (_dir, state, mut e) = fixture(id, safe.clone());
+        pick_all(&mut e, spec, &safe);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
         assert!(
@@ -190,6 +215,7 @@ fn managed_hardening_controls_are_left_alone_but_safe_ones_stay_protected() {
     for spec in hardening::all() {
         let id = spec.id;
         let (_dir, state, mut e) = fixture(id, hardening_unsafe_state(spec));
+        pick_all(&mut e, spec, &hardening_unsafe_state(spec));
         state.borrow_mut().blocked = true;
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped, "{id}");
         let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
@@ -752,4 +778,117 @@ fn a_chosen_fix_that_drifted_to_a_value_of_another_kind_is_left_alone() {
     let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
     assert_ne!(report.results[0].status, CheckStatus::Applied);
     assert_eq!(state.borrow().writes.len(), writes);
+}
+
+fn add_on_fixture(before: Value) -> (TempDir, Rc<RefCell<FakeState>>, Engine) {
+    let (dir, state, e) = fixture("browser.extensions_off", before);
+    state.borrow_mut().merge_items = true;
+    (dir, state, e)
+}
+
+#[test]
+fn only_the_picked_add_ons_are_turned_off_and_undo_turns_exactly_those_back_on() {
+    let id = "browser.extensions_off";
+    let before = json!({"items": {ADDON_A: 1, ADDON_B: 1, ADDON_OLD: 0}});
+    let (_dir, state, mut e) = add_on_fixture(before);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    pick(&mut e, id, &[ADDON_A]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Applied
+    );
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {ADDON_A: 0, ADDON_B: 1, ADDON_OLD: 0}})
+    );
+    assert_eq!(
+        state.borrow().writes,
+        vec![(id.to_string(), json!({"items": {ADDON_A: 0}}))]
+    );
+    let recorded = e.load().unwrap().pop().unwrap();
+    assert_eq!(recorded.entries[0].before, json!({"items": {ADDON_A: 1}}));
+    e.choose_items(ItemChoice::new()).unwrap();
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {ADDON_A: 1, ADDON_B: 1, ADDON_OLD: 0}})
+    );
+}
+
+#[test]
+fn nothing_is_turned_off_unless_the_person_picked_an_add_on() {
+    let id = "browser.extensions_off";
+    let (_dir, state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1, ADDON_B: 1}}));
+    let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(report.results[0].status, CheckStatus::Skipped);
+    pick(&mut e, id, &[]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Skipped
+    );
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Skipped);
+    assert!(state.borrow().writes.is_empty() && e.history().unwrap().is_empty());
+}
+
+#[test]
+fn an_add_on_picked_later_gets_its_own_record_and_each_one_undoes_separately() {
+    let id = "browser.extensions_off";
+    let (_dir, state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1, ADDON_B: 1}}));
+    pick(&mut e, id, &[ADDON_A]);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    pick(&mut e, id, &[ADDON_B]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Applied
+    );
+    assert_eq!(state.borrow().values[id], json!({"items": {ADDON_A: 0, ADDON_B: 0}}));
+    assert_eq!(e.load().unwrap().len(), 2);
+    pick(&mut e, id, &[ADDON_A, ADDON_B]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Unchanged
+    );
+    e.choose_items(ItemChoice::new()).unwrap();
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], json!({"items": {ADDON_A: 0, ADDON_B: 1}}));
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], json!({"items": {ADDON_A: 1, ADDON_B: 1}}));
+}
+
+#[test]
+fn an_add_on_rule_changed_since_is_never_undone() {
+    let id = "browser.extensions_off";
+    let (_dir, state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1}}));
+    pick(&mut e, id, &[ADDON_A]);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    state.borrow_mut().values.insert(id.into(), json!({"items": {ADDON_A: 2}}));
+    e.choose_items(ItemChoice::new()).unwrap();
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    let writes = state.borrow().writes.len();
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(state.borrow().writes.len(), writes);
+}
+
+#[test]
+fn only_legal_items_of_a_control_that_asks_can_be_picked() {
+    let (_dir, _state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1}}));
+    let id = "browser.extensions_off".to_string();
+    for bad in [
+        "chromium:chrome:short",
+        "chromium:firefox:abcdefghijklmnopabcdefghijklmnop",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmnoz",
+        "abcdefghijklmnopabcdefghijklmnop",
+        "",
+    ] {
+        assert!(e
+            .choose_items(ItemChoice::from([(id.clone(), vec![bad.to_string()])]))
+            .is_err());
+    }
+    assert!(e
+        .choose_items(ItemChoice::from([("net.hosts_file".to_string(), vec!["hosts".to_string()])]))
+        .is_err());
+    assert!(e
+        .choose_items(ItemChoice::from([(id, vec![ADDON_A.to_string(); 65])]))
+        .is_err());
 }

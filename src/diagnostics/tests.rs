@@ -523,6 +523,31 @@ fn backups_never_claim_verified_restore_or_data_coverage() {
 }
 
 #[test]
+fn add_ons_carry_their_name_and_older_reports_without_one_still_load() {
+    let item = |name: Option<&str>| {
+        let mut v = json!({"browser":"Chrome","profile_index":1,"id":"abcdefghijklmnopabcdefghijklmnop","version":"1.0","enabled":{"state":"Unknown","value":"NotAssessed"},"broad_host_access":k(true),"native_messaging":k(false)});
+        if let Some(name) = name {
+            v["name"] = json!(name);
+        }
+        v
+    };
+    let inventory = |name: Option<&str>| json!({"extensions":k(json!({"items":[item(name)],"truncated":false})),"profiles_examined":k(1)});
+    let detail = |name: Option<&str>| {
+        let p = assessed(ProbeId::BrowserExtensions, inventory(name));
+        assessment(&p, "browser.permissions").detail.clone()
+    };
+    assert!(detail(Some("Password Helper"))
+        .contains("\"Password Helper\" (abcdefghijklmnopabcdefghijklmnop)"));
+    for name in [None, Some("")] {
+        let text = detail(name);
+        assert!(
+            text.contains("extension abcdefghijklmnopabcdefghijklmnop declares"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn truncated_inventory_remains_unknown_with_valid_items() {
     let p = assessed(
         ProbeId::BrowserExtensions,

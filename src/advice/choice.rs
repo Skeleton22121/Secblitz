@@ -166,6 +166,9 @@ pub fn choice_consequence(id: &str) -> &'static str {
         "browser.safety_mode" => {
             "Stronger protection turns on. Browsers will say they are managed by your organization, which only means a setting was made."
         }
+        "browser.extensions_off" => {
+            "Picked add-ons turn off for all users. Browsers say they are managed by your organization, which only means a setting was made."
+        }
         "browser.dns_bypass" => {
             "Keep Web protection on. Browsers will say they are managed by your organization, which only means a setting was made."
         }

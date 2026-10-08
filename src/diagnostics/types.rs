@@ -293,6 +293,9 @@ pub struct BrowserExtension {
     /// Local ordinal only; profile names and paths never leave the collector.
     pub profile_index: u32,
     pub id: String,
+    /// The add-on's own name; empty when it could not be read.
+    #[serde(default)]
+    pub name: String,
     pub version: String,
     pub enabled: Reading<bool>,
     pub broad_host_access: Reading<bool>,

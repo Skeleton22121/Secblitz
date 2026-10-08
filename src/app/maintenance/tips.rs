@@ -123,6 +123,7 @@ impl TipProfile {
                 P::HostsFile,
                 P::LegacyFeatures,
                 P::Persistence,
+                P::BrowserExtensions,
                 P::AccountHygiene,
                 P::Sharing,
                 P::FirewallRules,
@@ -831,6 +832,19 @@ mod tests {
             TipFix::Offered("remote_desktop.disabled")
         );
         assert_eq!(rule_fix("winre.enabled"), Some("recovery.winre_enabled"));
+        assert_eq!(
+            rule_fix("browser.permissions"),
+            Some("browser.extensions_off")
+        );
+        let add_ons = tip_for(diag::ProbeId::BrowserExtensions, &["browser.permissions"]);
+        assert_eq!(add_ons.fix, Some("browser.extensions_off"));
+        assert_eq!(add_ons.advice, rule_advice("browser.permissions").unwrap());
+        assert_eq!(add_ons.fix_advice, rule_fix_advice("browser.permissions"));
+        for line in [add_ons.advice, add_ons.fix_advice] {
+            assert!(line.len() <= 130 && !line.contains('\u{2014}'), "{line}");
+        }
+        assert!(!add_ons.advice.contains("Secblitz can"));
+        assert!(add_ons.fix_advice.contains("Secblitz can"));
         let winre = tip_for(diag::ProbeId::WinRe, &["winre.enabled"]);
         assert_eq!(winre.fix, Some("recovery.winre_enabled"));
         assert_eq!(winre.advice, rule_advice("winre.enabled").unwrap());

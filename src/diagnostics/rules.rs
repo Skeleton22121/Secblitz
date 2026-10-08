@@ -301,7 +301,7 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
             out.push(inventory("browser.inventory", &v.extensions, "Bounded original-user extension inventory. Chromium version directories can include stale copies; installation does not establish enabled state."));
             if let Some(exts) = v.extensions.known() {
                 for extension in &exts.items {
-                    if extension.broad_host_access.known() == Some(&true) || extension.native_messaging.known() == Some(&true) { out.push(a("browser.permissions", Attention, format!("{:?} extension {} declares broad host access or native messaging. Review necessity and publisher; this is not a malware verdict.", extension.browser, extension.id))); }
+                    if extension.broad_host_access.known() == Some(&true) || extension.native_messaging.known() == Some(&true) { out.push(a("browser.permissions", Attention, format!("{:?} extension {} declares broad host access or native messaging. Review necessity and publisher; this is not a malware verdict.", extension.browser, extension_label(extension)))); }
                 }
             }
         }
@@ -473,4 +473,12 @@ pub(super) fn profile_recommendations(
         management,
         needs,
     )]
+}
+
+fn extension_label(extension: &BrowserExtension) -> String {
+    if extension.name.is_empty() {
+        extension.id.clone()
+    } else {
+        format!("\"{}\" ({})", extension.name, extension.id)
+    }
 }

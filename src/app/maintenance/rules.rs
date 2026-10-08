@@ -29,6 +29,7 @@ pub fn rule_advice(rule_id: &str) -> Option<&'static str> {
         "net.wifi_security" => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         "persistence.run_and_tasks" => "Open Task Manager, Startup apps, and switch off ones you don't know.",
         "clickfix.run_history" => "Something typed into the Run box looks like a fake check page trick. Run a full virus scan and change your passwords from another device.",
+        "browser.permissions" => "Some browser add-ons can read every site you visit. Remove the ones you don't use in your browser's menu.",
         "winre.enabled" => "Recovery tools are off. They help if Windows stops starting. Ask someone you trust to turn them back on.",
         _ => return None,
     })
@@ -73,6 +74,7 @@ pub fn rule_fix(rule_id: &str) -> Option<&'static str> {
         "remote.rdp" => "remote_desktop.disabled",
         "smb.v1" => "smb1.disabled",
         "winre.enabled" => "recovery.winre_enabled",
+        "browser.permissions" => "browser.extensions_off",
         other => other,
     };
     secblitz::hardening::spec(id).map(|spec| spec.id)
@@ -90,6 +92,7 @@ pub fn rule_fix_advice(rule_id: &str) -> &'static str {
         "smb.shares_exposed" => "Some folders are shared with everyone on your network. Secblitz can limit them, and you can undo it.",
         "smartscreen.browser_policy" => "A setting has switched off your browser's warnings about dangerous sites. Secblitz can remove it, and you can undo it.",
         "winre.enabled" => "Recovery tools are off. Secblitz can turn them back on for you, and you can undo it.",
+        "browser.permissions" => "Some browser add-ons can read every site you visit. Secblitz can turn off the ones you pick, and you can undo it.",
         _ => "Secblitz can fix this for you, and you can undo it. Look it over first.",
     }
 }

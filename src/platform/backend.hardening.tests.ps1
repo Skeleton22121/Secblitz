@@ -1940,4 +1940,88 @@ try {
     [IO.Directory]::Delete($netRoot, $true)
 }
 
+
+# ---- browser.extensions_off: list changes with gaps and foreign entries, name checks, state
+$idA = 'a' * 32; $idB = 'b' * 32; $idC = 'c' * 32
+$nameA = "chromium:chrome:$idA"; $nameB = "chromium:chrome:$idB"; $nameC = "chromium:edge:$idC"
+Assert (HAddonNameOk $nameA) 'a Chrome add-on name is accepted'
+Assert (HAddonNameOk $nameC) 'an Edge add-on name is accepted'
+foreach ($bad in @('', '*', "chromium:firefox:$idA", "chromium:chrome:$('q' * 32)", "chromium:chrome:$('a' * 31)", "chromium:chrome:$('a' * 33)", "chromium:chrome:$idA`n", "Chromium:chrome:$idA", "chromium:chrome:$($idA.ToUpper())")) {
+    Assert (!(HAddonNameOk $bad)) "the add-on name '$bad' is refused"
+}
+$script:addonLists = @{ chrome = @{}; edge = @{} }
+$script:addonMe = $true
+$script:addonInventory = @(
+    @{ name = $nameA; browser = 'chrome'; id = $idA; title = 'Alpha'; why = @('sites') },
+    @{ name = $nameB; browser = 'chrome'; id = $idB; title = 'Beta'; why = @('sites', 'programs') },
+    @{ name = $nameC; browser = 'edge'; id = $idC; title = 'Gamma'; why = @() })
+function HAddonList([string]$browser) { $copy = @{}; foreach ($k in $script:addonLists[$browser].Keys) { $copy[$k] = $script:addonLists[$browser][$k] }; return $copy }
+function HAddonPut([string]$browser, [string]$number, [string]$id) { $script:addonLists[$browser][$number] = $id }
+function HAddonDrop([string]$browser, [string]$number) { $script:addonLists[$browser].Remove($number) }
+function HAddonInventory { return $script:addonInventory }
+function HInteractiveIsMe { return $script:addonMe }
+function HStateNames { return @($script:undoState.Keys) }
+function HStateGet([string]$name) { if ($script:undoState.ContainsKey($name)) { return $script:undoState[$name] }; return $null }
+function HStateSet([string]$name, $data) { $script:undoState[$name] = $data }
+function HStateRemove([string]$name) { $script:undoState.Remove($name) }
+function HLabel([string]$key, [string]$text) { }
+$script:undoState = @{}
+
+$script:addonLists.chrome = @{ '1' = 'x' * 32; '4' = 'y' * 32; 'note' = 'z' * 32 }
+$before = (HAddonList 'chrome')
+Assert ((HAddonNextNumber $before) -eq 5) 'the next free number follows the highest one and ignores odd names'
+Assert ((HAddonNextNumber @{}) -eq 1) 'an empty list starts at 1'
+$r = HReadExtensions
+Assert ($r[$nameA] -eq 1 -and $r[$nameB] -eq 1 -and $r[$nameC] -eq 1) 'add-ons that are on read 1'
+HSetExtension $nameA 0
+Assert ($script:addonLists.chrome['5'] -ceq $idA) 'turning off adds the id at the next free number'
+Assert ($script:addonLists.chrome.Count -eq 4 -and $script:addonLists.chrome['1'] -ceq ('x' * 32) -and $script:addonLists.chrome['4'] -ceq ('y' * 32) -and $script:addonLists.chrome['note'] -ceq ('z' * 32)) 'foreign entries are untouched'
+Assert ($script:undoState[$nameA].v -ceq '5') 'the exact number is recorded'
+$r = HReadExtensions
+Assert ($r[$nameA] -eq 0 -and $r[$nameB] -eq 1) 'a turned off add-on reads 0 and the others stay 1'
+Reject { HSetExtension $nameA 0 } 'already turned off'
+HSetExtension $nameB 0
+Assert ($script:addonLists.chrome['6'] -ceq $idB) 'the second add-on takes the next number'
+$script:addonLists.chrome.Remove('5')
+Assert ((HReadExtensions)[$nameA] -eq 2) 'a removed entry reads as changed since'
+$script:addonLists.chrome['5'] = $idB
+Assert ((HReadExtensions)[$nameA] -eq 2) 'a different id at the number reads as changed since'
+Reject { HSetExtension $nameA 1 } 'changed again'
+Assert ($script:addonLists.chrome['5'] -ceq $idB -and $script:undoState.ContainsKey($nameA)) 'a changed entry is left alone'
+$script:addonLists.chrome['5'] = $idA
+HSetExtension $nameA 1
+Assert (!$script:addonLists.chrome.ContainsKey('5') -and $script:addonLists.chrome['6'] -ceq $idB -and $script:addonLists.chrome['4'] -ceq ('y' * 32)) 'undo removes only its own value and never renumbers'
+Assert (!$script:undoState.ContainsKey($nameA)) 'undo clears the saved state'
+HSetExtension $nameB 1
+Assert ($script:addonLists.chrome.Count -eq 3) 'the list is back to its foreign entries'
+HSetExtension $nameA 0
+Assert ($script:addonLists.chrome['5'] -ceq $idA) 'a freed number is reused only when it is the highest'
+HSetExtension $nameA 1
+$script:undoState = @{ $nameB = @{ v = '9'; id = $idB } }
+HSetExtension $nameB 1
+Assert ($script:undoState.Count -eq 0) 'undo of an entry that is already gone just forgets it'
+
+HSetExtension $nameC 0
+Assert ($script:addonLists.edge['1'] -ceq $idC -and $script:addonLists.chrome.Count -eq 3) 'Edge has its own list'
+HSetExtension $nameC 1
+Assert ($script:addonLists.edge.Count -eq 0) 'Edge undo empties its list'
+
+Reject { HSetExtension 'chromium:chrome:short' 0 } 'Invalid browser add-on'
+Reject { HSetExtension $nameA 2 } 'Invalid browser add-on'
+Reject { HSetExtension "chromium:chrome:$('d' * 32)" 0 } 'no longer needs a change'
+$script:addonLists.chrome['7'] = '*'
+Reject { HSetExtension $nameA 0 } 'rules changed'
+Assert (!$script:undoState.ContainsKey($nameA) -and $script:addonLists.chrome.Count -eq 4) 'a catch-all rule stops the change'
+Reject { HAddonPreflight } 'already turns off every add-on'
+$script:addonLists.chrome.Remove('7')
+$script:addonLists.chrome['8'] = $null
+Reject { HAddonPreflight } 'could not be read'
+$script:addonLists.chrome.Remove('8')
+HAddonPreflight
+Assert $true 'a list with only foreign ids passes the preflight'
+$script:addonMe = $false
+Reject { HSetExtension $nameA 0 } 'another account'
+Assert (!(HReadExtensions).ContainsKey($nameA)) 'another account is not offered the add-ons'
+$script:addonMe = $true
+
 Write-Output "Hardening PowerShell fixtures passed: $script:checks checks"

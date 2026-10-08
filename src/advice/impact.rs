@@ -142,6 +142,7 @@ pub fn control_impact(id: &str) -> &'static str {
             "Your browsers reporting how you use them and what you look at"
         }
         "browser.safety_mode" => "Harmful sites and trackers getting more room in your browsers",
+        "browser.extensions_off" => "A harmful add-on watching everything you do on every website",
         "browser.dns_bypass" => {
             "Ads, trackers and dangerous sites slipping past Web protection in your browsers"
         }

@@ -897,6 +897,7 @@ fn system_controls_follow_the_research_exclusions() {
         "browser.data_collection",
         "browser.safety_mode",
         "browser.dns_bypass",
+        "browser.extensions_off",
     ] {
         assert!(is_ask_check_id(id), "{id} must be a choice");
     }
@@ -1839,4 +1840,93 @@ fn the_run_box_switch_sets_one_machine_wide_value_without_a_restart() {
     );
     assert!(s.validate(&items(s, &[Some(2)])).is_err());
     assert!(s.gate.own_policy_key.is_empty());
+}
+
+const ADDON_A: &str = "chromium:chrome:abcdefghijklmnopabcdefghijklmnop";
+const ADDON_B: &str = "chromium:edge:ponmlkjihgfedcbaponmlkjihgfedcba";
+
+#[test]
+fn browser_add_ons_are_named_by_browser_and_extension_id() {
+    let s = spec("browser.extensions_off").unwrap();
+    assert!(s.ask && s.dynamic() && !s.reboot && s.needs_choice() && s.adds_batches());
+    assert_eq!(s.source, Source::BrowserExtensions);
+    s.validate(&json!({"items": {ADDON_A: 1, ADDON_B: 0}}))
+        .unwrap();
+    s.validate(&json!({"items": {ADDON_A: 2}})).unwrap();
+    for bad in [
+        "",
+        "chromium:chrome:",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmno",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmnopp",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmnoq",
+        "chromium:chrome:ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmno\n",
+        "chromium:opera:abcdefghijklmnopabcdefghijklmnop",
+        "firefox:abcdefghijklmnopabcdefghijklmnop",
+        "chrome:abcdefghijklmnopabcdefghijklmnop",
+        " chromium:chrome:abcdefghijklmnopabcdefghijklmnop",
+        "*",
+    ] {
+        assert!(
+            s.validate(&json!({"items": {bad: 1}})).is_err(),
+            "accepted {bad:?}"
+        );
+        assert!(!s.item_name_ok(bad), "{bad:?}");
+    }
+    assert!(s.validate(&json!({"items": {ADDON_A: 3}})).is_err());
+    assert!(s.item_name_ok(ADDON_A) && s.item_name_ok(ADDON_B));
+    assert!(spec("net.hosts_file").unwrap().item_name_ok("hosts"));
+    assert!(!s.item_name_ok("hosts"));
+}
+
+#[test]
+fn browser_add_on_targets_views_and_picks_only_touch_what_was_named() {
+    let s = spec("browser.extensions_off").unwrap();
+    let before = json!({"items": {ADDON_A: 1}});
+    assert!(s.any_unsafe(&before));
+    assert_eq!(
+        s.derive_target(&before).unwrap(),
+        json!({"items": {ADDON_A: 0}})
+    );
+    for safe in [0, 2] {
+        let state = json!({"items": {ADDON_A: safe}});
+        assert!(!s.any_unsafe(&state));
+        assert_eq!(s.derive_target(&state).unwrap(), state);
+    }
+    assert_eq!(
+        s.view(&json!({"items": {ADDON_A: 2, ADDON_B: 1}}), &before),
+        json!({"items": {ADDON_A: 2}})
+    );
+    let seen = json!({"items": {ADDON_A: 1, ADDON_B: 1}});
+    assert_eq!(
+        s.narrow(&seen, &[ADDON_B.to_string()]),
+        json!({"items": {ADDON_B: 1}})
+    );
+    assert_eq!(s.narrow(&seen, &[]), json!({"items": {}}));
+    assert!(!s.any_unsafe(&s.narrow(&seen, &[])));
+    assert!(s.has_unrecorded_unsafe(&seen, &before));
+    assert!(!s.has_unrecorded_unsafe(&json!({"items": {ADDON_A: 1}}), &before));
+    assert!(!s.has_unrecorded_unsafe(&json!({"items": {ADDON_A: 0, ADDON_B: 0}}), &before));
+    assert!(!spec("persistence.run_and_tasks").unwrap().needs_choice());
+}
+
+#[test]
+fn browser_add_ons_are_left_alone_where_the_browser_is_managed() {
+    let s = spec("browser.extensions_off").unwrap();
+    let guarded: Vec<_> = s.gate.policy_values.iter().map(|(_, n)| *n).collect();
+    for name in [
+        "CloudManagementEnrollmentToken",
+        "EdgeManagementEnrollmentToken",
+        "ExtensionSettings",
+    ] {
+        assert!(guarded.contains(&name), "{name}");
+    }
+    assert!(s
+        .gate
+        .policy_values
+        .iter()
+        .all(|(p, _)| p.starts_with(r"HKLM:\SOFTWARE\Policies\")));
+    let script = include_str!("../platform/hardening.handled.ps1");
+    assert!(script.contains(r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist"));
+    assert!(script.contains(r"SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist"));
 }

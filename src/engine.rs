@@ -22,7 +22,16 @@ use anyhow::{ensure, Context, Result};
 use catalog::{target, validate_value};
 use fsio::metadata_safe;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, fs::File, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs,
+    fs::File,
+    path::PathBuf,
+};
+
+/// The items the person picked, by control id. Only controls that ask for a choice read it.
+pub type ItemChoice = BTreeMap<String, Vec<String>>;
+const MAX_CHOSEN: usize = 64;
 
 /// The rule an audit uses to judge one setting, for callers without the journal.
 pub fn assessment(id: &str, o: &Observation) -> Result<CheckStatus> {
@@ -160,6 +169,7 @@ pub struct Engine {
     controls: Vec<Control>,
     machine: String,
     storage_failed: bool,
+    choice: ItemChoice,
     #[cfg(test)]
     mutation_check: Option<Box<MutationCheck>>,
 }
@@ -216,6 +226,7 @@ impl Engine {
             controls,
             machine: String::new(),
             storage_failed: false,
+            choice: ItemChoice::new(),
             #[cfg(test)]
             mutation_check: None,
         })
@@ -252,8 +263,33 @@ impl Engine {
         }
     }
 
+    /// Replaces the picked items. A name that is not a legal item of its control is refused, and nothing is kept.
+    pub fn choose_items(&mut self, choice: ItemChoice) -> Result<()> {
+        for (id, names) in &choice {
+            let spec = crate::hardening::spec(id).filter(|s| s.needs_choice());
+            let spec = spec.with_context(|| format!("Items cannot be picked for {id}"))?;
+            ensure!(names.len() <= MAX_CHOSEN, "Too many items picked for {id}");
+            ensure!(
+                names.iter().all(|n| spec.item_name_ok(n)),
+                "An item picked for {id} is not valid"
+            );
+        }
+        self.choice = choice;
+        Ok(())
+    }
+
+    pub(super) fn chosen(&self, id: &str) -> Option<&[String]> {
+        self.choice.get(id).map(Vec::as_slice)
+    }
+
     pub(super) fn observe(&mut self, id: &str) -> Result<Observation> {
-        Self::validated(id, self.backend.observe(id)?)
+        let mut obs = Self::validated(id, self.backend.observe(id)?)?;
+        if let (Some(names), Some(spec)) = (self.choice.get(id), crate::hardening::spec(id)) {
+            obs.value = spec.narrow(&obs.value, names);
+            obs.labels
+                .retain(|l| l.key.is_empty() || names.contains(&l.key));
+        }
+        Ok(obs)
     }
 
     fn validated(id: &str, obs: Observation) -> Result<Observation> {

@@ -219,10 +219,16 @@ struct Scan {
     evidence: usize,
 }
 
+/// Controls whose later picks are recorded in batches of their own, next to the ones still active.
+pub(super) fn adds_batches(id: &str) -> bool {
+    crate::hardening::spec(id).is_some_and(|s| s.adds_batches())
+}
+
 /// Validate the whole active stack before any caller probes or replays.
 /// Only the newest active batch can be incomplete; originals must have
 /// exactly one owner that is not yet put back, even when each WAL is valid in
-/// isolation. A control put back inside a batch that is still active owns nothing.
+/// isolation (controls that [`adds_batches`] may have several). A control put
+/// back inside a batch that is still active owns nothing.
 fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
     let active: Vec<_> = transactions.iter().filter(|t| !t.reverted).collect();
     let mut owners = HashSet::new();
@@ -233,7 +239,7 @@ fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
         );
         for entry in tx.entries.iter().filter(|e| e.state != State::Restored) {
             ensure!(
-                owners.insert(&entry.id),
+                owners.insert(&entry.id) || adds_batches(&entry.id),
                 "Duplicate active control owner; journal history is invalid"
             );
         }
