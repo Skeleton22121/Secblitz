@@ -869,7 +869,7 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
 
 fn below_art<'a>(state: &State, p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
     fade_below(
-        scrollable(content)
+        scrollable(container(content).padding([0.0, theme::S3]))
             .on_scroll(|v| Message::Fix(Msg::ResultList(v)))
             .direction(scrollbar())
             .style(scroll_style(p))
