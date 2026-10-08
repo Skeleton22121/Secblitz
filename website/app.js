@@ -71,4 +71,58 @@
         // Not shown; the page works without it.
       });
   }
+
+  // ---- Tour video: plays only while visible. Reduced motion and data saver
+  // start on the still; the button lets anyone play or pause it. ----
+  const video = document.getElementById("tour-video");
+  const button = document.getElementById("tour-toggle");
+  if (!video) return;
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  const connection = navigator.connection;
+  const state = { ready: false, visible: false, failed: false, choice: null };
+  video.muted = true;
+  // The visitor's own choice wins; until they make one, follow their settings.
+  const wanted = () => state.choice ? state.choice === "play" : !motion.matches && !connection?.saveData;
+  const allowed = () => state.ready && state.visible && !document.hidden && wanted();
+  const render = () => {
+    if (!button) return;
+    const playing = wanted();
+    button.hidden = !state.ready || state.failed;
+    button.classList.toggle("is-playing", playing);
+    button.querySelector("use").setAttribute("href", playing ? "#i-pause" : "#i-play");
+    button.querySelector("span").textContent = playing ? "Pause the tour" : "Play the tour";
+  };
+  const sync = () => {
+    if (allowed()) video.play().catch(() => {});
+    else video.pause();
+    // The themed still underneath shows until the recording really plays, and
+    // again if the visitor never chose to play it. A paused tour stays on its frame.
+    if (!wanted() && state.choice === null) video.hidden = true;
+    render();
+  };
+  video.addEventListener("playing", () => {
+    state.failed = false;
+    if (wanted()) video.hidden = false;
+    render();
+  });
+  video.addEventListener("error", () => {
+    if (video.error || video.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+      state.failed = true;
+      video.hidden = true;
+      render();
+    }
+  }, true);
+  video.addEventListener("loadedmetadata", () => { state.ready = true; sync(); });
+  button?.addEventListener("click", () => {
+    state.choice = wanted() ? "pause" : "play";
+    sync();
+  });
+  document.addEventListener("visibilitychange", sync);
+  motion.addEventListener("change", sync);
+  new IntersectionObserver(entries => {
+    state.visible = entries[0].isIntersecting;
+    sync();
+  // Watch the frame, not the video: the video stays hidden until it plays.
+  }, { threshold: 0.25 }).observe(video.parentElement);
+  if (video.readyState >= 1) video.dispatchEvent(new Event("loadedmetadata"));
 })();

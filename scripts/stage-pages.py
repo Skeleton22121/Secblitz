@@ -23,7 +23,7 @@ STATIC = (
     "index.html", "404.html", "privacy.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json", "releases/stable-arm64.json",
     "assets/favicon.svg", "assets/preview-92912b03eb97.webp",
     "assets/app-home-light.webp", "assets/app-home-dark.webp",
-    "assets/app-protection-light.webp", "assets/app-protection-dark.webp",
+    "assets/app-protection-light.webp", "assets/app-protection-dark.webp", "assets/intro-909e4b4d6414.mp4",
     "assets/fonts/ibm-plex-sans-400.woff2", "assets/fonts/ibm-plex-sans-500.woff2",
     "assets/fonts/ibm-plex-sans-600.woff2", "assets/fonts/IBMPlexSans-LICENSE.txt",
 )
