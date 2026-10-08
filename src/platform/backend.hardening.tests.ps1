@@ -768,8 +768,8 @@ function Test-Path { param($LiteralPath, $Path); return (@($script:fakePaths) -c
 foreach ($case in @(
     @($cfaWatchJson, 0, $true, ''),
     @($cfaWatchJson, 2, $true, ''),
-    @($cfaBlockJson, 0, $false, 'has not been watched yet'),
-    @($cfaBlockJson, 1, $false, 'has not been watched yet'),
+    @($cfaBlockJson, 0, $true, ''),
+    @($cfaBlockJson, 1, $true, ''),
     @($cfaBlockJson, 2, $true, ''),
     @($cfaBlockJson, 4, $true, ''),
     @($cfaAppsJson, 0, $false, 'folder protection is off'),

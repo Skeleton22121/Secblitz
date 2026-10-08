@@ -17,6 +17,7 @@ pub(crate) const WATCH_SECONDS: u64 = 7 * 24 * 60 * 60;
 pub(crate) const NOT_WATCHED: &str = "Not offered: folder protection has not been watched yet";
 pub(crate) const STILL_WATCHING: &str =
     "Not offered: folder protection has been watched for less than a week";
+pub(crate) const COVERED: &str = "Not offered: full folder protection is put back instead";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Verdict {
@@ -82,23 +83,28 @@ impl Engine {
         }
     }
 
-    /// Full protection waits for a week of watching. Once Secblitz has turned it on, it stays offered so a switch back can be put back. This only narrows what is offered; it never changes a setting.
+    /// Full protection waits for a week of watching. Once Secblitz has turned it on, it stays offered so a switch back can be put back, and the watch is not offered beside it: both share one Windows switch, so putting both back could leave it on watch. This only narrows what is offered; it never changes a setting.
     pub(super) fn cfa_gate(&self, id: &str, obs: &mut Observation) {
-        if id != BLOCK || !obs.eligible {
+        if (id != BLOCK && id != WATCH) || !obs.eligible {
             return;
         }
         let unsafe_now = crate::hardening::spec(id).is_some_and(|s| s.any_unsafe(&obs.value));
-        if !unsafe_now || self.cfa_protected() {
+        if !unsafe_now {
             return;
         }
-        let mode = obs.value["items"][MODE].as_u64();
-        let now = now();
-        match verdict(self.cfa_started(), mode, now) {
-            Verdict::Offer => {}
-            Verdict::Wait(reason) => {
-                obs.eligible = false;
-                obs.reason = reason.into();
+        let wait = if self.cfa_protected() {
+            (id == WATCH).then_some(COVERED)
+        } else if id == BLOCK {
+            match verdict(self.cfa_started(), obs.value["items"][MODE].as_u64(), now()) {
+                Verdict::Offer => None,
+                Verdict::Wait(reason) => Some(reason),
             }
+        } else {
+            None
+        };
+        if let Some(reason) = wait {
+            obs.eligible = false;
+            obs.reason = reason.into();
         }
     }
 

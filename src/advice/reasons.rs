@@ -61,6 +61,9 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         r if r == crate::engine::cfa::STILL_WATCHING => {
             "Windows is still watching your files. Full protection is offered after a week of watching."
         }
+        r if r == crate::engine::cfa::COVERED => {
+            "Putting full protection back turns this on too."
+        }
         "Not offered: folder protection is off" => "Turn on the folder watch first, then check again.",
         "Not offered: Defender cloud protection is off" => {
             "Turn on cloud threat lookups first, then check again."

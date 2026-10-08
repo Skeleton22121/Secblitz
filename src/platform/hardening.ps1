@@ -528,7 +528,6 @@ function HPreflight() {
             if ($status.RealTimeProtectionEnabled -ne $true) { throw 'Not offered: Defender real-time protection is off' }
             if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\CCM') { throw 'Not offered: this PC uses Configuration Manager' }
             $mode = HCfaMode
-            if ($spec.id -ceq 'defender.cfa_block' -and $mode -ne 2 -and $mode -ne 4) { throw 'Not offered: folder protection has not been watched yet' }
             if ($spec.id -ceq 'defender.cfa_allowed_apps' -and $mode -eq 0) { throw 'Not offered: folder protection is off' }
         }
         'browser.dns_bypass' {

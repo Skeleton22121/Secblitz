@@ -1005,6 +1005,34 @@ fn full_folder_protection_switched_off_by_someone_else_can_be_put_back() {
 }
 
 #[test]
+fn switched_off_full_folder_protection_is_put_back_alone_not_with_the_watch() {
+    let mode = |m: u64| json!({"items": {"EnableControlledFolderAccess": m}});
+    let set = |state: &Rc<RefCell<FakeState>>, m: u64| {
+        for id in [cfa::WATCH, cfa::BLOCK] {
+            state.borrow_mut().values.insert(id.into(), mode(m));
+        }
+    };
+    let (dir, state, _) = fixture(cfa::WATCH, mode(0));
+    set(&state, 0);
+    let mut e = reopen(&dir, &state, &[cfa::WATCH, cfa::BLOCK]);
+    e.apply_selected(&[cfa::WATCH.into()], |_| {}).unwrap();
+    set(&state, 2);
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS - 5);
+    e.apply_selected(&[cfa::BLOCK.into()], |_| {}).unwrap();
+
+    set(&state, 0);
+    let report = e.audit().unwrap();
+    let of = |id: &str| report.results.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(of(cfa::WATCH).status, CheckStatus::Skipped);
+    assert_eq!(of(cfa::WATCH).detail, cfa::COVERED);
+    assert_eq!(of(cfa::BLOCK).status, CheckStatus::Attention);
+    assert!(of(cfa::BLOCK).switched_back);
+
+    e.apply_selected(&[cfa::BLOCK.into()], |_| {}).unwrap();
+    assert_eq!(state.borrow().values[cfa::BLOCK], mode(1));
+}
+
+#[test]
 fn the_watch_week_starts_when_watching_is_applied_and_ends_when_it_is_undone() {
     let id = cfa::WATCH;
     let before = json!({"items": {"EnableControlledFolderAccess": 0}});
