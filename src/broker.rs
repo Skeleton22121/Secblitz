@@ -674,6 +674,7 @@ mod tests {
             Request::OpenSuggestFeature,
             Request::OpenPrivacyPolicy,
             Request::OpenRecoveryKey,
+            Request::StartTray,
             Request::AppUpdatesScan,
             Request::AppUpdateQuery(0),
             Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
