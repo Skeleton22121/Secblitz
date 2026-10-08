@@ -45,6 +45,8 @@ fn app() -> App {
         broker: None,
         start: None,
     });
+    // Whether the what's new note opens depends on this PC's earlier use of Secblitz.
+    app.whats_new = false;
     let report = report();
     app.ctx.catalog.available = report.results.iter().map(|r| r.id.clone()).collect();
     app.ctx.checking = None;
