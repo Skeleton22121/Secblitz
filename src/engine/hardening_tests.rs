@@ -939,8 +939,7 @@ fn full_folder_protection_waits_for_a_week_of_watching() {
     assert!(state.borrow().writes.is_empty());
 
     let (dir, state, mut e) = fixture(id, watching.clone());
-    let r = e.audit().unwrap().results.remove(0);
-    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::NOT_WATCHED));
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
     assert!(!dir.path().join("App").exists());
     write_watch_record(&dir, now_secs() - 60);
     let r = e.audit().unwrap().results.remove(0);
@@ -993,7 +992,7 @@ fn the_watch_week_counts_from_a_recorded_start_with_injected_time() {
     assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS - 1), Wait(STILL_WATCHING));
     assert_eq!(verdict(Some(t), Some(2), t), Wait(STILL_WATCHING));
     assert_eq!(verdict(Some(t + 5), Some(2), t), Wait(STILL_WATCHING));
-    assert_eq!(verdict(None, Some(2), t), Wait(NOT_WATCHED));
+    assert_eq!(verdict(None, Some(2), t), Offer);
     assert_eq!(verdict(None, Some(4), t), Wait(NOT_WATCHED));
     assert_eq!(verdict(None, Some(0), t), Wait(NOT_WATCHED));
     assert_eq!(verdict(None, None, t), Wait(NOT_WATCHED));

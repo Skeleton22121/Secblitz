@@ -24,11 +24,12 @@ pub(crate) enum Verdict {
     Wait(&'static str),
 }
 
-/// Whether full protection may be offered. `started` is the recorded start of watching; `mode` is what Defender reports now. Only mode 2, which watches everything full protection would block, counts as watching.
+/// Whether full protection may be offered. `started` is the recorded start of watching; `mode` is what Defender reports now. Only mode 2, which watches everything full protection would block, counts as watching. Watching that was turned on outside Secblitz has no recorded start, so it is offered at once rather than never.
 pub(crate) fn verdict(started: Option<u64>, mode: Option<u64>, now: u64) -> Verdict {
     match (started, mode) {
         (Some(at), Some(2)) if at <= now && now - at >= WATCH_SECONDS => Verdict::Offer,
         (Some(_), Some(2)) => Verdict::Wait(STILL_WATCHING),
+        (None, Some(2)) => Verdict::Offer,
         _ => Verdict::Wait(NOT_WATCHED),
     }
 }
