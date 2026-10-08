@@ -17,6 +17,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - A check that warns when something typed into the Run box looks like a fake check page trick.
 - The AI features topic shows when the Copilot app is installed, with a way to remove it.
 - A way to start fresh when Secblitz's undo history is damaged, keeping a copy of the damaged files.
+- Restore all brings back every removed app in one go.
 
 ### Changed
 - Before you agree, every fix says if it can't be undone, needs a restart, or makes your browser say "Managed by your organization".

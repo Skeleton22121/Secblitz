@@ -351,7 +351,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     for &(index, t) in &state.removed {
         let app = app_of(index);
         let has_copy = state.copies.contains(&index);
-        let enabled = state.restoring.is_none() && !ctx.busy;
+        let enabled = state.restoring.is_none() && state.batch.is_none() && !ctx.busy;
         let (subtitle, trailing): (String, Element<'a, Message>) = if state.restoring == Some(index)
         {
             let text = if state.restoring_copy {
@@ -364,6 +364,8 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 text,
                 anim::spinner(16.0, p.text_muted, state.spin.elapsed_at(state.now)),
             )
+        } else if state.queue.contains(&index) {
+            (ctx.t("Waiting"), space().into())
         } else if state.offline == Some(index) {
             (
                 ctx.t("You're offline. Connect to the internet, then press Retry."),
@@ -420,7 +422,37 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             &crate::app::maintenance::size_phrase(state.saved_bytes),
         )
     });
-    widgets::group(p, ctx.t("Removed apps"), summary, None, rows)
+    widgets::group(
+        p,
+        ctx.t("Removed apps"),
+        summary,
+        restore_all_view(state, ctx),
+        rows,
+    )
+}
+
+fn restore_all_view<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
+    let p = pal(ctx);
+    if let Some(batch) = &state.batch {
+        let done = batch.total - state.queue.len();
+        return Some(widgets::small(
+            p,
+            ctx.t("Restoring {i} of {n}…")
+                .replace("{i}", &done.to_string())
+                .replace("{n}", &batch.total.to_string()),
+        ));
+    }
+    if super::restorable(state).len() < 2 {
+        return None;
+    }
+    let enabled = state.restoring.is_none() && !state.probing && !ctx.busy;
+    Some(widgets::action(
+        p,
+        widgets::ButtonKind::Secondary,
+        ctx.t("Restore all"),
+        Some(Icon::Undo),
+        enabled.then(|| wrap(Msg::RestoreAll)),
+    ))
 }
 
 struct RowActions {
