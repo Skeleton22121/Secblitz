@@ -11,6 +11,8 @@ pub const NOTES: &[&str] = &[
     "Choose which browser add-ons to turn off.",
     "Stop untrusted apps from changing your personal folders.",
     "See when your files were last backed up.",
+    "Stop fake 'I'm not a robot' pages from installing password stealers.",
+    "Each fix tells you first if it can't be undone or needs a restart.",
     "A font that is easier to read.",
 ];
 
