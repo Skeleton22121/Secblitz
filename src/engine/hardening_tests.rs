@@ -504,7 +504,7 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("debloat.device_companion_apps", json!({"PreventDeviceMetadataFromNetwork": null})),
         ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
         ("browser.shopping_ai", json!({"EdgeShoppingAssistantEnabled": null, "HubsSidebarEnabled": null, "ShoppingListEnabled": null, "GeminiSettings": null})),
-        ("browser.dns_bypass", json!({"EdgeDnsOverHttpsMode": null, "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": null, "FirefoxDnsOverHttpsLocked": null})),
+        ("browser.dns_bypass", json!({"EdgeDnsOverHttpsMode": null, "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": null, "FirefoxDnsOverHttpsLocked": null})),
     ] {
         let (_dir, _state, mut e) = fixture(id, json!({ "items": items }));
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
@@ -619,7 +619,7 @@ fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_
     let id = "browser.dns_bypass";
     let before = json!({"items": {
         "EdgeDnsOverHttpsMode": "secure",
-        "ChromeDnsOverHttpsMode": null,
+        "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null,
         "FirefoxDnsOverHttpsEnabled": 1,
         "FirefoxDnsOverHttpsLocked": null,
     }});
@@ -631,6 +631,7 @@ fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_
         json!({"items": {
             "EdgeDnsOverHttpsMode": "off",
             "ChromeDnsOverHttpsMode": "off",
+            "BraveDnsOverHttpsMode": "off",
             "FirefoxDnsOverHttpsEnabled": 0,
             "FirefoxDnsOverHttpsLocked": 1,
         }})
@@ -654,9 +655,9 @@ fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_
 fn a_browser_setting_of_the_wrong_kind_is_never_offered_or_replaced() {
     let id = "browser.dns_bypass";
     for items in [
-        json!({"EdgeDnsOverHttpsMode": 0, "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
-        json!({"EdgeDnsOverHttpsMode": "secure", "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": "1", "FirefoxDnsOverHttpsLocked": null}),
-        json!({"EdgeDnsOverHttpsMode": "line\nbreak", "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": 0, "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": "secure", "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": "1", "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": "line\nbreak", "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
     ] {
         let (_dir, state, mut e) = fixture(id, json!({ "items": items }));
         let audited = e.audit().unwrap();
@@ -677,7 +678,7 @@ fn journal_images_of_text_settings_keep_the_exact_text_and_refuse_the_wrong_kind
     let items = |edge: Value| {
         json!({"items": {
             "EdgeDnsOverHttpsMode": edge,
-            "ChromeDnsOverHttpsMode": null,
+            "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null,
             "FirefoxDnsOverHttpsEnabled": 1,
             "FirefoxDnsOverHttpsLocked": null,
         }})
@@ -705,7 +706,7 @@ fn journal_images_of_text_settings_keep_the_exact_text_and_refuse_the_wrong_kind
         )
         .unwrap()
     };
-    let rest = r#""ChromeDnsOverHttpsMode":null,"FirefoxDnsOverHttpsEnabled":1,"FirefoxDnsOverHttpsLocked":null"#;
+    let rest = r#""ChromeDnsOverHttpsMode":null,"BraveDnsOverHttpsMode":null,"FirefoxDnsOverHttpsEnabled":1,"FirefoxDnsOverHttpsLocked":null"#;
     for (i, edge) in [
         r#"0"#,
         r#"1"#,

@@ -195,6 +195,7 @@ pub(super) const TERMINAL_SERVICES_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
 pub(super) const EDGE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
 pub(super) const CHROME_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
+const BRAVE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave";
 const FIREFOX_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox";
 const FIREFOX_TRACKING_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\EnableTrackingProtection";
@@ -1376,7 +1377,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "browser.dns_bypass",
         title: "Browsers use Web protection",
-        description: "Set the Edge and Chrome policy DnsOverHttpsMode to off and the Firefox policy DNSOverHTTPS to disabled and locked, so the browsers use the PC's own lookups, which Web protection filters, instead of their own private lookups. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
+        description: "Set the Edge, Chrome and Brave policy DnsOverHttpsMode to off and the Firefox policy DNSOverHTTPS to disabled and locked, so the browsers use the PC's own lookups, which Web protection filters, instead of their own private lookups. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
         source: Source::Registry,
         reboot: false,
         ask: true,
@@ -1388,6 +1389,10 @@ pub(super) static SPECS: &[Spec] = &[
             Key {
                 value: "DnsOverHttpsMode",
                 ..text("ChromeDnsOverHttpsMode", CHROME_POLICY, &["off"], false, Some("off"))
+            },
+            Key {
+                value: "DnsOverHttpsMode",
+                ..text("BraveDnsOverHttpsMode", BRAVE_POLICY, &["off"], false, Some("off"))
             },
             Key {
                 value: "Enabled",

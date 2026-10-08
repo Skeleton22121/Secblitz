@@ -9,6 +9,10 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- Web protection also checks Brave for ways around it.
+- The Web page says when a browser, a VPN or another setting can get around Web protection.
+
 ## [0.10.0] - 2026-10-07
 
 ### Added

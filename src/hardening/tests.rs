@@ -1486,6 +1486,7 @@ fn the_script_description_of_a_text_key_carries_the_text_rule() {
 
 const BROWSER_EDGE: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
 const BROWSER_CHROME: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
+const BROWSER_BRAVE: &str = r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave";
 const BROWSER_FIREFOX: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox";
 
 #[test]
@@ -1611,6 +1612,12 @@ fn browser_controls_set_exactly_the_documented_policy_values() {
                     json!("off"),
                 ),
                 (
+                    "BraveDnsOverHttpsMode",
+                    BROWSER_BRAVE,
+                    "DnsOverHttpsMode",
+                    json!("off"),
+                ),
+                (
                     "FirefoxDnsOverHttpsEnabled",
                     doh.as_str(),
                     "Enabled",
@@ -1687,7 +1694,7 @@ fn browser_lookup_texts_are_off_only_and_other_kinds_are_refused() {
     let state = |edge: Value| {
         json!({"items": {
             "EdgeDnsOverHttpsMode": edge, "ChromeDnsOverHttpsMode": "off",
-            "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
+            "BraveDnsOverHttpsMode": "off", "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
         }})
     };
     assert!(!s.any_unsafe(&state(json!("off"))));
@@ -1703,12 +1710,22 @@ fn browser_lookup_texts_are_off_only_and_other_kinds_are_refused() {
     }
     let bad_firefox = json!({"items": {
         "EdgeDnsOverHttpsMode": "off", "ChromeDnsOverHttpsMode": "off",
-        "FirefoxDnsOverHttpsEnabled": "0", "FirefoxDnsOverHttpsLocked": 1,
+        "BraveDnsOverHttpsMode": "off", "FirefoxDnsOverHttpsEnabled": "0", "FirefoxDnsOverHttpsLocked": 1,
     }});
     assert!(s.validate(&bad_firefox).is_err());
     let by_name = |n: &str| s.keys.iter().find(|k| k.name == n).unwrap();
     assert_eq!(by_name("EdgeDnsOverHttpsMode").value, "DnsOverHttpsMode");
     assert_eq!(by_name("ChromeDnsOverHttpsMode").value, "DnsOverHttpsMode");
+    assert_eq!(by_name("BraveDnsOverHttpsMode").value, "DnsOverHttpsMode");
+    assert_eq!(
+        by_name("BraveDnsOverHttpsMode").path,
+        r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave"
+    );
+    let brave_wrong = json!({"items": {
+        "EdgeDnsOverHttpsMode": "off", "ChromeDnsOverHttpsMode": "off",
+        "BraveDnsOverHttpsMode": 0, "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
+    }});
+    assert!(s.validate(&brave_wrong).is_err());
     assert_ne!(
         by_name("EdgeDnsOverHttpsMode").path,
         by_name("ChromeDnsOverHttpsMode").path

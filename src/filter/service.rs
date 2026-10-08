@@ -14,6 +14,7 @@ use super::activity::{self, Writes};
 use super::adapters;
 use super::config::{self, ErrorCode, RecentList, State, Status};
 use super::fetch;
+use super::gaps;
 use super::lists::{self, SOURCES};
 use super::matcher::Filter;
 use super::server::{self, upstream_addrs, BindError, Shared};
@@ -26,6 +27,7 @@ const UPSTREAM_RETRY_MIN: Duration = Duration::from_secs(5);
 const BIND_RETRY: Duration = Duration::from_secs(30);
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
 const STATUS_EVERY: Duration = Duration::from_secs(10);
+const GAPS_EVERY: Duration = Duration::from_secs(60);
 
 pub struct Paths {
     pub config: PathBuf,
@@ -337,6 +339,9 @@ pub fn serve(
     let mut last_status: Option<Status> = None;
     let mut upstream_checked = Instant::now();
     let mut lists_wanted = false;
+    let mut gaps_timer = Every::new(GAPS_EVERY);
+    let mut gaps = gaps::check();
+    gaps_timer.reset();
 
     while !stop.load(Ordering::Acquire) {
         if listeners.is_none() && bind_timer.due() {
@@ -372,6 +377,9 @@ pub fn serve(
             shared.set_local_suffixes(adapters::dns_suffixes());
             upstream_checked = Instant::now();
             upstream_timer.reset();
+        }
+        if gaps_timer.due() {
+            gaps = gaps::check();
         }
         if download && refresh_timer.due() {
             background.start(true, false);
@@ -409,6 +417,7 @@ pub fn serve(
                 written_at: now,
                 lookups: shared.lookups(now),
                 dangerous_at: shared.stats.dangerous_at(),
+                gaps: gaps.clone(),
             }
         };
         let changed = last_status
