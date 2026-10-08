@@ -770,8 +770,10 @@ function HAddonTitle([string]$versionDir, $manifest, [string]$id) {
 function HAddonWhy($manifest) {
     $permissions = @()
     foreach ($field in @('permissions', 'host_permissions')) {
-        $value = HAddonProp $manifest $field
-        if ($null -eq $value) { continue }
+        # Read in place: a one-entry list returned from a function arrives unrolled to a string.
+        $p = $manifest.PSObject.Properties[$field]
+        if ($null -eq $p -or $null -eq $p.Value) { continue }
+        $value = $p.Value
         if ($value -isnot [array]) { return @() }
         $permissions += $value
     }

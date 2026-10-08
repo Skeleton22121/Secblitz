@@ -2132,6 +2132,18 @@ $idA = 'a' * 32; $idB = 'b' * 32; $idC = 'c' * 32
 $nameA = "chromium:chrome:$idA"; $nameB = "chromium:chrome:$idB"; $nameC = "chromium:edge:$idC"
 Assert (HAddonNameOk $nameA) 'a Chrome add-on name is accepted'
 Assert (HAddonNameOk $nameC) 'an Edge add-on name is accepted'
+foreach ($case in @(
+        @('{"host_permissions":["*://*/*"]}', 'sites'),
+        @('{"permissions":["<all_urls>"]}', 'sites'),
+        @('{"permissions":["nativeMessaging"]}', 'programs'),
+        @('{"permissions":["storage","nativeMessaging"],"host_permissions":["https://*/*"]}', 'sites,programs'),
+        @('{"permissions":["storage"],"host_permissions":["https://example.com/*"]}', ''),
+        @('{"permissions":[],"host_permissions":[]}', ''),
+        @('{"name":"No permissions"}', ''),
+        @('{"permissions":"<all_urls>"}', ''))) {
+    $why = @(HAddonWhy (ConvertFrom-Json -InputObject $case[0])) -join ','
+    Assert ($why -ceq $case[1]) "add-on permissions $($case[0]) read as '$why'"
+}
 foreach ($bad in @('', '*', "chromium:firefox:$idA", "chromium:chrome:$('q' * 32)", "chromium:chrome:$('a' * 31)", "chromium:chrome:$('a' * 33)", "chromium:chrome:$idA`n", "Chromium:chrome:$idA", "chromium:chrome:$($idA.ToUpper())")) {
     Assert (!(HAddonNameOk $bad)) "the add-on name '$bad' is refused"
 }
