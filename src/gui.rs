@@ -237,6 +237,7 @@ pub enum Message {
     SearchEscape,
     Find,
     Noop,
+    CloseWhatsNew,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
     Explain(String),
@@ -315,6 +316,7 @@ pub struct App {
     pub settings: settings::State,
     pub app_access: app_access::State,
     privacy_shown: bool,
+    whats_new: bool,
     toast_gen: u32,
     toast_leaving: bool,
     entered: Option<std::time::Instant>,
@@ -345,7 +347,14 @@ impl App {
     }
 
     fn new(options: Options) -> (Self, Task<Message>) {
-        let prefs = app::settings::load();
+        let used_before =
+            secblitz::platform::app_dir().is_ok_and(|dir| app::whats_new::used_before(&dir));
+        let mut prefs = app::settings::load();
+        let whats_new = app::whats_new::due(prefs.whats_new_seen.as_deref(), used_before);
+        let news_unrecorded = prefs.whats_new_seen.as_deref() != Some(app::whats_new::VERSION);
+        if news_unrecorded {
+            prefs.whats_new_seen = Some(app::whats_new::VERSION.to_owned());
+        }
         persist::sync_notify(&prefs);
         let lang = prefs
             .lang
@@ -433,6 +442,7 @@ impl App {
             settings: Default::default(),
             app_access: Default::default(),
             privacy_shown: false,
+            whats_new,
             toast_gen: 0,
             toast_leaving: false,
             entered: None,
@@ -458,9 +468,16 @@ impl App {
         let web_state = web::on_enter(&mut app.web, &mut app.ctx);
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
+        let news = if news_unrecorded {
+            Task::perform(persist::save_prefs(app.ctx.prefs.clone()), |_| {
+                Message::Noop
+            })
+        } else {
+            Task::none()
+        };
         (
             app,
-            Task::batch([opened, first_check, enter, web_state, pending]),
+            Task::batch([opened, first_check, enter, web_state, pending, news]),
         )
     }
 
@@ -555,6 +572,9 @@ impl App {
                 Task::none()
             }
             Message::Escape => {
+                if std::mem::take(&mut self.whats_new) {
+                    return Task::none();
+                }
                 if self.fix.is_open() {
                     return fixflow::escape(&mut self.fix, &mut self.ctx);
                 }
@@ -600,6 +620,10 @@ impl App {
                 )
             }
             Message::Noop => Task::none(),
+            Message::CloseWhatsNew => {
+                self.whats_new = false;
+                Task::none()
+            }
             Message::PageOpened(page, ok) => {
                 let text = if ok {
                     self.recheck.arm(std::time::Instant::now(), self.focused);
@@ -1141,6 +1165,11 @@ impl App {
             Some(content) => widgets::sheet_layer(p, content),
             None => none(),
         };
+        let news_layer = if self.whats_new {
+            widgets::sheet_layer(p, self.whats_new_panel(p))
+        } else {
+            none()
+        };
         let toast_layer = match &self.ctx.toast {
             Some((message, tone)) => container(widgets::toast(
                 p,
@@ -1154,7 +1183,47 @@ impl App {
             .into(),
             None => none(),
         };
-        stack![body, modal_layer, fix_layer, toast_layer].into()
+        stack![body, modal_layer, fix_layer, news_layer, toast_layer].into()
+    }
+
+    fn whats_new_panel(&self, p: Palette) -> Element<'_, Message> {
+        let mut notes = column![].spacing(theme::S2);
+        for note in app::whats_new::NOTES {
+            notes = notes.push(
+                row![
+                    widgets::icon(Icon::Check, 16.0, p.tone(Tone::Good)),
+                    widgets::body(p, self.ctx.t(note))
+                ]
+                .spacing(theme::S2)
+                .align_y(Alignment::Center),
+            );
+        }
+        column![
+            row![
+                widgets::icon(Icon::Sparkles, theme::ICON_ROW, p.text_muted),
+                widgets::h2(p, self.ctx.t("What's new in Secblitz"))
+            ]
+            .spacing(theme::S3)
+            .align_y(Alignment::Center),
+            widgets::muted(
+                p,
+                format!("{} {}", self.ctx.t("Version"), app::whats_new::VERSION)
+            ),
+            notes,
+            row![
+                iced::widget::space::horizontal(),
+                widgets::action(
+                    p,
+                    widgets::ButtonKind::Primary,
+                    self.ctx.t("Got it"),
+                    None,
+                    Some(Message::CloseWhatsNew),
+                )
+            ],
+        ]
+        .spacing(theme::S4)
+        .width(Length::Fill)
+        .into()
     }
 
     fn verdict_tone(&self) -> Tone {

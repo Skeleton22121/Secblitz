@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 
-const FILE: &str = "last-check.json";
+pub const FILE: &str = "last-check.json";
 pub const FRESH_SECONDS: u64 = 3600;
 
 #[derive(Serialize, Deserialize)]

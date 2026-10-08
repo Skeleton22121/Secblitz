@@ -50,6 +50,8 @@ pub struct Prefs {
     pub notify_dangerous: bool,
     #[serde(default)]
     pub processor_tip_seen: bool,
+    #[serde(default)]
+    pub whats_new_seen: Option<String>,
 }
 
 fn on() -> bool {
@@ -66,6 +68,7 @@ impl Default for Prefs {
             notify_reverted: true,
             notify_dangerous: true,
             processor_tip_seen: false,
+            whats_new_seen: None,
         }
     }
 }
@@ -76,7 +79,7 @@ impl Prefs {
     }
 }
 
-const FILE: &str = "gui-prefs.json";
+pub const FILE: &str = "gui-prefs.json";
 const LIMIT: u64 = 8 * 1024;
 
 fn path() -> anyhow::Result<PathBuf> {
@@ -117,6 +120,11 @@ pub fn parse(bytes: &[u8]) -> Prefs {
         .get("processor_tip_seen")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    prefs.whats_new_seen = map
+        .get("whats_new_seen")
+        .and_then(|v| v.as_str())
+        .filter(|v| v.len() <= 32 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+        .map(str::to_owned);
     if let Some(tab) = map
         .get("tools_tab")
         .and_then(|v| v.as_str())
@@ -469,6 +477,7 @@ mod tests {
             notify_reverted: false,
             notify_dangerous: true,
             processor_tip_seen: true,
+            whats_new_seen: Some("0.11.0".into()),
         };
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
@@ -485,6 +494,19 @@ mod tests {
         let seen = parse(br#"{"processor_tip_seen":true,"theme":"dark"}"#);
         assert!(seen.processor_tip_seen);
         assert_eq!(seen.theme, ThemeChoice::Dark);
+    }
+
+    #[test]
+    fn only_a_version_number_is_kept_as_the_last_news_seen() {
+        assert_eq!(parse(b"{}").whats_new_seen, None);
+        assert_eq!(
+            parse(br#"{"whats_new_seen":"0.10.0"}"#)
+                .whats_new_seen
+                .as_deref(),
+            Some("0.10.0")
+        );
+        assert_eq!(parse(br#"{"whats_new_seen":"<b>"}"#).whats_new_seen, None);
+        assert_eq!(parse(br#"{"whats_new_seen":10}"#).whats_new_seen, None);
     }
 
     #[test]

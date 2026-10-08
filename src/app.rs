@@ -9,4 +9,5 @@ pub mod score;
 pub mod search;
 pub mod settings;
 pub mod topics;
+pub mod whats_new;
 pub mod worker;
