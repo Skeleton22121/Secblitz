@@ -359,8 +359,8 @@ const RENEWAL_PROCESSES: u32 = 2;
 pub fn start_secure_boot_renewal() -> Result<super::RenewalOutcome> {
     let script = super::renewal_script()?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     crate::platform::require_admin("The startup security renewal needs Administrator elevation")?;
     let reply: Value = run_script_in(script, Duration::from_secs(150), RENEWAL_PROCESSES)

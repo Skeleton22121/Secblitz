@@ -773,6 +773,8 @@ mod tests {
                         log: Log::default(),
                         fail_apply: false,
                         fail_audit: false,
+                        picked: 0,
+                        audited_with: Arc::default(),
                     }) as Box<dyn Session>)
                 } else {
                     Err(anyhow::Error::new(JournalDamaged {
