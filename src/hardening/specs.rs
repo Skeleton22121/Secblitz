@@ -1413,7 +1413,7 @@ pub(super) static SPECS: &[Spec] = &[
         title: "Turn off the Run box",
         description: "Turn off the Run box (Win+R and Run in the Start menu) for every account on this PC by setting NoRun=1. Task Manager, Command Prompt and everything else still work. Undo restores the earlier value.",
         source: Source::Registry,
-        reboot: true,
+        reboot: false,
         ask: true,
         keys: &[set("NoRun", EXPLORER, &[1], false, Some(1), 1)],
         gate: Gate {

@@ -1822,9 +1822,9 @@ fn every_fix_says_before_the_person_agrees_what_the_notices_promise() {
 }
 
 #[test]
-fn the_run_box_switch_sets_one_machine_wide_value_and_asks_to_sign_out() {
+fn the_run_box_switch_sets_one_machine_wide_value_without_a_restart() {
     let s = spec("clickfix.run_box").unwrap();
-    assert!(s.ask && s.reboot && !s.dynamic());
+    assert!(s.ask && !s.reboot && !s.dynamic());
     assert_eq!(s.source, Source::Registry);
     assert_eq!(s.keys.len(), 1);
     let k = &s.keys[0];

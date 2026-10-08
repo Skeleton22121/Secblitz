@@ -1020,7 +1020,7 @@ $script:fakePaths = @(); $script:fakeFs = $false
 
 # Run box: NoRun shares the Explorer policy key with unrelated values, so the spec has no own key and those neighbours are not management.
 $explorerPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
-$runJson = '{"id":"clickfix.run_box","source":"Registry","dynamic":false,"reboot":true,"keys":[{"name":"NoRun","path":"' + $explorerPath.Replace('\', '\\') + '","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","sharedValues":[],"policyValues":[]}}'
+$runJson = '{"id":"clickfix.run_box","source":"Registry","dynamic":false,"reboot":false,"keys":[{"name":"NoRun","path":"' + $explorerPath.Replace('\', '\\') + '","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],"gate":{"areas":[],"pattern":".","tamperExempt":false,"secedit":false,"ownPolicyKey":"","sharedValues":[],"policyValues":[]}}'
 $script:fakeFs = $true
 $script:fakePaths = @($explorerPath)
 MakeSpec $runJson
