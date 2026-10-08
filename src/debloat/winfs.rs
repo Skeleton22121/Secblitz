@@ -534,6 +534,28 @@ pub fn current_sid() -> Result<String> {
     }
 }
 
+pub fn windows_build() -> Option<u32> {
+    let mut buf = [0u16; 32];
+    let mut size = (buf.len() * 2) as u32;
+    // SAFETY: both strings are NUL-terminated and `buf` and `size` describe the same writable buffer.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            wide("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion").as_ptr(),
+            wide("CurrentBuildNumber").as_ptr(),
+            RRF_RT_REG_SZ,
+            null_mut(),
+            buf.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    let len = (size as usize / 2).saturating_sub(1);
+    String::from_utf16_lossy(&buf[..len]).trim().parse().ok()
+}
+
 pub fn profile_dir(sid: &str) -> Result<PathBuf> {
     ensure!(super::backup::valid_sid(sid), "Unexpected account");
     let key = format!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\{sid}");

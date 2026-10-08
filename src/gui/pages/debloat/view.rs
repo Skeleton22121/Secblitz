@@ -285,7 +285,7 @@ fn group_card<'a>(
             p,
             Some(app_glyph(p, state, index, theme::ICON_ROW)),
             ctx.t(app.name),
-            debloat::note(app.family).map(|note| ctx.t(note)),
+            debloat::note_on(app.family, debloat::is_windows_11()).map(|note| ctx.t(note)),
             box_,
             Vec::new(),
             Some(wrap(Msg::Toggle(index))),

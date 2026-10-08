@@ -377,6 +377,14 @@ pub static CATALOG: &[App] = &[
 
 /// A short plain line shown under an app's name when there is something
 /// worth knowing before removing it.
+/// The note to show on this PC. Copilot keys only exist on Windows 11 PCs.
+pub fn note_on(family: &str, windows_11: bool) -> Option<&'static str> {
+    if family == "Microsoft.MicrosoftOfficeHub" && !windows_11 {
+        return None;
+    }
+    note(family)
+}
+
 pub fn note(family: &str) -> Option<&'static str> {
     Some(match family {
         "Microsoft.MicrosoftOfficeHub" => {

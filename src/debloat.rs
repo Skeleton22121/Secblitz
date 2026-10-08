@@ -23,7 +23,7 @@ mod tests;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub use catalog::{is_protected, matches as pattern_matches, note};
+pub use catalog::{is_protected, matches as pattern_matches, note, note_on};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -320,6 +320,22 @@ pub(crate) fn remove_with_checkpoint(
         emit(Progress::Finished(index, result));
     }
     Ok(batch)
+}
+
+/// Windows 11 starts at build 22000. A build that can't be read counts as
+/// Windows 11, the more common case.
+pub fn is_windows_11() -> bool {
+    #[cfg(windows)]
+    {
+        static BUILD: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        BUILD
+            .get_or_init(winfs::windows_build)
+            .is_none_or(|b| b >= 22000)
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
 }
 
 pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
