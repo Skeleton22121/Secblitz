@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-08
+
 ### Added
 - Secblitz runs on PCs with an ARM processor, with its own installer.
 - PCs with an ARM processor running the regular version are told when a version made for them is available.
