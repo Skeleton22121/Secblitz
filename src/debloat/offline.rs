@@ -77,6 +77,38 @@ pub trait Host {
     fn family_installed(&self, _family: &str) -> bool {
         false
     }
+    /// Windows refuses an older copy of a shared part when a newer one is
+    /// installed, and apps accept the newer one, so either counts.
+    fn framework_present(&self, full: &str) -> bool {
+        self.present(full)
+    }
+}
+
+/// True when `installed` holds `full` or a newer version of the same package
+/// (same name, architecture and publisher).
+pub(crate) fn same_or_newer<'a>(full: &str, installed: impl IntoIterator<Item = &'a str>) -> bool {
+    let Ok(want) = backup::parse_full_name(full) else {
+        return false;
+    };
+    let version = |v: &str| -> Option<[u16; 4]> {
+        let mut out = [0u16; 4];
+        for (slot, n) in out.iter_mut().zip(v.split('.')) {
+            *slot = n.parse().ok()?;
+        }
+        Some(out)
+    };
+    let Some(wanted) = version(&want.version) else {
+        return false;
+    };
+    installed.into_iter().any(|name| {
+        backup::parse_full_name(name).is_ok_and(|have| {
+            have.name.eq_ignore_ascii_case(&want.name)
+                && have.arch == want.arch
+                && have.resource == want.resource
+                && have.publisher == want.publisher
+                && version(&have.version).is_some_and(|v| v >= wanted)
+        })
+    })
 }
 
 #[derive(Debug)]
@@ -305,7 +337,7 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
         let mut order: Vec<String> = Vec::new();
         let attempt = (|| -> Result<()> {
             for f in &m.frameworks {
-                if host.present(f) {
+                if host.framework_present(f) {
                     continue;
                 }
                 let copy = store
@@ -594,6 +626,19 @@ impl Host for WindowsHost {
             && super::winfs::windows_apps()
                 .is_ok_and(|w| std::fs::symlink_metadata(w.join(full)).is_ok())
     }
+    fn framework_present(&self, full: &str) -> bool {
+        if self.present(full) {
+            return true;
+        }
+        let Ok(dir) = super::winfs::windows_apps().and_then(|w| Ok(std::fs::read_dir(w)?)) else {
+            return false;
+        };
+        let names: Vec<String> = dir
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        same_or_newer(full, names.iter().map(String::as_str))
+    }
     fn save_data(
         &self,
         sid: &str,
@@ -795,6 +840,9 @@ mod tests {
         }
         fn present(&self, full: &str) -> bool {
             self.installed.borrow().contains(full)
+        }
+        fn framework_present(&self, full: &str) -> bool {
+            same_or_newer(full, self.installed.borrow().iter().map(String::as_str))
         }
         fn save_data(
             &self,
@@ -1057,6 +1105,52 @@ mod tests {
         restore_with(&host, &store, index()).unwrap();
         assert!(!host.log.borrow().iter().any(|l| l == &format!("in {FW}")));
         assert_eq!(host.registered.borrow()[0], vec![BUNDLE.to_string()]);
+    }
+
+    #[test]
+    fn restore_accepts_a_newer_framework_already_installed() {
+        let (_d, store) = store();
+        let host = weather();
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        let newer = "Microsoft.VCLibs.140.00_14.0.33728.0_x64__8wekyb3d8bbwe";
+        *host.installed.borrow_mut() = [newer.to_string()].into_iter().collect();
+        host.log.borrow_mut().clear();
+        assert_eq!(
+            restore_with(&host, &store, index()).unwrap(),
+            Restored::Back
+        );
+        assert!(!host.log.borrow().iter().any(|l| l == &format!("in {FW}")));
+        assert_eq!(host.registered.borrow()[0], vec![BUNDLE.to_string()]);
+    }
+
+    #[test]
+    fn only_a_matching_framework_of_the_same_or_higher_version_counts() {
+        let fw = "Microsoft.VCLibs.140.00.UWPDesktop_14.0.27629.0_x64__8wekyb3d8bbwe";
+        let yes = |installed: &[&str]| same_or_newer(fw, installed.iter().copied());
+        assert!(yes(&[fw]));
+        assert!(yes(&[
+            "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64__8wekyb3d8bbwe"
+        ]));
+        assert!(yes(&[
+            "Microsoft.VCLibs.140.00.UWPDesktop_14.0.27629.1_x64__8wekyb3d8bbwe"
+        ]));
+        assert!(!yes(&[
+            "Microsoft.VCLibs.140.00.UWPDesktop_14.0.27000.0_x64__8wekyb3d8bbwe"
+        ]));
+        assert!(!yes(&[
+            "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x86__8wekyb3d8bbwe"
+        ]));
+        assert!(!yes(&[
+            "Microsoft.VCLibs.140.00_14.0.33728.0_x64__8wekyb3d8bbwe"
+        ]));
+        assert!(!yes(&[
+            "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64__0000000000000"
+        ]));
+        assert!(!yes(&[
+            "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64__8wekyb3d8bbwe.tmp",
+            "Deleted"
+        ]));
+        assert!(!same_or_newer("not a package", [fw]));
     }
 
     #[test]

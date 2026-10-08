@@ -28,6 +28,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Removing apps that came with Windows 10 now works.
 - White app icons on Windows 10 show on a colored tile instead of disappearing, including Maps and People.
 - An app you chose to remove is closed first if it is open, so its copy is complete.
+- Bringing back an app works when Windows already has a newer version of a part it needs.
 - The Copilot key note only shows on Windows 11, where those keyboards exist.
 
 ## [0.9.3] - 2026-10-07
