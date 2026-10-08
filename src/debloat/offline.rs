@@ -74,9 +74,9 @@ pub trait Host {
     fn registered_ok(&self, family: &str) -> Result<bool>;
     fn data_folder_ready(&self, sid: &str, family: &str) -> bool;
     fn current_sid(&self) -> Result<String>;
-    fn family_installed(&self, _family: &str) -> bool {
-        false
-    }
+    /// Whether Windows has the app registered. Folders a removal leaves in
+    /// WindowsApps do not count.
+    fn family_installed(&self, family: &str) -> Result<bool>;
     /// Windows refuses an older copy of a shared part when a newer one is
     /// installed, and apps accept the newer one, so either counts.
     fn framework_present(&self, full: &str) -> bool {
@@ -326,8 +326,7 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
         if verify(store, m).is_err() {
             return Ok(Restored::Damaged);
         }
-        if m.packages.iter().any(|p| host.present(&p.full_name)) || host.family_installed(&m.family)
-        {
+        if host.family_installed(&m.family)? {
             outcome = Restored::AlreadyThere;
             continue;
         }
@@ -354,6 +353,11 @@ pub(crate) fn restore_with(host: &dyn Host, store: &Store, index: u16) -> Result
                 order.push(f.clone());
             }
             for p in &m.packages {
+                // Nothing has the app registered, so a folder already there is
+                // a leftover and would block the copy.
+                if host.present(&p.full_name) {
+                    host.remove_copy(&p.full_name)?;
+                }
                 let template =
                     permissions_for(host, &p.full_name, &p.sddl, &m.family, &mut fallback)?;
                 host.copy_in(
@@ -779,15 +783,13 @@ impl Host for WindowsHost {
     fn current_sid(&self) -> Result<String> {
         super::winfs::current_sid()
     }
-    fn family_installed(&self, family: &str) -> bool {
-        super::winfs::windows_apps()
-            .and_then(|w| Ok(std::fs::read_dir(w)?))
-            .is_ok_and(|dir| {
-                dir.flatten().any(|e| {
-                    backup::parse_full_name(&e.file_name().to_string_lossy())
-                        .is_ok_and(|id| id.family() == family)
-                })
-            })
+    fn family_installed(&self, family: &str) -> Result<bool> {
+        let (name, _) = family.rsplit_once('_').context("Unexpected app family")?;
+        Ok(self
+            .describe(name)?
+            .packages
+            .iter()
+            .any(|p| p.kind != Kind::Resource))
     }
 }
 
@@ -823,6 +825,8 @@ mod tests {
         data: RefCell<BTreeMap<String, Vec<u8>>>,   // sid -> plaintext marker
         signed_out: RefCell<BTreeSet<String>>,      // accounts with no data folder yet
         me: RefCell<String>,
+        leftover: RefCell<BTreeSet<String>>, // folders in WindowsApps nothing has registered
+        fail_lookup: bool,
     }
 
     impl Host for Fake {
@@ -843,6 +847,15 @@ mod tests {
         }
         fn framework_present(&self, full: &str) -> bool {
             same_or_newer(full, self.installed.borrow().iter().map(String::as_str))
+        }
+        fn family_installed(&self, family: &str) -> Result<bool> {
+            ensure!(!self.fail_lookup, "Windows didn't answer");
+            let leftover = self.leftover.borrow();
+            Ok(self.installed.borrow().iter().any(|full| {
+                !leftover.contains(full)
+                    && crate::debloat::backup::parse_full_name(full)
+                        .is_ok_and(|id| id.family() == family)
+            }))
         }
         fn save_data(
             &self,
@@ -1151,6 +1164,41 @@ mod tests {
             "Deleted"
         ]));
         assert!(!same_or_newer("not a package", [fw]));
+    }
+
+    #[test]
+    fn a_folder_left_after_removal_is_not_mistaken_for_the_app() {
+        let (_d, store) = store();
+        let host = weather();
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        *host.installed.borrow_mut() = [MAIN.to_string(), FW.to_string()].into_iter().collect();
+        *host.leftover.borrow_mut() = [MAIN.to_string()].into_iter().collect();
+        host.log.borrow_mut().clear();
+        assert_eq!(
+            restore_with(&host, &store, index()).unwrap(),
+            Restored::Back
+        );
+        let log = host.log.borrow().clone();
+        let pos = |s: &str| {
+            log.iter()
+                .position(|l| l == s)
+                .unwrap_or_else(|| panic!("{s} in {log:?}"))
+        };
+        assert!(pos(&format!("undo {MAIN}")) < pos(&format!("in {MAIN}")));
+        assert_eq!(host.registered.borrow()[0], vec![BUNDLE.to_string()]);
+    }
+
+    #[test]
+    fn restore_stops_and_keeps_the_copy_when_windows_cannot_say_what_is_installed() {
+        let (_d, store) = store();
+        let mut host = weather();
+        backup_family_with(&host, &store, index(), "Microsoft.BingWeather").unwrap();
+        host.installed.borrow_mut().clear();
+        host.log.borrow_mut().clear();
+        host.fail_lookup = true;
+        assert!(restore_with(&host, &store, index()).is_err());
+        assert!(host.log.borrow().is_empty());
+        assert!(!store.for_index(index()).is_empty());
     }
 
     #[test]
