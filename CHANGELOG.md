@@ -10,11 +10,21 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [Unreleased]
 
 ### Added
-- Web protection also checks Brave for ways around it.
-- The Web page says when a browser, a VPN or another setting can get around Web protection.
+- Secblitz runs on PCs with an ARM processor, with its own installer.
+- PCs with an ARM processor running the regular version are told when a version made for them is available.
+- Web protection can block scam sites, fake shops and pop-up spam, off until you turn them on.
+- Blocked scam, dangerous and pop-up sites show on the Web page, where you can let one through for 10 minutes.
+- The tray tells you which scam or dangerous site was blocked.
+- The Web page says when a browser, a VPN or another setting can get around Web protection, including Brave.
+- Pick which Chrome and Edge add-ons to turn off, with an exact undo.
+- Folder protection stops untrusted apps from changing your personal folders, after first watching which apps need them.
+- See when your files were last backed up with File History, OneDrive or Windows Backup.
+- A short list of what's new shows once after Secblitz is updated or reinstalled.
 
 ### Changed
 - The app uses the Lexend font, which is easier to read.
+- The list of apps that may use your camera, microphone and location shows who published each app.
+- Web protection also turns off Brave's own private lookups.
 
 ### Fixed
 - Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
