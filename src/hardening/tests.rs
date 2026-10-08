@@ -1748,6 +1748,7 @@ fn notices_follow_the_table() {
     }
     assert!(notices(spec("browser.shopping_ai").unwrap()).managed);
     assert!(notices(spec("browser.dns_bypass").unwrap()).managed);
+    assert!(notices(spec("browser.extensions_off").unwrap()).managed);
     assert!(!notices(spec("smartscreen.browser_policy").unwrap()).managed);
     assert!(!notices(spec("smb1.disabled").unwrap()).managed);
 }

@@ -175,10 +175,11 @@ fn writes_a_value(rule: &Rule) -> bool {
 
 pub fn notices(spec: &Spec) -> Notices {
     Notices {
-        managed: spec
-            .keys
-            .iter()
-            .any(|k| is_browser_policy(k.path) && writes_a_value(&k.rule)),
+        managed: spec.source == Source::BrowserExtensions
+            || spec
+                .keys
+                .iter()
+                .any(|k| is_browser_policy(k.path) && writes_a_value(&k.rule)),
         restart: spec.reboot,
         undoable: true,
     }
