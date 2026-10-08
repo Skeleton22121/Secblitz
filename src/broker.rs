@@ -40,6 +40,7 @@ pub enum Request {
     OpenSuggestFeature,
     OpenPrivacyPolicy,
     OpenRecoveryKey,
+    StartTray,
     UserSetting(Setting, Op),
     AppUpdatesScan,
     AppUpdateQuery(u16),
@@ -172,7 +173,8 @@ impl Request {
             | Request::OpenBackup
             | Request::OpenStorage
             | Request::OpenInstalledApps
-            | Request::OpenTaskbar => false,
+            | Request::OpenTaskbar
+            | Request::StartTray => false,
         }
     }
 
@@ -224,7 +226,8 @@ impl Request {
             | Request::BitwardenStatus
             | Request::AppAccessList(_)
             | Request::AppAccessSet { .. }
-            | Request::AppInstallerStatus => return None,
+            | Request::AppInstallerStatus
+            | Request::StartTray => return None,
         })
     }
 
@@ -262,6 +265,7 @@ impl Request {
             Request::OpenPrivacyPolicy => (37, 0),
             Request::OpenTaskbar => (38, 0),
             Request::OpenRecoveryKey => (41, 0),
+            Request::StartTray => (42, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -331,6 +335,7 @@ impl Request {
             37 => Request::OpenPrivacyPolicy,
             38 => Request::OpenTaskbar,
             41 => Request::OpenRecoveryKey,
+            42 => Request::StartTray,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             14 => Request::AppUpdatesScan,
             15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
@@ -788,10 +793,10 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 42, 43, 100, 255] {
+        for kind in [0u8, 43, 44, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17, 41]) {
+        for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17, 41, 42]) {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }

@@ -36,6 +36,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The link to turn on private lookups now goes straight to its switch.
 - Background checks work on Windows 10, where they could not read any settings.
 - You are told when Windows switches back a virus protection setting Secblitz fixed.
+- Turning the system tray icon on or off takes effect right away instead of at the next sign-in.
 
 ## [0.9.3] - 2026-10-07
 

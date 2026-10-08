@@ -376,7 +376,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 POLL_TIMER => {
                     with_tray(|t| refresh(hwnd, t));
                 }
-                QUIESCE_TIMER if quiesce_requested() => {
+                QUIESCE_TIMER if quiesce_requested() || crate::app::settings::tray_turned_off() => {
                     DestroyWindow(hwnd);
                 }
                 _ => {}
