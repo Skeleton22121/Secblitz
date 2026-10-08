@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -169,7 +170,7 @@ class BumpTests(unittest.TestCase):
         self.assertIn('"softwareVersion": "9.8.7"', (self.root / "website/structured.json").read_text())
         self.assertIn('<code id="sha">' + "0" * 64 + "</code>", page)
         stage = (self.root / "scripts/stage-pages.py").read_text()
-        self.assertIn(f'    "secblitz-{self.shown}-windows-x64-setup.exe",\n)', stage)
+        self.assertRegex(stage, rf'    "secblitz-{re.escape(self.shown)}-windows-(?:x64|arm64)-setup\.exe",\n\)')
         self.assertNotIn(f'"secblitz-{self.shown}-windows-x64.exe"', stage)
         self.assertEqual(stage.count(f"secblitz-{self.shown}-windows-x64-setup.exe"), 1)
 

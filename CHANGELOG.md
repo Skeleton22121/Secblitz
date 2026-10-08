@@ -22,19 +22,6 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Folder protection stops untrusted apps from changing your personal folders, after first watching which apps need them.
 - See when your files were last backed up with File History, OneDrive or Windows Backup.
 - A short list of what's new shows once after Secblitz is updated or reinstalled.
-
-### Changed
-- The app uses the Lexend font, which is easier to read.
-- Web protection also turns off Brave's own private lookups.
-
-### Fixed
-- Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
-- A start-up program or browser add-on found after a fix is no longer shown as switched back.
-- Camera, microphone and location show as off when they are switched off for everyone on the PC.
-
-## [0.10.0] - 2026-10-07
-
-### Added
 - Renew your PC's startup security certificates before the old ones expire, with a clear warning that it can't be undone.
 - An optional fix that turns off the Run box, which fake "I'm not a robot" pages use to install password stealers.
 - A check that warns when something typed into the Run box looks like a fake check page trick.
@@ -43,11 +30,16 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Restore all brings back every removed app in one go.
 
 ### Changed
+- The app uses the Lexend font, which is easier to read.
+- Web protection also turns off Brave's own private lookups.
 - Before you agree, every fix says if it can't be undone, needs a restart, or makes your browser say "Managed by your organization".
 - Older version downloads are no longer offered on the website.
 - Secblitz is now tested on Windows 10 (version 22H2).
 
 ### Fixed
+- Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
+- A start-up program or browser add-on found after a fix is no longer shown as switched back.
+- Camera, microphone and location show as off when they are switched off for everyone on the PC.
 - Files left over from an update are removed once the update is confirmed.
 - Removing apps that came with Windows 10 now works.
 - White app icons on Windows 10 show on a colored tile instead of disappearing, including Maps and People.

@@ -37,7 +37,6 @@ LEGACY_ASSETS = {
 HISTORICAL = (
     "secblitz-0.9.2-windows-x64-setup.exe",
     "secblitz-0.9.3-windows-x64-setup.exe",
-    "secblitz-0.10.0-windows-x64-setup.exe",
 )
 
 
