@@ -49,9 +49,9 @@ pub struct Capabilities {
 }
 pub fn capabilities() -> Capabilities {
     Capabilities {
-        windows_quality_updates: cfg!(all(windows, target_arch = "x86_64")),
+        windows_quality_updates: (cfg!(windows) && crate::platform::NATIVE_64),
         selected_app_upgrades: false,
-        quality_update_scope: "Windows x64, unmanaged interactive same-user administrator only. Current Windows Update security/critical Windows-family software updates, including reviewed bundles. Optional, preview, driver, feature/upgrade and interactive/exclusive updates are excluded. No source registration, policy changes, forced servicing termination or automatic reboot.",
+        quality_update_scope: "64-bit Windows, unmanaged interactive same-user administrator only. Current Windows Update security/critical Windows-family software updates, including reviewed bundles. Optional, preview, driver, feature/upgrade and interactive/exclusive updates are excluded. No source registration, policy changes, forced servicing termination or automatic reboot.",
         app_upgrade_unavailable_reason: "No trusted original-unelevated-user WinGet broker or independently verified source/version/architecture/scope/pin evidence is available. Application patching is disabled; no WinGet executable, installer, path or arguments are accepted.",
     }
 }
@@ -253,7 +253,7 @@ pub fn account_supported() -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        bail!("Patching requires elevated interactive Windows x64")
+        bail!("Patching requires elevated interactive 64-bit Windows")
     }
 }
 
@@ -270,7 +270,7 @@ fn native<T>(f: impl FnOnce(&mut Native) -> Result<T>) -> Result<T> {
     #[cfg(not(windows))]
     {
         let _ = f;
-        bail!("Patching requires elevated interactive Windows x64")
+        bail!("Patching requires elevated interactive 64-bit Windows")
     }
 }
 #[cfg(windows)]
@@ -297,6 +297,6 @@ fn spawn<T: Send + 'static>(
     #[cfg(not(windows))]
     {
         let _ = f;
-        bail!("Patching requires elevated interactive Windows x64")
+        bail!("Patching requires elevated interactive 64-bit Windows")
     }
 }

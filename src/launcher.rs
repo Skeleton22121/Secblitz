@@ -31,6 +31,7 @@ pub fn friendly_problem(raw: &str) -> &'static str {
         "requires windows",
         "only supported on windows",
         "windows 10/11",
+        "64-bit windows",
     ]) {
         "Secblitz works on Windows 10 and Windows 11 (64-bit) only. Open it on a PC that runs one of them."
     } else if has(&["undo history is damaged"]) {
@@ -1165,6 +1166,13 @@ mod tests {
             damaged.contains("Start fresh") && !damaged.contains("Restart"),
             "{damaged}"
         );
+        for raw in [
+            "The monitor requires 64-bit Windows",
+            "Secblitz supports 64-bit Windows only",
+            "Web protection requires 64-bit Windows",
+        ] {
+            assert!(friendly_problem(raw).contains("Windows 10"), "{raw}");
+        }
         assert!(
             friendly_problem("Another Secblitz operation holds the journal lock").contains("busy")
         );

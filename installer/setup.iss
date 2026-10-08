@@ -5,6 +5,12 @@
 #ifndef SourceExe
   #error SourceExe must be supplied by build-release.ps1
 #endif
+#ifndef Arch
+  #define Arch "x64"
+#endif
+#if Arch != "x64" && Arch != "arm64"
+  #error Arch must be x64 or arm64
+#endif
 #ifndef OutputPath
   #define OutputPath "..\dist"
 #endif
@@ -29,14 +35,19 @@ DisableDirPage=yes
 UsePreviousAppDir=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
+#if Arch == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 MinVersion=10.0
 WizardStyle=modern
 SetupIconFile=..\assets\secblitz.ico
 UninstallDisplayIcon={app}\secblitz.exe
 OutputDir={#OutputPath}
-OutputBaseFilename=secblitz-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=secblitz-{#AppVersion}-windows-{#Arch}-setup
 Compression=lzma2
 SolidCompression=yes
 ; The tray agent answers WM_QUERYENDSESSION/WM_ENDSESSION/WM_CLOSE by exiting, so

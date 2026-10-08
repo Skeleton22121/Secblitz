@@ -20,7 +20,7 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 STATIC = (
-    "index.html", "404.html", "privacy.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json",
+    "index.html", "404.html", "privacy.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json", "releases/stable-arm64.json",
     "assets/favicon.svg", "assets/preview-92912b03eb97.webp",
     "assets/app-home-light.webp", "assets/app-home-dark.webp",
     "assets/app-protection-light.webp", "assets/app-protection-dark.webp",
@@ -87,10 +87,10 @@ def check_content(relative, data):
             raise ValueError("download has an invalid PE header")
         machine = struct.unpack_from("<H", data, offset + 4)[0]
         magic = struct.unpack_from("<H", data, offset + 24)[0]
-        if (machine, magic) not in ((0x14c, 0x10b), (0x8664, 0x20b)):
+        if (machine, magic) not in ((0x14c, 0x10b), (0x8664, 0x20b), (0xaa64, 0x20b)):
             raise ValueError("download is not a supported Windows PE image")
-        if not relative.endswith("-setup.exe") and machine != 0x8664:
-            raise ValueError("portable download must be x64")
+        if not relative.endswith("-setup.exe") and machine != (0xaa64 if "-windows-arm64" in relative else 0x8664):
+            raise ValueError("portable download does not match its architecture")
     elif relative.endswith(".woff2"):
         if len(data) < 48 or data[:4] != b"wOF2" or struct.unpack_from(">I", data, 8)[0] != len(data):
             raise ValueError("invalid WOFF2 font")
@@ -110,13 +110,14 @@ def check_content(relative, data):
 def allowed_files(version):
     if not re.fullmatch(gate.VERSION, version):
         raise ValueError("expected version must be canonical X.Y.Z")
-    downloads = (*HISTORICAL, f"secblitz-{version}-windows-x64-setup.exe")
+    downloads = (*HISTORICAL, *(f"secblitz-{version}-{info['tag']}-setup.exe" for info in gate.ARCHES.values()))
     return set(STATIC) | {"downloads/" + name for name in downloads}
 
 
 def validate_snapshot(site, version, origin, references):
     payload = gate.verify_feed(site, version)
-    gate.verify_site_references(site, origin, version, payload)
+    arm_payload = gate.verify_feed(site, version, arch="arm64")
+    gate.verify_site_references(site, origin, version, payload, arm_payload)
     gate.verify_not_found_page(site)
     css = (site / "styles.css").read_text(encoding="utf-8")
     if "\\" in css or re.search(r"@import\b", css, re.I):
@@ -167,14 +168,15 @@ def stage(source, output, version, reference_dir):
         check_existing_output(output, names | set(FONT_LICENSES) | LEGACY_ASSETS)
     output.parent.mkdir(parents=True, exist_ok=True)
     references = {
-        f"secblitz-{version}-windows-x64-setup.exe": reference_dir / f"secblitz-{version}-windows-x64-setup.exe",
+        f"secblitz-{version}-{info['tag']}-setup.exe": reference_dir / f"secblitz-{version}-{info['tag']}-setup.exe"
+        for info in gate.ARCHES.values()
     }
     with tempfile.TemporaryDirectory(prefix=".pages-stage-", dir=output.parent) as temporary:
         work = Path(temporary)
         snapshot = work / "site"
         snapshot.mkdir()
         for name in sorted(names):
-            data = read_file(source / name, 16384 if name == "releases/stable.json" else gate.LIMIT)
+            data = read_file(source / name, 16384 if name.startswith("releases/") else gate.LIMIT)
             check_content(name, data)
             dest = snapshot / name
             dest.parent.mkdir(parents=True, exist_ok=True)

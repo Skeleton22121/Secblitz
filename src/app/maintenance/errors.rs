@@ -228,7 +228,7 @@ mod tests {
             "Owner opt-in expired",
             "Operations worker ended or result already consumed",
             "Owner-initiated reboot has not occurred",
-            "Maintenance execution requires Windows x64",
+            "Maintenance execution requires 64-bit Windows",
             "The remote name could not be resolved: network offline",
             "something unexpected",
             "Request blocked by policy",

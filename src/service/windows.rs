@@ -569,8 +569,8 @@ fn command(path: &Path) -> Result<String> {
 pub fn install() -> Result<()> {
     crate::platform::require_admin("Service installation requires Administrator elevation")?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "The monitor requires Windows x64"
+        crate::platform::NATIVE_64,
+        "The monitor requires 64-bit Windows"
     );
     // Only the protected installed copy may become the service binary: a
     // copy in a user-writable folder could be swapped before it is read.
@@ -796,8 +796,8 @@ pub fn install() -> Result<()> {
 pub fn start() -> Result<()> {
     crate::platform::require_admin("Service startup requires Administrator elevation")?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "The monitor requires Windows x64"
+        crate::platform::NATIVE_64,
+        "The monitor requires 64-bit Windows"
     );
     let scm = manager(ServiceManagerAccess::CONNECT)?;
     let service = scm.open_service(

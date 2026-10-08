@@ -5,7 +5,7 @@ const ZONES = [
   "67fffa53121a4368f163e075791f2580", // secblitz.lol
   "c5ee798fa38e35a0c49ed5a293b063ee", // beacons.lol (older updaters)
 ];
-const FILE = /^\/downloads\/(secblitz-\d+\.\d+\.\d+-windows-x64(?:-setup)?\.exe)$/;
+const FILE = /^\/downloads\/(secblitz-\d+\.\d+\.\d+-windows-(?:x64|arm64)(?:-setup)?\.exe)$/;
 const AUTOMATION = /curl|wget|bot|spider|crawl|python|go-http|java|okhttp|libwww|headless|powershell|secblitz-release|secblitz-owner/i;
 const MINUTE = 60 * 1000;
 const LAG = 10 * MINUTE; // analytics arrive a few minutes late

@@ -5,13 +5,13 @@
         [--feed-origin https://legacy.example ...]
 
 Fetches, from the live origin (default: the update origin compiled into the app,
-assets/update-origin.txt), the signed feed (releases/stable.json), the download
-page (/) and the setup, and compares the SHA-256 of each with
+assets/update-origin.txt), the signed feeds (releases/stable.json and stable-arm64.json), the download
+page (/) and both setups, and compares the SHA-256 of each with
 the staged file that was deployed. A fresh deploy can take a short while to
 reach every edge, so a mismatch is retried (--attempts, --delay) and only then
 fails, loudly, with exit code 1. A --feed-origin, such as a legacy update host
 whose front page redirects to the main site, is checked only for the files
-installed copies download from it: the feed and the setup.
+installed copies download from it: the feeds and the setups.
 Read only: no credentials, no writes.
 Standard library only.
 """
@@ -57,12 +57,15 @@ def fetch(url):
 
 
 def expected_files(site, version):
-    setup = f"secblitz-{version}-windows-x64-setup.exe"
-    return {
+    files = {
         "/releases/stable.json": site / "releases/stable.json",
+        "/releases/stable-arm64.json": site / "releases/stable-arm64.json",
         "/": site / "index.html",
-        f"/downloads/{setup}": site / "downloads" / setup,
     }
+    for arch in ("x64", "arm64"):
+        setup = f"secblitz-{version}-windows-{arch}-setup.exe"
+        files[f"/downloads/{setup}"] = site / "downloads" / setup
+    return files
 
 
 def first_difference(deployed, served, context=80):

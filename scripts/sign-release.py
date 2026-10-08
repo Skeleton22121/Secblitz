@@ -20,6 +20,23 @@ VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
 HASH = re.compile(r"[0-9a-f]{64}", re.ASCII)
 MANIFEST_LIMIT = 16 * 1024
 ARTIFACT_LIMIT = 25 * 1024 * 1024
+# Each architecture has its own feed, target and installer name. The x64 feed
+# keeps its original name and format so installed copies never see a change.
+ARCHES = {
+    "x64": dict(target="windows-x86_64", tag="windows-x64", feed="stable.json"),
+    "arm64": dict(target="windows-aarch64", tag="windows-arm64", feed="stable-arm64.json"),
+}
+
+
+def arch_of_target(target):
+    for name, info in ARCHES.items():
+        if info["target"] == target:
+            return name
+    raise ValueError("unknown target")
+
+
+def setup_name(version, arch):
+    return f"secblitz-{version}-{ARCHES[arch]['tag']}-setup.exe"
 
 
 def strict_json(data):
@@ -102,7 +119,7 @@ def stable_version(version):
     return parts
 
 
-def validate_manifest(payload, now):
+def validate_manifest(payload, now, arch=None):
     fields = {"schema", "version", "filename", "sha256", "size", "published_at", "expires_at", "target"}
     if not isinstance(payload, dict) or set(payload) != fields:
         raise ValueError("invalid v1 fields")
@@ -110,8 +127,13 @@ def validate_manifest(payload, now):
     for field in ("schema", "size", "published_at", "expires_at"):
         if type(payload[field]) is not int or not 0 <= payload[field] <= 2**64 - 1:
             raise ValueError("invalid integer")
-    if (payload["schema"] != 1 or payload["target"] != "windows-x86_64"
-            or payload["filename"] != f"secblitz-{payload['version']}-windows-x64-setup.exe"
+    if payload["target"] not in {info["target"] for info in ARCHES.values()}:
+        raise ValueError("invalid or stale v1 manifest")
+    found = arch_of_target(payload["target"])
+    if arch is not None and found != arch:
+        raise ValueError("invalid or stale v1 manifest")
+    if (payload["schema"] != 1
+            or payload["filename"] != setup_name(payload["version"], found)
             or not isinstance(payload["sha256"], str) or not HASH.fullmatch(payload["sha256"])
             or not 0 < payload["size"] <= 64 * 1024 * 1024
             or not 0 < payload["expires_at"] - payload["published_at"] <= 90 * 86400
@@ -193,10 +215,11 @@ def main():
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--lifetime-days", type=int, default=90)
+    parser.add_argument("--arch", choices=sorted(ARCHES), default="x64")
     parser.add_argument("--public-key", type=Path, default=ROOT / "assets/update-public-key.hex")
     args = parser.parse_args()
     stable_version(args.version)
-    expected = f"secblitz-{args.version}-windows-x64-setup.exe"
+    expected = setup_name(args.version, args.arch)
     if args.installer.name != expected or args.installer.is_symlink():
         parser.error("installer must be a regular file with the exact versioned setup filename")
     if not 1 <= args.lifetime_days <= 90:
@@ -219,7 +242,7 @@ def main():
     if not 0 < size <= 25 * 1024 * 1024:
         parser.error("installer must be nonempty and at most 25 MiB for Pages")
     now = int(time.time())
-    payload = dict(schema=1, version=args.version, target="windows-x86_64", filename=expected,
+    payload = dict(schema=1, version=args.version, target=ARCHES[args.arch]["target"], filename=expected,
                    sha256=digest.hexdigest(), size=size, published_at=now,
                    expires_at=now + args.lifetime_days * 86400)
     write_output(args.output, signed_envelope(payload, key))

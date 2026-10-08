@@ -33,6 +33,9 @@ function VbsFacts {
         $f = VFlag $cpu 'VirtualizationFirmwareEnabled'
         if ($f -eq $true) { $virt = $true } elseif ($f -eq $false -and $null -eq $virt) { $virt = $false }
     }
+    $hvPresent = $null
+    $cs = @(Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue)
+    if ($cs.Count -ge 1) { $hvPresent = VFlag $cs[0] 'HypervisorPresent' }
     $boot = $null
     if ($os.LastBootUpTime -is [datetime]) { $boot = [DateTimeOffset]::new($os.LastBootUpTime).ToUnixTimeSeconds() }
     $build = $null
@@ -63,6 +66,7 @@ function VbsFacts {
         configured = @(VNumbers $g.SecurityServicesConfigured)
         running = @(VNumbers $g.SecurityServicesRunning)
         virtFirmware = $virt
+        hypervisorPresent = $hvPresent
         vbsStatus = $vbsStatus
         build = $build
         mandatory = (VDword $dgPath 'Mandatory')

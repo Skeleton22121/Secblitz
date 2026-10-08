@@ -36,6 +36,7 @@ pub enum Action {
     OpenSuggestFeature,
     OpenPrivacyPolicy,
     OpenRecoveryKey,
+    OpenDownloadPage,
 }
 
 pub const REPORT_PROBLEM_URL: &str =
@@ -44,6 +45,7 @@ pub const SUGGEST_FEATURE_URL: &str =
     "https://github.com/secblitz/Secblitz/issues/new?template=feature_request.yml";
 pub const PRIVACY_POLICY_URL: &str = "https://secblitz.lol/privacy.html";
 pub const RECOVERY_KEY_URL: &str = "https://aka.ms/myrecoverykey";
+pub const DOWNLOAD_PAGE_URL: &str = "https://secblitz.lol/#download";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionResult {
@@ -123,6 +125,7 @@ fn target(action: Action) -> Option<Target> {
         Action::OpenSuggestFeature => Uri(SUGGEST_FEATURE_URL),
         Action::OpenPrivacyPolicy => Uri(PRIVACY_POLICY_URL),
         Action::OpenRecoveryKey => Uri(RECOVERY_KEY_URL),
+        Action::OpenDownloadPage => Uri(DOWNLOAD_PAGE_URL),
         Action::OpenBitLocker => Control(BITLOCKER_CONTROL),
         _ => return None,
     })
@@ -159,6 +162,7 @@ fn validate_settings_request(uri: &str, split_elevated: bool) -> Result<()> {
                 | SUGGEST_FEATURE_URL
                 | PRIVACY_POLICY_URL
                 | RECOVERY_KEY_URL
+                | DOWNLOAD_PAGE_URL
                 | "ms-settings:workplace"
                 | "ms-settings:recovery"
                 | "ms-settings:remotedesktop"
@@ -310,6 +314,7 @@ mod tests {
             (Action::OpenSuggestFeature, SUGGEST_FEATURE_URL),
             (Action::OpenPrivacyPolicy, PRIVACY_POLICY_URL),
             (Action::OpenRecoveryKey, RECOVERY_KEY_URL),
+            (Action::OpenDownloadPage, DOWNLOAD_PAGE_URL),
         ] {
             assert_eq!(settings_uri(action), Some(uri));
             validate_settings_request(uri, false).unwrap();

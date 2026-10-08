@@ -64,6 +64,9 @@ pub enum Msg {
     ToggleProtected,
     ToggleProtectedAll,
     WebSuggest(bool),
+    OpenDownload,
+    DownloadOpened(bool),
+    HideProcessorTip,
 }
 
 const LOW_DISK_BYTES: u64 = 5_000_000_000;
@@ -78,8 +81,41 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::ToggleProtected => state.protected_open = !state.protected_open,
         Msg::ToggleProtectedAll => state.protected_all = !state.protected_all,
         Msg::WebSuggest(on) => state.web_suggest = on,
+        Msg::OpenDownload => {
+            return ctx.broker_task(crate::broker::Request::OpenDownloadPage, |reply| {
+                Message::Home(Msg::DownloadOpened(matches!(
+                    reply,
+                    Ok(crate::broker::Reply::Done)
+                )))
+            })
+        }
+        Msg::DownloadOpened(true) => {}
+        Msg::DownloadOpened(false) => {
+            return Task::done(Message::Toast(
+                ctx.t("We couldn't open your web browser. Visit secblitz.lol to get the version made for your PC."),
+                Tone::Warn,
+            ))
+        }
+        Msg::HideProcessorTip => return hide_processor_tip(ctx),
     }
     Task::none()
+}
+
+fn hide_processor_tip(ctx: &mut Ctx) -> Task<Message> {
+    mark_tip_seen(&mut ctx.prefs);
+    Task::perform(crate::gui::save_prefs(ctx.prefs.clone()), |_| Message::Noop)
+}
+
+fn mark_tip_seen(prefs: &mut crate::app::settings::Prefs) {
+    prefs.processor_tip_seen = true;
+}
+
+fn processor_tip_due(ctx: &Ctx) -> bool {
+    tip_due(ctx.x64_on_arm, ctx.prefs.processor_tip_seen)
+}
+
+fn tip_due(x64_on_arm: bool, seen: bool) -> bool {
+    x64_on_arm && !seen
 }
 
 fn frame(state: &mut State, ctx: &Ctx, now: Instant) {
@@ -604,6 +640,9 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
     if !items.is_empty() {
         page = page.push(later(1, attention_group(ctx, report, &items)));
     }
+    if processor_tip_due(ctx) {
+        page = page.push(later(2, processor_card(ctx)));
+    }
     if state.web_suggest {
         page = page.push(later(2, web_card(ctx)));
     }
@@ -612,6 +651,30 @@ fn assessed<'a>(state: &State, ctx: &'a Ctx, report: &'a Report) -> Element<'a, 
         page = page.push(later(3, protected_group(state, ctx, count, &labels)));
     }
     page.into()
+}
+
+fn processor_card<'a>(ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    widgets::group(
+        p,
+        ctx.t("Tip"),
+        None,
+        Some(widgets::action(
+            p,
+            ButtonKind::Ghost,
+            ctx.t("Hide"),
+            None,
+            Some(Message::Home(Msg::HideProcessorTip)),
+        )),
+        vec![widgets::row_item(
+            p,
+            Some(Icon::Download),
+            ctx.t("A version made for your PC's processor is available"),
+            Some(ctx.t("Your PC has an ARM processor. Open the download page to get the version made for it. Your settings and history stay.")),
+            widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
+            Some(Message::Home(Msg::OpenDownload)),
+        )],
+    )
 }
 
 fn web_card<'a>(ctx: &'a Ctx) -> Element<'a, Message> {
@@ -753,6 +816,23 @@ fn protected_group<'a>(
 mod tests {
     use super::*;
     use secblitz::engine::Outcome;
+
+    #[test]
+    fn the_processor_tip_shows_only_on_an_x64_build_on_an_arm_pc_until_seen() {
+        assert!(tip_due(true, false));
+        assert!(!tip_due(true, true));
+        assert!(!tip_due(false, false));
+        assert!(!tip_due(false, true));
+    }
+
+    #[test]
+    fn only_the_hide_button_records_the_processor_tip_as_seen() {
+        let mut prefs = crate::app::settings::Prefs::default();
+        assert!(tip_due(true, prefs.processor_tip_seen));
+        mark_tip_seen(&mut prefs);
+        assert!(prefs.processor_tip_seen);
+        assert!(!tip_due(true, prefs.processor_tip_seen));
+    }
 
     fn outcome(id: &str, status: &str) -> Outcome {
         Outcome {

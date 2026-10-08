@@ -26,9 +26,8 @@
     systemDark.addEventListener("change", label);
   }
 
-  // ---- Copy the installer checksum ----
-  const copy = document.getElementById("copy-sha");
-  if (copy) {
+  // ---- Copy an installer checksum ----
+  for (const copy of document.querySelectorAll("button[data-copy]")) {
     copy.addEventListener("click", async () => {
       const target = document.getElementById(copy.dataset.copy);
       try {
@@ -40,6 +39,22 @@
       }
       setTimeout(() => { copy.textContent = "Copy"; }, 2000);
     });
+  }
+
+  // ---- Offer the ARM installer to PCs with an ARM processor ----
+  const arm = document.querySelector('a[data-arch="arm64"]');
+  const high = navigator.userAgentData && navigator.userAgentData.getHighEntropyValues;
+  if (arm && high) {
+    navigator.userAgentData.getHighEntropyValues(["architecture"])
+      .then(({ architecture }) => {
+        if (architecture !== "arm") return;
+        for (const button of document.querySelectorAll("a[data-auto-download]")) {
+          button.href = arm.href;
+        }
+      })
+      .catch(() => {
+        // The button keeps the installer for most PCs; both links stay visible.
+      });
   }
 
   // ---- Download count ----

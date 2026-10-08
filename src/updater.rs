@@ -20,6 +20,37 @@ pub use health::{health, MonitorHealth, TaskHealth, UpdateHealth};
 #[cfg(windows)]
 #[path = "updater/windows.rs"]
 mod windows;
+/// Fixed at compile time: each build reads only its own architecture's feed.
+#[cfg(target_arch = "aarch64")]
+mod arch {
+    pub const TARGET: &str = "windows-aarch64";
+    #[cfg(test)]
+    pub const OTHER_TARGET: &str = "windows-x86_64";
+    pub const SETUP_TAG: &str = "windows-arm64";
+    pub const STABLE_FEED: &str = "releases/stable-arm64.json";
+    pub const CANDIDATE_FEED: &str = "releases/candidate-arm64.json";
+    pub const DELIVERY_FEED: &str = "releases/delivery-arm64.json";
+    pub const DELIVERY_FLOOR: &str = "delivery-floor-arm64.json";
+}
+#[cfg(not(target_arch = "aarch64"))]
+mod arch {
+    pub const TARGET: &str = "windows-x86_64";
+    #[cfg(test)]
+    pub const OTHER_TARGET: &str = "windows-aarch64";
+    pub const SETUP_TAG: &str = "windows-x64";
+    pub const STABLE_FEED: &str = "releases/stable.json";
+    pub const CANDIDATE_FEED: &str = "releases/candidate.json";
+    pub const DELIVERY_FEED: &str = "releases/delivery.json";
+    pub const DELIVERY_FLOOR: &str = "delivery-floor.json";
+}
+// The highest-seen floor is shared by both builds of one PC, so moving from the
+// x64 build to the native arm64 build keeps its history.
+fn known_target(target: &str) -> bool {
+    matches!(target, "windows-x86_64" | "windows-aarch64")
+}
+fn setup_filename(version: &str) -> String {
+    format!("secblitz-{version}-{}-setup.exe", arch::SETUP_TAG)
+}
 const MANIFEST_LIMIT: usize = 16 * 1024;
 const INSTALLER_LIMIT: u64 = 64 * 1024 * 1024;
 const SKEW: u64 = 600;
@@ -147,7 +178,7 @@ fn parse_floor(bytes: &[u8]) -> Result<ReleaseFloor> {
     stable(&floor.version)?;
     ensure!(
         floor.schema == 1
-            && floor.target == "windows-x86_64"
+            && known_target(&floor.target)
             && valid_hash(&floor.sha256)
             && floor.expires_at > floor.published_at
             && floor.expires_at - floor.published_at <= 90 * 86400,
@@ -167,9 +198,9 @@ fn advance_floor(
         let version = stable(&m.version)?;
         let seen = stable(&previous.version)?;
         ensure!(version >= seen, "Previously seen release rollback rejected");
-        if version == seen {
+        if version == seen && m.target == previous.target {
             ensure!(
-                m.sha256 == previous.sha256 && m.target == previous.target,
+                m.sha256 == previous.sha256,
                 "Published release content changed"
             );
             ensure!(
@@ -275,12 +306,12 @@ fn verified_payload(bytes: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
 }
 fn validate_manifest(m: &Manifest, time: u64) -> Result<()> {
     ensure!(
-        m.schema == 1 && m.target == "windows-x86_64",
+        m.schema == 1 && m.target == arch::TARGET,
         "Unsupported update target/schema"
     );
     stable(&m.version)?;
     ensure!(
-        m.filename == format!("secblitz-{}-windows-x64-setup.exe", m.version),
+        m.filename == setup_filename(&m.version),
         "Invalid installer filename"
     );
     ensure!(valid_hash(&m.sha256), "Invalid SHA-256");

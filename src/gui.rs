@@ -151,6 +151,8 @@ pub struct Ctx {
     pub helper: Helper,
     pub state_dir: Option<PathBuf>,
     pub prefs: app::settings::Prefs,
+    /// This x64 build runs through emulation on an ARM PC.
+    pub x64_on_arm: bool,
     pub toast: Option<(String, Tone)>,
     pub explain_open: Option<String>,
     pub copilot_installed: bool,
@@ -413,6 +415,7 @@ impl App {
             helper,
             state_dir,
             prefs,
+            x64_on_arm: secblitz::platform::x64_on_arm(),
             toast: None,
             explain_open: None,
             copilot_installed: false,

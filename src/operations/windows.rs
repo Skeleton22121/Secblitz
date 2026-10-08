@@ -91,7 +91,7 @@ pub(super) struct Backend {
 }
 impl Backend {
     pub fn new(root: &Path) -> Result<Self> {
-        ensure!(cfg!(target_arch = "x86_64"), "Native Windows x64 required");
+        ensure!(crate::platform::NATIVE_64, "Native 64-bit Windows required");
         let mut buffer = vec![0u16; 32768];
         // SAFETY: `buffer` is writable for the length passed.
         let n = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;

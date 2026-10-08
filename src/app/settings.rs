@@ -48,6 +48,8 @@ pub struct Prefs {
     pub notify_reverted: bool,
     #[serde(default = "on")]
     pub notify_dangerous: bool,
+    #[serde(default)]
+    pub processor_tip_seen: bool,
 }
 
 fn on() -> bool {
@@ -63,6 +65,7 @@ impl Default for Prefs {
             protection_topic: None,
             notify_reverted: true,
             notify_dangerous: true,
+            processor_tip_seen: false,
         }
     }
 }
@@ -110,6 +113,10 @@ pub fn parse(bytes: &[u8]) -> Prefs {
     ] {
         *slot = map.get(key).and_then(|v| v.as_bool()).unwrap_or(true);
     }
+    prefs.processor_tip_seen = map
+        .get("processor_tip_seen")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if let Some(tab) = map
         .get("tools_tab")
         .and_then(|v| v.as_str())
@@ -428,12 +435,23 @@ mod tests {
             protection_topic: Some(crate::app::topics::Topic::Browsers),
             notify_reverted: false,
             notify_dangerous: true,
+            processor_tip_seen: true,
         };
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
         assert!(!dir.path().join("gui-prefs.json.tmp").exists());
         std::fs::write(&file, b"{broken").unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), Prefs::default());
+    }
+
+    #[test]
+    fn the_processor_tip_is_unseen_until_recorded() {
+        assert!(!Prefs::default().processor_tip_seen);
+        assert!(!parse(b"{}").processor_tip_seen);
+        assert!(!parse(br#"{"processor_tip_seen":"yes"}"#).processor_tip_seen);
+        let seen = parse(br#"{"processor_tip_seen":true,"theme":"dark"}"#);
+        assert!(seen.processor_tip_seen);
+        assert_eq!(seen.theme, ThemeChoice::Dark);
     }
 
     #[test]

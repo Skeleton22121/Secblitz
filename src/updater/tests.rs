@@ -172,8 +172,8 @@ fn install_attempt_corruption_never_becomes_idle_or_legacy_health() {
 }
 
 fn payload() -> serde_json::Value {
-    serde_json::json!({"schema":1,"version":"9.0.0","filename":"secblitz-9.0.0-windows-x64-setup.exe",
-        "sha256":hex::encode(Sha256::digest(b"test")),"size":4,"published_at":1000,"expires_at":2000,"target":"windows-x86_64"})
+    serde_json::json!({"schema":1,"version":"9.0.0","filename":setup_filename("9.0.0"),
+        "sha256":hex::encode(Sha256::digest(b"test")),"size":4,"published_at":1000,"expires_at":2000,"target":arch::TARGET})
 }
 fn signed(raw: &[u8]) -> (Vec<u8>, [u8; 32]) {
     let key = SigningKey::from_bytes(&[42; 32]);
@@ -366,7 +366,8 @@ fn authentic_but_malformed_payloads_are_rejected() {
         assert!(verify_value(missing, 1500).is_err(), "missing {field}");
     }
     let duplicate = format!(
-        "{{\"targ\\u0065t\":\"windows-x86_64\",{}",
+        "{{\"targ\\u0065t\":\"{}\",{}",
+        arch::TARGET,
         raw.trim_start_matches('{')
     );
     let (bytes, key) = signed(duplicate.as_bytes());
@@ -377,22 +378,19 @@ fn authentic_but_malformed_payloads_are_rejected() {
 fn signed_target_path_hash_and_integer_constraints_are_enforced() {
     for (field, value) in [
         ("schema", serde_json::json!(2)),
-        ("target", serde_json::json!("windows-aarch64")),
-        ("target", serde_json::json!("windows-x86_64 ")),
+        ("target", serde_json::json!(arch::OTHER_TARGET)),
+        ("target", serde_json::json!(format!("{} ", arch::TARGET))),
         ("filename", serde_json::json!("..\\setup.exe")),
         ("filename", serde_json::json!("C:\\setup.exe")),
         (
             "filename",
-            serde_json::json!("secblitz-9.0.0-windows-x64-setup.exe:payload"),
+            serde_json::json!(format!("{}:payload", setup_filename("9.0.0"))),
         ),
         (
             "filename",
-            serde_json::json!("secblitz-9.0.0-windows-x64-setup.exe\u{0}"),
+            serde_json::json!(format!("{}\u{0}", setup_filename("9.0.0"))),
         ),
-        (
-            "filename",
-            serde_json::json!("secblitz-8.0.0-windows-x64-setup.exe"),
-        ),
+        ("filename", serde_json::json!(setup_filename("8.0.0"))),
         ("sha256", serde_json::json!("a".repeat(63))),
         ("sha256", serde_json::json!("a".repeat(65))),
         ("sha256", serde_json::json!("A".repeat(64))),
@@ -444,11 +442,7 @@ fn clock_skew_and_validity_boundaries_are_exact() {
 fn expired_feed_is_rejected_even_when_version_matches_current_build() {
     let mut p = payload();
     p["version"] = env!("CARGO_PKG_VERSION").into();
-    p["filename"] = format!(
-        "secblitz-{}-windows-x64-setup.exe",
-        env!("CARGO_PKG_VERSION")
-    )
-    .into();
+    p["filename"] = setup_filename(env!("CARGO_PKG_VERSION")).into();
     let fresh = verify_value(p.clone(), 1500).unwrap();
     assert!(!newer(&fresh, env!("CARGO_PKG_VERSION")).unwrap());
     assert!(verify_value(p, 2601).is_err());
@@ -468,7 +462,7 @@ fn installed_version_order_and_canonical_versions_are_required() {
         assert!(stable(text).is_err(), "{text}");
         let mut p = payload();
         p["version"] = text.into();
-        p["filename"] = format!("secblitz-{text}-windows-x64-setup.exe").into();
+        p["filename"] = setup_filename(text).into();
         assert!(verify_value(p, 1500).is_err());
     }
     let m = verify_value(payload(), 1500).unwrap();
@@ -621,7 +615,7 @@ fn numeric_overflow_and_encoded_path_inputs_fail_before_download() {
         assert!(verify_value(p, 1500).is_err(), "filename {text}");
         let mut p = payload();
         p["version"] = text.into();
-        p["filename"] = format!("secblitz-{text}-windows-x64-setup.exe").into();
+        p["filename"] = setup_filename(text).into();
         assert!(verify_value(p, 1500).is_err(), "version {text}");
     }
     let mut p = payload();
@@ -857,7 +851,7 @@ fn release_floor_survives_restart_and_failed_payload_and_clock_rollback() {
     let older = verify_value(payload(), 1500).unwrap();
     let mut p = payload();
     p["version"] = "10.0.0".into();
-    p["filename"] = "secblitz-10.0.0-windows-x64-setup.exe".into();
+    p["filename"] = setup_filename("10.0.0").into();
     let observed = verify_value(p, 1500).unwrap();
     let floor = advance_floor(&observed, "8.0.0", None).unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -872,6 +866,62 @@ fn release_floor_survives_restart_and_failed_payload_and_clock_rollback() {
     let revived = verify_value(payload(), 1500).unwrap();
     assert!(advance_floor(&revived, "8.0.0", Some(&floor)).is_err());
     assert!(newer(&older, "10.0.0").is_err()); // Clock cannot lower version floor.
+}
+
+#[test]
+fn floor_keeps_its_history_when_the_pc_switches_to_the_other_architecture() {
+    let m = verify_value(payload(), 1500).unwrap();
+    let floor = advance_floor(&m, "9.0.0", None).unwrap();
+    let mut other = floor.clone();
+    other.target = arch::OTHER_TARGET.into();
+    other.sha256 = hex::encode(Sha256::digest(b"other build"));
+    let bytes = serde_json::to_vec(&other).unwrap();
+    assert_eq!(parse_floor(&bytes).unwrap(), other);
+    let switched = advance_floor(&m, "9.0.0", Some(&other)).unwrap();
+    assert_eq!(
+        (switched.target.as_str(), switched.sha256.as_str()),
+        (arch::TARGET, m.sha256.as_str())
+    );
+    let mut older = payload();
+    older["version"] = "8.5.0".into();
+    older["filename"] = setup_filename("8.5.0").into();
+    let older = verify_value(older, 1500).unwrap();
+    assert!(advance_floor(&older, "8.0.0", Some(&other)).is_err());
+    other.target = "windows-riscv64".into();
+    assert!(parse_floor(&serde_json::to_vec(&other).unwrap()).is_err());
+}
+
+#[test]
+fn each_build_reads_only_its_own_feed_and_installer() {
+    assert!(arch::STABLE_FEED.starts_with("releases/stable"));
+    assert!(arch::CANDIDATE_FEED.starts_with("releases/candidate"));
+    assert!(arch::DELIVERY_FEED.starts_with("releases/delivery"));
+    assert!(setup_filename("9.0.0").contains(arch::SETUP_TAG));
+    let mut other = payload();
+    other["target"] = arch::OTHER_TARGET.into();
+    assert!(verify_value(other, 1500).is_err());
+    let mut foreign = payload();
+    foreign["filename"] = setup_filename("9.0.0")
+        .replace(
+            arch::SETUP_TAG,
+            if arch::SETUP_TAG == "windows-x64" {
+                "windows-arm64"
+            } else {
+                "windows-x64"
+            },
+        )
+        .into();
+    assert!(verify_value(foreign, 1500).is_err());
+    if cfg!(target_arch = "aarch64") {
+        assert_eq!(arch::STABLE_FEED, "releases/stable-arm64.json");
+    } else {
+        assert_eq!(arch::STABLE_FEED, "releases/stable.json");
+        assert_eq!(arch::TARGET, "windows-x86_64");
+        assert_eq!(
+            setup_filename("9.0.0"),
+            "secblitz-9.0.0-windows-x64-setup.exe"
+        );
+    }
 }
 
 #[test]
@@ -904,7 +954,7 @@ fn immutable_release_allows_renewal_but_not_hash_or_metadata_rollback() {
     }
     let mut next = payload();
     next["version"] = "10.0.0".into();
-    next["filename"] = "secblitz-10.0.0-windows-x64-setup.exe".into();
+    next["filename"] = setup_filename("10.0.0").into();
     let next = verify_value(next, 1500).unwrap();
     assert_eq!(
         advance_floor(&next, "9.0.0", Some(&old)).unwrap().version,
@@ -929,7 +979,7 @@ fn release_floor_schema_is_strict_bounded_and_independent_of_wall_clock() {
         ("version", serde_json::json!("9.0.0-rc.1")),
         ("sha256", serde_json::json!("A".repeat(64))),
         ("sha256", serde_json::json!("a".repeat(63))),
-        ("target", serde_json::json!("windows-aarch64")),
+        ("target", serde_json::json!("windows-riscv64")),
         ("published_at", serde_json::json!(-1)),
         ("expires_at", serde_json::json!(1000)),
         ("expires_at", serde_json::json!(1000 + 91 * 86400)),

@@ -1,6 +1,7 @@
 //! CPUID probes used to explain why a protection is or is not offered.
 
-/// CPUID leaf 7, ECX bit 7: the same flag on Intel and AMD.
+/// CPUID leaf 7, ECX bit 7: the same flag on Intel and AMD. Only x86 has this
+/// flag, so kernel stack protection is never offered on an ARM processor.
 pub fn cpu_has_shadow_stacks() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -24,15 +25,29 @@ fn cpuid_leaf7_ecx() -> Option<u32> {
     }
 }
 
-/// CPUID leaf 1 bit 31, then leaf 0x40000000; None on bare hardware.
-pub fn cpu_hypervisor_vendor() -> Option<String> {
+/// CPUID leaf 1 bit 31, then leaf 0x40000000; None on bare hardware. Other
+/// processors have no such leaf, so Windows' own answer is used instead.
+pub fn cpu_hypervisor_vendor(windows_says_present: Option<bool>) -> Option<String> {
     #[cfg(target_arch = "x86_64")]
     {
+        let _ = windows_says_present;
         hypervisor_vendor_x86()
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        None
+        vendor_from_windows(windows_says_present)
+    }
+}
+
+/// Windows does not name the vendor, so any hypervisor is "unknown": that
+/// only counts when memory integrity is already running, never as a reason
+/// to offer it. A PC where the answer is missing is treated as a virtual
+/// machine too, because a wrong offer costs more than a missing one.
+#[cfg(any(not(target_arch = "x86_64"), test))]
+fn vendor_from_windows(present: Option<bool>) -> Option<String> {
+    match present {
+        Some(false) => None,
+        _ => Some("unknown".into()),
     }
 }
 
@@ -81,6 +96,13 @@ mod tests {
     fn registers(name: &[u8; 12]) -> [u32; 3] {
         let word = |at: usize| u32::from_le_bytes(name[at..at + 4].try_into().unwrap());
         [word(0), word(4), word(8)]
+    }
+
+    #[test]
+    fn without_a_cpuid_leaf_windows_decides_whether_a_hypervisor_runs() {
+        assert_eq!(vendor_from_windows(Some(false)), None);
+        assert_eq!(vendor_from_windows(Some(true)).as_deref(), Some("unknown"));
+        assert_eq!(vendor_from_windows(None).as_deref(), Some("unknown"));
     }
 
     #[test]

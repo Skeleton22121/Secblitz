@@ -3,14 +3,16 @@
 
     assemble-site.py --version 0.8.1 --assets release-assets --historical historical --output dist/pages
 
---assets holds the four release files (already checked against SHA256SUMS, the
+--assets holds the seven release files (already checked against SHA256SUMS, the
 build attestations and the pinned update key by publish-website.yml):
 
-    secblitz-X.Y.Z-windows-x64-setup.exe, secblitz-X.Y.Z-windows-x64.exe, SHA256SUMS, stable.json
+    secblitz-X.Y.Z-windows-x64-setup.exe, secblitz-X.Y.Z-windows-x64.exe,
+    secblitz-X.Y.Z-windows-arm64-setup.exe, secblitz-X.Y.Z-windows-arm64.exe,
+    SHA256SUMS, stable.json, stable-arm64.json
 
 --historical holds the older downloads fetched by historical-downloads.py.
-The portable exe is larger than the Pages file limit, so it stays on the GitHub
-release and is not copied into the site.
+The portable exes are larger than the Pages file limit, so they stay on the GitHub
+release and are not copied into the site.
 Steps: copy website/ into a scratch tree, add the downloads and the signed
 feed, write the real checksum and size into the page (finalize-site.py), run the
 release gate (prepare-pages.py --require-feed) and then stage-pages.py, which
@@ -26,6 +28,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ARCHES = ("x64", "arm64")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", re.ASCII)
 
 
@@ -53,14 +56,16 @@ def assemble(version, assets, historical, output, website=None):
     if not VERSION.fullmatch(version):
         raise AssembleError("Version must be plain X.Y.Z.")
     website = website or ROOT / "website"
-    setup = f"secblitz-{version}-windows-x64-setup.exe"
-    portable = f"secblitz-{version}-windows-x64.exe"
+    setups = {arch: f"secblitz-{version}-windows-{arch}-setup.exe" for arch in ARCHES}
+    portables = {arch: f"secblitz-{version}-windows-{arch}.exe" for arch in ARCHES}
+    feeds = {"x64": "stable.json", "arm64": "stable-arm64.json"}
+    expected = {*setups.values(), *portables.values(), "SHA256SUMS", *feeds.values()}
     release = regular_files(assets)
-    if set(release) != {setup, portable, "SHA256SUMS", "stable.json"}:
-        raise AssembleError("The release must carry exactly: " + ", ".join(sorted((setup, portable, "SHA256SUMS", "stable.json")))
+    if set(release) != expected:
+        raise AssembleError("The release must carry exactly: " + ", ".join(sorted(expected))
                             + ". Found: " + ", ".join(sorted(release)) + ".")
     old = regular_files(historical)
-    if set(old) & {setup, portable}:
+    if set(old) & {*setups.values(), *portables.values()}:
         raise AssembleError("The historical downloads already contain this version.")
     with tempfile.TemporaryDirectory(prefix="assemble-site-") as scratch:
         scratch = Path(scratch)
@@ -69,12 +74,14 @@ def assemble(version, assets, historical, output, website=None):
         (site / "downloads").mkdir(exist_ok=True)
         for path in old.values():
             shutil.copyfile(path, site / "downloads" / path.name)
-        shutil.copyfile(release[setup], site / "downloads" / setup)
         (site / "releases").mkdir(exist_ok=True)
-        shutil.copyfile(release["stable.json"], site / "releases" / "stable.json")
         reference.mkdir()
-        shutil.copyfile(release[setup], reference / setup)
-        run(ROOT / "scripts/finalize-site.py", "--site", site, "--version", version, "--setup", release[setup])
+        for arch, setup in setups.items():
+            shutil.copyfile(release[setup], site / "downloads" / setup)
+            shutil.copyfile(release[setup], reference / setup)
+            shutil.copyfile(release[feeds[arch]], site / "releases" / feeds[arch])
+        run(ROOT / "scripts/finalize-site.py", "--site", site, "--version", version,
+            "--setup", release[setups["x64"]], "--setup-arm64", release[setups["arm64"]])
         run(ROOT / "scripts/prepare-pages.py", "--site", site, "--require-feed", "--expected-version", version)
         if output.exists():
             raise AssembleError("The output directory must not exist yet.")

@@ -11,11 +11,11 @@ fn fixture() -> (SigningKey, SigningKey, Vec<u8>, serde_json::Value) {
     let root = SigningKey::from_bytes(&[51; 32]);
     let delegate = SigningKey::from_bytes(&[52; 32]);
     let manifest = serde_json::json!({"schema":1,"version":"9.0.0",
-        "filename":"secblitz-9.0.0-windows-x64-setup.exe", "sha256":hex::encode(Sha256::digest(b"test")),
-        "size":4,"published_at":1000,"expires_at":2000,"target":"windows-x86_64"});
+        "filename":setup_filename("9.0.0"), "sha256":hex::encode(Sha256::digest(b"test")),
+        "size":4,"published_at":1000,"expires_at":2000,"target":arch::TARGET});
     let raw = envelope(&manifest, &delegate);
     let auth = serde_json::json!({"schema":1,"role":"secblitz-delivery","sequence":1,
-        "origin":"https://updates.example.org/","target":"windows-x86_64",
+        "origin":"https://updates.example.org/","target":arch::TARGET,
         "published_at":1000,"expires_at":2000,"version":"9.0.0",
         "manifest_sha256":hex::encode(Sha256::digest(&raw)),
         "manifest_key":hex::encode(delegate.verifying_key().to_bytes()),
@@ -81,7 +81,7 @@ fn delegation_scope_is_strict_bounded_and_weak_keys_are_rejected() {
             "expires_at",
             serde_json::json!(1000 + delivery::LIFETIME + 1),
         ),
-        ("target", serde_json::json!("windows-aarch64")),
+        ("target", serde_json::json!(arch::OTHER_TARGET)),
         ("manifest_key", serde_json::json!("00".repeat(32))),
         (
             "manifest_key",
@@ -213,7 +213,7 @@ fn holdback_observes_floor_and_failed_health_cannot_enable_downgrade() {
     assert!(health::validate(b"{}", "9.0.0", None).is_err());
     let old = Manifest {
         version: "8.5.0".into(),
-        filename: "secblitz-8.5.0-windows-x64-setup.exe".into(),
+        filename: setup_filename("8.5.0"),
         ..m
     };
     assert!(advance_floor(&old, "8.0.0", Some(&floor)).is_err());

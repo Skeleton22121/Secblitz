@@ -26,9 +26,13 @@ Compilation uses **six** bundled wizard resources: English, Spanish, French,
 German, Portuguese and Italian, plus project custom messages for all six.
 A missing resource can fail compilation, whereas missing custom messages can
 warn and fall back to English: the first v0.2.0 test demonstrated that distinction.
-Setup targets Windows 10/11 x64 (Windows itself also permits x64
-emulation on compatible ARM64 machines). It is not intended for Windows Server.
-ARM64-emulated execution is not claimed as tested.
+Two setups are built. `secblitz-X.Y.Z-windows-x64-setup.exe` uses
+`ArchitecturesAllowed=x64compatible`, so it still installs on ARM64 PCs, where
+Windows runs it through emulation. `secblitz-X.Y.Z-windows-arm64-setup.exe`
+(`./scripts/build-release.ps1 -Arch arm64`, on a Windows on ARM PC) installs the
+native build with `ArchitecturesAllowed=arm64`. Both use the same AppId and
+install folder, so the ARM setup upgrades an x64 install in place and keeps its
+settings and history. Neither is intended for Windows Server.
 
 The build checks formatting, tests and Clippy, then builds a locked-dependency
 MSVC release with static CRT and checks PE imports with `dumpbin`. `dist/`

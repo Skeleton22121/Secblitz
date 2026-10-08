@@ -4,6 +4,9 @@ use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+/// Both 64-bit builds are supported: x86_64, and native arm64 on Windows on ARM.
+pub const NATIVE_64: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
+
 #[cfg(windows)]
 #[path = "platform/windows.rs"]
 mod windows;
@@ -293,7 +296,22 @@ pub fn backend() -> Result<Box<dyn Backend>> {
     }
     #[cfg(not(windows))]
     {
-        bail!("Secblitz requires Windows 10/11 x64; this platform cannot assess or change Windows")
+        bail!(
+            "Secblitz requires 64-bit Windows 10/11; this platform cannot assess or change Windows"
+        )
+    }
+}
+
+/// This x64 build is running through emulation on a PC with an ARM processor,
+/// where the native arm64 build is available.
+pub fn x64_on_arm() -> bool {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::x64_on_arm()
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        false
     }
 }
 
@@ -557,6 +575,13 @@ fn validate_value(id: &str, value: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emulation_on_an_arm_pc_is_only_detected_on_windows() {
+        #[cfg(not(windows))]
+        assert!(!x64_on_arm());
+    }
+
     #[test]
     fn firewall_observation_wire_contract_preserves_raw_values() {
         use crate::model::{

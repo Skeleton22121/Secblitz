@@ -569,8 +569,8 @@ fn wait_for(service: &Service, goal: Scm) -> Result<bool> {
 pub fn install() -> Result<()> {
     crate::platform::require_admin(NEEDS_ADMIN)?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Web protection requires Windows x64"
+        crate::platform::NATIVE_64,
+        "Web protection requires 64-bit Windows"
     );
     let binary = installed_binary()?;
     let _held = pin_path(binary.parent().context("Missing program folder")?)?;
