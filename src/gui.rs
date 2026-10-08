@@ -25,7 +25,7 @@ use theme::{Palette, Tone};
 use persist::{forget_check, persist, Cache};
 pub use persist::{save_prefs, wait_persisted};
 pub use tasks::{blocking, blocking_stream};
-use window::window_icon;
+use window::{match_title_bar, window_icon};
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -475,15 +475,31 @@ impl App {
         } else {
             Task::none()
         };
+        let title_bar = match_title_bar(app.ctx.palette).map(|()| Message::Noop);
         (
             app,
-            Task::batch([opened, first_check, enter, web_state, pending, news]),
+            Task::batch([
+                opened,
+                first_check,
+                enter,
+                web_state,
+                pending,
+                news,
+                title_bar,
+            ]),
         )
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let was_busy = self.ctx.busy;
+        let mode = self.ctx.palette.mode;
         let mut task = self.handle(message);
+        if self.ctx.palette.mode != mode {
+            task = Task::batch([
+                task,
+                match_title_bar(self.ctx.palette).map(|()| Message::Noop),
+            ]);
+        }
         let privacy = self.page == Page::Fixes
             && fixes::topic_on_show(&self.fixes) == Some(crate::app::topics::Topic::Privacy);
         if privacy && !self.privacy_shown {

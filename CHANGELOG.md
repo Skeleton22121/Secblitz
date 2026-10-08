@@ -35,6 +35,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Before you agree, every fix says if it can't be undone, needs a restart, or makes your browser say "Managed by your organization".
 - Older version downloads are no longer offered on the website.
 - Secblitz is now tested on Windows 10 (version 22H2).
+- The window's title bar blends into the app, without the icon and name.
 
 ### Fixed
 - Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
