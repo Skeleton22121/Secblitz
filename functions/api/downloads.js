@@ -52,9 +52,26 @@ function short(n) {
   return `${(n / 1000000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
+// The same table as deploy/downloads.sql, made on first use so a deploy needs no extra step.
+async function readRow(env) {
+  const select = () => env.DB.prepare("SELECT total, checked FROM release_downloads WHERE id = 1").first();
+  try {
+    return await select();
+  } catch (error) {
+    if (!/no such table/i.test(String(error?.message ?? error))) throw error;
+    await env.DB.batch([
+      env.DB.prepare(
+        "CREATE TABLE IF NOT EXISTS release_downloads (id INTEGER PRIMARY KEY CHECK (id = 1), total INTEGER NOT NULL DEFAULT 0, checked INTEGER NOT NULL DEFAULT 0)",
+      ),
+      env.DB.prepare("INSERT OR IGNORE INTO release_downloads (id, total, checked) VALUES (1, 0, 0)"),
+    ]);
+    return select();
+  }
+}
+
 // ?format=badge answers in the shields.io endpoint format for the README.
 export async function onRequestGet({ request, env, waitUntil }) {
-  const row = await env.DB.prepare("SELECT total, checked FROM release_downloads WHERE id = 1").first();
+  const row = await readRow(env);
   if (row && row.checked === 0) {
     await refresh(env).catch((error) => console.error(error));
   } else {

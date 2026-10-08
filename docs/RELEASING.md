@@ -147,9 +147,10 @@ counted. It asks GitHub at most every 10 minutes, when someone asks for the
 number, and keeps the last total, so the number still shows if GitHub is
 unreachable. No token is needed.
 
-- D1 database `secblitz-downloads`, bound as `DB` in `wrangler.jsonc`. Create
-  the table with `wrangler d1 execute secblitz-downloads --remote --file
-  deploy/downloads.sql`.
+- D1 database `secblitz-downloads`, bound as `DB` in `wrangler.jsonc`. The
+  function creates its table on first use; `deploy/downloads.sql` is the same
+  schema, for `wrangler d1 execute secblitz-downloads --remote --file
+  deploy/downloads.sql` by hand.
 
 ### Environment `signing` and SignPath (optional, off until you turn it on)
 
