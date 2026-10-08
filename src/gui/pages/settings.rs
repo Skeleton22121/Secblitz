@@ -156,6 +156,7 @@ pub enum Msg {
     Confirmed,
     BackgroundDone(bool, Result<(), String>),
     TrayDone(bool, Result<(), String>),
+    TrayStarted(bool),
     ToggleTechnical,
     Feedback(crate::broker::Request),
     FeedbackOpened(bool),
@@ -305,14 +306,19 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.working = false;
             state.generation = state.generation.wrapping_add(1);
             match result {
+                Ok(()) if on => {
+                    state.tray = true;
+                    ctx.broker_task(crate::broker::Request::StartTray, |reply| {
+                        Message::Settings(Msg::TrayStarted(matches!(
+                            reply,
+                            Ok(crate::broker::Reply::Done)
+                        )))
+                    })
+                }
                 Ok(()) => {
-                    state.tray = on;
+                    state.tray = false;
                     toast(
-                        if on {
-                            "Secblitz now shows in the system tray."
-                        } else {
-                            "Secblitz no longer shows in the system tray."
-                        },
+                        "Secblitz no longer shows in the system tray.",
                         Tone::Good,
                         ctx,
                     )
@@ -324,6 +330,15 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 ),
             }
         }
+        Msg::TrayStarted(started) => toast(
+            if started {
+                "Secblitz now shows in the system tray."
+            } else {
+                "Secblitz will show in the system tray the next time you sign in."
+            },
+            Tone::Good,
+            ctx,
+        ),
         Msg::ToggleTechnical => {
             state.technical = !state.technical;
             Task::none()

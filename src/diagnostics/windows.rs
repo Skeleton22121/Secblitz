@@ -240,7 +240,8 @@ fn pipe() -> ProbeResult<(File, File)> {
 fn environment(root: &Path) -> ProbeResult<Vec<u16>> {
     // No inherited PATH, PSModulePath, HOME, APPDATA, proxy, credentials, TEMP,
     // COMPLUS or CLR profiler variables. Known folders use the actual user token.
-    let variables = [
+    // Sorted, as Windows expects.
+    let mut variables = vec![
         ("PATH", root.join("System32").into_os_string()),
         ("PSModuleAnalysisCachePath", OsString::from("NUL")),
         (
@@ -249,8 +250,12 @@ fn environment(root: &Path) -> ProbeResult<Vec<u16>> {
                 .into_os_string(),
         ),
         ("SystemRoot", root.as_os_str().to_owned()),
-        ("WINDIR", root.as_os_str().to_owned()),
     ];
+    if let Some(temp) = crate::platform::own_temp_dir() {
+        variables.push(("TEMP", temp.clone().into_os_string()));
+        variables.push(("TMP", temp.into_os_string()));
+    }
+    variables.push(("WINDIR", root.as_os_str().to_owned()));
     let mut output = Vec::new();
     for (name, value) in variables {
         output.extend(format!("{name}=").encode_utf16());

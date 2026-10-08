@@ -399,6 +399,31 @@ public static class SecblitzPaths {
         $null = Get-OwnedFilter
     }
 
+    # Restart Manager cannot ask the window's unelevated parent to leave because it has
+    # no window; the parent exits once the window closes. A window busy with a fix stays.
+    function Close-OwnedWindows {
+        $session = [Diagnostics.Process]::GetCurrentProcess().SessionId
+        $mine = @(Get-CimInstance Win32_Process -Filter "Name='secblitz.exe'" | Where-Object {
+                $_.SessionId -eq $session -and $_.ExecutablePath -ieq $exe })
+        $ids = @($mine | ForEach-Object { [int]$_.ProcessId })
+        $closing = @()
+        foreach ($item in $mine) {
+            $process = Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue
+            if ($null -eq $process) { continue }
+            try {
+                if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.CloseMainWindow()) {
+                    $closing += [int]$item.ProcessId
+                    if ($ids -contains [int]$item.ParentProcessId) { $closing += [int]$item.ParentProcessId }
+                }
+            } finally { $process.Dispose() }
+        }
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while ($closing.Count -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+            $closing = @($closing | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+        }
+    }
+
     function Invoke-ExeCommand([ValidateSet('filter install', 'filter uninstall')][string]$Arguments) {
         $start = [Diagnostics.ProcessStartInfo]::new()
         $start.FileName = $exe
@@ -594,6 +619,7 @@ public static class SecblitzPaths {
             Protect-Item $root $true
             Stop-OwnedMonitor
             Stop-OwnedFilter
+            Close-OwnedWindows
             $monitorRan = $null -ne $monitor -and $monitor.State -in @('Running', 'Start Pending')
             $filterRan = $null -ne $filterService -and $filterService.State -in @('Running', 'Start Pending')
             if ($monitorRan -and $filterRan) { exit 12 }
@@ -611,6 +637,7 @@ public static class SecblitzPaths {
             }
         }
         RemoveMonitor {
+            Close-OwnedWindows
             Disable-Updates
             if ($null -ne $monitor) {
                 Stop-OwnedMonitor
@@ -620,6 +647,8 @@ public static class SecblitzPaths {
         }
         ResumeMonitor {
             if ($null -ne $monitor) {
+                # An upgrade keeps the service's old settings, so restart-on-failure is set here too.
+                & ([IO.Path]::Combine([Environment]::SystemDirectory, 'sc.exe')) failure SecblitzMonitor reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
                 $controller = Get-Service -Name SecblitzMonitor
                 try {
                     if ($controller.Status -eq 'Stopped') { $controller.Start() }

@@ -205,6 +205,19 @@ pub fn tray_enabled() -> bool {
     }
 }
 
+/// True only when Windows confirms the startup entry is gone, never on a failed read,
+/// so a running tray closes when the user turns it off and not on a passing error.
+pub fn tray_turned_off() -> bool {
+    #[cfg(windows)]
+    {
+        run_key::absent()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 pub fn set_tray_enabled(on: bool) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
@@ -303,6 +316,26 @@ mod run_key {
         } else {
             None
         }
+    }
+
+    pub fn absent() -> bool {
+        let Ok(key) = open(KEY_QUERY_VALUE) else {
+            return false;
+        };
+        let name = wide(TRAY_VALUE);
+        let mut size = 0u32;
+        // SAFETY: a null data pointer only asks for the value size.
+        let status = unsafe {
+            RegQueryValueExW(
+                key.0,
+                name.as_ptr(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut size,
+            )
+        };
+        status == ERROR_FILE_NOT_FOUND
     }
 
     pub fn set(command: &str) -> anyhow::Result<()> {

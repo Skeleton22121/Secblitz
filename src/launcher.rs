@@ -727,6 +727,7 @@ mod imp {
                 Some(AppState::Unknown) | None => Reply::Unknown,
             },
             Request::AppUpdate(index) => update_app(usize::from(index)),
+            Request::StartTray => start_tray(),
             Request::AppAccessList(capability) => app_access_list(capability),
             Request::AppAccessSet {
                 capability,
@@ -735,6 +736,24 @@ mod imp {
                 allow,
             } => app_access_set(capability, target, tag, allow),
             _ => request.page().map_or(Reply::Failed, open),
+        }
+    }
+
+    fn start_tray() -> Reply {
+        use std::os::windows::process::CommandExt;
+        let Some(exe) = crate::app::settings::installed_exe() else {
+            return Reply::Unavailable;
+        };
+        if !crate::app::settings::tray_enabled() {
+            return Reply::Failed;
+        }
+        match std::process::Command::new(exe)
+            .arg("tray")
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .spawn()
+        {
+            Ok(_) => Reply::Done,
+            Err(_) => Reply::Failed,
         }
     }
 

@@ -43,6 +43,13 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - An app is no longer reported as already back when Windows only left a folder behind, which removed its saved copy.
 - Bringing back apps no longer fails after other apps have been brought back.
 - The Copilot key note only shows on Windows 11, where those keyboards exist.
+- The link to turn on private lookups now goes straight to its switch.
+- Background checks work on Windows 10, where they could not read any settings.
+- You are told when Windows switches back a virus protection setting Secblitz fixed.
+- Turning the system tray icon on or off takes effect right away instead of at the next sign-in.
+- A virus scan now shows that it is scanning while it runs and says when it has finished.
+- Background checks start again on their own if they stop unexpectedly.
+- Installing a new version or removing Secblitz while it is open now closes it first, so nothing is left behind.
 
 ## [0.9.3] - 2026-10-07
 
