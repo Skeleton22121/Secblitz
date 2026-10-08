@@ -553,6 +553,14 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("Secblitz keeps a copy, so you can bring them back any time from the Removed apps tab, even without internet.")
         },
     ));
+    col = col.push(widgets::small(
+        p,
+        if n == 1 {
+            ctx.t("If this app is open, Secblitz closes it first.")
+        } else {
+            ctx.t("If any of these apps are open, Secblitz closes them first.")
+        },
+    ));
     if indices.iter().any(|i| app_of(*i).group == Group::Gaming) {
         col = col.push(widgets::inline_notice(
             p,

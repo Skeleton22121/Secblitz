@@ -364,6 +364,7 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     let backup = |p: &Installed| -> std::result::Result<(), Kept> {
         match &store {
             Ok(store) => {
+                winfs::close_package(&p.package);
                 offline::backup_family_with(&offline::WindowsHost, store, p.index, &p.package)
                     .map(|_| ())
             }

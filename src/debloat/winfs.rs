@@ -534,6 +534,64 @@ pub fn current_sid() -> Result<String> {
     }
 }
 
+/// Ends every process that runs as the app package `name`, its windows and its
+/// background tasks. Called only for an app the person chose to remove, just
+/// before its copy is saved: a running app keeps its settings file locked, and
+/// Windows closes it during removal anyway. Returns how many were ended.
+pub fn close_package(name: &str) -> usize {
+    use windows_sys::Win32::Storage::Packaging::Appx::GetPackageFamilyName;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcessId, OpenProcess, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    };
+    let mut closed = 0;
+    // SAFETY: the snapshot and process handles are owned here and closed once;
+    // every out-pointer refers to a local of the size passed with it.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return 0;
+        }
+        let me = GetCurrentProcessId();
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snap, &mut entry);
+        while ok != 0 {
+            let pid = entry.th32ProcessID;
+            if pid > 4 && pid != me {
+                let process = OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                    0,
+                    pid,
+                );
+                if !process.is_null() {
+                    let mut buf = [0u16; 130];
+                    let mut len = buf.len() as u32;
+                    if GetPackageFamilyName(process, &mut len, buf.as_mut_ptr()) == 0 {
+                        let family =
+                            String::from_utf16_lossy(&buf[..(len as usize).saturating_sub(1)]);
+                        let own = family
+                            .rsplit_once('_')
+                            .is_some_and(|(n, _)| n.eq_ignore_ascii_case(name));
+                        if own && TerminateProcess(process, 1) != 0 {
+                            WaitForSingleObject(process, 5000);
+                            closed += 1;
+                        }
+                    }
+                    CloseHandle(process);
+                }
+            }
+            ok = Process32NextW(snap, &mut entry);
+        }
+        CloseHandle(snap);
+    }
+    closed
+}
+
 pub fn windows_build() -> Option<u32> {
     let mut buf = [0u16; 32];
     let mut size = (buf.len() * 2) as u32;
