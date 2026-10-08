@@ -332,7 +332,29 @@ fn tech_line(status: &CheckStatus, a: &advice::Advice, lang: Lang) -> String {
 
 pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
     let (key, names) = item_names(r)?;
+    let names: Vec<String> = names
+        .iter()
+        .map(|n| {
+            if r.id == "defender.cfa_allowed_apps" {
+                app_label(ctx.lang, n)
+            } else {
+                (*n).to_owned()
+            }
+        })
+        .collect();
     Some(ctx.t(key).replace("{names}", &names.join(", ")))
+}
+
+/// The helper writes who published a blocked app in English after its path, as "path (note)".
+fn app_label(lang: Lang, label: &str) -> String {
+    let Some((path, note)) = label.strip_suffix(')').and_then(|l| l.rsplit_once(" (")) else {
+        return label.to_owned();
+    };
+    let note = match note.strip_prefix("by ") {
+        Some(who) => lang.t("by {name}").replace("{name}", who),
+        None => lang.t(note),
+    };
+    format!("{path} ({note})")
 }
 
 fn item_names(r: &secblitz::engine::Outcome) -> Option<(&'static str, Vec<&str>)> {
@@ -1983,6 +2005,7 @@ fn fix_controls<'a>(
     };
     let label = match n {
         0 => ctx.t("Fix selected"),
+        1 => ctx.t("Fix 1 selected"),
         _ => ctx.t("Fix {n} selected").replace("{n}", &n.to_string()),
     };
     let fix = widgets::action(
@@ -2366,6 +2389,36 @@ fn protected_group<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn who_published_an_allowed_app_is_said_in_the_chosen_language() {
+        assert_eq!(
+            app_label(Lang::De, r"C:\Users\Public\NoteWriter2.exe (not signed)"),
+            r"C:\Users\Public\NoteWriter2.exe (nicht signiert)"
+        );
+        assert_eq!(
+            app_label(
+                Lang::Fr,
+                r"C:\Program Files (x86)\Tool\tool.exe (by Example Ltd)"
+            ),
+            r"C:\Program Files (x86)\Tool\tool.exe (par Example Ltd)"
+        );
+        assert_eq!(
+            app_label(
+                Lang::Es,
+                r"C:\Users\a\Downloads\x.exe (not signed, in a temporary or download folder)"
+            ),
+            r"C:\Users\a\Downloads\x.exe (sin firma, en una carpeta temporal o de descargas)"
+        );
+        assert_eq!(
+            app_label(Lang::It, r"C:\a\b.exe (signature not valid)"),
+            r"C:\a\b.exe (firma non valida)"
+        );
+        assert_eq!(
+            app_label(Lang::Pt, r"C:\Program Files (x86)\b.exe"),
+            r"C:\Program Files (x86)\b.exe"
+        );
+    }
 
     #[test]
     fn details_never_repeat_what_the_row_shows() {
