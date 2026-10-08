@@ -107,7 +107,8 @@ fn inspect_pinned(
             "Security inspection failed"
         );
         let _sd = Local(sd);
-        inspect_acl(owner, acl, directory, strict, ancestor)?;
+        let root = ancestor && crate::platform::security::is_volume_root(f);
+        inspect_acl(owner, acl, directory, strict, ancestor, root)?;
     }
     Ok(())
 }
@@ -117,6 +118,7 @@ unsafe fn inspect_acl(
     directory: bool,
     strict: bool,
     ancestor: bool,
+    root: bool,
 ) -> Result<()> {
     unsafe {
         let sy = sid("S-1-5-18")?;
@@ -168,6 +170,11 @@ unsafe fn inspect_acl(
                         | FILE_WRITE_ATTRIBUTES
                         | GENERIC_READ
                         | GENERIC_EXECUTE
+                        | if root {
+                            crate::platform::security::VOLUME_ROOT_EXTRA
+                        } else {
+                            0
+                        }
                 } else {
                     FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | GENERIC_READ | GENERIC_EXECUTE
                 };
@@ -1723,6 +1730,15 @@ mod tests {
         fs::remove_dir(test_root).unwrap();
     }
     fn check_acl(sddl: &str, directory: bool, strict: bool, ancestor: bool) -> Result<()> {
+        check_acl_at(sddl, directory, strict, ancestor, false)
+    }
+    fn check_acl_at(
+        sddl: &str,
+        directory: bool,
+        strict: bool,
+        ancestor: bool,
+        root: bool,
+    ) -> Result<()> {
         unsafe {
             let mut sd = null_mut();
             ensure!(
@@ -1746,7 +1762,7 @@ mod tests {
                     && present != 0,
                 "Test DACL query failed"
             );
-            inspect_acl(owner, acl, directory, strict, ancestor)
+            inspect_acl(owner, acl, directory, strict, ancestor, root)
         }
     }
     #[test]
@@ -1787,6 +1803,29 @@ mod tests {
                     .unwrap_err()
                     .to_string()
                     .contains("Untrusted update write/execution rights"),
+                "{right:#x}"
+            );
+        }
+    }
+    #[test]
+    fn fresh_volume_root_acl_is_allowed_only_at_a_volume_root() {
+        let sddl = "O:SYG:SYD:(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1301bf;;;AU)(A;OICIIO;GA;;;SY)(A;;FA;;;SY)(A;OICIIO;GA;;;BA)(A;;FA;;;BA)(A;OICIIO;GXGR;;;BU)(A;;0x1200a9;;;BU)";
+        check_acl_at(sddl, true, false, true, true).unwrap();
+        assert!(check_acl(sddl, true, false, true).is_err());
+        assert!(check_acl_at(sddl, true, true, false, true).is_err());
+        for right in [
+            WRITE_DAC,
+            WRITE_OWNER,
+            FILE_DELETE_CHILD,
+            GENERIC_WRITE,
+            GENERIC_ALL,
+        ] {
+            let sddl = format!(
+                "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x{:x};;;AU)",
+                0x1301bf | right
+            );
+            assert!(
+                check_acl_at(&sddl, true, false, true, true).is_err(),
                 "{right:#x}"
             );
         }

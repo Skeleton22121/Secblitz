@@ -93,6 +93,8 @@ public static class SecblitzPaths {
             if ($Ancestor -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
             $allowed = 0x1200a9 # Read/execute, never write/delete/change owner or ACL.
             if ($Ancestor) { $allowed = $allowed -bor 6 } # Windows root/Program Files create-child ACEs.
+            # A freshly formatted volume root also grants delete and attribute writes; a root cannot be deleted or renamed.
+            if ($Ancestor -and $Path -ieq [IO.Path]::GetPathRoot($Path)) { $allowed = $allowed -bor 0x10110 }
             if ($Ancestor -and $ProgramDataDir) { $allowed = $allowed -bor 0x110 }
             if ($Path -eq (Join-Path $root 'Monitor\latest.json') -and $rule.IdentityReference.Value -eq 'S-1-5-19') {
                 $allowed = 0x12019f # Existing service-owned report only.

@@ -191,7 +191,8 @@ fn inspect(
         );
         ensure!(rc == 0, "Cannot inspect file ACL ({rc})");
         let _sd = Local(sd);
-        inspect_descriptor(sd, directory, protected, report, shared)
+        let root = !protected && crate::platform::security::is_volume_root(file);
+        inspect_descriptor(sd, directory, protected, report, shared, root)
     }
 }
 
@@ -201,6 +202,7 @@ fn inspect_descriptor(
     protected: bool,
     report: bool,
     shared: bool,
+    root: bool,
 ) -> Result<()> {
     unsafe {
         let mut owner = null_mut();
@@ -312,7 +314,12 @@ fn inspect_descriptor(
                     | FILE_ADD_FILE
                     | FILE_ADD_SUBDIRECTORY
                     | GENERIC_READ
-                    | GENERIC_EXECUTE;
+                    | GENERIC_EXECUTE
+                    | if root {
+                        crate::platform::security::VOLUME_ROOT_EXTRA
+                    } else {
+                        0
+                    };
                 ensure!(a.Mask & !benign == 0, "Writable/untrusted ancestor DACL");
             }
         }

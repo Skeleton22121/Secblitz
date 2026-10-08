@@ -61,6 +61,7 @@ fn descriptor(directory: bool) -> Result<Local> {
 }
 
 fn inspect(file: &File, directory: bool, strict: bool, ancestor: bool) -> Result<()> {
+    let root = ancestor && crate::platform::security::is_volume_root(file);
     unsafe {
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
         ensure!(
@@ -169,6 +170,11 @@ fn inspect(file: &File, directory: bool, strict: bool, ancestor: bool) -> Result
                             | FILE_ADD_SUBDIRECTORY
                             | FILE_WRITE_EA
                             | FILE_WRITE_ATTRIBUTES
+                            | if root {
+                                crate::platform::security::VOLUME_ROOT_EXTRA
+                            } else {
+                                0
+                            }
                     } else {
                         0
                     };
