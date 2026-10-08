@@ -7,10 +7,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use super::companies;
 use super::config::{
-    read_capped, BlockHistory, DayCount, RecentItem, RecentList, TopSite, MAX_RECENT_ITEMS,
-    RECENT_SECONDS, STATS_DAYS, TOP_SITES,
+    counters, read_capped, BlockHistory, DayCount, RecentItem, RecentList, TopSite,
+    MAX_RECENT_ITEMS, RECENT_SECONDS, STATS_DAYS, TOP_SITES,
 };
-use super::matcher::Kind;
+use super::matcher::{Kind, KINDS};
 
 #[cfg(test)]
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -51,13 +51,14 @@ pub struct Detail {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct DetailDay {
     pub day: u64,
-    pub blocked: [u64; 5],
+    #[serde(deserialize_with = "counters")]
+    pub blocked: [u64; KINDS],
     pub sites: Vec<(String, u64)>,
 }
 
 #[derive(Default)]
 struct Day {
-    blocked: [u64; 5],
+    blocked: [u64; KINDS],
     sites: HashMap<String, u64>,
 }
 
@@ -407,11 +408,11 @@ mod tests {
             [
                 DayCount {
                     day,
-                    blocked: [1, 1, 0, 0, 0]
+                    blocked: [1, 1, 0, 0, 0, 0, 0]
                 },
                 DayCount {
                     day: day + 1,
-                    blocked: [0, 0, 1, 1, 1]
+                    blocked: [0, 0, 1, 1, 1, 0, 0]
                 }
             ]
         );
@@ -543,7 +544,7 @@ mod tests {
         b.resume(serde_json::from_str(&json).unwrap(), now + 200);
         b.record("a.example.com", Kind::Ads, now + 201);
         let h = b.history_now(now + 202);
-        assert_eq!(h.days[0].blocked, [3, 0, 0, 0, 1]);
+        assert_eq!(h.days[0].blocked, [3, 0, 0, 0, 1, 0, 0]);
         assert_eq!(
             h.top[0],
             TopSite {
@@ -554,5 +555,27 @@ mod tests {
         let c = Activity::default();
         c.resume(serde_json::from_str(&json).unwrap(), now + 40 * DAY);
         assert!(c.history_now(now + 40 * DAY).days.is_empty());
+    }
+
+    #[test]
+    fn scam_and_popup_blocks_are_counted_and_old_files_still_load() {
+        let a = Activity::default();
+        let now = 90 * DAY + 50;
+        a.record("shop.example.com", Kind::Scam, now);
+        a.record("pop.example.com", Kind::Popups, now + 1);
+        let h = a.history_now(now + 2);
+        assert_eq!(h.days[0].blocked, [0, 0, 0, 0, 0, 1, 1]);
+
+        let old = format!(
+            r#"{{"days":[{{"day":{},"blocked":[1,2,3,4,5],"sites":[["a.example",3]]}}]}}"#,
+            crate::clock::local_day(now)
+        );
+        let b = Activity::default();
+        b.resume(serde_json::from_str(&old).unwrap(), now);
+        b.record("shop.example.com", Kind::Scam, now + 1);
+        assert_eq!(
+            b.history_now(now + 2).days[0].blocked,
+            [1, 2, 3, 4, 5, 1, 0]
+        );
     }
 }

@@ -83,15 +83,21 @@ pub enum Kind {
     Dangerous,
     Adult,
     Gambling,
+    Scam,
+    Popups,
 }
 
+pub const KINDS: usize = 7;
+
 impl Kind {
-    pub const ALL: [Kind; 5] = [
+    pub const ALL: [Kind; KINDS] = [
         Kind::Ads,
         Kind::Tracking,
         Kind::Dangerous,
         Kind::Adult,
         Kind::Gambling,
+        Kind::Scam,
+        Kind::Popups,
     ];
 
     pub fn index(self) -> usize {
@@ -101,6 +107,8 @@ impl Kind {
             Kind::Dangerous => 2,
             Kind::Adult => 3,
             Kind::Gambling => 4,
+            Kind::Scam => 5,
+            Kind::Popups => 6,
         }
     }
 }
@@ -112,6 +120,8 @@ pub struct Switches {
     pub dangerous: bool,
     pub adult: bool,
     pub gambling: bool,
+    pub scam: bool,
+    pub popups: bool,
     pub safe_search: bool,
 }
 
@@ -122,6 +132,8 @@ pub struct Filter {
     pub dangerous: Category,
     pub adult: Category,
     pub gambling: Category,
+    pub scam: Category,
+    pub popups: Category,
     pub never: HashSet64,
 }
 
@@ -134,7 +146,7 @@ impl Filter {
         self.decide_allowing(name, on, &HashSet64::default())
     }
 
-    /// Allowed sites and the never-block set win; then Dangerous, Adult, Gambling, Ads, Tracking. Ads go before tracking because ad networks are on the tracking lists too.
+    /// Allowed sites and the never-block set win; then Dangerous, Scam, Adult, Gambling, Pop-ups, Ads, Tracking. Ads go before tracking because ad networks are on the tracking lists too.
     pub fn decide_allowing(&self, name: &str, on: Switches, allowed: &HashSet64) -> Option<Kind> {
         if allowed.any_suffix(name) || self.never.any_suffix(name) {
             return None;
@@ -142,11 +154,17 @@ impl Filter {
         if on.dangerous && self.dangerous.blocks(name) {
             return Some(Kind::Dangerous);
         }
+        if on.scam && self.scam.blocks(name) {
+            return Some(Kind::Scam);
+        }
         if on.adult && self.adult.blocks(name) {
             return Some(Kind::Adult);
         }
         if on.gambling && self.gambling.blocks(name) {
             return Some(Kind::Gambling);
+        }
+        if on.popups && self.popups.blocks(name) {
+            return Some(Kind::Popups);
         }
         if on.ads && self.ads.blocks(name) {
             return Some(Kind::Ads);
@@ -179,6 +197,8 @@ mod tests {
         dangerous: true,
         adult: true,
         gambling: true,
+        scam: true,
+        popups: true,
         safe_search: true,
     };
 
@@ -250,6 +270,8 @@ mod tests {
             dangerous: cat(&["bad.com"], &[]),
             adult: cat(&["x.com", "bad.com", "adult.com"], &[]),
             gambling: cat(&["x.com", "bet.com", "adult.com"], &[]),
+            scam: Category::default(),
+            popups: Category::default(),
             never: HashSet64::default(),
         };
         assert_eq!(f.decide("bad.com", ALL), Some(Kind::Dangerous));
@@ -269,6 +291,49 @@ mod tests {
         };
         assert_eq!(f.decide("x.com", no_family), Some(Kind::Ads));
         assert_eq!(f.decide("bet.com", no_family), None);
+    }
+
+    #[test]
+    fn scam_and_popup_lists_keep_their_place_in_the_order() {
+        let f = Filter {
+            ads: cat(&["x.com", "p.com"], &[]),
+            dangerous: cat(&["bad.com"], &[]),
+            scam: cat(&["bad.com", "shop.com", "x.com"], &[]),
+            adult: cat(&["x.com", "shop.com"], &[]),
+            gambling: cat(&["x.com"], &[]),
+            popups: cat(&["x.com", "p.com"], &[]),
+            ..Filter::empty()
+        };
+        assert_eq!(f.decide("bad.com", ALL), Some(Kind::Dangerous));
+        assert_eq!(f.decide("shop.com", ALL), Some(Kind::Scam));
+        assert_eq!(f.decide("x.com", ALL), Some(Kind::Scam));
+        let no_scam = Switches { scam: false, ..ALL };
+        assert_eq!(f.decide("x.com", no_scam), Some(Kind::Adult));
+        let no_family = Switches {
+            scam: false,
+            adult: false,
+            gambling: false,
+            ..ALL
+        };
+        assert_eq!(f.decide("x.com", no_family), Some(Kind::Popups));
+        assert_eq!(f.decide("p.com", no_family), Some(Kind::Popups));
+        let no_popups = Switches {
+            popups: false,
+            ..no_family
+        };
+        assert_eq!(f.decide("p.com", no_popups), Some(Kind::Ads));
+        assert_eq!(f.decide("shop.com", no_popups), None);
+    }
+
+    #[test]
+    fn never_block_beats_scam_and_popups() {
+        let f = Filter {
+            scam: cat(&["windowsupdate.com"], &[]),
+            popups: cat(&["windowsupdate.com"], &[]),
+            never: set(&["windowsupdate.com"]),
+            ..Filter::empty()
+        };
+        assert_eq!(f.decide("dl.windowsupdate.com", ALL), None);
     }
 
     #[test]

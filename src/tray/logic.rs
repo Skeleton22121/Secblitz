@@ -1,5 +1,7 @@
 //! Portable tray logic (icon, tooltip, alerts) and the shield icon renderer.
 use crate::i18n::Lang;
+use secblitz::filter::config::{normalized_site, Notice};
+use secblitz::filter::matcher::Kind;
 use secblitz::status::{Notify, State, Status};
 use serde::Deserialize;
 
@@ -70,7 +72,7 @@ pub fn worsened(previous: &Status, now: &Status) -> bool {
 pub enum Balloon {
     Worsened,
     Reverted(Vec<String>),
-    Dangerous,
+    Blocked(Notice),
 }
 
 impl Balloon {
@@ -78,7 +80,7 @@ impl Balloon {
         match self {
             Balloon::Worsened => None,
             Balloon::Reverted(_) => Some("protection"),
-            Balloon::Dangerous => Some("web"),
+            Balloon::Blocked(_) => Some("web"),
         }
     }
 
@@ -88,9 +90,12 @@ impl Balloon {
                 lang.t("Your protection dropped. Open Secblitz to see what needs attention.")
             }
             Balloon::Reverted(ids) => reverted_text(lang, ids),
-            Balloon::Dangerous => lang.t(
-                "Secblitz blocked a dangerous website. It may try to steal passwords or install harmful software.",
-            ),
+            Balloon::Blocked(notice) => lang
+                .t(match notice.kind {
+                    Kind::Dangerous => "Secblitz blocked a site that looks dangerous: {site}",
+                    _ => "Secblitz blocked a site that looks like a scam: {site}",
+                })
+                .replace("{site}", &notice.site),
         }
     }
 }
@@ -130,58 +135,58 @@ pub fn status_balloon(previous: &Status, now: &Status, notify: &Notify) -> Optio
     something_else.then_some(Balloon::Worsened)
 }
 
-pub const DANGEROUS_GAP: u64 = 10 * 60;
+pub const NOTICE_GAP: u64 = 10 * 60;
 /// Clock skew tolerated before a block time counts as forged.
-const DANGEROUS_FUTURE: u64 = 5 * 60;
-pub const DANGEROUS_LIMIT: u64 = 16 * 1024;
+const NOTICE_FUTURE: u64 = 5 * 60;
+pub const NOTICE_LIMIT: u64 = 16 * 1024;
 
 #[derive(Deserialize)]
-struct DangerousAt {
+struct NoticeOnly {
     #[serde(default)]
-    dangerous_at: Option<u64>,
+    notice: Option<Notice>,
 }
 
-/// Never a site name.
-pub fn dangerous_at(bytes: &[u8]) -> Option<u64> {
-    if bytes.len() as u64 > DANGEROUS_LIMIT {
+/// Only the last scam or dangerous block is read from the web protection status, and only when
+/// it is of one of those kinds with a plain site name.
+pub fn block_notice(bytes: &[u8]) -> Option<Notice> {
+    if bytes.len() as u64 > NOTICE_LIMIT {
         return None;
     }
-    serde_json::from_slice::<DangerousAt>(bytes)
-        .ok()?
-        .dangerous_at
+    let notice = serde_json::from_slice::<NoticeOnly>(bytes).ok()?.notice?;
+    let site = normalized_site(&notice.site).filter(|site| *site == notice.site)?;
+    matches!(notice.kind, Kind::Dangerous | Kind::Scam).then_some(Notice { site, ..notice })
 }
 
 #[derive(Debug, Default)]
-pub struct Dangerous {
+pub struct Notices {
     started: bool,
     seen: u64,
     shown: Option<u64>,
 }
 
-impl Dangerous {
+impl Notices {
     /// The first reading only sets the starting point, so old blocks do not notify at sign-in.
-    pub fn observe(&mut self, at: Option<u64>, now: u64, allowed: bool) -> bool {
-        let at = at.filter(|at| *at <= now.saturating_add(DANGEROUS_FUTURE));
+    /// Returns the block to announce, at most once every ten minutes.
+    pub fn observe(&mut self, notice: Option<Notice>, now: u64, allowed: bool) -> Option<Notice> {
+        let notice = notice.filter(|n| n.at <= now.saturating_add(NOTICE_FUTURE));
         if !self.started {
             self.started = true;
-            self.seen = at.unwrap_or(0);
-            return false;
+            self.seen = notice.as_ref().map_or(0, |n| n.at);
+            return None;
         }
-        let Some(at) = at else {
-            return false;
-        };
-        if at <= self.seen {
-            return false;
+        let notice = notice?;
+        if notice.at <= self.seen {
+            return None;
         }
-        self.seen = at;
+        self.seen = notice.at;
         let spaced = self
             .shown
-            .is_none_or(|last| now.saturating_sub(last) >= DANGEROUS_GAP);
+            .is_none_or(|last| now.saturating_sub(last) >= NOTICE_GAP);
         if !allowed || !spaced {
-            return false;
+            return None;
         }
         self.shown = Some(now);
-        true
+        Some(notice)
     }
 }
 
@@ -355,7 +360,8 @@ mod tests {
         let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         for b in [
             Balloon::Worsened,
-            Balloon::Dangerous,
+            Balloon::Blocked(notice(Kind::Dangerous, "evil.example", 1)),
+            Balloon::Blocked(notice(Kind::Scam, "shop.example", 1)),
             Balloon::Reverted(ids(&["defender.realtime"])),
             Balloon::Reverted(ids(&["not.a.control"])),
             Balloon::Reverted(ids(&["a", "b"])),
@@ -385,8 +391,12 @@ mod tests {
         );
         assert!(!unknown.contains("not.a.control"));
         assert_eq!(
-            Balloon::Dangerous.text(lang),
-            "Secblitz blocked a dangerous website. It may try to steal passwords or install harmful software."
+            Balloon::Blocked(notice(Kind::Dangerous, "evil.example", 1)).text(lang),
+            "Secblitz blocked a site that looks dangerous: evil.example"
+        );
+        assert_eq!(
+            Balloon::Blocked(notice(Kind::Scam, "shop.example", 1)).text(lang),
+            "Secblitz blocked a site that looks like a scam: shop.example"
         );
     }
 
@@ -397,7 +407,10 @@ mod tests {
             Balloon::Reverted(vec!["a".into()]).page(),
             Some("protection")
         );
-        assert_eq!(Balloon::Dangerous.page(), Some("web"));
+        assert_eq!(
+            Balloon::Blocked(notice(Kind::Scam, "shop.example", 1)).page(),
+            Some("web")
+        );
     }
 
     #[test]
@@ -456,58 +469,130 @@ mod tests {
         );
     }
 
+    fn notice(kind: Kind, site: &str, at: u64) -> Notice {
+        Notice {
+            kind,
+            site: site.into(),
+            at,
+        }
+    }
+
     #[test]
-    fn the_dangerous_notice_waits_for_a_new_block_and_a_quiet_ten_minutes() {
-        let mut d = Dangerous::default();
-        assert!(
-            !d.observe(Some(900), 1000, true),
+    fn the_block_notice_waits_for_a_new_block_and_a_quiet_ten_minutes() {
+        let mut d = Notices::default();
+        let at = |t| Some(notice(Kind::Scam, "shop.example", t));
+        assert_eq!(
+            d.observe(at(900), 1000, true),
+            None,
             "first reading is the start"
         );
-        assert!(!d.observe(Some(900), 1060, true));
-        assert!(d.observe(Some(1100), 1120, true));
-        assert!(!d.observe(Some(1100), 1180, true));
-        assert!(!d.observe(Some(1200), 1240, true), "inside ten minutes");
-        assert!(!d.observe(Some(1300), 1120 + DANGEROUS_GAP - 1, true));
-        assert!(d.observe(Some(1400), 1120 + DANGEROUS_GAP, true));
-        assert!(!d.observe(None, 5000, true));
-        assert!(!d.observe(Some(1000), 5000, true), "older times never show");
+        assert_eq!(d.observe(at(900), 1060, true), None);
+        assert_eq!(d.observe(at(1100), 1120, true), at(1100));
+        assert_eq!(d.observe(at(1100), 1180, true), None);
+        assert_eq!(d.observe(at(1200), 1240, true), None, "inside ten minutes");
+        assert_eq!(d.observe(at(1300), 1120 + NOTICE_GAP - 1, true), None);
+        assert_eq!(d.observe(at(1400), 1120 + NOTICE_GAP, true), at(1400));
+        assert_eq!(d.observe(None, 5000, true), None);
+        assert_eq!(
+            d.observe(at(1000), 5000, true),
+            None,
+            "older times never show"
+        );
+    }
+
+    #[test]
+    fn scam_and_dangerous_blocks_share_the_ten_minutes() {
+        let mut d = Notices::default();
+        assert_eq!(d.observe(None, 1000, true), None);
+        let scam = notice(Kind::Scam, "shop.example", 1100);
+        assert_eq!(d.observe(Some(scam.clone()), 1120, true), Some(scam));
+        let danger = notice(Kind::Dangerous, "evil.example", 1200);
+        assert_eq!(d.observe(Some(danger.clone()), 1300, true), None);
+        let later = notice(Kind::Dangerous, "evil.example", 1900);
+        assert_eq!(
+            d.observe(Some(later.clone()), 1120 + NOTICE_GAP, true),
+            Some(later)
+        );
     }
 
     #[test]
     fn the_first_block_after_a_quiet_start_is_announced() {
-        let mut d = Dangerous::default();
-        assert!(!d.observe(None, 1000, true));
-        assert!(!d.observe(None, 1060, true));
-        assert!(d.observe(Some(1100), 1120, true));
-        let mut forged = Dangerous::default();
-        assert!(!forged.observe(Some(u64::MAX), 1000, true));
-        assert!(forged.observe(Some(1100), 1120, true));
+        let mut d = Notices::default();
+        assert_eq!(d.observe(None, 1000, true), None);
+        assert_eq!(d.observe(None, 1060, true), None);
+        let first = notice(Kind::Dangerous, "evil.example", 1100);
+        assert_eq!(
+            d.observe(Some(first.clone()), 1120, true),
+            Some(first.clone())
+        );
+        let mut forged = Notices::default();
+        let future = notice(Kind::Scam, "shop.example", u64::MAX);
+        assert_eq!(forged.observe(Some(future), 1000, true), None);
+        assert_eq!(forged.observe(Some(first.clone()), 1120, true), Some(first));
     }
 
     #[test]
-    fn the_dangerous_notice_respects_the_switch_and_ignores_forged_times() {
-        let mut d = Dangerous::default();
-        assert!(!d.observe(Some(100), 200, false));
-        assert!(!d.observe(Some(150), 210, false), "off: seen, not shown");
-        assert!(d.observe(Some(300), 400, true), "off did not use the gap");
-        let mut e = Dangerous::default();
-        assert!(!e.observe(Some(100), 200, true));
-        assert!(!e.observe(Some(u64::MAX), 300, true));
-        assert!(
-            e.observe(Some(350), 400, true),
+    fn the_block_notice_respects_the_switch_and_ignores_forged_times() {
+        let mut d = Notices::default();
+        let at = |t| Some(notice(Kind::Scam, "shop.example", t));
+        assert_eq!(d.observe(at(100), 200, false), None);
+        assert_eq!(d.observe(at(150), 210, false), None, "off: seen, not shown");
+        assert_eq!(
+            d.observe(at(300), 400, true),
+            at(300),
+            "off did not use the gap"
+        );
+        let mut e = Notices::default();
+        assert_eq!(e.observe(at(100), 200, true), None);
+        assert_eq!(e.observe(at(u64::MAX), 300, true), None);
+        assert_eq!(
+            e.observe(at(350), 400, true),
+            at(350),
             "a forged time changed nothing"
         );
     }
 
     #[test]
-    fn only_the_block_time_is_read_from_the_web_status() {
-        let full = br#"{"listening":true,"state":"on","blocked":[1,2,3],"dangerous_at":1791334020,"future":"x"}"#;
-        assert_eq!(dangerous_at(full), Some(1_791_334_020));
-        assert_eq!(dangerous_at(br#"{"listening":true}"#), None);
-        assert_eq!(dangerous_at(br#"{"dangerous_at":null}"#), None);
-        assert_eq!(dangerous_at(br#"{"dangerous_at":"soon"}"#), None);
-        assert_eq!(dangerous_at(b"not json"), None);
-        assert_eq!(dangerous_at(&vec![b' '; 20_000]), None);
+    fn only_a_scam_or_dangerous_notice_is_read_from_the_web_status() {
+        let full = br#"{"listening":true,"state":"ready","blocked":[1,2,3],"dangerous_at":9,
+            "notice":{"kind":"scam","site":"shop.example","at":1791334020},"future":"x"}"#;
+        assert_eq!(
+            block_notice(full),
+            Some(notice(Kind::Scam, "shop.example", 1_791_334_020))
+        );
+        let danger = br#"{"notice":{"kind":"dangerous","site":"evil.example","at":5}}"#;
+        assert_eq!(
+            block_notice(danger),
+            Some(notice(Kind::Dangerous, "evil.example", 5))
+        );
+        assert_eq!(block_notice(br#"{"listening":true}"#), None);
+        assert_eq!(block_notice(br#"{"notice":null}"#), None);
+        assert_eq!(block_notice(b"not json"), None);
+        assert_eq!(block_notice(&vec![b' '; 20_000]), None);
+        for other in ["ads", "tracking", "adult", "gambling", "popups"] {
+            let text = format!(r#"{{"notice":{{"kind":"{other}","site":"a.example","at":5}}}}"#);
+            assert_eq!(block_notice(text.as_bytes()), None, "{other}");
+        }
+        assert_eq!(
+            block_notice(br#"{"notice":{"kind":"scam","site":"a.example","at":"soon"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn a_notice_with_anything_but_a_plain_site_name_is_dropped() {
+        for site in [
+            "Shop.Example",
+            "shop.example.",
+            "has space.example",
+            "a.example/path",
+            "https://a.example",
+            "",
+            "nodots",
+        ] {
+            let text = format!(r#"{{"notice":{{"kind":"scam","site":"{site}","at":5}}}}"#);
+            assert_eq!(block_notice(text.as_bytes()), None, "{site}");
+        }
     }
 
     #[test]

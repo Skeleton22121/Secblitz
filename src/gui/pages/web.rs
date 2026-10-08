@@ -19,7 +19,7 @@ use secblitz::filter::config::{
 };
 use secblitz::filter::control::{self, ServiceState};
 use secblitz::filter::gaps::Gap;
-use secblitz::filter::matcher::Kind;
+use secblitz::filter::matcher::{Kind, KINDS};
 use std::time::{Duration, Instant};
 
 type El<'a> = Element<'a, Message>;
@@ -38,6 +38,8 @@ pub enum Switch {
     Ads,
     Tracking,
     Dangerous,
+    Scam,
+    Popups,
     Adult,
     Gambling,
     SafeSearch,
@@ -45,14 +47,22 @@ pub enum Switch {
 }
 
 impl Switch {
-    const PROTECTION: [Switch; 3] = [Switch::Ads, Switch::Tracking, Switch::Dangerous];
-    const FAMILY: [Switch; 3] = [Switch::Adult, Switch::Gambling, Switch::SafeSearch];
-    const PRIVACY: [Switch; 1] = [Switch::PrivateLookups];
-    #[cfg(test)]
-    const ALL: [Switch; 7] = [
+    const PROTECTION: [Switch; 5] = [
         Switch::Ads,
         Switch::Tracking,
         Switch::Dangerous,
+        Switch::Scam,
+        Switch::Popups,
+    ];
+    const FAMILY: [Switch; 3] = [Switch::Adult, Switch::Gambling, Switch::SafeSearch];
+    const PRIVACY: [Switch; 1] = [Switch::PrivateLookups];
+    #[cfg(test)]
+    const ALL: [Switch; 9] = [
+        Switch::Ads,
+        Switch::Tracking,
+        Switch::Dangerous,
+        Switch::Scam,
+        Switch::Popups,
         Switch::Adult,
         Switch::Gambling,
         Switch::SafeSearch,
@@ -64,6 +74,8 @@ impl Switch {
             Switch::Ads => "web.ads",
             Switch::Tracking => "web.tracking",
             Switch::Dangerous => "web.dangerous",
+            Switch::Scam => "web.scam",
+            Switch::Popups => "web.popups",
             Switch::Adult => "web.adult",
             Switch::Gambling => "web.gambling",
             Switch::SafeSearch => "web.safe_search",
@@ -76,6 +88,8 @@ impl Switch {
             Switch::Ads => c.ads,
             Switch::Tracking => c.tracking,
             Switch::Dangerous => c.dangerous,
+            Switch::Scam => c.scam,
+            Switch::Popups => c.popups,
             Switch::Adult => c.adult,
             Switch::Gambling => c.gambling,
             Switch::SafeSearch => c.safe_search,
@@ -88,6 +102,8 @@ impl Switch {
             Switch::Ads => c.ads = on,
             Switch::Tracking => c.tracking = on,
             Switch::Dangerous => c.dangerous = on,
+            Switch::Scam => c.scam = on,
+            Switch::Popups => c.popups = on,
             Switch::Adult => c.adult = on,
             Switch::Gambling => c.gambling = on,
             Switch::SafeSearch => c.safe_search = on,
@@ -141,6 +157,7 @@ enum Busy {
     Resume,
     Retry,
     Allow,
+    AllowOnce,
     Remove,
     Add,
 }
@@ -156,6 +173,7 @@ pub struct State {
     tab: Tab,
     pause_choices: bool,
     confirm: Option<String>,
+    confirm_once: Option<String>,
     site: String,
     site_problem: Option<SiteProblem>,
     all_recent: bool,
@@ -178,6 +196,9 @@ pub enum Msg {
     AskAllow(String),
     CancelAllow,
     Allow(String),
+    AskOnce(String),
+    CancelOnce,
+    AllowOnce(String),
     Unallow(String),
     SiteInput(String),
     AddSite,
@@ -311,7 +332,7 @@ pub fn suggests(snapshot: &Snapshot) -> bool {
     snapshot.installed && !snapshot.config.any_on()
 }
 
-fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 5]> {
+fn blocked_today(snapshot: &Snapshot) -> Option<[u64; KINDS]> {
     let status = snapshot.status.as_ref()?;
     if !snapshot.config.any_on() || !config::fresh(status, snapshot.now) {
         return None;
@@ -319,7 +340,7 @@ fn blocked_today(snapshot: &Snapshot) -> Option<[u64; 5]> {
     Some(if status.day == history::local_day(snapshot.now) {
         status.blocked
     } else {
-        [0; 5]
+        [0; KINDS]
     })
 }
 
@@ -461,6 +482,19 @@ pub fn visible_recent(snapshot: &Snapshot) -> Vec<&RecentItem> {
         .recent
         .iter()
         .filter(|i| !is_allowed(&i.name, &snapshot.config.allow))
+        .filter(|i| !snapshot.config.allowed_once(&i.name, snapshot.now))
+        .collect()
+}
+
+/// The kinds a person may want to open for a moment. Ads and trackers are blocked all the time and are not worth a prompt.
+fn lets_through_once(kind: Kind) -> bool {
+    matches!(kind, Kind::Dangerous | Kind::Scam | Kind::Popups)
+}
+
+pub fn recent_blocks(snapshot: &Snapshot) -> Vec<&RecentItem> {
+    visible_recent(snapshot)
+        .into_iter()
+        .filter(|i| lets_through_once(i.kind))
         .collect()
 }
 
@@ -554,6 +588,18 @@ fn allow_site(name: String) -> Result<(), String> {
     }
 }
 
+fn allow_once(name: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        secblitz::filter::control::allow_site_once(&name).map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        Err("unavailable".into())
+    }
+}
+
 fn remove_allowed(name: String) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -595,6 +641,7 @@ fn start(
 
 pub fn on_enter(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
     state.confirm = None;
+    state.confirm_once = None;
     state.pause_choices = false;
     poll(state)
 }
@@ -747,6 +794,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::SetTab(tab) => {
             state.tab = tab;
             state.confirm = None;
+            state.confirm_once = None;
             Task::none()
         }
         Msg::AskAllow(name) => {
@@ -763,6 +811,21 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             state.confirm = None;
             start(state, Busy::Allow, move || allow_site(name))
+        }
+        Msg::AskOnce(name) => {
+            state.confirm_once = Some(name);
+            Task::none()
+        }
+        Msg::CancelOnce => {
+            state.confirm_once = None;
+            Task::none()
+        }
+        Msg::AllowOnce(name) => {
+            if !ready(state) {
+                return Task::none();
+            }
+            state.confirm_once = None;
+            start(state, Busy::AllowOnce, move || allow_once(name))
         }
         Msg::Unallow(name) => {
             if !ready(state) {
@@ -998,6 +1061,8 @@ fn kind_icon(kind: Kind) -> Icon {
         Kind::Dangerous => Icon::ShieldAlert,
         Kind::Adult => Icon::EyeOff,
         Kind::Gambling => Icon::Gamepad,
+        Kind::Scam => Icon::AlertTriangle,
+        Kind::Popups => Icon::Bell,
     }
 }
 
@@ -1008,6 +1073,8 @@ fn kind_label(ctx: &Ctx, kind: Kind) -> String {
         Kind::Dangerous => "Dangerous websites",
         Kind::Adult => "Adult websites",
         Kind::Gambling => "Gambling",
+        Kind::Scam => "Scam sites",
+        Kind::Popups => "Pop-up spam",
     })
 }
 
@@ -1018,6 +1085,8 @@ fn kind_short(ctx: &Ctx, kind: Kind) -> String {
         Kind::Dangerous => "Dangerous",
         Kind::Adult => "Adult",
         Kind::Gambling => "Gambling",
+        Kind::Scam => "Scam",
+        Kind::Popups => "Pop-ups",
     })
 }
 
@@ -1047,6 +1116,18 @@ fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
             Icon::ShieldAlert,
             ctx.t("Block dangerous websites"),
             ctx.t("Stops your PC from opening known scam and virus websites."),
+        ),
+        Switch::Scam => (
+            Icon::AlertTriangle,
+            ctx.t("Scam and fake shop sites"),
+            ctx.t("Blocks fake online shops, fake streaming sites and subscription traps."),
+        ),
+        Switch::Popups => (
+            Icon::Bell,
+            ctx.t("Pop-up and notification spam"),
+            ctx.t(
+                "Blocks sites that flood you with pop-ups and fake 'your PC is infected' notifications.",
+            ),
         ),
         Switch::Adult => (
             Icon::EyeOff,
@@ -1232,6 +1313,8 @@ fn blocked_today_group<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> Option<El<'a>> 
                 || match k {
                     Kind::Adult => snapshot.config.adult,
                     Kind::Gambling => snapshot.config.gambling,
+                    Kind::Scam => snapshot.config.scam,
+                    Kind::Popups => snapshot.config.popups,
                     _ => false,
                 }
         })
@@ -1396,6 +1479,12 @@ fn overview<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
     }
     if snapshot.installed {
         page = page.push(private_row(ctx, snapshot));
+    }
+    if state.busy == Some(Busy::AllowOnce) {
+        page = page.push(progress::indeterminate(p, Tone::Brand));
+    }
+    if let Some(group) = recent_blocks_group(state, ctx, snapshot) {
+        page = page.push(group);
     }
     if let Some(group) = blocked_today_group(ctx, snapshot) {
         page = page.push(group);
@@ -1584,6 +1673,98 @@ fn recent_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<E
     rows
 }
 
+fn recent_blocks_group<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Option<El<'a>> {
+    let p = ctx.palette;
+    let items = recent_blocks(snapshot);
+    if items.is_empty() {
+        return None;
+    }
+    let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
+    let shown = widgets::limited(&items, RECENT_SHOWN, state.all_recent);
+    let mut rows: Vec<El<'a>> = shown
+        .iter()
+        .map(|item| {
+            let name = item.name.clone();
+            let dangerous = item.kind == Kind::Dangerous;
+            let ask = if dangerous {
+                Msg::AskOnce(name.clone())
+            } else {
+                Msg::AllowOnce(name.clone())
+            };
+            let head = widgets::row_item(
+                p,
+                Some(kind_icon(item.kind)),
+                name.clone(),
+                Some(format!(
+                    "{} · {}",
+                    kind_short(ctx, item.kind),
+                    ago_text(ctx, minutes_ago(snapshot.now, item.at))
+                )),
+                widgets::action(
+                    p,
+                    ButtonKind::Secondary,
+                    ctx.t("Let me through once"),
+                    None,
+                    enabled.then_some(wrap(ask)),
+                ),
+                None,
+            );
+            if dangerous && state.confirm_once.as_deref() == Some(name.as_str()) {
+                column![
+                    head,
+                    widgets::under_row(vec![
+                        widgets::inline_notice(
+                            p,
+                            Tone::Warn,
+                            ctx.t(
+                                "This site was blocked because it may be dangerous. Only open it if you are sure it is safe. It stays open for 10 minutes.",
+                            ),
+                        ),
+                        row![
+                            widgets::action(
+                                p,
+                                ButtonKind::Danger,
+                                ctx.t("Let me through anyway"),
+                                None,
+                                enabled.then_some(wrap(Msg::AllowOnce(name))),
+                            ),
+                            widgets::action(
+                                p,
+                                ButtonKind::Ghost,
+                                ctx.t("Cancel"),
+                                None,
+                                Some(wrap(Msg::CancelOnce)),
+                            ),
+                        ]
+                        .spacing(theme::S2)
+                        .into(),
+                    ])
+                ]
+                .width(Length::Fill)
+                .into()
+            } else {
+                head
+            }
+        })
+        .collect();
+    if items.len() > shown.len() {
+        rows.push(widgets::show_more_button(
+            p,
+            ctx.t("Show more"),
+            wrap(Msg::MoreRecent),
+        ));
+    }
+    Some(widgets::group(
+        p,
+        ctx.t("Recent blocks"),
+        Some(ctx.t(
+            "Scam, dangerous and pop-up sites blocked in the last 15 minutes. If you trust one, you can open it for 10 minutes.",
+        )),
+        None,
+        rows,
+    ))
+}
+
 fn allowed_rows<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> Vec<El<'a>> {
     let p = ctx.palette;
     let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
@@ -1743,7 +1924,7 @@ mod tests {
             state: ListState::Ready,
             written_at: NOW - 5,
             day: NOW / SECONDS_PER_DAY,
-            blocked: [1204, 388, 0, 0, 0],
+            blocked: [1204, 388, 0, 0, 0, 0, 0],
             ..Status::default()
         }
     }
@@ -2012,14 +2193,14 @@ mod tests {
     #[test]
     fn counts_come_from_today_only() {
         let s = snapshot(config(true), Some(healthy()), true);
-        assert_eq!(blocked_today(&s), Some([1204, 388, 0, 0, 0]));
+        assert_eq!(blocked_today(&s), Some([1204, 388, 0, 0, 0, 0, 0]));
         let yesterday = Status {
             day: NOW / SECONDS_PER_DAY - 1,
             ..healthy()
         };
         assert_eq!(
             blocked_today(&snapshot(config(true), Some(yesterday), true)),
-            Some([0; 5])
+            Some([0; KINDS])
         );
         assert!(blocked_today(&snapshot(config(false), Some(healthy()), true)).is_none());
     }
@@ -2122,7 +2303,7 @@ mod tests {
         }
     }
 
-    fn history_of(days: &[(u64, [u64; 5])], top: &[(&str, u64)]) -> BlockHistory {
+    fn history_of(days: &[(u64, [u64; KINDS])], top: &[(&str, u64)]) -> BlockHistory {
         BlockHistory {
             days: days
                 .iter()
@@ -2146,7 +2327,10 @@ mod tests {
     fn the_chart_covers_thirty_days_ending_today_with_zeros_for_quiet_days() {
         let today = 20_000;
         let stats = history_of(
-            &[(today - 29, [1, 2, 3, 0, 0]), (today - 3, [10, 0, 0, 4, 1])],
+            &[
+                (today - 29, [1, 2, 3, 0, 0, 0, 0]),
+                (today - 3, [10, 0, 0, 4, 1, 0, 0]),
+            ],
             &[],
         );
         let days = daily_totals(Some(&stats), today, None);
@@ -2163,7 +2347,7 @@ mod tests {
     #[test]
     fn today_uses_the_newer_of_the_saved_and_the_live_count() {
         let today = 20_000;
-        let stats = history_of(&[(today, [5, 0, 0, 0, 0])], &[]);
+        let stats = history_of(&[(today, [5, 0, 0, 0, 0, 0, 0])], &[]);
         assert_eq!(daily_totals(Some(&stats), today, Some(9))[29].1, 9);
         assert_eq!(daily_totals(Some(&stats), today, Some(2))[29].1, 5);
         assert_eq!(daily_totals(Some(&stats), today, None)[29].1, 5);
@@ -2288,6 +2472,62 @@ mod tests {
     }
 
     #[test]
+    fn recent_blocks_list_only_scam_dangerous_and_popup_sites() {
+        let mut s = snapshot(config(true), Some(healthy()), true);
+        s.recent = vec![
+            item("ads.example", Kind::Ads, NOW - 5),
+            item("shop.example", Kind::Scam, NOW - 10),
+            item("evil.example", Kind::Dangerous, NOW - 20),
+            item("pop.example", Kind::Popups, NOW - 30),
+            item("tracker.example", Kind::Tracking, NOW - 40),
+            item("adult.example", Kind::Adult, NOW - 50),
+            item("bet.example", Kind::Gambling, NOW - 60),
+        ];
+        let names: Vec<_> = recent_blocks(&s).iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["shop.example", "evil.example", "pop.example"]);
+    }
+
+    #[test]
+    fn a_site_let_through_once_leaves_the_lists_until_it_runs_out() {
+        use secblitz::filter::config::AllowOnce;
+        let mut s = snapshot(
+            Config {
+                allow_once: vec![AllowOnce {
+                    site: "shop.example".into(),
+                    until: NOW + 300,
+                }],
+                ..config(true)
+            },
+            Some(healthy()),
+            true,
+        );
+        s.recent = vec![
+            item("www.shop.example", Kind::Scam, NOW - 10),
+            item("evil.example", Kind::Dangerous, NOW - 20),
+        ];
+        assert_eq!(recent_blocks(&s).len(), 1);
+        assert_eq!(visible_recent(&s).len(), 1);
+        s.now = NOW + 300;
+        assert_eq!(recent_blocks(&s).len(), 2);
+    }
+
+    #[test]
+    fn scam_and_popup_switches_start_off_and_sit_under_protection() {
+        let c = Config::default();
+        assert!(!Switch::Scam.get(&c) && !Switch::Popups.get(&c));
+        let mut c = Config::default();
+        Switch::Scam.set(&mut c, true);
+        assert!(c.scam && !c.popups);
+        Switch::Popups.set(&mut c, true);
+        assert!(c.scam && c.popups);
+        let protection = Switch::PROTECTION;
+        let at = |s: Switch| protection.iter().position(|p| *p == s).unwrap();
+        assert!(at(Switch::Dangerous) < at(Switch::Scam));
+        assert!(at(Switch::Scam) < at(Switch::Popups));
+        assert!(!Switch::FAMILY.contains(&Switch::Scam));
+    }
+
+    #[test]
     fn blocks_are_told_in_whole_minutes() {
         assert_eq!(minutes_ago(NOW, NOW), 0);
         assert_eq!(minutes_ago(NOW, NOW - 59), 0);
@@ -2384,7 +2624,7 @@ mod tests {
         later.now = NOW + 61;
         assert!(!same_look(&with_recent, &later));
         let mut with_stats = a.clone();
-        with_stats.stats = Some(history_of(&[(1, [1, 0, 0, 0, 0])], &[]));
+        with_stats.stats = Some(history_of(&[(1, [1, 0, 0, 0, 0, 0, 0])], &[]));
         assert!(!same_look(&a, &with_stats));
     }
 
@@ -2435,7 +2675,7 @@ mod tests {
             Some(Status {
                 lookups: Lookups::PrivateFallback,
                 dangerous_at: Some(NOW - 600),
-                blocked: [1204, 388, 7, 2, 0],
+                blocked: [1204, 388, 7, 2, 0, 0, 0],
                 ..healthy()
             }),
             true,
@@ -2449,7 +2689,7 @@ mod tests {
                 .map(|i| {
                     (
                         today.saturating_sub(29) + i,
-                        [i * 7 % 90, i % 11, i % 3, 0, 0],
+                        [i * 7 % 90, i % 11, i % 3, 0, 0, 0, 0],
                     )
                 })
                 .collect::<Vec<_>>(),
