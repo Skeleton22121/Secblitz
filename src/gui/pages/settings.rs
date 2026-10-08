@@ -22,6 +22,7 @@ pub enum UpdateView {
     Ready,
     Checking,
     Unknown,
+    NotChecked,
     Off,
 }
 
@@ -32,7 +33,7 @@ pub fn update_view(status: &secblitz::updater::UpdateStatus) -> UpdateView {
         O::DeferredBusy if status.checked_at == 0 => UpdateView::Checking,
         O::WorkerStarted { .. } | O::DeferredBusy => UpdateView::Ready,
         O::Failed { .. } => UpdateView::Unknown,
-        O::NotConfigured if status.checked_at == 0 => UpdateView::Off,
+        O::NotConfigured if status.checked_at == 0 => UpdateView::NotChecked,
         O::NotConfigured => UpdateView::Off,
     }
 }
@@ -156,6 +157,7 @@ pub enum Msg {
     Confirmed,
     BackgroundDone(bool, Result<(), String>),
     TrayDone(bool, Result<(), String>),
+    TrayStarted(bool),
     ToggleTechnical,
     Feedback(crate::broker::Request),
     FeedbackOpened(bool),
@@ -305,14 +307,19 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.working = false;
             state.generation = state.generation.wrapping_add(1);
             match result {
+                Ok(()) if on => {
+                    state.tray = true;
+                    ctx.broker_task(crate::broker::Request::StartTray, |reply| {
+                        Message::Settings(Msg::TrayStarted(matches!(
+                            reply,
+                            Ok(crate::broker::Reply::Done)
+                        )))
+                    })
+                }
                 Ok(()) => {
-                    state.tray = on;
+                    state.tray = false;
                     toast(
-                        if on {
-                            "Secblitz now shows in the system tray."
-                        } else {
-                            "Secblitz no longer shows in the system tray."
-                        },
+                        "Secblitz no longer shows in the system tray.",
                         Tone::Good,
                         ctx,
                     )
@@ -324,6 +331,15 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 ),
             }
         }
+        Msg::TrayStarted(started) => toast(
+            if started {
+                "Secblitz now shows in the system tray."
+            } else {
+                "Secblitz will show in the system tray the next time you sign in."
+            },
+            Tone::Good,
+            ctx,
+        ),
         Msg::ToggleTechnical => {
             state.technical = !state.technical;
             Task::none()
@@ -538,7 +554,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             widgets::row_item(
                 p,
                 Some(Icon::ShieldAlert),
-                t("Tell me when a dangerous website is blocked"),
+                t("Tell me when a dangerous or scam website is blocked"),
                 None,
                 widgets::switch(
                     p,
@@ -565,6 +581,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         Remote::Ready(UpdateView::Ready) => (
             widgets::pill(p, t("Update ready"), Tone::Warn),
             t("An update is ready. It installs when Secblitz is closed."),
+        ),
+        Remote::Ready(UpdateView::NotChecked) => (
+            widgets::pill(p, t("Not checked yet"), Tone::Neutral),
+            t("Automatic updates are on. Secblitz looks for new versions every hour."),
         ),
         Remote::Ready(UpdateView::Off) => (
             widgets::pill(p, t("Not set up"), Tone::Neutral),
@@ -595,7 +615,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
     let mut details = column![
         widgets::small(p, t("A safer PC. Without headaches.")),
-        widgets::small(p, t("Fonts: IBM Plex Sans (SIL Open Font License).")),
+        widgets::small(p, t("Fonts: Lexend (SIL Open Font License).")),
         widgets::small(p, t("Icons: Fluent UI System Icons (MIT license).")),
         widgets::small(
             p,
@@ -793,7 +813,11 @@ mod tests {
             update_view(&status(O::Failed { reason: "x".into() }, 5)),
             UpdateView::Unknown
         );
-        assert_eq!(update_view(&status(O::NotConfigured, 0)), UpdateView::Off);
+        assert_eq!(
+            update_view(&status(O::NotConfigured, 0)),
+            UpdateView::NotChecked
+        );
+        assert_eq!(update_view(&status(O::NotConfigured, 5)), UpdateView::Off);
     }
 
     #[test]

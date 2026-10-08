@@ -29,6 +29,7 @@ function Get-CimInstance {
         }
         'Win32_OperatingSystem' { return [pscustomobject]@{ BuildNumber = '26100'; LastBootUpTime = [datetime]'2026-01-02T03:04:05' } }
         'Win32_Processor' { return $script:processors }
+        'Win32_ComputerSystem' { return [pscustomobject]@{ HypervisorPresent = $script:hypervisor } }
         default { throw "Unexpected class $ClassName" }
     }
 }
@@ -63,6 +64,7 @@ function Reset {
     $script:events = @()
     $script:eventFilter = $null
     $script:readDenied = $false
+    $script:hypervisor = $true
 }
 $dg = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard'
 $hvci = "$dg\Scenarios\HypervisorEnforcedCodeIntegrity"
@@ -72,6 +74,7 @@ Reset
 $f = VbsFacts
 Assert (@($f.available).Count -eq 3 -and $f.available[2] -eq 3) 'Available properties changed'
 Assert (@($f.running).Count -eq 0 -and $f.running -is [array]) 'Empty running list must stay an array'
+Assert ($f.hypervisorPresent -eq $true) 'Hypervisor fact not read'
 Assert ($f.virtFirmware -eq $true -and $f.build -eq 26100 -and $f.vbsStatus -eq 0) 'Firmware, build or status not read'
 Assert ($null -eq $f.mandatory -and $null -eq $f.enableVbs -and $null -eq $f.requirePlatform) 'Absent values must be null'
 Assert ($null -eq $f.enabledHvci -and $null -eq $f.lockVbs) 'Absent registry values must be null'

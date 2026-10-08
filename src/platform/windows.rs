@@ -26,7 +26,7 @@ use windows_sys::Win32::{
 mod journal;
 #[path = "vbs_native.rs"]
 mod vbs_native;
-pub use journal::state_dir;
+pub use journal::{create_private_dir, state_dir};
 
 struct Handle(HANDLE);
 impl Drop for Handle {
@@ -64,6 +64,39 @@ fn windows_dir() -> Result<PathBuf> {
     let p = PathBuf::from(String::from_utf16(&buf[..n])?);
     ensure!(p.is_absolute(), "Windows directory is not absolute");
     Ok(p)
+}
+
+#[cfg(target_arch = "x86_64")]
+pub fn x64_on_arm() -> bool {
+    use windows_sys::Win32::System::SystemInformation::IMAGE_FILE_MACHINE_ARM64;
+    let (mut process, mut native) = (0u16, 0u16);
+    // SAFETY: both out-pointers are valid for the call and the handle is the current process.
+    let ok = unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) };
+    ok != 0 && native == IMAGE_FILE_MACHINE_ARM64
+}
+
+/// The running account's own temp folder, from its profile rather than inherited variables.
+/// Windows PowerShell 5.1 locks itself down when it cannot write its policy test file, and
+/// without TEMP it falls back to the Windows folder, which LocalService cannot write.
+pub fn own_temp_dir() -> Option<PathBuf> {
+    let mut raw = null_mut();
+    let hr = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_LocalAppData,
+            KF_FLAG_DONT_VERIFY as u32,
+            null_mut(),
+            &mut raw,
+        )
+    };
+    let path = (hr >= 0 && !raw.is_null()).then(|| {
+        let len = (0..).take_while(|&i| unsafe { *raw.add(i) } != 0).count();
+        PathBuf::from(String::from_utf16_lossy(unsafe {
+            std::slice::from_raw_parts(raw, len)
+        }))
+    });
+    unsafe { windows_sys::Win32::System::Com::CoTaskMemFree(raw.cast()) };
+    let temp = path?.join("Temp");
+    (temp.is_absolute() && temp.is_dir()).then_some(temp)
 }
 
 pub fn is_elevated() -> Result<bool> {
@@ -271,8 +304,8 @@ fn job(processes: u32) -> Result<Handle> {
 }
 fn run<T: DeserializeOwned>(action: &str, id: Option<&str>, value: Option<&Value>) -> Result<T> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     super::validate_request(action, id, value)?;
     if let Some(id) = id.filter(|id| crate::hardening::is_hardening_check_id(id)) {
@@ -314,8 +347,8 @@ pub fn permission_gate(id: &str) -> Result<()> {
 pub fn support_action(id: &str) -> Result<()> {
     let script = super::support_script(id)?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let timeout = match id {
@@ -335,13 +368,28 @@ pub fn support_action(id: &str) -> Result<()> {
 pub fn remove_threats() -> Result<super::ThreatRemoval> {
     let script = super::threats_script()?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     crate::platform::require_admin("Defender support actions require Administrator elevation")?;
     let reply: Value = run_script(script, Duration::from_secs(10 * 60))
         .context("Windows Security could not finish removing them. Nothing else was changed")?;
     super::parse_threat_reply(&reply)
+}
+
+/// The script lists firmware boot entries with the inbox bcdedit.exe, so one helper may start.
+const RENEWAL_PROCESSES: u32 = 2;
+
+pub fn start_secure_boot_renewal() -> Result<super::RenewalOutcome> {
+    let script = super::renewal_script()?;
+    ensure!(
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
+    );
+    crate::platform::require_admin("The startup security renewal needs Administrator elevation")?;
+    let reply: Value = run_script_in(script, Duration::from_secs(150), RENEWAL_PROCESSES)
+        .context("Windows could not start the renewal. Check again in a few minutes")?;
+    super::parse_renewal_reply(&reply)
 }
 
 const DISM_PROCESSES: u32 = 4;
@@ -370,7 +418,8 @@ fn run_script_in<T: DeserializeOwned>(
     // stderr rejection: real errors must not be filtered out as "progress".
     let bootstrap = "$global:ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))";
     let job = job(processes)?;
-    let mut child = Command::new(ps)
+    let mut command = Command::new(ps);
+    command
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -396,9 +445,11 @@ fn run_script_in<T: DeserializeOwned>(
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Start inbox Windows PowerShell")?;
+        .stderr(Stdio::piped());
+    if let Some(temp) = own_temp_dir() {
+        command.env("TEMP", &temp).env("TMP", &temp);
+    }
+    let mut child = command.spawn().context("Start inbox Windows PowerShell")?;
     // The fixed script waits on stdin before any probes. Failure to assign never
     // releases that gate. Job closure kills PowerShell and disallows descendants.
     if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) } == 0 {
@@ -491,8 +542,8 @@ fn run_script_in<T: DeserializeOwned>(
 struct WindowsBackend;
 pub fn backend() -> Result<Box<dyn Backend>> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Secblitz supports Windows x64 only"
+        crate::platform::NATIVE_64,
+        "Secblitz supports 64-bit Windows only"
     );
     // Fail early if the trusted inbox interpreter is absent. OS/client capability
     // gates run independently before every mutation, not just construction.

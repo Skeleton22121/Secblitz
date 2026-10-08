@@ -32,7 +32,9 @@ impl Topic {
     pub fn of(id: &str) -> Topic {
         let head = id.split_once('.').map_or(id, |(head, _)| head);
         match (head, id) {
-            (_, "smartscreen.apps" | "net.hosts_file") | ("defender", _) => Topic::Threats,
+            (_, "smartscreen.apps" | "net.hosts_file") | ("defender" | "clickfix", _) => {
+                Topic::Threats
+            }
             ("uac" | "accounts" | "lsa" | "wdigest" | "ntlm" | "session", _) => Topic::SignIn,
             (
                 "firewall" | "net" | "tls" | "smb" | "smb1" | "remote_desktop"
@@ -137,6 +139,9 @@ mod tests {
             ("defender.asr.office", Threats),
             ("defender.asr.ransomware_usb", Threats),
             ("defender.network_protection", Threats),
+            ("defender.cfa_watch", Threats),
+            ("defender.cfa_block", Threats),
+            ("defender.cfa_allowed_apps", Threats),
             ("defender.cloud_block_level", Threats),
             ("defender.exclusions_risky", Threats),
             ("smartscreen.apps", Threats),
@@ -168,6 +173,7 @@ mod tests {
             ("smb.shares_exposed", Network),
             ("printer.point_and_print", Windows),
             ("autorun.disabled", Windows),
+            ("clickfix.run_box", Threats),
             ("wsh.disabled", Windows),
             ("update.auto_policy_disabled", Windows),
             ("update.store_autoupdate_policy", Windows),
@@ -195,6 +201,7 @@ mod tests {
             ("browser.data_collection", Browsers),
             ("browser.safety_mode", Browsers),
             ("browser.dns_bypass", Browsers),
+            ("browser.extensions_off", Browsers),
             ("privacy.recall", Ai),
             ("ai.click_to_do", Ai),
             ("ai.paint", Ai),

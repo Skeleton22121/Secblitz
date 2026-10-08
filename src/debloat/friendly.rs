@@ -36,6 +36,8 @@ pub fn no_copy(raw: &str) -> &'static str {
     let has = |words: &[&str]| words.iter().any(|w| r.contains(w));
     if has(&["not enough space", "disk full", "0x80070070", "no space"]) {
         "There is not enough free space to save a copy. Free up some space, then try again."
+    } else if has(&["being used by another process", "0x80070020"]) {
+        "The app is still running, so Secblitz couldn't save a copy. Restart your PC and try again."
     } else if has(&["access is denied", "0x80070005", "permission"]) {
         "Windows did not let Secblitz save a copy. Sign in with an account that can make changes to this PC, then open Secblitz again."
     } else if has(&["encryption", "damaged saved data key"]) {
@@ -81,6 +83,10 @@ mod tests {
         );
         assert!(removal_failure("Access is denied. (0x80070005)").contains("Sign in"));
         assert!(no_copy("not enough space").contains("Free up"));
+        assert!(no_copy(
+            "The process cannot access the file because it is being used by another process."
+        )
+        .contains("still running"));
         assert!(run_failure("Windows took too long to answer").contains("too long"));
         assert!(removal_run_failure("Windows took too long to answer").contains("too long"));
         assert!(removal_run_failure("odd failure").contains("remove the apps"));

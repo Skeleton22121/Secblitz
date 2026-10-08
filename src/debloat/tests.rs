@@ -311,6 +311,30 @@ fn apps_that_are_not_installed_are_ignored() {
 }
 
 #[test]
+fn an_unreadable_removed_apps_list_is_kept_not_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(journal::FILE);
+    let kept = dir.path().join(format!("{}.damaged", journal::FILE));
+    let batch = Batch {
+        t: 1,
+        removed: Vec::new(),
+        skipped: vec![2],
+        failed: Vec::new(),
+        kept: Vec::new(),
+    };
+    let good = serde_json::to_string(&batch).unwrap();
+    std::fs::write(&path, format!("{good}\nnot json\n")).unwrap();
+    assert_eq!(journal::load_from(&path), vec![batch.clone()]);
+    assert_eq!(std::fs::read(&kept).unwrap(), std::fs::read(&path).unwrap());
+    std::fs::write(&path, b"\xff\xfe").unwrap();
+    assert!(journal::load_from(&path).is_empty());
+    assert!(!path.exists());
+    assert_eq!(std::fs::read(&kept).unwrap(), b"\xff\xfe");
+    std::fs::write(&path, format!("{good}\n")).unwrap();
+    assert_eq!(journal::load_from(&path), vec![batch]);
+}
+
+#[test]
 fn journal_round_trip_and_restore_marking() {
     let dir = std::env::temp_dir().join(format!("secblitz-debloat-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -577,10 +601,18 @@ fn the_duolingo_row_matches_its_real_package_and_nothing_wider() {
 }
 
 #[test]
-fn the_office_hub_row_uses_its_current_name_and_warns_about_the_copilot_key() {
+fn the_office_hub_row_uses_its_current_name_and_warns_about_the_copilot_key_on_windows_11() {
     let hub = &catalog()[idx("Microsoft.MicrosoftOfficeHub") as usize];
     assert_eq!(hub.name, "Microsoft 365 Copilot app");
     assert!(catalog::note(hub.family).unwrap().contains("Copilot key"));
+    assert!(catalog::note_on(hub.family, true)
+        .unwrap()
+        .contains("Copilot key"));
+    assert_eq!(catalog::note_on(hub.family, false), None);
+    assert_eq!(
+        catalog::note_on("microsoft.windowscommunicationsapps", false),
+        catalog::note("microsoft.windowscommunicationsapps")
+    );
 }
 
 #[test]

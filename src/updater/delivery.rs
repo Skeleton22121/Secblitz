@@ -56,7 +56,7 @@ pub(super) fn decode(
         a.schema == 1
             && a.role == "secblitz-delivery"
             && a.sequence > 0
-            && a.target == "windows-x86_64",
+            && a.target == super::arch::TARGET,
         "Unsupported delivery authorization"
     );
     ensure!(

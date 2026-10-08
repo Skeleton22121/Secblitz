@@ -25,11 +25,34 @@ pub use view::{tab_label, tab_name, BUSY_MARK};
 pub enum Sheet {
     Scan,
     RemoveThreats,
+    Renewal { bitlocker: bool },
     DefenderUpdate,
     Repair(RepairKind),
     InstallUpdates,
     Bitwarden,
     Restart,
+}
+
+impl Sheet {
+    /// What each confirmation sheet must tell the person before they agree.
+    pub fn notices(self) -> secblitz::hardening::Notices {
+        let (restart, undoable) = match self {
+            Sheet::RemoveThreats | Sheet::Repair(RepairKind::Repair) | Sheet::InstallUpdates => {
+                (false, false)
+            }
+            Sheet::Restart => (true, true),
+            Sheet::Renewal { .. } => (true, false),
+            Sheet::Scan
+            | Sheet::DefenderUpdate
+            | Sheet::Repair(RepairKind::Check)
+            | Sheet::Bitwarden => (false, true),
+        };
+        secblitz::hardening::Notices {
+            managed: false,
+            restart,
+            undoable,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +97,9 @@ pub enum Msg {
     ScanDone(Result<(), String>),
     ThreatsDone(Result<actions::ThreatRemoval, String>),
     ClearThreats,
+    RenewalDone(Result<actions::RenewalOutcome, String>),
+    OpenRecoveryKey,
+    RecoveryKeyOpened(bool),
     DefenderDone(Result<(), String>),
     ClearScan,
     ClearDefender,
@@ -198,6 +224,8 @@ pub struct State {
     account: Account,
     scan: Run<Result<(), String>>,
     threats: Run<Result<actions::ThreatRemoval, String>>,
+    renewing: bool,
+    renewal_unconfirmed: bool,
     defender: Run<Result<(), String>>,
     repair: Repair,
     updates: Updates,
@@ -236,6 +264,8 @@ impl Default for State {
             account: Account::Checking,
             scan: Run::Idle,
             threats: Run::Idle,
+            renewing: false,
+            renewal_unconfirmed: false,
             defender: Run::Idle,
             repair: Repair::Idle,
             updates: Updates::Idle,
@@ -321,7 +351,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             // a threat removal must not run alongside a fix or undo.
             let changes_pc = matches!(
                 sheet,
-                Sheet::Repair(_) | Sheet::InstallUpdates | Sheet::Restart | Sheet::RemoveThreats
+                Sheet::Repair(_)
+                    | Sheet::InstallUpdates
+                    | Sheet::Restart
+                    | Sheet::RemoveThreats
+                    | Sheet::Renewal { .. }
             );
             let blocked = changes_pc && (ctx.busy || !state.can_start_change());
             if blocked {
@@ -403,7 +437,60 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 _ => Task::none(),
             }
         }
+        Msg::RenewalDone(r) => {
+            ctx.busy = false;
+            state.renewing = false;
+            if matches!(r, Ok(actions::RenewalOutcome::Started { .. })) {
+                record_renewal(ctx);
+            }
+            state.renewal_unconfirmed = r.is_err();
+            let (words, tone) = match &r {
+                Ok(outcome) => (
+                    crate::app::maintenance::renewal_result_text(*outcome),
+                    match outcome {
+                        actions::RenewalOutcome::Started { .. } => Tone::Good,
+                        actions::RenewalOutcome::Refused(_) => Tone::Warn,
+                    },
+                ),
+                Err(_) => (
+                    "The renewal may have started, but we couldn't confirm it. Check the tip again in a few minutes.",
+                    Tone::Warn,
+                ),
+            };
+            let toast = Task::done(Message::Toast(ctx.t(words), tone));
+            match &state.tips {
+                Tips::Done(shown) => {
+                    let profile = shown.profile;
+                    Task::batch([
+                        toast,
+                        Task::perform(blocking(move || logic::run_tips(profile)), |r| {
+                            tools(Msg::TipsRefreshed(Box::new(r)))
+                        }),
+                    ])
+                }
+                _ => toast,
+            }
+        }
+        Msg::OpenRecoveryKey => ctx.broker_task(crate::broker::Request::OpenRecoveryKey, |reply| {
+            tools(Msg::RecoveryKeyOpened(matches!(
+                reply,
+                Ok(crate::broker::Reply::Done)
+            )))
+        }),
+        Msg::RecoveryKeyOpened(true) => Task::none(),
+        Msg::RecoveryKeyOpened(false) => Task::done(Message::Toast(
+            ctx.t("We couldn't open your web browser. Visit aka.ms/myrecoverykey to find your recovery key."),
+            Tone::Warn,
+        )),
         Msg::TipsRefreshed(report) => {
+            if std::mem::take(&mut state.renewal_unconfirmed)
+                && report
+                    .tips
+                    .iter()
+                    .any(|t| t.renewal == Some(secblitz::diagnostics::Renewal::Started))
+            {
+                record_renewal(ctx);
+            }
             if matches!(state.tips, Tips::Done(_)) {
                 state.tips = Tips::Done(report);
             }
@@ -673,7 +760,7 @@ impl State {
 
     pub fn tab_busy(&self, tab: ToolsTab) -> bool {
         match tab {
-            ToolsTab::Tips => matches!(self.tips, Tips::Running(_)),
+            ToolsTab::Tips => matches!(self.tips, Tips::Running(_)) || self.renewing,
             ToolsTab::Viruses => {
                 matches!(self.scan, Run::Working)
                     || matches!(self.threats, Run::Working)
@@ -706,6 +793,22 @@ impl State {
     }
 }
 
+fn record_renewal(ctx: &Ctx) {
+    if let Some(dir) = &ctx.state_dir {
+        let score = ctx.score().unwrap_or_default();
+        let _ = crate::app::history::record(
+            dir,
+            &crate::app::history::Entry {
+                t: crate::app::history::now(),
+                kind: crate::app::history::Kind::SecureBootRenewal,
+                protected: score.protected,
+                total: score.total,
+                n: 0,
+            },
+        );
+    }
+}
+
 fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
     ctx.forget_check();
     match sheet {
@@ -733,6 +836,17 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
             Task::perform(blocking(|| actions::remove_threats().map_err(plain)), |r| {
                 tools(Msg::ThreatsDone(r))
             })
+        }
+        Sheet::Renewal { .. } => {
+            if ctx.busy || !state.can_start_change() {
+                return Task::none();
+            }
+            ctx.busy = true;
+            state.renewing = true;
+            Task::perform(
+                blocking(|| actions::start_secure_boot_renewal().map_err(plain)),
+                |r| tools(Msg::RenewalDone(r)),
+            )
         }
         Sheet::DefenderUpdate => {
             state.defender = Run::Working;
@@ -797,6 +911,33 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
 #[cfg(test)]
 mod followup_tests {
     use super::*;
+
+    #[test]
+    fn every_sheet_says_what_its_notices_promise() {
+        let sheets = [
+            Sheet::Scan,
+            Sheet::RemoveThreats,
+            Sheet::DefenderUpdate,
+            Sheet::Repair(RepairKind::Check),
+            Sheet::Repair(RepairKind::Repair),
+            Sheet::InstallUpdates,
+            Sheet::Bitwarden,
+            Sheet::Restart,
+            Sheet::Renewal { bitlocker: false },
+            Sheet::Renewal { bitlocker: true },
+        ];
+        for sheet in sheets {
+            let (_, _, lines, _) = view::sheet_copy(sheet);
+            let text = lines.join(" ").to_lowercase();
+            let n = sheet.notices();
+            assert_eq!(text.contains("can't be undone"), !n.undoable, "{sheet:?}");
+            assert_eq!(
+                text.contains("restart"),
+                n.restart || sheet == Sheet::InstallUpdates,
+                "{sheet:?}"
+            );
+        }
+    }
 
     #[test]
     fn repair_bar_creeps_inside_its_step_and_never_goes_back() {

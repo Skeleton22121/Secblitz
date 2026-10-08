@@ -32,7 +32,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path(__file__).with_name("historical-downloads.sha256")
 LIMIT = 25 * 1024 * 1024
-LINE = re.compile(r"([0-9a-f]{64})  (secblitz-[0-9.]+-windows-x64(?:-setup)?\.exe)")
+LINE = re.compile(r"([0-9a-f]{64})  (secblitz-[0-9.]+-windows-(?:x64|arm64)(?:-setup)?\.exe)")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", re.ASCII)
 
 
@@ -131,7 +131,7 @@ def record(version, base, fetcher=download, stage=None, path=MANIFEST, verified_
         raise HistoryError("Version must be plain X.Y.Z.")
     stage = stage or load_stage()
     hashes = read_manifest(path) if path.exists() else {}
-    names = [name for name in listed_names(stage) if name.startswith(f"secblitz-{version}-windows-x64")]
+    names = [name for name in listed_names(stage) if name.startswith(f"secblitz-{version}-windows-")]
     if not names:
         raise HistoryError(f"{version} is not in the list of older downloads.")
     for name in names:
@@ -159,7 +159,7 @@ def record_missing(base, fetcher=download, stage=None, path=MANIFEST, verified_d
     versions = []
     for name in listed_names(stage):
         if name not in hashes:
-            version = re.fullmatch(r"secblitz-(.*)-windows-x64(?:-setup)?\.exe", name)[1]
+            version = re.fullmatch(r"secblitz-(.*)-windows-(?:x64|arm64)(?:-setup)?\.exe", name)[1]
             if version not in versions:
                 versions.append(version)
     for version in versions:
@@ -193,7 +193,7 @@ def main(argv=None):
             seen = []
             for name in listed_names(stage):
                 if name not in hashes:
-                    version = re.fullmatch(r"secblitz-(.*)-windows-x64(?:-setup)?\.exe", name)[1]
+                    version = re.fullmatch(r"secblitz-(.*)-windows-(?:x64|arm64)(?:-setup)?\.exe", name)[1]
                     if version not in seen:
                         seen.append(version)
                         print(version)

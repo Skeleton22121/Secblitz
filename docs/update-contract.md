@@ -2,6 +2,19 @@
 
 Source/evidence reviewed 2026-10-03. Current gate: genuine published 0.4.3 to 0.5.0 LIVE E2E PASS. Protected highest-seen state and atomic replacement shipped in 0.4.3 and remain active. This is not full TUF or Authenticode publisher authentication. Earlier 0.4.x failures and the pre-floor/unlink-first descriptions in older reviews are historical, not the current contract.
 
+## Architectures (0.11)
+
+Each build reads the feed for its own processor, fixed at compile time. Nothing about the x64 feed changes, so installed copies never see a format change.
+
+| Build | Feed | Delivery lane | `target` | Installer |
+| --- | --- | --- | --- | --- |
+| x64 | `releases/stable.json` | `releases/delivery.json`, `releases/candidate.json` | `windows-x86_64` | `secblitz-X.Y.Z-windows-x64-setup.exe` |
+| arm64 | `releases/stable-arm64.json` | `releases/delivery-arm64.json`, `releases/candidate-arm64.json` | `windows-aarch64` | `secblitz-X.Y.Z-windows-arm64-setup.exe` |
+
+Both feeds use the same schema, the same root key and the same rules. `scripts/sign-release.py --arch x64|arm64` signs one feed per call; the target and the installer name must agree or signing and verification refuse. An x64 build on an ARM PC keeps reading `stable.json`. Automatic switching from x64 to arm64 is not done: the app only tells the person once that a version made for their processor exists.
+
+The protected highest-seen floor (`release-floor.json`) is shared by both builds of a PC and accepts either target, so moving to the native build keeps its history. At the same version, a change of target is not treated as changed content. A lower version is still refused. The delivery floor is kept per build (`delivery-floor.json`, `delivery-floor-arm64.json`).
+
 ## Unreleased 0.6.0 delivery extension
 
 Candidate clients optionally read root-signed `releases/delivery.json`, which authorizes one exact `releases/candidate.json` envelope, one delegated key, version/origin/target, bounded sequence/freshness and signed cohort policy. The authorization lasts at most seven days. A protected random local rollout identity is not uploaded; the signed basis-point policy produces deterministic holdback. Observing a held-back candidate advances the release floor, so withdrawing rollout cannot authorize downgrade. Recovery requires a higher-version fix.

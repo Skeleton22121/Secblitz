@@ -121,7 +121,11 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             state.engine = Some(result.clone());
             Task::none()
         }
-        E::Checked(_) | E::Applied { .. } | E::Undone { .. } if state.visited => refresh(ctx),
+        E::Checked(_) | E::Applied { .. } | E::Undone { .. } | E::Recovered(Ok(_))
+            if state.visited =>
+        {
+            refresh(ctx)
+        }
         _ => Task::none(),
     }
 }
@@ -154,6 +158,8 @@ fn kind_icon(kind: Kind) -> (Icon, Tone) {
         Kind::Undo | Kind::UndoSome => (Icon::Undo, Tone::Warn),
         Kind::Debloat => (Icon::Package, Tone::Neutral),
         Kind::Restore => (Icon::Refresh, Tone::Good),
+        Kind::Recovery => (Icon::Refresh, Tone::Neutral),
+        Kind::SecureBootRenewal => (Icon::ShieldCheck, Tone::Neutral),
     }
 }
 
@@ -371,6 +377,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
     let (undo_body, undo_enabled) = match &state.engine {
         None => (ctx.t("Checking what can be undone…"), false),
+        Some(Err(_)) if ctx.damage.is_some() => (
+            ctx.t("Undo isn't available until the damaged undo history is sorted out."),
+            false,
+        ),
         Some(Err(_)) => (
             ctx.t("We couldn't read your list of fixes. Close Secblitz and open it again."),
             false,
@@ -437,7 +447,11 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     );
     let quick = column![undo, choose, removed].spacing(theme::S1);
 
-    let mut page = column![trend, quick].spacing(theme::S8);
+    let mut page = column![].spacing(theme::S8);
+    if let Some(info) = &ctx.damage {
+        page = page.push(super::recovery::card(ctx, info));
+    }
+    page = page.push(trend).push(quick);
     if data.days.is_empty() {
         page = page.push(widgets::empty_state(
             p,

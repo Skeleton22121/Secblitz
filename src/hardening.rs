@@ -93,12 +93,21 @@ pub enum Source {
     RecoveryTools,
     /// Read from the Wi-Fi service setting, never from tool display text.
     WifiRandomAddress,
+    /// Dynamic: Chrome and Edge add-ons that can read every site or talk to
+    /// other programs (1 on, 0 turned off by us through the browser's block
+    /// list, 2 turned off by us and changed since). Only the add-ons the person
+    /// picks are ever looked at (see [`Spec::narrow`]).
+    BrowserExtensions,
+    /// Dynamic: programs that folder protection watched or blocked while changing files
+    /// (0 not allowed yet), and the ones Secblitz allowed (1).
+    CfaAllowedApps,
 }
 
 pub const ITEM_FIXED: u32 = 0;
 pub const ITEM_FLAGGED: u32 = 1;
 pub const ITEM_CHANGED: u32 = 2;
 const HANDLED_SAFE: &[u32] = &[ITEM_FIXED, ITEM_CHANGED];
+pub const ADDON_PREFIXES: [&str; 2] = ["chromium:chrome:", "chromium:edge:"];
 pub const STARTUP_PREFIXES: [&str; 6] = [
     "run-machine:",
     "run-machine32:",
@@ -133,6 +142,50 @@ pub struct Spec {
     pub ask: bool,
     pub keys: &'static [Key],
     pub gate: Gate,
+}
+
+/// What a person is told before agreeing to a fix, derived from the table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Notices {
+    pub managed: bool,
+    pub restart: bool,
+    pub undoable: bool,
+}
+
+const BROWSER_POLICY_ROOTS: [&str; 4] = [
+    r"HKLM:\SOFTWARE\Policies\Microsoft\Edge",
+    r"HKLM:\SOFTWARE\Policies\Google\Chrome",
+    r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox",
+    r"HKLM:\SOFTWARE\Policies\BraveSoftware",
+];
+
+fn is_browser_policy(path: &str) -> bool {
+    BROWSER_POLICY_ROOTS.iter().any(|root| {
+        path.len() >= root.len()
+            && path.is_char_boundary(root.len())
+            && path[..root.len()].eq_ignore_ascii_case(root)
+            && matches!(path.as_bytes().get(root.len()), None | Some(b'\\'))
+    })
+}
+
+/// A fix that only removes policy values leaves no "managed" notice behind.
+fn writes_a_value(rule: &Rule) -> bool {
+    matches!(
+        rule,
+        Rule::Set { fix: Some(_), .. } | Rule::Text { fix: Some(_), .. }
+    )
+}
+
+pub fn notices(spec: &Spec) -> Notices {
+    Notices {
+        managed: spec.source == Source::BrowserExtensions
+            || spec
+                .keys
+                .iter()
+                .any(|k| is_browser_policy(k.path) && writes_a_value(&k.rule)),
+        restart: spec.reboot,
+        undoable: true,
+    }
 }
 
 pub fn all() -> &'static [Spec] {
@@ -300,8 +353,18 @@ fn key_name_ok(source: Source, name: &str) -> bool {
         }
         Source::StaleAccounts => stale_account_name_ok(name),
         Source::ShareGrants => share_grant_name_ok(name),
+        Source::BrowserExtensions => addon_name_ok(name),
+        Source::CfaAllowedApps => cfa_app_name_ok(name),
         _ => false,
     }
+}
+
+/// `chromium:<chrome|edge>:<extension id>`: Chromium extension ids are 32 letters from a to p.
+pub fn addon_name_ok(name: &str) -> bool {
+    ADDON_PREFIXES
+        .iter()
+        .find_map(|p| name.strip_prefix(p))
+        .is_some_and(|id| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b)))
 }
 
 /// A local account SID with a user-created RID (1000 and up): never the
@@ -319,6 +382,52 @@ fn stale_account_name_ok(name: &str) -> bool {
         && parts[3]
             .parse::<u64>()
             .is_ok_and(|rid| (1000..=u64::from(u32::MAX)).contains(&rid))
+}
+
+/// Programs that run other programs or scripts: allowing one would let anything
+/// it starts change protected files.
+pub const SCRIPT_HOSTS: &[&str] = &[
+    "powershell.exe",
+    "pwsh.exe",
+    "powershell_ise.exe",
+    "wscript.exe",
+    "cscript.exe",
+    "mshta.exe",
+    "cmd.exe",
+    "rundll32.exe",
+    "regsvr32.exe",
+];
+
+/// `app:<drive letter path to one .exe>`: no wildcards, variables, network
+/// paths, relative parts or script hosts.
+fn cfa_app_name_ok(name: &str) -> bool {
+    let Some(path) = name.strip_prefix("app:") else {
+        return false;
+    };
+    let b = path.as_bytes();
+    if path.chars().count() > 260
+        || path.len() < 7
+        || !(b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\')
+        || path.trim() != path
+        || path
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '"' | '*' | '?' | '<' | '>' | '|' | '%' | '/'))
+        || path[2..].contains(':')
+    {
+        return false;
+    }
+    let mut parts = path[3..].split('\\').peekable();
+    let mut leaf = "";
+    while let Some(part) = parts.next() {
+        if part.is_empty() || part == "." || part == ".." || part.trim_end() != part {
+            return false;
+        }
+        if parts.peek().is_none() {
+            leaf = part;
+        }
+    }
+    let leaf = leaf.to_ascii_lowercase();
+    leaf.ends_with(".exe") && leaf.len() > 4 && !SCRIPT_HOSTS.contains(&leaf.as_str())
 }
 
 pub const BROAD_SIDS: &[&str] = &["S-1-1-0", "S-1-5-7", "S-1-5-32-546"];
@@ -402,7 +511,64 @@ impl Spec {
                 | Source::StartupItems
                 | Source::StaleAccounts
                 | Source::ShareGrants
+                | Source::BrowserExtensions
+                | Source::CfaAllowedApps
         )
+    }
+
+    /// Whether the person names the items to change. Without a choice nothing is
+    /// ever written, so applying every control at once cannot touch them.
+    pub fn needs_choice(&self) -> bool {
+        self.source == Source::BrowserExtensions
+    }
+
+    /// Whether items found later are changed in a batch of their own, next to
+    /// the batches already recorded.
+    pub fn adds_batches(&self) -> bool {
+        self.source == Source::BrowserExtensions
+    }
+
+    pub fn item_name_ok(&self, name: &str) -> bool {
+        self.dynamic() && key_name_ok(self.source, name)
+    }
+
+    /// An observation reduced to the named items. Items that are not named are
+    /// left out of the record altogether.
+    pub fn narrow(&self, observed: &Value, names: &[String]) -> Value {
+        let Some(items) = observed.get("items").and_then(Value::as_object) else {
+            return observed.clone();
+        };
+        let kept: Map<String, Value> = items
+            .iter()
+            .filter(|(k, _)| names.contains(k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        json!({ "items": kept })
+    }
+
+    /// Whether `observed` holds an item that still needs changing and is not part of `recorded`.
+    pub fn has_unrecorded_unsafe(&self, observed: &Value, recorded: &Value) -> bool {
+        self.unsafe_item(observed, recorded, false)
+    }
+
+    /// Whether an item of `recorded` needs changing again in `observed`.
+    pub fn has_recorded_unsafe(&self, observed: &Value, recorded: &Value) -> bool {
+        self.unsafe_item(observed, recorded, true)
+    }
+
+    fn unsafe_item(&self, observed: &Value, recorded: &Value, in_record: bool) -> bool {
+        let (Some(o), Some(r)) = (
+            observed.get("items").and_then(Value::as_object),
+            recorded.get("items").and_then(Value::as_object),
+        ) else {
+            return false;
+        };
+        o.iter().any(|(k, v)| {
+            r.contains_key(k) == in_record
+                && self.key(k).is_some_and(|key| {
+                    Item::from_json(v).is_ok_and(|item| !item_is_safe(key.rule, &item))
+                })
+        })
     }
 
     fn key(&self, name: &str) -> Option<&Key> {
@@ -504,7 +670,10 @@ impl Spec {
     /// narrowed by what is observed now): the observation is narrowed to them
     /// instead, with vanished items read as "0" (see [`Spec::view`]).
     pub fn exact_recorded(&self) -> bool {
-        matches!(self.source, Source::StaleAccounts | Source::ShareGrants)
+        matches!(
+            self.source,
+            Source::StaleAccounts | Source::ShareGrants | Source::CfaAllowedApps
+        )
     }
 
     /// Restrict an observation to the keys of a journaled template. Fixed

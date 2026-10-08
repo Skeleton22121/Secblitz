@@ -332,13 +332,36 @@ fn tech_line(status: &CheckStatus, a: &advice::Advice, lang: Lang) -> String {
 
 pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
     let (key, names) = item_names(r)?;
+    let names: Vec<String> = names
+        .iter()
+        .map(|n| {
+            if r.id == "defender.cfa_allowed_apps" {
+                app_label(ctx.lang, n)
+            } else {
+                (*n).to_owned()
+            }
+        })
+        .collect();
     Some(ctx.t(key).replace("{names}", &names.join(", ")))
+}
+
+/// The helper writes who published a blocked app in English after its path, as "path (note)".
+fn app_label(lang: Lang, label: &str) -> String {
+    let Some((path, note)) = label.strip_suffix(')').and_then(|l| l.rsplit_once(" (")) else {
+        return label.to_owned();
+    };
+    let note = match note.strip_prefix("by ") {
+        Some(who) => lang.t("by {name}").replace("{name}", who),
+        None => lang.t(note),
+    };
+    format!("{path} ({note})")
 }
 
 fn item_names(r: &secblitz::engine::Outcome) -> Option<(&'static str, Vec<&str>)> {
     let (key, kind) = match r.id.as_str() {
         "accounts.stale_enabled" => ("Accounts: {names}", "account"),
         "smb.shares_exposed" => ("Folders: {names}", "share"),
+        "defender.cfa_allowed_apps" => ("Apps: {names}", "app"),
         _ => return None,
     };
     let mut names: Vec<&str> = Vec::new();
@@ -386,7 +409,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
         list.push(Att {
             id: id.clone(),
             topic: Topic::of(id),
-            switched_back: r.undoable,
+            switched_back: r.switched_back,
             name,
             line,
             why: ctx.t(a.next),
@@ -643,7 +666,7 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
 fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
     items
         .iter()
-        .filter(|item| !matches!(item.kind.as_str(), "account" | "share"))
+        .filter(|item| !matches!(item.kind.as_str(), "account" | "share" | "app"))
         .map(|item| match item.kind.as_str() {
             "skip_missing" => format!(
                 "{}: {}. {}",
@@ -658,6 +681,25 @@ fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
                 ctx.t("A file that could be started instead was found. Run a virus scan from the Tools page.")
             ),
             "more" => format!("{}: {}", ctx.t("More items not listed"), item.name),
+            "addon" => {
+                let mut parts = vec![
+                    item.name.clone(),
+                    if item.key.starts_with("chromium:edge:") {
+                        "Edge"
+                    } else {
+                        "Chrome"
+                    }
+                    .to_owned(),
+                ];
+                for why in item.why.split(',') {
+                    parts.push(match why {
+                        "sites" => ctx.t("Can read every site you visit"),
+                        "programs" => ctx.t("Can talk to other programs on your PC"),
+                        _ => continue,
+                    });
+                }
+                format!("{}: {}", ctx.t("Browser add-on"), parts.join(" · "))
+            }
             kind => {
                 let kind = match kind {
                     "service" => "Background program",
@@ -1556,6 +1598,9 @@ pub fn view<'a>(
         };
     let mut body = column![].spacing(theme::S8);
 
+    if let Some(info) = &ctx.damage {
+        return page(Vec::new(), body.push(super::recovery::card(ctx, info)));
+    }
     if let Some(error) = &ctx.engine_error {
         return page(
             Vec::new(),
@@ -1960,6 +2005,7 @@ fn fix_controls<'a>(
     };
     let label = match n {
         0 => ctx.t("Fix selected"),
+        1 => ctx.t("Fix 1 selected"),
         _ => ctx.t("Fix {n} selected").replace("{n}", &n.to_string()),
     };
     let fix = widgets::action(
@@ -2146,6 +2192,25 @@ fn topic_groups<'a>(
             Some(Message::Navigate(crate::gui::Page::Debloat)),
         ));
     }
+    if topic == Topic::Ai && !narrowed && ctx.copilot_installed {
+        groups.push(widgets::row_item_tinted(
+            p,
+            Some(Icon::Apps),
+            None,
+            ctx.t("The Copilot app is installed"),
+            Some(ctx.t("You can remove it in Clean up apps and bring it back later.")),
+            widgets::action(
+                p,
+                ButtonKind::Secondary,
+                ctx.t("Open Clean up apps"),
+                None,
+                Some(Message::OpenCleanUp(
+                    crate::gui::pages::debloat::COPILOT_APP,
+                )),
+            ),
+            None,
+        ));
+    }
     groups
 }
 
@@ -2326,6 +2391,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn who_published_an_allowed_app_is_said_in_the_chosen_language() {
+        assert_eq!(
+            app_label(Lang::De, r"C:\Users\Public\NoteWriter2.exe (not signed)"),
+            r"C:\Users\Public\NoteWriter2.exe (nicht signiert)"
+        );
+        assert_eq!(
+            app_label(
+                Lang::Fr,
+                r"C:\Program Files (x86)\Tool\tool.exe (by Example Ltd)"
+            ),
+            r"C:\Program Files (x86)\Tool\tool.exe (par Example Ltd)"
+        );
+        assert_eq!(
+            app_label(
+                Lang::Es,
+                r"C:\Users\a\Downloads\x.exe (not signed, in a temporary or download folder)"
+            ),
+            r"C:\Users\a\Downloads\x.exe (sin firma, en una carpeta temporal o de descargas)"
+        );
+        assert_eq!(
+            app_label(Lang::It, r"C:\a\b.exe (signature not valid)"),
+            r"C:\a\b.exe (firma non valida)"
+        );
+        assert_eq!(
+            app_label(Lang::Pt, r"C:\Program Files (x86)\b.exe"),
+            r"C:\Program Files (x86)\b.exe"
+        );
+    }
+
+    #[test]
     fn details_never_repeat_what_the_row_shows() {
         let row = "Turn on Windows Firewall.\nAccounts: bob";
         assert!(details(
@@ -2383,6 +2478,7 @@ mod tests {
         let label = |kind: &str, name: &str| ItemLabel {
             kind: kind.into(),
             name: name.into(),
+            ..ItemLabel::default()
         };
         let outcome = |id: &str, items: Vec<ItemLabel>| secblitz::engine::Outcome {
             id: id.into(),

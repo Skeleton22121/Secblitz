@@ -235,6 +235,7 @@ impl Engine {
             report.transaction = Some(tx.name.clone());
             self.revert_transaction(tx, &mut report, &mut callback)?;
         }
+        self.cfa_note(&report.results);
         report.findings = self.findings();
         if let Some(tx) = transactions.iter().rev().find(|t| !t.reverted) {
             report.findings.push(Self::journal_finding(tx));
@@ -307,6 +308,7 @@ impl Engine {
             report.push(result, &mut callback);
         }
         self.close_finished(&mut transactions)?;
+        self.cfa_note(&report.results);
         report.findings = self.findings();
         Ok(report)
     }
@@ -400,6 +402,7 @@ impl Engine {
             self.revert_transaction(tx, &mut report, &mut callback)?;
             left_over |= !tx.reverted;
         }
+        self.cfa_note(&report.results);
         report.findings = self.findings();
         for tx in transactions.iter().rev().filter(|t| !t.reverted) {
             report.findings.push(Self::journal_finding(tx));

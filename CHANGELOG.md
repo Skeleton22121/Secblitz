@@ -9,6 +9,59 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-08
+
+### Added
+- Secblitz runs on PCs with an ARM processor, with its own installer.
+- PCs with an ARM processor running the regular version are told when a version made for them is available.
+- Web protection can block scam sites, fake shops and pop-up spam, off until you turn them on.
+- Blocked scam, dangerous and pop-up sites show on the Web page, where you can let one through for 10 minutes.
+- The tray tells you which scam or dangerous site was blocked.
+- The Web page says when a browser, a VPN or another setting can get around Web protection, including Brave.
+- Pick which Chrome and Edge add-ons to turn off, with an exact undo.
+- Folder protection stops untrusted apps from changing your personal folders, after first watching which apps need them.
+- See when your files were last backed up with File History, OneDrive or Windows Backup.
+- A short list of what's new shows once after Secblitz is updated or reinstalled.
+- Renew your PC's startup security certificates before the old ones expire, with a clear warning that it can't be undone.
+- An optional fix that turns off the Run box, which fake "I'm not a robot" pages use to install password stealers.
+- A check that warns when something typed into the Run box looks like a fake check page trick.
+- The AI features topic shows when the Copilot app is installed, with a way to remove it.
+- A way to start fresh when Secblitz's undo history is damaged, keeping a copy of the damaged files.
+- Restore all brings back every removed app in one go.
+
+### Changed
+- The app uses the Lexend font, which is easier to read.
+- Web protection also turns off Brave's own private lookups.
+- Before you agree, every fix says if it can't be undone, needs a restart, or makes your browser say "Managed by your organization".
+- Older version downloads are no longer offered on the website.
+- Secblitz is now tested on Windows 10 (version 22H2).
+- The window's title bar blends into the app, without the icon and name.
+- The Home summary is shorter: what Secblitz can fix for you, and when it last checked.
+
+### Fixed
+- Setup no longer stops with "could not finish setting up" on some new PCs, including ARM laptops.
+- Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
+- A start-up program or browser add-on found after a fix is no longer shown as switched back.
+- Camera, microphone and location show as off when they are switched off for everyone on the PC.
+- Files left over from an update are removed once the update is confirmed.
+- Removing apps that came with Windows 10 now works.
+- White app icons on Windows 10 show on a colored tile instead of disappearing, including Maps and People.
+- An app you chose to remove is closed first if it is open, so its copy is complete.
+- Bringing back an app works when Windows already has a newer version of a part it needs.
+- An app is no longer reported as already back when Windows only left a folder behind, which removed its saved copy.
+- Bringing back apps no longer fails after other apps have been brought back.
+- The Copilot key note only shows on Windows 11, where those keyboards exist.
+- The link to turn on private lookups now goes straight to its switch.
+- Background checks work on Windows 10, where they could not read any settings.
+- You are told when Windows switches back a virus protection setting Secblitz fixed.
+- Turning the system tray icon on or off takes effect right away instead of at the next sign-in.
+- A virus scan now shows that it is scanning while it runs and says when it has finished.
+- Background checks start again on their own if they stop unexpectedly.
+- Installing a new version or removing Secblitz while it is open now closes it first, so nothing is left behind.
+- Fixes, undo and updates are no longer held back while Windows Defender or Windows Update works in the background.
+- Settings no longer says automatic updates aren't set up before their first hourly check.
+- Long lines in the fix result no longer run into the scroll bar.
+
 ## [0.9.3] - 2026-10-07
 
 ### Fixed

@@ -307,25 +307,44 @@ fn backup_coverage_reports_found_stale_and_missing_backups() {
     let ev = |age: u64| BackupEvent {
         date_unix_seconds: now - age * 86_400,
     };
-    assert_eq!(
-        rules::backup_coverage(Some(&[ev(3)]), Some(0), Some(now)).0,
-        Status::Healthy
-    );
-    assert_eq!(
-        rules::backup_coverage(Some(&[ev(80)]), Some(2), Some(now)).0,
-        Status::Attention
-    );
-    let (status, detail) = rules::backup_coverage(Some(&[]), Some(4), Some(now));
+    let drive = |events: Option<&[BackupEvent]>,
+                 fh: Option<u64>,
+                 od: Option<u32>,
+                 plugged: Option<bool>| {
+        rules::backup_coverage(
+            &rules::BackupSources {
+                events,
+                shadow_copies: Some(0),
+                file_history_last: fh,
+                onedrive_folders: od,
+                file_history_drive_plugged_in: plugged,
+            },
+            Some(now),
+        )
+    };
+    let src = |events: Option<&[BackupEvent]>, fh: Option<u64>, od: Option<u32>| {
+        drive(events, fh, od, None)
+    };
+    assert_eq!(src(Some(&[ev(3)]), None, None).0, Status::Healthy);
+    assert_eq!(src(Some(&[ev(80)]), None, None).0, Status::Attention);
+    let (status, detail) = src(Some(&[]), Some(0), Some(0));
     assert_eq!(status, Status::Attention);
     assert!(detail.starts_with("No backup found"));
-    assert_ne!(
-        rules::backup_coverage(Some(&[]), Some(4), Some(now)).0,
-        Status::Healthy
-    );
-    assert_eq!(
-        rules::backup_coverage(None, Some(4), Some(now)).0,
-        Status::Unknown
-    );
+    let (status, detail) = src(Some(&[ev(20)]), Some(now - 3 * 86_400), None);
+    assert_eq!(status, Status::Healthy);
+    assert!(detail.starts_with("Last backup: 3 days ago (File History)"));
+    assert!(src(Some(&[]), Some(0), Some(3))
+        .1
+        .contains("3 of Documents"));
+    assert_ne!(src(Some(&[]), Some(0), Some(3)).0, Status::Healthy);
+    assert_eq!(src(None, None, None).0, Status::Unknown);
+    assert_eq!(src(None, None, Some(0)).0, Status::Unknown);
+    let unplug = "Unplug your backup drive when it's not backing up.";
+    let fh = Some(now - 86_400);
+    assert!(drive(Some(&[]), fh, None, Some(true)).1.contains(unplug));
+    assert!(!drive(Some(&[]), fh, None, Some(false)).1.contains(unplug));
+    assert!(!drive(Some(&[]), fh, None, None).1.contains(unplug));
+    assert!(!src(Some(&[]), Some(0), Some(0)).1.contains("plug it in"));
 }
 
 #[test]
@@ -523,6 +542,31 @@ fn backups_never_claim_verified_restore_or_data_coverage() {
 }
 
 #[test]
+fn add_ons_carry_their_name_and_older_reports_without_one_still_load() {
+    let item = |name: Option<&str>| {
+        let mut v = json!({"browser":"Chrome","profile_index":1,"id":"abcdefghijklmnopabcdefghijklmnop","version":"1.0","enabled":{"state":"Unknown","value":"NotAssessed"},"broad_host_access":k(true),"native_messaging":k(false)});
+        if let Some(name) = name {
+            v["name"] = json!(name);
+        }
+        v
+    };
+    let inventory = |name: Option<&str>| json!({"extensions":k(json!({"items":[item(name)],"truncated":false})),"profiles_examined":k(1)});
+    let detail = |name: Option<&str>| {
+        let p = assessed(ProbeId::BrowserExtensions, inventory(name));
+        assessment(&p, "browser.permissions").detail.clone()
+    };
+    assert!(detail(Some("Password Helper"))
+        .contains("\"Password Helper\" (abcdefghijklmnopabcdefghijklmnop)"));
+    for name in [None, Some("")] {
+        let text = detail(name);
+        assert!(
+            text.contains("extension abcdefghijklmnopabcdefghijklmnop declares"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn truncated_inventory_remains_unknown_with_valid_items() {
     let p = assessed(
         ProbeId::BrowserExtensions,
@@ -668,7 +712,9 @@ fn scripts_preserve_read_only_and_privacy_boundaries() {
     let launcher = include_str!("windows.rs");
     assert!(launcher.contains("CREATE_SUSPENDED"));
     assert!(launcher.contains("CREATE_UNICODE_ENVIRONMENT"));
-    assert!(launcher.contains("limits.basic.active_processes = 1"));
+    assert!(launcher.contains(
+        "limits.basic.active_processes = if id == ProbeId::SecureBootCerts { 2 } else { 1 }"
+    ));
     assert!(!launcher.contains("std::env::var"));
     assert!(launcher.contains("elevation.TokenIsElevated != 0"));
     assert!(launcher.contains("EqualSid"));
@@ -952,12 +998,102 @@ fn os_support_and_secure_boot_certificate_probes_parse_end_to_end() {
         ProbeId::SecureBootCerts,
         json!({
             "update_completed_event":k(true),"update_staged_event":k(false),"update_error_event":k(false),
-            "servicing_status":k("Updated"),"ca2023_in_db":k(true),"secure_boot_enabled":k(true)
+            "servicing_status":k("Updated"),"ca2023_in_db":k(true),"secure_boot_enabled":k(true),
+            "maker_blocked_event":k(false),"available_updates":k(0),"servicing_error":k(0),"capable":k(2),
+            "task_state":k("Ready"),"is_vm":k(false),"bitlocker_on":k(true),"other_os":k(false)
         }),
     );
     assert_eq!(p.status, Status::Healthy);
     let p = assessed(ProbeId::SecureBootCerts, json!({"servicing_status":k(7)}));
     assert_eq!(p.status, Status::Unknown);
+}
+
+#[test]
+fn secure_boot_renewal_facts_parse_and_drive_the_offer() {
+    use super::Renewal;
+    let facts = |extra: Value| {
+        let mut base = json!({
+            "update_completed_event":k(false),"update_staged_event":k(true),"update_error_event":k(false),
+            "servicing_status":k("NotStarted"),"ca2023_in_db":k(false),"secure_boot_enabled":k(true),
+            "maker_blocked_event":k(false),"available_updates":k(0),"servicing_error":k(0),"capable":k(0),
+            "task_state":k("Ready"),"is_vm":k(false),"bitlocker_on":k(false),"other_os":k(false)
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            base[key] = value.clone();
+        }
+        base
+    };
+    let renewal = |value: Value| {
+        let p = assessed(ProbeId::SecureBootCerts, value);
+        let Some(Evidence::SecureBootCerts(v)) = &p.evidence else {
+            panic!("facts did not parse");
+        };
+        Renewal::of(v)
+    };
+    assert_eq!(
+        renewal(facts(json!({}))),
+        Renewal::Offer { bitlocker: false }
+    );
+    assert_eq!(
+        renewal(facts(json!({"bitlocker_on":k(true)}))),
+        Renewal::Offer { bitlocker: true }
+    );
+    assert_eq!(
+        renewal(facts(json!({"available_updates":k(22852)}))),
+        Renewal::Started
+    );
+    assert_eq!(
+        renewal(facts(json!({"servicing_status":k("InProgress")}))),
+        Renewal::Started
+    );
+    assert_eq!(renewal(facts(json!({"is_vm":k(true)}))), Renewal::VirtualPc);
+    assert_eq!(
+        renewal(facts(json!({"servicing_status":k("Updated")}))),
+        Renewal::Done
+    );
+    let p = assessed(ProbeId::SecureBootCerts, facts(json!({"is_vm":k(true)})));
+    assert_eq!(p.status, Status::Informational);
+    let p = assessed(ProbeId::SecureBootCerts, facts(json!({})));
+    assert_eq!(p.status, Status::Attention);
+    // A wrong type is unreadable, never coerced into an offer.
+    for wrong in [
+        json!({"available_updates":k("0")}),
+        json!({"available_updates":k(-1)}),
+        json!({"task_state":k(1)}),
+        json!({"is_vm":k("false")}),
+        json!({"other_os":k(0)}),
+        json!({"maker_blocked_event":k(Value::Null)}),
+    ] {
+        assert_eq!(
+            renewal(facts(wrong.clone())),
+            Renewal::Blocked(super::Blocker::NotChecked),
+            "{wrong}"
+        );
+    }
+    let p = d(ProbeId::SecureBootCerts, facts(json!({"surprise":k(true)})));
+    assert!(p.evidence.is_none());
+}
+
+#[test]
+fn the_secure_boot_probe_reads_ids_and_values_never_event_text() {
+    let script = include_str!("probes.ps1");
+    let start = script.find("'SecureBootCerts' {").unwrap();
+    let end = script[start..].find("'DefenderProtection' {").unwrap();
+    let branch = &script[start..start + end];
+    assert!(!branch.contains(".Message"));
+    assert!(
+        branch.contains("bcdedit")
+            || include_str!("../platform/secureboot.ps1").contains("bcdedit.exe")
+    );
+    for write in [
+        "Set-ItemProperty",
+        "New-ItemProperty",
+        "SetValue",
+        "Start-ScheduledTask",
+        "Set-",
+    ] {
+        assert!(!branch.contains(write), "{write}");
+    }
 }
 
 #[test]
@@ -967,7 +1103,11 @@ fn new_probes_have_compiled_branches_and_read_only_privacy_boundaries() {
         include_str!("common.ps1"),
         include_str!("probes.ps1")
     );
-    let native = [ProbeId::WindowsHello, ProbeId::WifiSecurity];
+    let native = [
+        ProbeId::WindowsHello,
+        ProbeId::WifiSecurity,
+        ProbeId::RunHistory,
+    ];
     for &id in &ProbeId::ALL[23..] {
         assert_eq!(
             script.contains(&format!("'{id:?}' {{")),
@@ -1024,6 +1164,7 @@ fn every_new_probe_has_a_launcher_module_entry_and_unique_source() {
         "DnsEncryption",
         "WifiSecurity",
         "Autostart",
+        "RunHistory",
     ] {
         assert!(launcher.contains(&format!("ProbeId::{id}")), "{id}");
     }
@@ -1196,6 +1337,43 @@ fn autostart_counts_flag_risky_entries_and_need_complete_evidence() {
         Status::Unknown
     );
     assert_eq!(status_of(&fixture(unreadable, 1, 0), id), Status::Attention);
+}
+
+#[test]
+fn run_history_counts_flag_tricks_and_need_complete_evidence() {
+    let id = "clickfix.run_history";
+    let fixture = |checked: Value, suspicious: Value| {
+        assessed(
+            ProbeId::RunHistory,
+            json!({
+                "entries_checked":checked,"suspicious_entries":suspicious,
+                "encoded_command":k(0),"web_script":k(0),"mshta":k(0),
+                "download_tool":k(0),"hidden_window":k(0)
+            }),
+        )
+    };
+    assert_eq!(status_of(&fixture(k(0), k(0)), id), Status::Healthy);
+    assert_eq!(status_of(&fixture(k(9), k(0)), id), Status::Healthy);
+    assert_eq!(status_of(&fixture(k(9), k(2)), id), Status::Attention);
+    let unreadable = json!({"state":"Unknown","value":"Unavailable"});
+    assert_eq!(
+        status_of(&fixture(unreadable.clone(), k(0)), id),
+        Status::Unknown
+    );
+    assert_eq!(
+        status_of(&fixture(k(9), unreadable.clone()), id),
+        Status::Unknown
+    );
+    assert_eq!(status_of(&fixture(unreadable, k(1)), id), Status::Attention);
+    assert!(parse::decode(
+        ProbeId::RunHistory,
+        br#"{"entries_checked":{"state":"Known","value":1},"command":"powershell -enc AAAA"}"#
+    )
+    .is_err());
+    let flagged = fixture(k(9), k(2));
+    let detail = &assessment(&flagged, id).detail;
+    assert!(detail.contains("never kept") && !detail.contains("AAAA"));
+    assert_eq!(ProbeId::RunHistory.scope(), Scope::OriginalUser);
 }
 
 #[test]

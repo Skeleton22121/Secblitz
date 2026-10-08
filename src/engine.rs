@@ -5,8 +5,10 @@
 mod apply;
 mod audit;
 mod catalog;
+pub mod cfa;
 mod fsio;
 mod journal;
+pub mod recover;
 mod recovery;
 mod revert;
 mod store;
@@ -21,11 +23,26 @@ use anyhow::{ensure, Context, Result};
 use catalog::{target, validate_value};
 use fsio::metadata_safe;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, fs::File, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs,
+    fs::File,
+    path::PathBuf,
+};
 
-/// The rule an audit uses to judge one setting, for callers without the journal.
+/// The items the person picked, by control id. Only controls that ask for a choice read it.
+pub type ItemChoice = BTreeMap<String, Vec<String>>;
+const MAX_CHOSEN: usize = 64;
+
+/// The audit's rule for one setting, judged on its value alone, for the background check.
+/// Its account can read settings it may not open for change, and it only raises settings
+/// Secblitz already fixed, so who may change them now does not matter.
 pub fn assessment(id: &str, o: &Observation) -> Result<CheckStatus> {
-    catalog::assessment_status(id, o)
+    let o = Observation {
+        eligible: true,
+        ..o.clone()
+    };
+    catalog::assessment_status(id, &o)
 }
 
 const SCHEMA: u32 = 1;
@@ -130,6 +147,10 @@ pub struct Outcome {
     /// Secblitz changed this setting and can put it back on its own. Filled by a check.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub undoable: bool,
+    /// Something Secblitz changed here needs a change again. Items found after the change
+    /// do not count. Filled by a check.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub switched_back: bool,
 }
 
 /// Approval alone cannot make an ambiguous original safe, so there is deliberately no force-truncate API. Restore a verified journal backup under engine.lock instead.
@@ -159,6 +180,7 @@ pub struct Engine {
     controls: Vec<Control>,
     machine: String,
     storage_failed: bool,
+    choice: ItemChoice,
     #[cfg(test)]
     mutation_check: Option<Box<MutationCheck>>,
 }
@@ -176,6 +198,15 @@ fn native_mutation_interlocks(held: &File) -> Result<()> {
 
 impl Engine {
     pub fn open(dir: PathBuf, backend: Box<dyn Backend>) -> Result<Self> {
+        let mut engine = Self::unopened(dir, backend)?;
+        let _lock = engine.lock()?;
+        engine.identify()?;
+        engine.load()?;
+        Ok(engine)
+    }
+
+    /// Validates the directory and backend without taking the lock or reading any journal.
+    fn unopened(dir: PathBuf, backend: Box<dyn Backend>) -> Result<Self> {
         #[cfg(all(windows, not(test)))]
         ensure!(
             dir == crate::platform::state_dir()?,
@@ -200,24 +231,26 @@ impl Engine {
                 "Backend target differs from compiled target"
             );
         }
-        let mut engine = Self {
+        Ok(Self {
             dir,
             backend,
             controls,
             machine: String::new(),
             storage_failed: false,
+            choice: ItemChoice::new(),
             #[cfg(test)]
             mutation_check: None,
-        };
-        let _lock = engine.lock()?;
-        let machine = engine.backend.machine_id()?;
+        })
+    }
+
+    fn identify(&mut self) -> Result<()> {
+        let machine = self.backend.machine_id()?;
         ensure!(
             !machine.is_empty() && machine.len() <= 256 && !machine.chars().any(char::is_control),
             "Invalid machine identity"
         );
-        engine.machine = machine;
-        engine.load()?;
-        Ok(engine)
+        self.machine = machine;
+        Ok(())
     }
 
     pub(super) fn control(&self, id: &str) -> Result<&Control> {
@@ -241,8 +274,34 @@ impl Engine {
         }
     }
 
+    /// Replaces the picked items. A name that is not a legal item of its control is refused, and nothing is kept.
+    pub fn choose_items(&mut self, choice: ItemChoice) -> Result<()> {
+        for (id, names) in &choice {
+            let spec = crate::hardening::spec(id).filter(|s| s.needs_choice());
+            let spec = spec.with_context(|| format!("Items cannot be picked for {id}"))?;
+            ensure!(names.len() <= MAX_CHOSEN, "Too many items picked for {id}");
+            ensure!(
+                names.iter().all(|n| spec.item_name_ok(n)),
+                "An item picked for {id} is not valid"
+            );
+        }
+        self.choice = choice;
+        Ok(())
+    }
+
+    pub(super) fn chosen(&self, id: &str) -> Option<&[String]> {
+        self.choice.get(id).map(Vec::as_slice)
+    }
+
     pub(super) fn observe(&mut self, id: &str) -> Result<Observation> {
-        Self::validated(id, self.backend.observe(id)?)
+        let mut obs = Self::validated(id, self.backend.observe(id)?)?;
+        if let (Some(names), Some(spec)) = (self.choice.get(id), crate::hardening::spec(id)) {
+            obs.value = spec.narrow(&obs.value, names);
+            obs.labels
+                .retain(|l| l.key.is_empty() || names.contains(&l.key));
+        }
+        self.cfa_gate(id, &mut obs);
+        Ok(obs)
     }
 
     fn validated(id: &str, obs: Observation) -> Result<Observation> {
@@ -267,7 +326,11 @@ impl Engine {
         observed
             .into_iter()
             .zip(ids)
-            .map(|(obs, id)| Self::validated(id, obs?))
+            .map(|(obs, id)| {
+                let mut obs = Self::validated(id, obs?)?;
+                self.cfa_gate(id, &mut obs);
+                Ok(obs)
+            })
             .collect()
     }
 

@@ -49,14 +49,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError("release redirects are forbidden")
 
 
-def live_feed(origin):
+def live_feed(origin, feed="stable.json"):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    request = urllib.request.Request(origin + "releases/stable.json", headers={
+    request = urllib.request.Request(origin + "releases/" + feed, headers={
         "User-Agent": "Secblitz-Release-Renewal/1", "Accept": "application/json",
         "Cache-Control": "no-cache",
     })
     with opener.open(request, timeout=30) as response:
-        if response.status != 200 or response.url != origin + "releases/stable.json":
+        if response.status != 200 or response.url != origin + "releases/" + feed:
             raise ValueError("unexpected release response")
         data = response.read(sign.MANIFEST_LIMIT + 1)
     if len(data) > sign.MANIFEST_LIMIT:
@@ -64,9 +64,9 @@ def live_feed(origin):
     return data
 
 
-def renewal(current, public, artifact, filename, now, lifetime_days=90):
+def renewal(current, public, artifact, filename, now, lifetime_days=90, arch=None):
     payload = sign.verify_envelope(current, public)
-    sign.validate_manifest(payload, now)
+    sign.validate_manifest(payload, now, arch)
     if (not 1 <= lifetime_days <= 90 or not payload["published_at"] < now < payload["expires_at"]
             or filename != payload["filename"] or len(artifact) != payload["size"]
             or len(artifact) > sign.ARTIFACT_LIMIT
@@ -75,7 +75,7 @@ def renewal(current, public, artifact, filename, now, lifetime_days=90):
     new = dict(payload, published_at=now, expires_at=now + lifetime_days * 86400)
     if new["expires_at"] <= payload["expires_at"]:
         raise ValueError("renewal must extend expiration")
-    sign.validate_manifest(new, now)
+    sign.validate_manifest(new, now, arch)
     return new
 
 
@@ -90,6 +90,7 @@ def main():
     parser.add_argument("--public-key", type=Path, default=sign.ROOT / "assets/update-public-key.hex")
     parser.add_argument("--renew-within-days", type=int, default=14)
     parser.add_argument("--lifetime-days", type=int, default=90)
+    parser.add_argument("--arch", choices=sorted(sign.ARCHES), default="x64")
     parser.add_argument("--sign", action="store_true")
     parser.add_argument("--key", type=Path)
     parser.add_argument("--output", type=Path)
@@ -112,10 +113,11 @@ def main():
     if public_text != args.expected_public_key or hashlib.sha256(current).hexdigest() != args.current_sha256:
         raise ValueError("key/current bytes changed")
     public = bytes.fromhex(public_text)
-    if live_feed(origin) != current:
+    feed = sign.ARCHES[args.arch]["feed"]
+    if live_feed(origin, feed) != current:
         raise ValueError("live feed differs from renewal snapshot")
     now = int(time.time())
-    planned = renewal(current, public, inputs[args.installer][1], args.installer.name, now, args.lifetime_days)
+    planned = renewal(current, public, inputs[args.installer][1], args.installer.name, now, args.lifetime_days, args.arch)
     old = sign.verify_envelope(current, public)
     if old["expires_at"] - now > args.renew_within_days * 86400:
         print("Fresh feed outside renewal window; no output and no key loaded.")
@@ -133,9 +135,9 @@ def main():
     for path, (limit, snapshot) in inputs.items():
         if sign.read_input(path, limit) != snapshot:
             raise ValueError("renewal input changed")
-    if live_feed(origin) != current:
+    if live_feed(origin, feed) != current:
         raise ValueError("live feed changed during renewal")
-    sign.validate_manifest(planned, int(time.time()))
+    sign.validate_manifest(planned, int(time.time()), args.arch)
     # Exclusive create: unlike original release signing, renewal never replaces
     # an existing file, including a historical signed release.
     with output.open("xb") as stream:

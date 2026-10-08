@@ -16,7 +16,8 @@ use std::{
 use windows_service::{
     define_windows_service,
     service::{
-        ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
+        ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
+        ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
         ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
     },
     service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
@@ -190,7 +191,8 @@ fn inspect(
         );
         ensure!(rc == 0, "Cannot inspect file ACL ({rc})");
         let _sd = Local(sd);
-        inspect_descriptor(sd, directory, protected, report, shared)
+        let root = !protected && crate::platform::security::is_volume_root(file);
+        inspect_descriptor(sd, directory, protected, report, shared, root)
     }
 }
 
@@ -200,6 +202,7 @@ fn inspect_descriptor(
     protected: bool,
     report: bool,
     shared: bool,
+    root: bool,
 ) -> Result<()> {
     unsafe {
         let mut owner = null_mut();
@@ -311,7 +314,12 @@ fn inspect_descriptor(
                     | FILE_ADD_FILE
                     | FILE_ADD_SUBDIRECTORY
                     | GENERIC_READ
-                    | GENERIC_EXECUTE;
+                    | GENERIC_EXECUTE
+                    | if root {
+                        crate::platform::security::VOLUME_ROOT_EXTRA
+                    } else {
+                        0
+                    };
                 ensure!(a.Mask & !benign == 0, "Writable/untrusted ancestor DACL");
             }
         }
@@ -569,8 +577,8 @@ fn command(path: &Path) -> Result<String> {
 pub fn install() -> Result<()> {
     crate::platform::require_admin("Service installation requires Administrator elevation")?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "The monitor requires Windows x64"
+        crate::platform::NATIVE_64,
+        "The monitor requires 64-bit Windows"
     );
     // Only the protected installed copy may become the service binary: a
     // copy in a user-writable folder could be swapped before it is read.
@@ -684,7 +692,9 @@ pub fn install() -> Result<()> {
                 account_name: Some(ACCOUNT.into()),
                 account_password: None,
             },
+            // START: Windows requires it to set restart-on-failure actions.
             ServiceAccess::CHANGE_CONFIG
+                | ServiceAccess::START
                 | ServiceAccess::DELETE
                 | ServiceAccess::WRITE_DAC
                 | ServiceAccess::WRITE_OWNER,
@@ -746,6 +756,16 @@ pub fn install() -> Result<()> {
             error()
         );
         service.set_description("Read-only security observations every 15 minutes. No automatic remediation; latest report in Program Files/Secblitz/Monitor.")?;
+        let restart = |seconds| ServiceAction {
+            action_type: ServiceActionType::Restart,
+            delay: Duration::from_secs(seconds),
+        };
+        service.update_failure_actions(ServiceFailureActions {
+            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(24 * 60 * 60)),
+            reboot_msg: None,
+            command: None,
+            actions: Some(vec![restart(5), restart(5), restart(30)]),
+        })?;
         ensure!(
             unsafe {
                 ChangeServiceConfigW(
@@ -796,8 +816,8 @@ pub fn install() -> Result<()> {
 pub fn start() -> Result<()> {
     crate::platform::require_admin("Service startup requires Administrator elevation")?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "The monitor requires Windows x64"
+        crate::platform::NATIVE_64,
+        "The monitor requires 64-bit Windows"
     );
     let scm = manager(ServiceManagerAccess::CONNECT)?;
     let service = scm.open_service(

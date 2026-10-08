@@ -44,6 +44,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "net.llmnr" => "Someone on your network answering name lookups with wrong replies",
         "accounts.lockout_policy" => "Someone guessing your password again and again",
         "autorun.disabled" => "Harmful programs starting from a USB stick or disc",
+        "clickfix.run_box" => "A fake web page tricking you into running a harmful command",
         "wifi.risky_profiles" => "Unknown Wi-Fi hotspots connecting your PC without asking",
         "lsa.restrict_anonymous" => "Someone on the network listing your accounts and shares",
         "remote_assistance.disabled" => "Someone taking over your PC through a help invitation",
@@ -60,6 +61,9 @@ pub fn control_impact(id: &str) -> &'static str {
         "defender.network_protection" => {
             "Programs connecting to known harmful websites and servers"
         }
+        "defender.cfa_watch" => "Not knowing which apps change your personal files",
+        "defender.cfa_block" => "Ransomware locking your photos and documents",
+        "defender.cfa_allowed_apps" => "A trusted app being stopped from saving your work",
         "defender.cloud_block_level" => {
             "Brand-new harmful files slipping through before anyone has judged them"
         }
@@ -141,6 +145,7 @@ pub fn control_impact(id: &str) -> &'static str {
             "Your browsers reporting how you use them and what you look at"
         }
         "browser.safety_mode" => "Harmful sites and trackers getting more room in your browsers",
+        "browser.extensions_off" => "A harmful add-on watching everything you do on every website",
         "browser.dns_bypass" => {
             "Ads, trackers and dangerous sites slipping past Web protection in your browsers"
         }

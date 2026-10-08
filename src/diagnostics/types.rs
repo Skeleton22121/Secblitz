@@ -117,7 +117,7 @@ macro_rules! probe_ids {
             pub const ALL: &'static [Self] = &[$(Self::$name),+];
             pub fn source(self) -> &'static str { match self { $(Self::$name => $source),+ } }
             pub fn scope(self) -> Scope {
-                if self == Self::BrowserExtensions { Scope::OriginalUser } else { Scope::Machine }
+                if matches!(self, Self::BrowserExtensions | Self::RunHistory) { Scope::OriginalUser } else { Scope::Machine }
             }
         }
     };
@@ -140,14 +140,14 @@ probe_ids! {
     BrowserExtensions => "Verified original desktop user's bounded Chrome/Edge manifests and Firefox extensions.json",
     Storage => "Storage/Get-PhysicalDisk and Get-StorageReliabilityCounter",
     Ntfs => "Win32_Volume: fixed-volume filesystem/dirty bit/capacity",
-    Backup => "Win32_ShadowCopy and bounded Microsoft-Windows-Backup success event metadata",
+    Backup => "Win32_ShadowCopy, bounded Microsoft-Windows-Backup and File History event metadata, and OneDrive folder redirection",
     Adapters => "NetAdapter/Get-NetAdapter: operational state only",
     Dns => "DnsClient/Get-DnsClientServerAddress: configured server counts only",
     Proxy => "WinHTTP/WinHttpGetDefaultProxyConfiguration: access type only",
     Vpn => "VpnClient/Get-VpnConnection -AllUserConnection: status only",
     Permissions => "permissions::audit: bounded fixed-service broad-principal DACL audit",
     OsSupport => "HKLM Windows version values: DisplayVersion, build and edition id only",
-    SecureBootCerts => "System event ids 1795-1798/1801/1808, Secure Boot servicing status and db certificate presence (no firmware data emitted)",
+    SecureBootCerts => "System event ids, Secure Boot servicing values, the renewal task state, db certificate presence, virtual PC, BitLocker and other-system hints (no firmware data or event text emitted)",
     DefenderProtection => "Defender/Get-MpComputerStatus, Get-MpThreat, Get-MpThreatDetection and exclusion counts only (no paths)",
     SmartScreen => "HKLM SmartScreen, Smart App Control and browser safe-browsing policy indicators",
     UpdatePolicy => "HKLM Windows Update policy and pause values, service start types, pending restart and uptime",
@@ -161,6 +161,7 @@ probe_ids! {
     WindowsHello => "Trusted System32/dsregcmd.exe /status: the PIN / Windows Hello set-up flag only, no other line is kept",
     DnsEncryption => "DnsClient: configured DNS server counts against registered encrypted-DNS servers (no addresses)",
     WifiSecurity => "WLAN API: security type of the connected Wi-Fi network only (no network name or address)",
+    RunHistory => "The signed-in user's Run box history (RunMRU): counts of entries that match known fake check page tricks (no command text is kept)",
     Autostart => "Run/RunOnce keys, Startup folders and non-Microsoft scheduled tasks: counts of risky unsigned entries only (no names or paths)",
 }
 
@@ -292,6 +293,9 @@ pub struct BrowserExtension {
     /// Local ordinal only; profile names and paths never leave the collector.
     pub profile_index: u32,
     pub id: String,
+    /// The add-on's own name; empty when it could not be read.
+    #[serde(default)]
+    pub name: String,
     pub version: String,
     pub enabled: Reading<bool>,
     pub broad_host_access: Reading<bool>,
@@ -312,7 +316,13 @@ facts!(Volume {
     capacity_bytes: u64,
     free_bytes: u64
 });
-facts!(Backup { shadow_copy_count: u32, success_events: Inventory<BackupEvent> });
+facts!(Backup {
+    shadow_copy_count: u32,
+    success_events: Inventory<BackupEvent>,
+    file_history_last_unix_seconds: u64,
+    onedrive_folders: u32,
+    file_history_drive_removable_connected: bool
+});
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupEvent {
@@ -356,6 +366,14 @@ facts!(SecureBootCerts {
     servicing_status: String,
     ca2023_in_db: bool,
     secure_boot_enabled: bool,
+    maker_blocked_event: bool,
+    available_updates: u32,
+    servicing_error: u32,
+    capable: u32,
+    task_state: String,
+    is_vm: bool,
+    bitlocker_on: bool,
+    other_os: bool,
 });
 facts!(DefenderProtection {
     running_mode: String,
@@ -426,6 +444,15 @@ facts!(Autostart {
     risky_unsigned: u32,
     suspicious_command: u32,
 });
+facts!(RunHistory {
+    entries_checked: u32,
+    suspicious_entries: u32,
+    encoded_command: u32,
+    web_script: u32,
+    mshta: u32,
+    download_tool: u32,
+    hidden_window: u32,
+});
 facts!(Permissions { services: Inventory<PermissionFinding> });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -476,6 +503,7 @@ pub enum Evidence {
     DnsEncryption(DnsEncryption),
     WifiSecurity(WifiSecurity),
     Autostart(Autostart),
+    RunHistory(RunHistory),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

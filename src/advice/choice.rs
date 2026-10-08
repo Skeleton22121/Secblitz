@@ -15,7 +15,10 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Sign-in add-ons from other companies may stop working. Needs a restart."
         }
         "autorun.disabled" => {
-            "Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead."
+            "Plugging in a USB stick or disc will no longer pop up a menu. Open it from File Explorer instead. Needs a restart."
+        }
+        "clickfix.run_box" => {
+            "Win+R and Run in the Start menu stop working for everyone on this PC."
         }
         "wifi.risky_profiles" => {
             "Saved risky Wi-Fi networks stop joining by themselves. You can still connect by hand."
@@ -49,6 +52,15 @@ pub fn choice_consequence(id: &str) -> &'static str {
         }
         "defender.cloud_block_level" => {
             "Windows is stricter with unknown files and may pause a download for up to 20 seconds."
+        }
+        "defender.cfa_watch" => {
+            "Windows quietly notes which apps change your files. Nothing is blocked, and you can undo this."
+        }
+        "defender.cfa_block" => {
+            "Apps Windows doesn't trust can no longer change your files. One you use may need allowing. You can undo this."
+        }
+        "defender.cfa_allowed_apps" => {
+            "These apps will be allowed to change your files in protected folders. Undo takes them off the list."
         }
         "net.stack_hardening" => "Nothing you will notice day to day. Needs a restart.",
         "net.netbios" => "Very old network devices may stop being found by name.",
@@ -162,6 +174,9 @@ pub fn choice_consequence(id: &str) -> &'static str {
         }
         "browser.safety_mode" => {
             "Stronger protection turns on. Browsers will say they are managed by your organization, which only means a setting was made."
+        }
+        "browser.extensions_off" => {
+            "Picked add-ons turn off for all users. Browsers say they are managed by your organization, which only means a setting was made."
         }
         "browser.dns_bypass" => {
             "Keep Web protection on. Browsers will say they are managed by your organization, which only means a setting was made."

@@ -1,6 +1,7 @@
 //! PC health tips and the per-rule advice behind them.
 use super::rules::{
-    rule_advice, rule_fix, rule_fix_advice, rule_open, rule_remove_threats, rule_restart, rule_scan,
+    rule_advice, rule_fix, rule_fix_advice, rule_open, rule_remove_threats, rule_renewal_advice,
+    rule_restart, rule_scan,
 };
 use secblitz::diagnostics as diag;
 use secblitz::model::CheckStatus;
@@ -58,6 +59,7 @@ impl TipProfile {
                 P::UpdatePolicy,
                 P::HostsFile,
                 P::Autostart,
+                P::RunHistory,
                 P::AccountSetup,
             ],
             Self::Gaming => &[
@@ -73,6 +75,7 @@ impl TipProfile {
                 P::DefenderProtection,
                 P::UpdatePolicy,
                 P::Autostart,
+                P::RunHistory,
                 P::WifiSecurity,
             ],
             Self::Work => &[
@@ -96,6 +99,7 @@ impl TipProfile {
                 P::AccountHygiene,
                 P::FirewallRules,
                 P::Autostart,
+                P::RunHistory,
                 P::AccountSetup,
                 P::WifiSecurity,
                 P::DnsEncryption,
@@ -119,10 +123,12 @@ impl TipProfile {
                 P::HostsFile,
                 P::LegacyFeatures,
                 P::Persistence,
+                P::BrowserExtensions,
                 P::AccountHygiene,
                 P::Sharing,
                 P::FirewallRules,
                 P::Autostart,
+                P::RunHistory,
                 P::AccountSetup,
                 P::WindowsHello,
                 P::WifiSecurity,
@@ -174,6 +180,7 @@ pub fn tip_title(id: diag::ProbeId) -> &'static str {
         P::DnsEncryption => "Private internet lookups",
         P::WifiSecurity => "Wi-Fi protection",
         P::Autostart => "Programs that start by themselves",
+        P::RunHistory => "Run box history",
     }
 }
 
@@ -199,6 +206,7 @@ pub fn probe_page(id: diag::ProbeId) -> Option<crate::guide::Page> {
         P::Adapters | P::Dns | P::Proxy | P::Vpn | P::DnsEncryption => Page::Network,
         P::WifiSecurity => Page::Wifi,
         P::SmartScreen => Page::AppBrowser,
+        P::RunHistory => Page::WindowsSecurity,
         P::LegacyFeatures => Page::OptionalFeatures,
         P::FirewallRules => Page::Firewall,
         P::WindowsHello => Page::SignIn,
@@ -220,6 +228,7 @@ pub fn probe_guide(id: diag::ProbeId) -> Option<&'static crate::guide::Guide> {
         P::BitLocker => "Device encryption",
         P::SecureBoot => "Secure Boot",
         P::Management => "Management and mutation eligibility",
+        P::RunHistory => "clickfix.run_history",
         _ => return None,
     })
 }
@@ -264,6 +273,7 @@ pub fn tip_advice(id: diag::ProbeId) -> &'static str {
         P::DnsEncryption => "Your internet lookups aren't private. Turn on encrypted lookups in your network settings.",
         P::WifiSecurity => "Your Wi-Fi has weak or no protection. Switch to the newest security option on your router.",
         P::Autostart => "A risky program starts by itself with Windows. Ask someone you trust to look at it.",
+        P::RunHistory => "Something typed into the Run box looks like a fake check page trick. Run a full virus scan and change your passwords from another device.",
     }
 }
 
@@ -352,6 +362,7 @@ pub enum TipAction {
     CheckNow,
     RestartNow,
     RemoveThreats,
+    StartRenewal { bitlocker: bool },
     Scan,
     Steps,
     Open(secblitz::actions::Action),
@@ -365,6 +376,10 @@ pub fn tip_action(tip: &Tip, fix: TipFix<'_>, can_open: bool) -> TipAction {
         (TipFix::Offered(id), _) => TipAction::ReviewFix(id),
         (TipFix::NotOffered { .. }, _) => TipAction::SeeWhy,
         (TipFix::Restart(_), _) => TipAction::None,
+        _ if matches!(tip.renewal, Some(diag::Renewal::Offer { .. })) => match tip.renewal {
+            Some(diag::Renewal::Offer { bitlocker }) => TipAction::StartRenewal { bitlocker },
+            _ => TipAction::None,
+        },
         _ if tip.restart => TipAction::RestartNow,
         _ if tip.remove_threats => TipAction::RemoveThreats,
         _ if tip.scan => TipAction::Scan,
@@ -395,6 +410,7 @@ pub struct Tip {
     pub fix_advice: &'static str,
     pub restart: bool,
     pub remove_threats: bool,
+    pub renewal: Option<diag::Renewal>,
     pub explain: Option<String>,
 }
 
@@ -466,6 +482,10 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .iter()
             .any(|a| a.status == diag::Status::Attention && rule_scan(&a.rule.id));
         let look = state == TipState::Look;
+        let renewal = match &probe.evidence {
+            Some(diag::Evidence::SecureBootCerts(facts)) if look => Some(diag::Renewal::of(facts)),
+            _ => None,
+        };
         let explain = lead
             .into_iter()
             .chain(
@@ -479,12 +499,17 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             .find(|rule| secblitz::explain::for_check(rule).is_some())
             .map(str::to_owned);
         let lead = lead.filter(|_| look);
-        let restart = lead.is_some_and(rule_restart);
+        let restart = lead.is_some_and(rule_restart) || renewal == Some(diag::Renewal::Started);
         tips.push(Tip {
             explain,
             title: tip_title(id),
             state,
-            advice: match (look, lead.and_then(rule_advice)) {
+            advice: match (
+                look,
+                renewal
+                    .and_then(rule_renewal_advice)
+                    .or_else(|| lead.and_then(rule_advice)),
+            ) {
                 (false, _) => "",
                 (true, Some(text)) => text,
                 (true, None) => tip_advice(id),
@@ -509,6 +534,7 @@ pub fn summarize_tips(profile: TipProfile, report: &diag::Report) -> TipsReport 
             fix_advice: lead.map_or("", rule_fix_advice),
             restart,
             remove_threats: look && remove_threats,
+            renewal,
         });
     }
     let rank = |s: TipState| match s {
@@ -716,6 +742,7 @@ mod tests {
             fix_advice: rule_fix_advice(rule),
             restart: false,
             remove_threats: false,
+            renewal: None,
             explain: None,
         }
     }
@@ -805,6 +832,19 @@ mod tests {
             TipFix::Offered("remote_desktop.disabled")
         );
         assert_eq!(rule_fix("winre.enabled"), Some("recovery.winre_enabled"));
+        assert_eq!(
+            rule_fix("browser.permissions"),
+            Some("browser.extensions_off")
+        );
+        let add_ons = tip_for(diag::ProbeId::BrowserExtensions, &["browser.permissions"]);
+        assert_eq!(add_ons.fix, Some("browser.extensions_off"));
+        assert_eq!(add_ons.advice, rule_advice("browser.permissions").unwrap());
+        assert_eq!(add_ons.fix_advice, rule_fix_advice("browser.permissions"));
+        for line in [add_ons.advice, add_ons.fix_advice] {
+            assert!(line.len() <= 130 && !line.contains('\u{2014}'), "{line}");
+        }
+        assert!(!add_ons.advice.contains("Secblitz can"));
+        assert!(add_ons.fix_advice.contains("Secblitz can"));
         let winre = tip_for(diag::ProbeId::WinRe, &["winre.enabled"]);
         assert_eq!(winre.fix, Some("recovery.winre_enabled"));
         assert_eq!(winre.advice, rule_advice("winre.enabled").unwrap());
@@ -1025,6 +1065,7 @@ mod tests {
                 fix_advice: "",
                 restart: false,
                 remove_threats: false,
+                renewal: None,
                 explain: None,
             };
             let action = tip_action(&tip, TipFix::Manual, true);
@@ -1067,6 +1108,7 @@ mod tests {
             "net.dns_encryption",
             "net.wifi_security",
             "persistence.run_and_tasks",
+            "clickfix.run_history",
             "remote.rdp",
             "smb.v1",
             "winre.enabled",
@@ -1348,5 +1390,86 @@ mod tests {
             .iter()
             .filter(|t| t.state == TipState::Good)
             .all(|t| t.advice.is_empty()));
+    }
+
+    fn renewal_tip(change: impl Fn(&mut diag::SecureBootCerts)) -> Tip {
+        use diag::Reading::Known;
+        let mut facts = diag::SecureBootCerts {
+            update_completed_event: Known(false),
+            update_staged_event: Known(true),
+            update_error_event: Known(false),
+            servicing_status: Known("NotStarted".into()),
+            ca2023_in_db: Known(false),
+            secure_boot_enabled: Known(true),
+            maker_blocked_event: Known(false),
+            available_updates: Known(0),
+            servicing_error: Known(0),
+            capable: Known(0),
+            task_state: Known("Ready".into()),
+            is_vm: Known(false),
+            bitlocker_on: Known(true),
+            other_os: Known(false),
+        };
+        change(&mut facts);
+        let mut report = report_with(diag::ProbeId::SecureBootCerts, &["boot.secure_boot_certs"]);
+        let probe = report
+            .probes
+            .iter_mut()
+            .find(|p| p.id == diag::ProbeId::SecureBootCerts)
+            .unwrap();
+        probe.evidence = Some(diag::Evidence::SecureBootCerts(facts));
+        tip_in(&report, diag::ProbeId::SecureBootCerts)
+    }
+
+    #[test]
+    fn the_startup_security_tip_offers_the_renewal_only_when_it_can_be_done() {
+        use diag::Reading::Known;
+        let tip = renewal_tip(|_| {});
+        assert_eq!(tip.renewal, Some(diag::Renewal::Offer { bitlocker: true }));
+        assert_eq!(
+            tip_action(&tip, TipFix::Manual, true),
+            TipAction::StartRenewal { bitlocker: true }
+        );
+        assert!(tip.advice.contains("renewing"));
+        let tip = renewal_tip(|f| f.bitlocker_on = Known(false));
+        assert_eq!(
+            tip_action(&tip, TipFix::Manual, true),
+            TipAction::StartRenewal { bitlocker: false }
+        );
+
+        let started = renewal_tip(|f| f.available_updates = Known(0x5944));
+        assert!(started.restart && started.open.is_none());
+        assert_eq!(
+            tip_action(&started, TipFix::Manual, true),
+            TipAction::RestartNow
+        );
+        assert!(started.advice.starts_with("Renewal started."));
+
+        for (name, change, words) in [
+            (
+                "maker",
+                (|f: &mut diag::SecureBootCerts| f.maker_blocked_event = Known(true))
+                    as fn(&mut diag::SecureBootCerts),
+                "PC maker needs to update",
+            ),
+            (
+                "task",
+                |f| f.task_state = Known("Disabled".into()),
+                "update job is switched off",
+            ),
+            (
+                "other system",
+                |f| f.other_os = Known(true),
+                "another system",
+            ),
+        ] {
+            let tip = renewal_tip(change);
+            assert!(tip.advice.contains(words), "{name}: {}", tip.advice);
+            assert!(!matches!(
+                tip_action(&tip, TipFix::Manual, true),
+                TipAction::StartRenewal { .. } | TipAction::RestartNow
+            ));
+            assert_no_dev_terms(tip.advice);
+        }
     }
 }

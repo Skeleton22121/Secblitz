@@ -246,7 +246,7 @@ pub(super) fn facts() -> Result<Facts> {
         include_str!("vbs.ps1")
     );
     let mut facts: Facts = run_script_in(script, Duration::from_secs(60), 1)?;
-    facts.hypervisor_vendor = vbs::cpu_hypervisor_vendor();
+    facts.hypervisor_vendor = vbs::cpu_hypervisor_vendor(facts.hypervisor_present);
     ensure!(facts.available.len() < 64, "unexpected protection facts");
     Ok(facts)
 }

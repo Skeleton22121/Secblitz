@@ -101,7 +101,9 @@ pub fn load_all(lists_dir: &Path) -> BTreeMap<&'static str, String> {
 pub fn usable_entries(source: &Source, text: &str) -> usize {
     match source.role {
         Role::Dns | Role::WindowsTracking => lists::parse_blocklist(text).block.len(),
-        Role::Threats | Role::Adult | Role::Gambling => lists::parse_blocklist_hashes(text).0.len(),
+        Role::Threats | Role::Adult | Role::Gambling | Role::Scam | Role::Popups => {
+            lists::parse_blocklist_hashes(text).0.len()
+        }
         Role::TrackingClassifier | Role::AdClassifier => lists::parse_classifier(text).len(),
     }
 }
@@ -137,6 +139,12 @@ pub fn rebuild(lists: &BTreeMap<&str, String>) -> Option<Filter> {
     }
     if let Some(text) = text_of(lists, Role::Gambling).into_iter().next() {
         filter.gambling = hashed(text);
+    }
+    if let Some(text) = text_of(lists, Role::Scam).into_iter().next() {
+        filter.scam = hashed(text);
+    }
+    if let Some(text) = text_of(lists, Role::Popups).into_iter().next() {
+        filter.popups = hashed(text);
     }
     Some(filter)
 }
@@ -219,7 +227,7 @@ mod tests {
         assert!(rebuild(&lists).is_none());
         lists.insert("hagezi-tif", "||evil.example^\n".to_string());
         let filter = rebuild(&lists).unwrap();
-        assert_eq!(lists::counts(&filter), [0, 0, 1, 0, 0]);
+        assert_eq!(lists::counts(&filter), [0, 0, 1, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -267,7 +275,7 @@ mod tests {
         let candidate = rebuild(&updated).unwrap();
         assert_eq!(
             lists::counts(&accept(candidate, &previous).unwrap()),
-            [2, 2, 1, 0, 0]
+            [2, 2, 1, 0, 0, 0, 0]
         );
     }
 
@@ -281,7 +289,7 @@ mod tests {
         );
         lists.insert("hagezi-gambling", "||bet.example^\n".to_string());
         let filter = rebuild(&lists).unwrap();
-        assert_eq!(lists::counts(&filter), [1, 1, 0, 1, 1]);
+        assert_eq!(lists::counts(&filter), [1, 1, 0, 1, 1, 0, 0]);
         assert!(filter.adult.blocks("www.adult.example"));
         assert!(!filter.adult.blocks("ok.adult.example"));
         assert!(filter.gambling.blocks("bet.example"));
@@ -289,6 +297,38 @@ mod tests {
         // The family lists alone are not enough to start protecting.
         lists.remove("adguard-dns");
         assert!(rebuild(&lists).is_none());
+    }
+
+    #[test]
+    fn scam_and_popup_lists_fill_their_own_switches() {
+        let mut lists = BTreeMap::new();
+        lists.insert("adguard-dns", "||ads.example^\n".to_string());
+        lists.insert(
+            "hagezi-fake",
+            "! Title: fake\n||shop.example^\n@@||ok.shop.example^\n".to_string(),
+        );
+        lists.insert("hagezi-popupads", "||popup.example^\n".to_string());
+        let filter = rebuild(&lists).unwrap();
+        assert_eq!(lists::counts(&filter), [1, 1, 0, 0, 0, 1, 1]);
+        assert!(filter.scam.blocks("www.shop.example"));
+        assert!(!filter.scam.blocks("ok.shop.example"));
+        assert!(!filter.scam.blocks("popup.example"));
+        assert!(filter.popups.blocks("popup.example"));
+        assert!(!filter.popups.blocks("shop.example"));
+        lists.remove("adguard-dns");
+        assert!(rebuild(&lists).is_none());
+    }
+
+    #[test]
+    fn scam_list_that_goes_missing_keeps_the_previous_set() {
+        let mut good = BTreeMap::new();
+        good.insert("adguard-dns", "||ads.example^\n".to_string());
+        good.insert("hagezi-fake", "||shop.example^\n".to_string());
+        good.insert("hagezi-popupads", "||popup.example^\n".to_string());
+        let previous = rebuild(&good).unwrap();
+        good.insert("hagezi-popupads", "<html>oops</html>".to_string());
+        let candidate = rebuild(&good).unwrap();
+        assert!(accept(candidate, &previous).is_err());
     }
 
     #[test]
@@ -310,6 +350,8 @@ mod tests {
             "easylist",
             "hagezi-nsfw",
             "hagezi-gambling",
+            "hagezi-fake",
+            "hagezi-popupads",
         ] {
             assert_eq!(
                 usable_entries(source(id), "<html>Not found</html>"),

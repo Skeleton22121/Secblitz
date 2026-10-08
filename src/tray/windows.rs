@@ -69,7 +69,7 @@ struct Tray {
     last: Option<Status>,
     shown: Option<(usize, String)>,
     opened: Option<Instant>,
-    danger: logic::Dangerous,
+    notices: logic::Notices,
     page: Option<&'static str>,
 }
 thread_local! {
@@ -207,15 +207,15 @@ fn balloon(hwnd: HWND, t: &mut Tray, notice: &logic::Balloon) {
     }
 }
 
-/// The time of the last dangerous block; it holds no site names, so the unelevated tray may read it.
-fn dangerous_at() -> Option<u64> {
+/// The last scam or dangerous block. The status file is read-only to the tray and names only those two kinds.
+fn block_notice() -> Option<secblitz::filter::config::Notice> {
     use std::io::Read;
     let file = std::fs::File::open(secblitz::filter::config::status_path().ok()?).ok()?;
     let mut bytes = Vec::new();
-    file.take(logic::DANGEROUS_LIMIT + 1)
+    file.take(logic::NOTICE_LIMIT + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    logic::dangerous_at(&bytes)
+    logic::block_notice(&bytes)
 }
 
 fn open_app(t: &mut Tray, page: Option<&str>) {
@@ -260,10 +260,11 @@ fn refresh(hwnd: HWND, t: &mut Tray) {
         }
         t.last = Some(now);
     }
-    if t.danger
-        .observe(dangerous_at(), status::now(), notify.dangerous)
+    if let Some(notice) = t
+        .notices
+        .observe(block_notice(), status::now(), notify.dangerous)
     {
-        balloon(hwnd, t, &logic::Balloon::Dangerous);
+        balloon(hwnd, t, &logic::Balloon::Blocked(notice));
     }
 }
 
@@ -376,7 +377,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 POLL_TIMER => {
                     with_tray(|t| refresh(hwnd, t));
                 }
-                QUIESCE_TIMER if quiesce_requested() => {
+                QUIESCE_TIMER if quiesce_requested() || crate::app::settings::tray_turned_off() => {
                     DestroyWindow(hwnd);
                 }
                 _ => {}
@@ -462,7 +463,7 @@ pub fn run(lang: Lang) -> Result<i32> {
                 last: None,
                 shown: None,
                 opened: None,
-                danger: logic::Dangerous::default(),
+                notices: logic::Notices::default(),
                 page: None,
             })
         });

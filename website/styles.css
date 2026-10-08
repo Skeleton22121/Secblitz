@@ -222,6 +222,7 @@ h3 { font-size: 17px; line-height: 1.35; font-weight: 600; letter-spacing: -0.00
 .meta { margin-top: var(--s3); color: var(--muted); font-size: 14px; }
 .meta > span { white-space: nowrap; }
 .meta a { text-underline-offset: 3px; }
+.meta.choice { margin-top: var(--s4); }
 .meta a:hover { color: var(--text); }
 .hero .shot { margin-top: var(--s12); }
 

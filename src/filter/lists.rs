@@ -1,7 +1,7 @@
 //! Block-list sources, strict parsing and the per-switch classification.
 
 use super::config::Config;
-use super::matcher::{hash, Category, Filter, HashSet64};
+use super::matcher::{hash, Category, Filter, HashSet64, KINDS};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -10,6 +10,8 @@ pub enum Role {
     Threats,
     Adult,
     Gambling,
+    Scam,
+    Popups,
     TrackingClassifier,
     AdClassifier,
 }
@@ -19,6 +21,8 @@ impl Role {
         match self {
             Role::Adult => config.adult,
             Role::Gambling => config.gambling,
+            Role::Scam => config.scam,
+            Role::Popups => config.popups,
             _ => true,
         }
     }
@@ -34,7 +38,7 @@ pub struct Source {
 
 const MIB: u64 = 1024 * 1024;
 
-pub const SOURCES: [Source; 10] = [
+pub const SOURCES: [Source; 12] = [
     Source {
         id: "adguard-dns",
         url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
@@ -70,6 +74,20 @@ pub const SOURCES: [Source; 10] = [
         max_bytes: 16 * MIB,
         refresh_days: 7,
         role: Role::Gambling,
+    },
+    Source {
+        id: "hagezi-fake",
+        url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/fake.txt",
+        max_bytes: 8 * MIB,
+        refresh_days: 1,
+        role: Role::Scam,
+    },
+    Source {
+        id: "hagezi-popupads",
+        url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/popupads.txt",
+        max_bytes: 8 * MIB,
+        refresh_days: 1,
+        role: Role::Popups,
     },
     Source {
         id: "adguard-tracking",
@@ -303,13 +321,15 @@ pub fn build(inputs: &Inputs) -> Filter {
     }
 }
 
-pub fn counts(filter: &Filter) -> [usize; 5] {
+pub fn counts(filter: &Filter) -> [usize; KINDS] {
     [
         filter.ads.block.len(),
         filter.tracking.block.len(),
         filter.dangerous.block.len(),
         filter.adult.block.len(),
         filter.gambling.block.len(),
+        filter.scam.block.len(),
+        filter.popups.block.len(),
     ]
 }
 
@@ -403,7 +423,7 @@ mod tests {
         assert_eq!(f.tracking.block.len(), 2);
         assert!(contains(&f.tracking, "doubleclick.net"));
         assert!(contains(&f.tracking, "hotjar.com"));
-        assert_eq!(counts(&f), [2, 2, 0, 0, 0]);
+        assert_eq!(counts(&f), [2, 2, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -428,7 +448,7 @@ mod tests {
             tracking_classifiers: vec![],
             ad_classifiers: vec![],
         });
-        assert_eq!(counts(&f), [2, 2, 0, 0, 0]);
+        assert_eq!(counts(&f), [2, 2, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -440,7 +460,7 @@ mod tests {
             tracking_classifiers: vec![],
             ad_classifiers: vec![],
         });
-        assert_eq!(counts(&f), [0, 1, 1, 0, 0]);
+        assert_eq!(counts(&f), [0, 1, 1, 0, 0, 0, 0]);
         let on = Switches {
             tracking: true,
             dangerous: true,
@@ -468,6 +488,12 @@ mod tests {
             let weekly = matches!(s.role, Role::TrackingClassifier | Role::AdClassifier);
             let weekly = weekly || matches!(s.role, Role::Adult | Role::Gambling);
             assert_eq!(s.refresh_days, if weekly { 7 } else { 1 }, "{}", s.id);
+            if matches!(s.role, Role::Scam | Role::Popups) {
+                assert!(s
+                    .url
+                    .starts_with("https://raw.githubusercontent.com/hagezi/"));
+                assert_eq!(s.max_bytes, 8 * MIB, "{}", s.id);
+            }
         }
         let tif = SOURCES.iter().find(|s| s.id == "hagezi-tif").unwrap();
         assert_eq!(tif.max_bytes, 128 * MIB);
@@ -497,6 +523,28 @@ mod tests {
             caps,
             [("hagezi-nsfw", 8 * MIB), ("hagezi-gambling", 16 * MIB)]
         );
+    }
+
+    #[test]
+    fn scam_and_popup_lists_are_only_wanted_when_their_switch_is_on() {
+        let off = Config::default();
+        let scam = Config {
+            scam: true,
+            ..Config::default()
+        };
+        let popups = Config {
+            popups: true,
+            ..Config::default()
+        };
+        assert!(!Role::Scam.wanted(&off) && !Role::Popups.wanted(&off));
+        assert!(Role::Scam.wanted(&scam) && !Role::Popups.wanted(&scam));
+        assert!(Role::Popups.wanted(&popups) && !Role::Scam.wanted(&popups));
+        let ids: Vec<_> = SOURCES
+            .iter()
+            .filter(|s| matches!(s.role, Role::Scam | Role::Popups))
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(ids, ["hagezi-fake", "hagezi-popupads"]);
     }
 
     #[test]

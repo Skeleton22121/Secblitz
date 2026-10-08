@@ -1,5 +1,5 @@
 # Handled-item controls: services.unquoted_paths, firewall.user_dir_inbound_allow, net.hosts_file,
-# persistence.run_and_tasks. Each item reads 1 while flagged and untouched, 0 while exactly as Secblitz
+# persistence.run_and_tasks, browser.extensions_off. Each item reads 1 while flagged and untouched, 0 while exactly as Secblitz
 # left it, 2 when Secblitz fixed it and someone changed it since. The exact original lives in
 # HKLM\\Software\\Secblitz\\HardeningUndo\\<control id>. Nothing is deleted; no child process is started.
 $hUserDirPattern = '\\users\\[^\\]+\\(downloads|desktop|appdata\\local\\temp)\\|\\users\\public\\|\\windows\\temp\\|%userprofile%\\(downloads|desktop)\\|%temp%\\|%public%\\'
@@ -60,18 +60,25 @@ function HLabelKind([string]$name) {
         'StartupItems' { if ($name.StartsWith('task:')) { return 'task' } else { return 'startup' } }
         'StaleAccounts' { return 'account' }
         'ShareGrants' { return 'share' }
+        'BrowserExtensions' { return 'addon' }
+        'CfaAllowedApps' { return 'app' }
     }
     return ''
 }
 function HLabelList($slice) {
     $out = @()
     $more = 0
+    $flagged = if ([string]$spec.source -ceq 'CfaAllowedApps') { 0 } else { 1 }
     foreach ($name in @($slice.Keys | Sort-Object)) {
-        if (!$script:hLabels.ContainsKey($name) -or $null -eq $slice[$name] -or $slice[$name] -is [string] -or [int64]$slice[$name] -ne 1) { continue }
+        if (!$script:hLabels.ContainsKey($name) -or $null -eq $slice[$name] -or $slice[$name] -is [string] -or [int64]$slice[$name] -ne $flagged) { continue }
         $kind = HLabelKind $name
         if ($kind -eq '') { continue }
         foreach ($text in @($script:hLabels[$name])) {
-            if ($out.Count -lt $hLabelLimit) { $out += @{ kind = $kind; name = [string]$text } } else { $more++ }
+            if ($out.Count -lt $hLabelLimit) {
+                $entry = @{ kind = $kind; name = [string]$text }
+                if ($kind -ceq 'addon') { $entry.key = $name; $entry.why = (@($script:hAddonInfo[$name]) -join ',') }
+                $out += $entry
+            } else { $more++ }
         }
     }
     foreach ($left in @($script:hLeft | Select-Object -First 8)) { $out += $left }
@@ -652,4 +659,213 @@ function HSetStartup([string]$name, $v) {
 }
 function HStartupPreflight() {
     if (@(HStartupEntries).Count -gt $hStartupMax) { throw 'Not offered: too many items to switch off safely at once' }
+}
+
+# ---- browser.extensions_off (names are "chromium:<chrome|edge>:<extension id>")
+# Secblitz adds the id to the browser's ExtensionInstallBlocklist at the next free number and keeps
+# that number in its own state. Undo removes only that value. Other entries are never renumbered.
+$script:hAddonInfo = @{}
+$script:hAddonCache = $null
+function HAddonParts([string]$name) {
+    $m = [regex]::Match($name, '^chromium:(?<b>chrome|edge):(?<id>[a-p]{32})\z')
+    if (!$m.Success) { return $null }
+    return @{ browser = $m.Groups['b'].Value; id = $m.Groups['id'].Value }
+}
+function HAddonNameOk([string]$name) { return ($null -ne (HAddonParts $name)) }
+function HAddonPolicyKey([string]$browser) {
+    if ($browser -ceq 'chrome') { return 'SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist' }
+    return 'SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist'
+}
+function HAddonList([string]$browser) {
+    $out = @{}
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey((HAddonPolicyKey $browser), $false)
+    if ($null -eq $key) { return $out }
+    try {
+        foreach ($n in @($key.GetValueNames())) {
+            if ($key.GetValueKind($n) -eq [Microsoft.Win32.RegistryValueKind]::String) { $out[$n] = [string]$key.GetValue($n) }
+            else { $out[$n] = $null }
+        }
+    } finally { $key.Dispose() }
+    return $out
+}
+function HAddonPut([string]$browser, [string]$number, [string]$id) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey((HAddonPolicyKey $browser))
+    try { $key.SetValue($number, $id, [Microsoft.Win32.RegistryValueKind]::String) } finally { $key.Dispose() }
+}
+function HAddonDrop([string]$browser, [string]$number) {
+    $subKey = HAddonPolicyKey $browser
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($subKey, $true)
+    if ($null -eq $key) { return }
+    try {
+        $key.DeleteValue($number, $false)
+        $empty = ($key.ValueCount -eq 0 -and $key.SubKeyCount -eq 0)
+    } finally { $key.Dispose() }
+    if (!$empty) { return }
+    $leafAt = $subKey.LastIndexOf('\')
+    $parent = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($subKey.Substring(0, $leafAt), $true)
+    if ($null -eq $parent) { return }
+    try { $parent.DeleteSubKey($subKey.Substring($leafAt + 1), $false) } finally { $parent.Dispose() }
+}
+function HAddonNextNumber($list) {
+    $max = [int64]0
+    foreach ($n in @($list.Keys)) {
+        if ($n -cmatch '^[0-9]{1,9}$' -and [int64]$n -gt $max) { $max = [int64]$n }
+    }
+    return ($max + 1)
+}
+function HAddonLocalData() { return [Environment]::GetFolderPath('LocalApplicationData') }
+function HAddonPathPlain([string]$path) {
+    # Profile folders belong to the person: a link anywhere on the way is never followed.
+    $full = [IO.Path]::GetFullPath($path)
+    if ($full -cnotmatch '^[A-Za-z]:\\' -or $full.Substring(2).Contains(':')) { return $false }
+    $part = [IO.Path]::GetPathRoot($full)
+    foreach ($leaf in $full.Substring($part.Length).Split('\')) {
+        if (!$leaf -or $leaf -eq '.' -or $leaf -eq '..' -or $leaf.EndsWith(' ') -or $leaf.EndsWith('.')) { return $false }
+        $part = [IO.Path]::Combine($part, $leaf)
+        try { $attr = [IO.File]::GetAttributes($part) } catch { return $false }
+        if (($attr -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    }
+    return $true
+}
+function HAddonJson([string]$path) {
+    try {
+        if (!(HAddonPathPlain $path)) { return $null }
+        $info = New-Object IO.FileInfo $path
+        if (!$info.Exists -or $info.Length -gt 1048576) { return $null }
+        $text = [Text.UTF8Encoding]::new($false, $false).GetString([IO.File]::ReadAllBytes($path)).TrimStart([char]0xFEFF)
+        return (ConvertFrom-Json -InputObject $text)
+    } catch { return $null }
+}
+function HAddonProp($obj, [string]$name) {
+    if ($null -eq $obj) { return $null }
+    $p = $obj.PSObject.Properties[$name]
+    if ($null -eq $p) { return $null }
+    return $p.Value
+}
+function HAddonTitle([string]$versionDir, $manifest, [string]$id) {
+    $raw = HAddonProp $manifest 'name'
+    if ($raw -isnot [string]) { $raw = '' }
+    $m = [regex]::Match($raw, '^__MSG_(?<k>[A-Za-z0-9_@]{1,64})__\z')
+    if ($m.Success) {
+        $raw = ''
+        $locales = @()
+        $default = HAddonProp $manifest 'default_locale'
+        if ($default -is [string] -and $default -cmatch '^[A-Za-z0-9_-]{1,20}$') { $locales += $default }
+        foreach ($fallback in @('en', 'en_US')) { if ($locales -cnotcontains $fallback) { $locales += $fallback } }
+        foreach ($locale in $locales) {
+            $messages = HAddonJson ([IO.Path]::Combine($versionDir, '_locales', $locale, 'messages.json'))
+            if ($null -eq $messages) { continue }
+            $hit = @($messages.PSObject.Properties | Where-Object { $_.Name -ieq $m.Groups['k'].Value } | Select-Object -First 1)
+            if ($hit.Count -eq 1) {
+                $entry = $hit[0].Value
+                $text = HAddonProp $entry 'message'
+                if ($text -is [string] -and $text.Trim() -ne '') { $raw = $text; break }
+            }
+        }
+    }
+    $clean = HClean $raw
+    if ($clean -eq '') { return $id }
+    return $clean
+}
+function HAddonWhy($manifest) {
+    $permissions = @()
+    foreach ($field in @('permissions', 'host_permissions')) {
+        # Read in place: a one-entry list returned from a function arrives unrolled to a string.
+        $p = $manifest.PSObject.Properties[$field]
+        if ($null -eq $p -or $null -eq $p.Value) { continue }
+        $value = $p.Value
+        if ($value -isnot [array]) { return @() }
+        $permissions += $value
+    }
+    $why = @()
+    if (($permissions -contains '<all_urls>') -or ($permissions -contains '*://*/*') -or ($permissions -contains 'https://*/*') -or ($permissions -contains 'http://*/*')) { $why += 'sites' }
+    if ($permissions -contains 'nativeMessaging') { $why += 'programs' }
+    return $why
+}
+function HAddonInventory() {
+    if ($null -ne $script:hAddonCache) { return $script:hAddonCache }
+    $found = @{}
+    $local = HAddonLocalData
+    foreach ($b in @(@{ browser = 'chrome'; root = @('Google', 'Chrome', 'User Data') }, @{ browser = 'edge'; root = @('Microsoft', 'Edge', 'User Data') })) {
+        $root = [IO.Path]::Combine($local, $b.root[0], $b.root[1], $b.root[2])
+        try {
+            if (!(HAddonPathPlain $root)) { continue }
+            $profiles = @([IO.Directory]::EnumerateDirectories($root) | Where-Object { [IO.Path]::GetFileName($_) -cmatch '^(Default|Profile [0-9]+)$' } | Select-Object -First 16)
+            foreach ($profile in $profiles) {
+                $extensions = [IO.Path]::Combine($profile, 'Extensions')
+                if (!(HAddonPathPlain $extensions)) { continue }
+                foreach ($dir in @([IO.Directory]::EnumerateDirectories($extensions) | Select-Object -First 256)) {
+                    $id = [IO.Path]::GetFileName($dir)
+                    $name = 'chromium:' + $b.browser + ':' + $id
+                    if (!(HAddonNameOk $name) -or $found.ContainsKey($name) -or !(HAddonPathPlain $dir)) { continue }
+                    $newest = @(@([IO.Directory]::EnumerateDirectories($dir) | Select-Object -First 8) | ForEach-Object { New-Object IO.DirectoryInfo $_ } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
+                    if ($newest.Count -ne 1) { continue }
+                    $manifest = HAddonJson ([IO.Path]::Combine($newest[0].FullName, 'manifest.json'))
+                    if ($null -eq $manifest) { continue }
+                    $why = @(HAddonWhy $manifest)
+                    if ($why.Count -eq 0) { continue }
+                    $found[$name] = @{ name = $name; browser = $b.browser; id = $id; title = (HAddonTitle $newest[0].FullName $manifest $id); why = $why }
+                }
+            }
+        } catch { }
+    }
+    $script:hAddonCache = @($found.Values | Sort-Object { $_.title }, { $_.name })
+    return $script:hAddonCache
+}
+function HReadExtensions() {
+    $script:hAddonCache = $null
+    $script:hAddonInfo = @{}
+    $out = @{}
+    $lists = @{ chrome = (HAddonList 'chrome'); edge = (HAddonList 'edge') }
+    foreach ($name in @(HStateNames)) {
+        $parts = HAddonParts $name
+        if ($null -eq $parts) { continue }
+        $st = HStateGet $name
+        if ($null -eq $st) { continue }
+        $list = $lists[$parts.browser]
+        $number = [string]$st.v
+        $out[$name] = $(if ($list.ContainsKey($number) -and $null -ne $list[$number] -and $list[$number] -ceq $parts.id) { 0 } else { 2 })
+    }
+    if (HInteractiveIsMe) {
+        foreach ($a in @(HAddonInventory)) {
+            if ($out.ContainsKey($a.name) -or @($lists[$a.browser].Values) -ccontains $a.id) { continue }
+            $out[$a.name] = 1
+            HLabel $a.name $a.title
+            $script:hAddonInfo[$a.name] = $a.why
+        }
+    }
+    return $out
+}
+function HSetExtension([string]$name, $v) {
+    $parts = HAddonParts $name
+    if ($null -eq $parts -or $null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid browser add-on state' }
+    $list = HAddonList $parts.browser
+    if ([int]$v -eq 0) {
+        if (!(HInteractiveIsMe)) { throw 'The add-on belongs to another account; it was left alone' }
+        $script:hAddonCache = $null
+        if (@(HAddonInventory | Where-Object { $_.name -ceq $name }).Count -ne 1) { throw 'The add-on no longer needs a change' }
+        if (@($list.Values) -ccontains $parts.id) { throw 'The add-on is already turned off; it was left alone' }
+        if (@($list.Values | Where-Object { $null -eq $_ -or $_ -ceq '*' }).Count -gt 0) { throw 'The browser add-on rules changed; nothing was changed' }
+        $number = [string](HAddonNextNumber $list)
+        HStateSet $name @{ v = $number; id = $parts.id }
+        try { HAddonPut $parts.browser $number $parts.id }
+        catch { HStateRemove $name; throw }
+        return
+    }
+    $st = HStateGet $name
+    if ($null -eq $st) { throw 'Secblitz no longer has the saved state for this add-on' }
+    $number = [string]$st.v
+    if ($list.ContainsKey($number)) {
+        if ($null -eq $list[$number] -or $list[$number] -cne $parts.id) { throw 'The add-on rule changed again; it was left alone' }
+        HAddonDrop $parts.browser $number
+    }
+    HStateRemove $name
+}
+function HAddonPreflight() {
+    foreach ($browser in @('chrome', 'edge')) {
+        foreach ($text in @((HAddonList $browser).Values)) {
+            if ($null -eq $text) { throw 'Not offered: the browser add-on rules on this PC could not be read' }
+            if ($text -ceq '*') { throw 'Not offered: a browser rule already turns off every add-on' }
+        }
+    }
 }

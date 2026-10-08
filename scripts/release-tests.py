@@ -54,6 +54,37 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             renew.renewal(sign.signed_envelope(long, self.key), self.public, self.artifact, self.m["filename"], 1500, 1)
 
+    def arm64_manifest(self, **changes):
+        m = dict(self.m, filename="secblitz-9.0.0-windows-arm64-setup.exe", target="windows-aarch64")
+        m.update(changes)
+        return m
+
+    def test_each_architecture_signs_only_its_own_target_and_installer_name(self):
+        arm = self.arm64_manifest()
+        sign.validate_manifest(self.m, 1500, "x64")
+        sign.validate_manifest(arm, 1500, "arm64")
+        sign.validate_manifest(arm, 1500)
+        for manifest, arch in [(self.m, "arm64"), (arm, "x64")]:
+            with self.assertRaises(ValueError): sign.validate_manifest(manifest, 1500, arch)
+        for change in [dict(filename=self.m["filename"]), dict(target="windows-x86_64"), dict(target="windows-arm64")]:
+            with self.assertRaises(ValueError): sign.validate_manifest(self.arm64_manifest(**change), 1500)
+        with self.assertRaises(ValueError): sign.validate_manifest(dict(self.m, filename=arm["filename"]), 1500)
+        self.assertEqual(sign.ARCHES["x64"]["feed"], "stable.json")
+        self.assertEqual(sign.ARCHES["arm64"]["feed"], "stable-arm64.json")
+
+    def test_arm64_renewal_and_delivery_keep_the_arm64_target(self):
+        arm = self.arm64_manifest()
+        raw = sign.signed_envelope(arm, self.key)
+        new = renew.renewal(raw, self.public, self.artifact, arm["filename"], 1500, 90, "arm64")
+        self.assertEqual((new["target"], new["filename"]), (arm["target"], arm["filename"]))
+        with self.assertRaises(ValueError):
+            renew.renewal(raw, self.public, self.artifact, arm["filename"], 1500, 90, "x64")
+        a = self.policy(raw=raw)
+        self.assertEqual(a["target"], "windows-aarch64")
+        self.assertEqual(self.policy()["target"], "windows-x86_64")
+        with self.assertRaises(ValueError):
+            authorize.validate_authorization(dict(a, target="windows-arm64"), a["origin"])
+
     def test_strict_json_bounded_fields_and_duplicate_rejection(self):
         for raw in [b'{"schema":1,"schema":1}', b'{"schema":1,"schem\\u0061":1}', b'{"x":NaN}']:
             with self.assertRaises(ValueError): sign.strict_json(raw)
@@ -170,7 +201,7 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 paths, args = self.cli_fixture(directory)
                 args += ["--sign", "--key", str(paths["key"]), "--output", str(paths["output"])]
-                def fetch_second(_origin):
+                def fetch_second(_origin, _feed):
                     if mode == "local-artifact": paths["installer"].write_bytes(b"changed")
                     if mode == "local-key": paths["public"].write_bytes(b"00" * 32)
                     return self.raw

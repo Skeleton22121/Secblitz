@@ -91,7 +91,7 @@ pub(super) struct Backend {
 }
 impl Backend {
     pub fn new(root: &Path) -> Result<Self> {
-        ensure!(cfg!(target_arch = "x86_64"), "Native Windows x64 required");
+        ensure!(crate::platform::NATIVE_64, "Native 64-bit Windows required");
         let mut buffer = vec![0u16; 32768];
         // SAFETY: `buffer` is writable for the length passed.
         let n = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
@@ -292,7 +292,7 @@ impl core::Backend for Backend {
             "Invalid boot identity"
         );
         let idle_seconds = idle_seconds();
-        let busy = busy_processes()?
+        let busy = busy_processes(core::blocks_repair_start)?
             || match process {
                 Some(p) => process_alive(p)?,
                 None => false,
@@ -427,7 +427,7 @@ fn process_alive(expected: &ProcessIdentity) -> Result<bool> {
     );
     Ok(status == WAIT_TIMEOUT)
 }
-fn busy_processes() -> Result<bool> {
+fn busy_processes(blocks: fn(&str) -> bool) -> Result<bool> {
     // SAFETY: the snapshot call has no pointer arguments.
     let snapshot = unsafe { CreateToolhelp32Snapshot(2, 0) };
     ensure!(
@@ -466,15 +466,7 @@ fn busy_processes() -> Result<bool> {
         // our own DISM/SFC steps start it and it then idles for minutes, and
         // Windows' servicing stack already serializes sessions inside it. As a
         // gate it only ever blocked the step after our own.
-        if matches!(
-            name.as_str(),
-            "dism.exe"
-                | "dismhost.exe"
-                | "sfc.exe"
-                | "mpcmdrun.exe"
-                | "usoclient.exe"
-                | "mousocoreworker.exe"
-        ) {
+        if blocks(&name) {
             return Ok(true);
         }
         // SAFETY: `snapshot` is valid and `entry.size` is set.
@@ -491,7 +483,7 @@ fn busy_processes() -> Result<bool> {
 
 pub(super) fn ensure_no_servicing_processes() -> Result<()> {
     ensure!(
-        !busy_processes()?,
+        !busy_processes(core::may_be_own_repair)?,
         "Deferred: a Windows servicing process is active"
     );
     Ok(())

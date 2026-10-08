@@ -1,6 +1,6 @@
 //! Protection score: protected checks over all checks (findings excluded).
 use secblitz::advice::{self, Group};
-use secblitz::engine::{Outcome, Report};
+use secblitz::engine::{cfa, Outcome, Report};
 use secblitz::model::{Authority, CheckStatus};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -259,12 +259,19 @@ pub fn changed_ids(report: &Report) -> Vec<String> {
         .collect()
 }
 
-/// Only these can later count as switched back by Windows.
+/// Only these can later count as switched back by Windows. Full folder protection and the
+/// watch share one Windows switch, so while full protection is armed it stands for both.
 pub fn armed_ids(report: &Report) -> Vec<String> {
+    let armed = |r: &&Outcome| r.undoable && r.status == CheckStatus::Compliant;
+    let full = report
+        .results
+        .iter()
+        .any(|r| r.id == cfa::BLOCK && armed(&r));
     report
         .results
         .iter()
-        .filter(|r| r.undoable && r.status == CheckStatus::Compliant)
+        .filter(armed)
+        .filter(|r| !(full && r.id == cfa::WATCH))
         .map(|r| r.id.clone())
         .collect()
 }
@@ -349,6 +356,19 @@ mod tests {
             ["defender.realtime"],
             "it was working at the previous check, now it is not"
         );
+    }
+
+    #[test]
+    fn full_folder_protection_is_armed_for_the_watch_it_includes() {
+        let fixed = |id: &str| {
+            let mut o = out(id, "compliant");
+            o.undoable = true;
+            o
+        };
+        let both = rep(vec![fixed(cfa::WATCH), fixed(cfa::BLOCK)]);
+        assert_eq!(armed_ids(&both), [cfa::BLOCK]);
+        let watch_only = rep(vec![fixed(cfa::WATCH), out(cfa::BLOCK, "skipped")]);
+        assert_eq!(armed_ids(&watch_only), [cfa::WATCH]);
     }
 
     #[test]

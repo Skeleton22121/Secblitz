@@ -17,6 +17,10 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 LIMIT = 25 * 1024 * 1024
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+ARCHES = {
+    "x64": dict(target="windows-x86_64", tag="windows-x64", feed="releases/stable.json", sha="sha"),
+    "arm64": dict(target="windows-aarch64", tag="windows-arm64", feed="releases/stable-arm64.json", sha="sha-arm64"),
+}
 SECRET_MARKERS = re.compile(
     rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|[\"']?(?:CLOUDFLARE_API_TOKEN|CLOUDFLARE_API_KEY|CF_API_KEY|CF_API_TOKEN|X-Auth-Key|X-Auth-Email|CLOUDFLARE_EMAIL|CF_API_EMAIL)[\"']?\s*[:=]|Authorization\s*:\s*Bearer\s+",
     re.IGNORECASE,
@@ -57,9 +61,10 @@ def unique_object(pairs):
     return result
 
 
-def verify_feed(site, expected_version=None, feed_path=None, installer_directory=None):
+def verify_feed(site, expected_version=None, feed_path=None, installer_directory=None, arch="x64"):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    feed_bytes = (feed_path or site / "releases/stable.json").read_bytes()
+    info = ARCHES[arch]
+    feed_bytes = (feed_path or site / info["feed"]).read_bytes()
     if len(feed_bytes) > 16384:
         raise ValueError("feed exceeds 16 KiB")
     envelope = json.loads(feed_bytes, object_pairs_hook=unique_object)
@@ -74,13 +79,13 @@ def verify_feed(site, expected_version=None, feed_path=None, installer_directory
     payload = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
     if set(payload) != {"schema", "version", "target", "filename", "sha256", "size", "published_at", "expires_at"}:
         raise ValueError("unexpected payload fields")
-    if type(payload["schema"]) is not int or payload["schema"] != 1 or payload["target"] != "windows-x86_64":
+    if type(payload["schema"]) is not int or payload["schema"] != 1 or payload["target"] != info["target"]:
         raise ValueError("unsupported release schema or target")
     if not isinstance(payload["version"], str) or not re.fullmatch(VERSION, payload["version"]):
         raise ValueError("invalid stable version")
     if expected_version and payload["version"] != expected_version:
         raise ValueError("signed feed version does not match expected release version")
-    if payload["filename"] != f"secblitz-{payload['version']}-windows-x64-setup.exe":
+    if payload["filename"] != f"secblitz-{payload['version']}-{info['tag']}-setup.exe":
         raise ValueError("invalid installer filename")
     if any(type(payload[k]) is not int for k in ("size", "published_at", "expires_at")):
         raise ValueError("size and timestamps must be integers")
@@ -97,7 +102,7 @@ def verify_feed(site, expected_version=None, feed_path=None, installer_directory
         raise ValueError("installer size mismatch")
     if hashlib.sha256(installer.read_bytes()).hexdigest() != payload["sha256"]:
         raise ValueError("installer SHA-256 mismatch")
-    print("Signed feed and installer verified against pinned key.")
+    print(f"Signed {arch} feed and installer verified against pinned key.")
     return payload
 
 
@@ -105,9 +110,10 @@ class SiteReferences(HTMLParser):
     def __init__(self):
         super().__init__()
         self.references = []
-        self.hash_parts = []
+        self.hash_parts = {}
         self.hash_tag = None
-        self.hash_count = 0
+        self.hash_id = None
+        self.hash_count = {}
         self.canonicals = []
 
     def handle_starttag(self, tag, attrs):
@@ -119,9 +125,10 @@ class SiteReferences(HTMLParser):
         for name in ("href", "src", "poster"):
             if attrs.get(name):
                 self.references.append(attrs[name])
-        if attrs.get("id") == "sha":
+        if attrs.get("id") in {info["sha"] for info in ARCHES.values()}:
             self.hash_tag = tag
-            self.hash_count += 1
+            self.hash_id = attrs["id"]
+            self.hash_count[self.hash_id] = self.hash_count.get(self.hash_id, 0) + 1
 
     def handle_endtag(self, tag):
         if tag == self.hash_tag:
@@ -129,16 +136,16 @@ class SiteReferences(HTMLParser):
 
     def handle_data(self, data):
         if self.hash_tag:
-            self.hash_parts.append(data)
+            self.hash_parts.setdefault(self.hash_id, []).append(data)
 
 
-def verify_site_references(site, origin, expected_version=None, payload=None):
+def verify_site_references(site, origin, expected_version=None, payload=None, arm_payload=None):
     page = SiteReferences()
     page.feed((site / "index.html").read_text(encoding="utf-8"))
     if page.canonicals:
         if not origin or page.canonicals != [origin + "/"]:
             raise ValueError("HTML canonical URL must be the configured compiled origin followed by /")
-    installers = set()
+    installers = {name: set() for name in ARCHES}
     for reference in page.references:
         url = urlsplit(reference)
         is_installer = unquote(url.path).lower().endswith(".exe")
@@ -157,19 +164,28 @@ def verify_site_references(site, origin, expected_version=None, payload=None):
         if not local.is_relative_to(site.resolve()) or not local.is_file():
             raise ValueError("HTML references a missing or out-of-output local asset")
         if is_installer:
-            if url.query or url.fragment or not re.fullmatch(r"downloads/secblitz-" + VERSION + r"-windows-x64-setup\.exe", relative):
+            found = None if url.query or url.fragment else re.fullmatch(
+                r"downloads/secblitz-" + VERSION + r"-windows-(x64|arm64)-setup\.exe", relative)
+            if not found:
                 raise ValueError("HTML installer URL must use the canonical download path")
-            installers.add(relative)
-    if len(installers) != 1:
-        raise ValueError("HTML must reference exactly one current installer across its download links")
-    relative = next(iter(installers))
-    if expected_version and relative != f"downloads/secblitz-{expected_version}-windows-x64-setup.exe":
-        raise ValueError("HTML download version does not match expected release version")
-    digest = hashlib.sha256((site / relative).read_bytes()).hexdigest()
-    if page.hash_count != 1 or "".join(page.hash_parts).strip() != digest:
-        raise ValueError("HTML displayed SHA-256 does not match its installer")
-    if payload and (relative != "downloads/" + payload["filename"] or digest != payload["sha256"]):
-        raise ValueError("HTML download does not match the signed stable feed")
+            installers[found[1]].add(relative)
+    for name, signed in (("x64", payload), ("arm64", arm_payload)):
+        info = ARCHES[name]
+        wanted = 1 if name == "x64" or signed else 0
+        if len(installers[name]) != wanted:
+            raise ValueError(f"HTML must reference exactly {wanted} current {name} installer across its download links")
+        if not wanted:
+            if info["sha"] in page.hash_count:
+                raise ValueError(f"HTML shows a {name} SHA-256 without a {name} release")
+            continue
+        relative = next(iter(installers[name]))
+        if expected_version and relative != f"downloads/secblitz-{expected_version}-{info['tag']}-setup.exe":
+            raise ValueError("HTML download version does not match expected release version")
+        digest = hashlib.sha256((site / relative).read_bytes()).hexdigest()
+        if page.hash_count.get(info["sha"]) != 1 or "".join(page.hash_parts[info["sha"]]).strip() != digest:
+            raise ValueError("HTML displayed SHA-256 does not match its installer")
+        if signed and (relative != "downloads/" + signed["filename"] or digest != signed["sha256"]):
+            raise ValueError("HTML download does not match the signed stable feed")
     print("HTML assets, installer links and displayed SHA-256 verified.")
 
 
@@ -240,6 +256,7 @@ def main():
     parser.add_argument("--site", type=Path, default=ROOT / "website", help="static directory to validate (default: website; production: dist/pages)")
     parser.add_argument("--require-feed", action="store_true", help="require a verified signed stable feed")
     parser.add_argument("--expected-version", help="require this exact release version (release gate defaults to Cargo.toml)")
+    parser.add_argument("--arch", choices=sorted(ARCHES), default="x64", help="architecture of the feed given to --verify-feed")
     parser.add_argument("--verify-feed", type=Path, help="verify a separately downloaded feed locally, without modifying files")
     parser.add_argument("--installer-directory", type=Path, help="directory containing the downloaded installer for --verify-feed")
     args = parser.parse_args()
@@ -257,7 +274,7 @@ def main():
     if args.verify_feed:
         if not args.installer_directory or args.origin or args.require_feed:
             parser.error("--verify-feed requires --installer-directory and cannot configure origin or use --require-feed")
-        verify_feed(site, expected, args.verify_feed, args.installer_directory)
+        verify_feed(site, expected, args.verify_feed, args.installer_directory, args.arch)
         return
     if args.installer_directory:
         parser.error("--installer-directory requires --verify-feed")
@@ -304,7 +321,8 @@ def main():
         print("No stable feed yet; release publication is not ready.")
     configured = (ROOT / "assets/update-origin.txt").read_text().strip()
     effective_origin = origin or (origin_value(configured) if configured else None)
-    verify_site_references(site, effective_origin, expected, payload)
+    arm_payload = verify_feed(site, expected, arch="arm64") if (site / ARCHES["arm64"]["feed"]).exists() else None
+    verify_site_references(site, effective_origin, expected, payload, arm_payload)
     if (site / "404.html").exists():
         verify_not_found_page(site)
     if (site / "privacy.html").exists():

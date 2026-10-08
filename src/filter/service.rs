@@ -14,8 +14,9 @@ use super::activity::{self, Writes};
 use super::adapters;
 use super::config::{self, ErrorCode, RecentList, State, Status};
 use super::fetch;
+use super::gaps;
 use super::lists::{self, SOURCES};
-use super::matcher::Filter;
+use super::matcher::{Filter, KINDS};
 use super::server::{self, upstream_addrs, BindError, Shared};
 use super::store;
 
@@ -26,6 +27,7 @@ const UPSTREAM_RETRY_MIN: Duration = Duration::from_secs(5);
 const BIND_RETRY: Duration = Duration::from_secs(30);
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
 const STATUS_EVERY: Duration = Duration::from_secs(10);
+const GAPS_EVERY: Duration = Duration::from_secs(60);
 
 pub struct Paths {
     pub config: PathBuf,
@@ -60,7 +62,7 @@ pub fn listen_addresses() -> Vec<SocketAddr> {
 #[derive(Default)]
 struct Meta {
     state: State,
-    domains: [u64; 5],
+    domains: [u64; KINDS],
     lists_updated: Option<u64>,
     refresh_error: Option<ErrorCode>,
 }
@@ -228,9 +230,10 @@ impl Every {
 fn same_apart_from_counts(a: &Status, b: &Status) -> bool {
     let strip = |s: &Status| Status {
         written_at: 0,
-        blocked: [0; 5],
+        blocked: [0; KINDS],
         day: 0,
         dangerous_at: None,
+        notice: None,
         ..s.clone()
     };
     strip(a) == strip(b)
@@ -310,6 +313,7 @@ pub fn serve(
             .stats
             .resume(previous.day, previous.blocked, server::unix_now());
         shared.stats.resume_dangerous_at(previous.dangerous_at);
+        shared.stats.resume_notice(previous.notice);
     }
     shared
         .activity
@@ -337,6 +341,9 @@ pub fn serve(
     let mut last_status: Option<Status> = None;
     let mut upstream_checked = Instant::now();
     let mut lists_wanted = false;
+    let mut gaps_timer = Every::new(GAPS_EVERY);
+    let mut gaps = gaps::check();
+    gaps_timer.reset();
 
     while !stop.load(Ordering::Acquire) {
         if listeners.is_none() && bind_timer.due() {
@@ -352,9 +359,12 @@ pub fn serve(
             let fresh = config::load_config(&paths.config);
             {
                 let before = shared.config.read().unwrap_or_else(PoisonError::into_inner);
-                lists_wanted |=
-                    (fresh.adult && !before.adult) || (fresh.gambling && !before.gambling);
+                lists_wanted |= (fresh.adult && !before.adult)
+                    || (fresh.gambling && !before.gambling)
+                    || (fresh.scam && !before.scam)
+                    || (fresh.popups && !before.popups);
             }
+            let fresh = fresh.without_expired(server::unix_now()).unwrap_or(fresh);
             shared.set_config(fresh);
         }
         if lists_wanted && download && background.start(true, false) {
@@ -372,6 +382,9 @@ pub fn serve(
             shared.set_local_suffixes(adapters::dns_suffixes());
             upstream_checked = Instant::now();
             upstream_timer.reset();
+        }
+        if gaps_timer.due() {
+            gaps = gaps::check();
         }
         if download && refresh_timer.due() {
             background.start(true, false);
@@ -409,6 +422,8 @@ pub fn serve(
                 written_at: now,
                 lookups: shared.lookups(now),
                 dangerous_at: shared.stats.dangerous_at(),
+                gaps: gaps.clone(),
+                notice: shared.stats.notice(),
             }
         };
         let changed = last_status
@@ -598,7 +613,7 @@ mod tests {
         rebuild_from_disk(&p, &shared, &meta);
         let m = lock(&meta);
         assert_eq!(m.state, State::Ready);
-        assert_eq!(m.domains, [1, 1, 2, 0, 0]);
+        assert_eq!(m.domains, [1, 1, 2, 0, 0, 0, 0]);
         assert!(m.lists_updated.is_some());
         assert!(shared
             .filter
@@ -735,16 +750,16 @@ mod tests {
             load_status(&status_path).filter(|s| s.blocked[0] == 1)
         });
         assert_eq!(status.dangerous_at, None);
-        assert_eq!(status.domains, [1, 1, 0, 0, 0]);
+        assert_eq!(status.domains, [1, 1, 0, 0, 0, 0, 0]);
         let stats = wait_for("the statistics", || config::load_stats(&stats_path));
-        assert_eq!(stats.days[0].blocked, [1, 0, 0, 0, 0]);
+        assert_eq!(stats.days[0].blocked, [1, 0, 0, 0, 0, 0, 0]);
         assert_eq!(stats.top[0].site, "ads.example");
 
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
         assert_eq!(config::load_recent(&recent_path).unwrap().items, []);
         let detail = activity::load_detail(&detail_path);
-        assert_eq!(detail.days[0].blocked, [1, 0, 0, 0, 0]);
+        assert_eq!(detail.days[0].blocked, [1, 0, 0, 0, 0, 0, 0]);
         assert_eq!(detail.days[0].sites, [("ads.example".to_string(), 1)]);
     }
 
@@ -756,7 +771,7 @@ mod tests {
         let saved = activity::Detail {
             days: vec![activity::DetailDay {
                 day: crate::clock::local_day(now),
-                blocked: [4, 0, 0, 0, 0],
+                blocked: [4, 0, 0, 0, 0, 0, 0],
                 sites: vec![("ads.example".to_string(), 4)],
             }],
         };
@@ -787,7 +802,7 @@ mod tests {
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
         let stats = config::load_stats(&stats_path).unwrap();
-        assert_eq!(stats.days[0].blocked, [4, 0, 0, 0, 0]);
+        assert_eq!(stats.days[0].blocked, [4, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

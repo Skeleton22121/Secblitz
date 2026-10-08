@@ -259,6 +259,8 @@ pub struct Facts {
     pub enabled_stack: Option<u32>,
     pub boot_unix: Option<i64>,
     pub blocked: Vec<String>,
+    /// Win32_ComputerSystem HypervisorPresent; the only hypervisor fact on arm64.
+    pub hypervisor_present: Option<bool>,
     /// Vendor the processor reports for the hypervisor it runs under, filled
     /// in by the caller from CPUID (not by the script). None: no hypervisor.
     #[serde(skip)]

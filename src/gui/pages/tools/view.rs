@@ -412,7 +412,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             p,
             Icon::Bug,
             ctx.t("Scan for viruses"),
-            ctx.t("Starting the scan…"),
+            ctx.t("Scanning your PC. This can take a few minutes."),
         ),
         Run::Done(Ok(())) => finished(
             state,
@@ -421,8 +421,8 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 slot: Slot::Scan,
                 icon: Icon::Bug,
                 tone: Tone::Good,
-                title: ctx.t("Scan started"),
-                sub: Some(ctx.t("Windows Security will notify you if it finds anything.")),
+                title: ctx.t("Scan finished"),
+                sub: Some(ctx.t("Windows Security tells you if it found anything.")),
                 menu: open_security_entry(ctx)
                     .into_iter()
                     .chain([entry(Icon::Check, ctx.t("Done"), Msg::ClearScan)])
@@ -1091,9 +1091,18 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
             ctx.t("Remove"),
             (!threats_busy && !ctx.busy).then_some(Msg::Ask(Sheet::RemoveThreats)),
         ),
+        logic::TipAction::StartRenewal { bitlocker } => secondary(
+            p,
+            ctx.t("Renew now"),
+            (!ctx.busy).then_some(Msg::Ask(Sheet::Renewal { bitlocker })),
+        ),
         logic::TipAction::Scan => secondary(
             p,
-            ctx.t("Scan now"),
+            if scanning {
+                ctx.t("Scanning…")
+            } else {
+                ctx.t("Scan now")
+            },
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
         logic::TipAction::Open(open) => {
@@ -1306,90 +1315,124 @@ fn shortcut_rows<'a>(ctx: &'a Ctx, which: &[Shortcut]) -> Vec<El<'a>> {
 type SheetText = (Icon, String, Vec<String>, String);
 
 fn sheet_text(state: &State, ctx: &Ctx, sheet: Sheet) -> SheetText {
-    match sheet {
-        Sheet::Scan => (
-            Icon::Bug,
-            ctx.t("Scan for viruses?"),
-            vec![
-                ctx.t("Windows Security will check your PC for harmful software."),
-                ctx.t("If it finds something, it removes it or puts it somewhere safe."),
-                ctx.t("You can keep using your PC."),
-            ],
-            ctx.t("Start scan"),
-        ),
-        Sheet::RemoveThreats => (
-            Icon::Bug,
-            ctx.t("Remove the harmful files?"),
-            vec![
-                ctx.t("Windows Security will remove the harmful files it has found on this PC."),
-                ctx.t("It usually keeps what it removes in quarantine. If it was a mistake, you can restore an item in Windows Security."),
-                ctx.t("You can keep using your PC while it works."),
-            ],
-            ctx.t("Remove them"),
-        ),
-        Sheet::DefenderUpdate => (
-            Icon::Download,
-            ctx.t("Update virus protection?"),
-            vec![ctx.t("Windows will download the newest virus information from Microsoft.")],
-            ctx.t("Update now"),
-        ),
-        Sheet::Repair(RepairKind::Check) => (
-            Icon::Wrench,
-            ctx.t("Check for problems?"),
-            vec![
-                ctx.t("Secblitz will look at Windows for damage. Nothing is changed."),
-                ctx.t("This can take a few minutes. You can keep using your PC."),
-            ],
-            ctx.t("Start check"),
-        ),
-        Sheet::Repair(RepairKind::Repair) => (
-            Icon::Wrench,
-            ctx.t("Repair system files?"),
-            vec![
-                ctx.t("Secblitz will look for damaged Windows files and replace them with good copies."),
-                ctx.t("This can take 15–45 minutes. You can keep using your PC."),
-                ctx.t("Your own files and apps are not touched. This can't be undone automatically, but it only fixes files that belong to Windows."),
-            ],
-            ctx.t("Repair now"),
-        ),
+    let (icon, title, lines, confirm) = sheet_copy(sheet);
+    let title = match sheet {
         Sheet::InstallUpdates => {
             let n = match &state.updates {
                 Updates::Found(f) => f.updates.len(),
                 _ => 0,
             };
-            (
-                Icon::Download,
-                if n == 1 {
-                    ctx.t("Install 1 update?")
-                } else {
-                    ctx.t("Install {n} updates?").replace("{n}", &n.to_string())
-                },
-                vec![
-                    ctx.t("These updates come from Microsoft and protect your PC."),
-                    ctx.t("This can take a while. You can keep using your PC, but save your work first because Windows may need to restart."),
-                    ctx.t("Updates can't be undone automatically. By continuing you accept Microsoft's license terms for them."),
-                ],
-                ctx.t("Install now"),
-            )
+            if n == 1 {
+                ctx.t("Install 1 update?")
+            } else {
+                ctx.t("Install {n} updates?").replace("{n}", &n.to_string())
+            }
         }
+        _ => ctx.t(title),
+    };
+    (
+        icon,
+        title,
+        lines.iter().map(|l| ctx.t(l)).collect(),
+        ctx.t(confirm),
+    )
+}
+
+pub(super) type SheetCopy = (Icon, &'static str, &'static [&'static str], &'static str);
+
+/// English source of each confirmation sheet. The install sheet's title is built from the update count.
+pub(super) fn sheet_copy(sheet: Sheet) -> SheetCopy {
+    match sheet {
+        Sheet::Scan => (
+            Icon::Bug,
+            "Scan for viruses?",
+            &[
+                "Windows Security will check your PC for harmful software.",
+                "If it finds something, it removes it or puts it somewhere safe.",
+                "You can keep using your PC.",
+            ],
+            "Start scan",
+        ),
+        Sheet::RemoveThreats => (
+            Icon::Bug,
+            "Remove the harmful files?",
+            &[
+                "Windows Security will remove the harmful files it has found on this PC.",
+                "This can't be undone from Secblitz. Windows Security usually keeps what it removes in quarantine. If it was a mistake, you can restore an item there.",
+                "You can keep using your PC while it works.",
+            ],
+            "Remove them",
+        ),
+        Sheet::Renewal { bitlocker } => (
+            Icon::ShieldCheck,
+            "Renew your PC's startup security?",
+            if bitlocker {
+                &[
+                    "This can't be undone.",
+                    "It finishes the next time you restart your PC. Secblitz never restarts your PC for you.",
+                    "Your PC may ask for your BitLocker recovery key once after the restart. Make sure you can find it before you continue.",
+                ]
+            } else {
+                &[
+                    "This can't be undone.",
+                    "It finishes the next time you restart your PC. Secblitz never restarts your PC for you.",
+                ]
+            },
+            "Renew now",
+        ),
+        Sheet::DefenderUpdate => (
+            Icon::Download,
+            "Update virus protection?",
+            &["Windows will download the newest virus information from Microsoft."],
+            "Update now",
+        ),
+        Sheet::Repair(RepairKind::Check) => (
+            Icon::Wrench,
+            "Check for problems?",
+            &[
+                "Secblitz will look at Windows for damage. Nothing is changed.",
+                "This can take a few minutes. You can keep using your PC.",
+            ],
+            "Start check",
+        ),
+        Sheet::Repair(RepairKind::Repair) => (
+            Icon::Wrench,
+            "Repair system files?",
+            &[
+                "Secblitz will look for damaged Windows files and replace them with good copies.",
+                "This can take 15–45 minutes. You can keep using your PC.",
+                "Your own files and apps are not touched. This can't be undone automatically, but it only fixes files that belong to Windows.",
+            ],
+            "Repair now",
+        ),
+        Sheet::InstallUpdates => (
+            Icon::Download,
+            "Install updates?",
+            &[
+                "These updates come from Microsoft and protect your PC.",
+                "This can take a while. You can keep using your PC, but save your work first because Windows may need to restart.",
+                "Updates can't be undone automatically. By continuing you accept Microsoft's license terms for them.",
+            ],
+            "Install now",
+        ),
         Sheet::Restart => (
             Icon::Restart,
-            ctx.t("Restart your PC now?"),
-            vec![
-                ctx.t("Your PC restarts to finish installing updates."),
-                ctx.t("Save your work first. Programs with unsaved work will ask you before they close."),
+            "Restart your PC now?",
+            &[
+                "Your PC restarts to finish installing updates.",
+                "Save your work first. Programs with unsaved work will ask you before they close.",
             ],
-            ctx.t("Restart now"),
+            "Restart now",
         ),
         Sheet::Bitwarden => (
             Icon::Lock,
-            ctx.t("Install Bitwarden?"),
-            vec![
-                ctx.t("Bitwarden is a free password manager."),
-                ctx.t("Secblitz will download it from its official source and install it for you."),
-                ctx.t("You can remove it later in Windows Settings."),
+            "Install Bitwarden?",
+            &[
+                "Bitwarden is a free password manager.",
+                "Secblitz will download it from its official source and install it for you.",
+                "You can remove it later in Windows Settings.",
             ],
-            ctx.t("Install"),
+            "Install",
         ),
     }
 }
@@ -1446,6 +1489,16 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     for line in lines {
         content = content.push(widgets::body(p, line));
     }
+    if !sheet.notices().undoable {
+        content = content.push(
+            row![
+                widgets::icon(Icon::AlertTriangle, 16.0, p.tone(Tone::Warn)),
+                widgets::body(p, ctx.t("Can't be undone"))
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
+        );
+    }
     if let Some(note) = state.sheet_block {
         content = content.push(
             row![
@@ -1455,6 +1508,15 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
             .spacing(theme::S2)
             .align_y(Alignment::Center),
         );
+    }
+    if sheet == (Sheet::Renewal { bitlocker: true }) {
+        content = content.push(widgets::action(
+            p,
+            ButtonKind::Secondary,
+            ctx.t("Find my recovery key"),
+            Some(Icon::ExternalLink),
+            Some(tools(Msg::OpenRecoveryKey)),
+        ));
     }
     if sheet == Sheet::InstallUpdates {
         if let Updates::Found(found) = &state.updates {
@@ -1485,4 +1547,52 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
         .spacing(theme::S6)
         .width(Length::Fill)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Lang;
+
+    fn renewal_sheet(lang: Lang, bitlocker: bool) -> (String, Vec<String>, String) {
+        let (app, _) = crate::gui::App::new(crate::gui::Options {
+            lang,
+            broker: None,
+            start: None,
+        });
+        let (_, title, lines, confirm) =
+            sheet_text(&app.tools, &app.ctx, Sheet::Renewal { bitlocker });
+        (title, lines, confirm)
+    }
+
+    #[test]
+    fn the_renewal_sheet_says_it_cannot_be_undone_and_needs_a_restart_before_the_yes() {
+        let (_, lines, confirm) = renewal_sheet(Lang::En, false);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("can't be undone"));
+        assert!(lines[1].contains("restart") && lines[1].contains("never restarts"));
+        assert_eq!(confirm, "Renew now");
+        assert!(lines.iter().all(|l| !l.contains('\u{2014}')));
+    }
+
+    #[test]
+    fn the_recovery_key_line_shows_only_when_bitlocker_is_on() {
+        let (_, plain, _) = renewal_sheet(Lang::En, false);
+        let (_, locked, _) = renewal_sheet(Lang::En, true);
+        assert_eq!(locked.len(), plain.len() + 1);
+        assert!(locked[2].contains("BitLocker recovery key"));
+    }
+
+    #[test]
+    fn every_language_has_the_three_lines() {
+        for lang in [Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
+            let (en_title, en, _) = renewal_sheet(Lang::En, true);
+            let (title, lines, _) = renewal_sheet(lang, true);
+            assert_ne!(title, en_title, "{lang:?}");
+            assert_eq!(lines.len(), 3);
+            for (line, english) in lines.iter().zip(&en) {
+                assert_ne!(line, english, "{lang:?}");
+            }
+        }
+    }
 }

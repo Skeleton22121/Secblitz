@@ -2,7 +2,8 @@
 //! never blocks. The GUI submits a `Job` and receives a stream of `Event`s.
 use iced::futures::channel::mpsc as stream;
 use iced::futures::Stream;
-use secblitz::engine::{Engine, Progress, Report};
+use secblitz::engine::recover::{JournalDamaged, NotDamaged};
+use secblitz::engine::{Engine, ItemChoice, Progress, Report};
 use std::sync::{mpsc, Arc};
 
 pub trait Session {
@@ -22,6 +23,10 @@ pub trait Session {
     ) -> anyhow::Result<Report>;
     fn history(&mut self) -> anyhow::Result<Vec<String>>;
     fn can_start(&mut self, undo: bool) -> anyhow::Result<()>;
+    /// The items the person picked for the controls that ask; an empty choice clears them.
+    fn choose_items(&mut self, _picked: ItemChoice) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl Session for Engine {
@@ -64,16 +69,30 @@ impl Session for Engine {
     fn can_start(&mut self, undo: bool) -> anyhow::Result<()> {
         Engine::can_change(self, undo)
     }
+    fn choose_items(&mut self, picked: ItemChoice) -> anyhow::Result<()> {
+        Engine::choose_items(self, picked)
+    }
 }
+
+type ProgressSink = Box<dyn FnMut(Progress<'_>)>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Job {
     Check,
     Apply(Vec<String>),
+    /// A fix where the person also picked items, such as browser add-ons, by control.
+    ApplyPicked {
+        ids: Vec<String>,
+        picked: ItemChoice,
+    },
     Undo,
     UndoSome(Vec<String>),
     History,
-    Preflight { undo: bool },
+    Preflight {
+        undo: bool,
+    },
+    /// Move the damaged undo history aside and open a fresh one. Only answered after a failed start.
+    StartFresh,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -87,6 +106,9 @@ pub type Outcome = Result<Arc<Report>, String>;
 #[derive(Debug, Clone)]
 pub enum Event {
     Opened(Result<Catalog, String>),
+    /// The start failed because the saved undo history is damaged. Sent just before the failed `Opened`.
+    Damaged(JournalDamaged),
+    Recovered(Result<Catalog, String>),
     Progress {
         phase: Phase,
         id: String,
@@ -135,10 +157,12 @@ impl std::fmt::Debug for Worker {
 
 impl Worker {
     /// Start the engine thread. `open` runs on that thread, so the session
-    /// need not be `Send`.
-    pub fn spawn<F>(open: F) -> Self
+    /// need not be `Send`. After a failed start, `recover` runs only when the
+    /// window asks for `Job::StartFresh`, and `open` is tried again.
+    pub fn spawn<F, R>(open: F, recover: R) -> Self
     where
-        F: FnOnce() -> anyhow::Result<Box<dyn Session>> + Send + 'static,
+        F: Fn() -> anyhow::Result<Box<dyn Session>> + Send + 'static,
+        R: Fn() -> anyhow::Result<()> + Send + 'static,
     {
         let (jobs, inbox) = mpsc::channel::<Request>();
         let (opened_tx, opened_rx) = stream::unbounded();
@@ -147,23 +171,22 @@ impl Worker {
             .spawn(move || {
                 let mut session = match open() {
                     Ok(session) => {
-                        let _ = opened_tx.unbounded_send(Event::Opened(Ok(Catalog {
-                            available: session.available(),
-                            restart: session.restart_ids(),
-                        })));
+                        let _ = opened_tx.unbounded_send(Event::Opened(Ok(catalog_of(&*session))));
+                        drop(opened_tx);
                         session
                     }
                     Err(error) => {
+                        if let Some(damage) = error.downcast_ref::<JournalDamaged>() {
+                            let _ = opened_tx.unbounded_send(Event::Damaged(*damage));
+                        }
                         let _ = opened_tx.unbounded_send(Event::Opened(Err(format!("{error:#}"))));
                         drop(opened_tx);
-                        let message = format!("{error:#}");
-                        for (job, reply) in inbox {
-                            let _ = reply.unbounded_send(failed(&job, &message));
+                        match wait_for_recovery(&inbox, &open, &recover, &format!("{error:#}")) {
+                            Some(session) => session,
+                            None => return,
                         }
-                        return;
                     }
                 };
-                drop(opened_tx);
                 for (job, reply) in inbox {
                     run(session.as_mut(), job, &reply);
                 }
@@ -190,11 +213,52 @@ impl Worker {
     }
 }
 
+fn catalog_of(session: &dyn Session) -> Catalog {
+    Catalog {
+        available: session.available(),
+        restart: session.restart_ids(),
+    }
+}
+
+/// Answers every job with the start-up failure until a fresh start works. `None` when the window is gone.
+fn wait_for_recovery<F, R>(
+    inbox: &mpsc::Receiver<Request>,
+    open: &F,
+    recover: &R,
+    message: &str,
+) -> Option<Box<dyn Session>>
+where
+    F: Fn() -> anyhow::Result<Box<dyn Session>>,
+    R: Fn() -> anyhow::Result<()>,
+{
+    for (job, reply) in inbox {
+        if job != Job::StartFresh {
+            let _ = reply.unbounded_send(failed(&job, message));
+            continue;
+        }
+        let recovered = match recover() {
+            Err(e) if e.downcast_ref::<NotDamaged>().is_some() => Ok(()),
+            other => other,
+        };
+        match recovered.and_then(|()| open()) {
+            Ok(session) => {
+                let _ = reply.unbounded_send(Event::Recovered(Ok(catalog_of(&*session))));
+                return Some(session);
+            }
+            Err(error) => {
+                eprintln!("Starting a fresh undo history failed: {error:#}");
+                let _ = reply.unbounded_send(Event::Recovered(Err(format!("{error:#}"))));
+            }
+        }
+    }
+    None
+}
+
 fn failed(job: &Job, message: &str) -> Event {
     let e = || -> Outcome { Err(message.to_owned()) };
     match job {
         Job::Check => Event::Checked(e()),
-        Job::Apply(ids) => Event::Applied {
+        Job::Apply(ids) | Job::ApplyPicked { ids, .. } => Event::Applied {
             attempted: ids.clone(),
             result: e(),
             verify: e(),
@@ -214,6 +278,7 @@ fn failed(job: &Job, message: &str) -> Event {
             undo: *undo,
             result: Err(message.to_owned()),
         },
+        Job::StartFresh => Event::Recovered(Err(message.to_owned())),
     }
 }
 
@@ -257,35 +322,48 @@ fn apply_in_batches(
     Ok(merged)
 }
 
+fn applied(
+    session: &mut dyn Session,
+    ids: Vec<String>,
+    picked: ItemChoice,
+    progress: &dyn Fn(Phase) -> ProgressSink,
+) -> Event {
+    let result = match session.choose_items(picked) {
+        Ok(()) => outcome(apply_in_batches(
+            session,
+            &ids,
+            &mut *progress(Phase::Applying),
+        )),
+        Err(e) => Err(format!("{e:#}")),
+    };
+    // Checking again looks at everything, not only what was picked.
+    let _ = session.choose_items(ItemChoice::new());
+    let verify = outcome(session.audit(&mut *progress(Phase::Verifying)));
+    Event::Applied {
+        attempted: ids,
+        result,
+        verify,
+    }
+}
+
 fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Event>) {
-    let progress = |phase: Phase| {
+    let progress = |phase: Phase| -> Box<dyn FnMut(Progress<'_>)> {
         let reply = reply.clone();
-        move |step: Progress<'_>| {
+        Box::new(move |step: Progress<'_>| {
             let _ = reply.unbounded_send(Event::Progress {
                 phase,
                 id: step.id.to_owned(),
                 status: step.step.as_str().to_owned(),
             });
-        }
+        })
     };
     let event = match job {
-        Job::Check => Event::Checked(outcome(session.audit(&mut progress(Phase::Checking)))),
-        Job::Apply(ids) => {
-            let result = outcome(apply_in_batches(
-                session,
-                &ids,
-                &mut progress(Phase::Applying),
-            ));
-            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
-            Event::Applied {
-                attempted: ids,
-                result,
-                verify,
-            }
-        }
+        Job::Check => Event::Checked(outcome(session.audit(&mut *progress(Phase::Checking)))),
+        Job::Apply(ids) => applied(session, ids, ItemChoice::new(), &progress),
+        Job::ApplyPicked { ids, picked } => applied(session, ids, picked, &progress),
         Job::Undo => {
-            let result = outcome(session.undo(&mut progress(Phase::Undoing)));
-            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
+            let result = outcome(session.undo(&mut *progress(Phase::Undoing)));
+            let verify = outcome(session.audit(&mut *progress(Phase::Verifying)));
             Event::Undone {
                 chosen: Vec::new(),
                 result,
@@ -293,8 +371,8 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
             }
         }
         Job::UndoSome(ids) => {
-            let result = outcome(session.undo_selected(&ids, &mut progress(Phase::Undoing)));
-            let verify = outcome(session.audit(&mut progress(Phase::Verifying)));
+            let result = outcome(session.undo_selected(&ids, &mut *progress(Phase::Undoing)));
+            let verify = outcome(session.audit(&mut *progress(Phase::Verifying)));
             Event::Undone {
                 chosen: ids,
                 result,
@@ -306,6 +384,7 @@ fn run(session: &mut dyn Session, job: Job, reply: &stream::UnboundedSender<Even
             undo,
             result: session.can_start(undo).map_err(|e| format!("{e:#}")),
         },
+        Job::StartFresh => Event::Recovered(Err("Nothing needs to be started fresh.".into())),
     };
     let _ = reply.unbounded_send(event);
 }
@@ -324,6 +403,8 @@ mod tests {
         log: Log,
         fail_apply: bool,
         fail_audit: bool,
+        picked: usize,
+        audited_with: Arc<std::sync::Mutex<Vec<usize>>>,
     }
 
     impl Fake {
@@ -346,7 +427,15 @@ mod tests {
         fn restart_ids(&self) -> Vec<String> {
             vec!["b".into()]
         }
+        fn choose_items(&mut self, picked: ItemChoice) -> anyhow::Result<()> {
+            self.picked = picked.values().map(Vec::len).sum();
+            if self.picked > 0 {
+                self.note(format!("choose {}", self.picked));
+            }
+            Ok(())
+        }
         fn audit(&mut self, progress: &mut dyn FnMut(Progress<'_>)) -> anyhow::Result<Report> {
+            self.audited_with.lock().unwrap().push(self.picked);
             self.note("audit");
             progress(Progress::new(
                 "a",
@@ -412,20 +501,61 @@ mod tests {
     }
 
     fn worker(fail_apply: bool, fail_audit: bool) -> (Worker, Log) {
+        let (w, log, _) = worker_seeing(fail_apply, fail_audit);
+        (w, log)
+    }
+
+    fn worker_seeing(
+        fail_apply: bool,
+        fail_audit: bool,
+    ) -> (Worker, Log, Arc<std::sync::Mutex<Vec<usize>>>) {
         let log = Log::default();
         let l = log.clone();
-        let w = Worker::spawn(move || {
-            Ok(Box::new(Fake {
-                log: l,
-                fail_apply,
-                fail_audit,
-            }) as Box<dyn Session>)
-        });
-        (w, log)
+        let audited_with = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = audited_with.clone();
+        let w = Worker::spawn(
+            move || {
+                Ok(Box::new(Fake {
+                    log: l.clone(),
+                    fail_apply,
+                    fail_audit,
+                    picked: 0,
+                    audited_with: seen.clone(),
+                }) as Box<dyn Session>)
+            },
+            || Ok(()),
+        );
+        (w, log, audited_with)
     }
 
     fn collect(w: &Worker, job: Job) -> Vec<Event> {
         block_on(w.run(job).collect())
+    }
+
+    #[test]
+    fn picked_items_reach_the_fix_and_are_cleared_before_the_check_that_follows() {
+        let (w, log, audited_with) = worker_seeing(false, false);
+        let picked = ItemChoice::from([("x".to_owned(), vec!["i".to_owned(), "j".to_owned()])]);
+        let events = collect(
+            &w,
+            Job::ApplyPicked {
+                ids: vec!["x".into()],
+                picked,
+            },
+        );
+        assert_eq!(*log.lock().unwrap(), ["choose 2", "apply x", "audit"]);
+        assert_eq!(*audited_with.lock().unwrap(), [0]);
+        assert!(matches!(
+            events.last(),
+            Some(Event::Applied { attempted, result: Ok(_), verify: Ok(_) }) if attempted == &["x"]
+        ));
+    }
+
+    #[test]
+    fn a_plain_fix_picks_nothing() {
+        let (w, log) = worker(false, false);
+        collect(&w, Job::Apply(vec!["x".into()]));
+        assert_eq!(*log.lock().unwrap(), ["apply x", "audit"]);
     }
 
     #[test]
@@ -612,7 +742,7 @@ mod tests {
 
     #[test]
     fn open_failure_answers_every_job_with_the_error() {
-        let w = Worker::spawn(|| anyhow::bail!("cannot open"));
+        let w = Worker::spawn(|| anyhow::bail!("cannot open"), || Ok(()));
         match block_on(w.opened().collect::<Vec<_>>()).as_slice() {
             [Event::Opened(Err(e))] => assert!(e.contains("cannot open")),
             other => panic!("unexpected {other:?}"),
@@ -630,5 +760,85 @@ mod tests {
             let text = format!("{:?}", events[0]);
             assert!(text.contains("cannot open"), "{text}");
         }
+    }
+
+    fn damaged_worker(recovers: bool) -> Worker {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let fresh = Arc::new(AtomicBool::new(false));
+        let flag = fresh.clone();
+        Worker::spawn(
+            move || {
+                if flag.load(Ordering::SeqCst) {
+                    Ok(Box::new(Fake {
+                        log: Log::default(),
+                        fail_apply: false,
+                        fail_audit: false,
+                        picked: 0,
+                        audited_with: Arc::default(),
+                    }) as Box<dyn Session>)
+                } else {
+                    Err(anyhow::Error::new(JournalDamaged {
+                        kind: secblitz::engine::recover::DamageKind::Total,
+                        files: 2,
+                    })
+                    .context("outer"))
+                }
+            },
+            move || {
+                anyhow::ensure!(recovers, "files are in use");
+                fresh.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+    }
+
+    #[test]
+    fn damaged_history_is_reported_before_the_failed_start() {
+        let w = damaged_worker(true);
+        match block_on(w.opened().collect::<Vec<_>>()).as_slice() {
+            [Event::Damaged(d), Event::Opened(Err(_))] => assert_eq!(d.files, 2),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn starting_fresh_reopens_the_session_and_jobs_work_again() {
+        let w = damaged_worker(true);
+        block_on(w.opened().collect::<Vec<_>>());
+        assert!(matches!(
+            collect(&w, Job::Check).as_slice(),
+            [Event::Checked(Err(_))]
+        ));
+        match collect(&w, Job::StartFresh).as_slice() {
+            [Event::Recovered(Ok(c))] => assert_eq!(c.available, vec!["a", "b"]),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            collect(&w, Job::Check).last(),
+            Some(Event::Checked(Ok(_)))
+        ));
+    }
+
+    #[test]
+    fn a_failed_fresh_start_leaves_the_session_closed_and_can_be_retried() {
+        let w = damaged_worker(false);
+        block_on(w.opened().collect::<Vec<_>>());
+        match collect(&w, Job::StartFresh).as_slice() {
+            [Event::Recovered(Err(e))] => assert!(e.contains("files are in use")),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            collect(&w, Job::Check).as_slice(),
+            [Event::Checked(Err(_))]
+        ));
+    }
+
+    #[test]
+    fn starting_fresh_does_nothing_when_the_start_worked() {
+        let (w, _) = worker(false, false);
+        assert!(matches!(
+            collect(&w, Job::StartFresh).as_slice(),
+            [Event::Recovered(Err(_))]
+        ));
     }
 }

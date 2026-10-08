@@ -843,6 +843,8 @@ struct FakeState {
     readiness_count: usize,
     short_batch: bool,
     extra_findings: Vec<Finding>,
+    /// A write changes only the items it names, the way a real dynamic control does.
+    merge_items: bool,
 }
 struct Fake {
     state: Rc<RefCell<FakeState>>,
@@ -959,7 +961,17 @@ impl Backend for Fake {
         if s.fail_before_write {
             bail!("Simulated failure before mutation");
         }
-        s.values.insert(id.into(), value.clone());
+        let mut stored = value.clone();
+        if let (true, Some(old), Some(new)) = (
+            s.merge_items,
+            s.values.get(id).and_then(|v| v["items"].as_object()),
+            value["items"].as_object(),
+        ) {
+            let mut items = old.clone();
+            items.extend(new.clone());
+            stored = json!({ "items": items });
+        }
+        s.values.insert(id.into(), stored);
         s.writes.push((id.into(), value.clone()));
         if s.fail_write {
             bail!("Simulated crash after mutation");
@@ -2351,6 +2363,7 @@ fn skipping_a_batch_keeps_computed_outcomes_and_reports_each_control_once() {
 }
 
 include!("recovery_tests.rs");
+include!("recover_tests.rs");
 include!("hardening_tests.rs");
 include!("revert_all_tests.rs");
 
@@ -2397,3 +2410,21 @@ fn progress_steps_keep_their_stable_text() {
     }
 }
 include!("selective_undo_tests.rs");
+
+#[test]
+fn background_judgement_uses_the_value_even_when_the_account_cannot_change_it() {
+    let seen = |value: Value| Observation {
+        value,
+        eligible: false,
+        reason: "Requested registry access is not allowed.".into(),
+        ..Observation::default()
+    };
+    assert_eq!(
+        assessment("defender.pua", &seen(json!({"items":{"PUAProtection":0}}))).unwrap(),
+        CheckStatus::Attention
+    );
+    assert_eq!(
+        assessment("defender.pua", &seen(json!({"items":{"PUAProtection":1}}))).unwrap(),
+        CheckStatus::Compliant
+    );
+}

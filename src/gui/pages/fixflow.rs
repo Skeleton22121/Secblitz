@@ -8,13 +8,16 @@ use crate::gui::widgets::anim::{self, Clock, Tween};
 use crate::gui::widgets::controls::{fade_below, more_below, scroll_style, scrollbar};
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::handoff;
-use crate::gui::widgets::{self, progress, ButtonKind};
+use crate::gui::widgets::{self, progress, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
 use iced::{Alignment, Background, Border, Element, Length, Subscription, Task};
+use secblitz::engine::ItemChoice;
 use secblitz::model::CheckStatus;
+use std::collections::BTreeSet;
 use std::time::Instant;
 
+const ADDONS: &str = "browser.extensions_off";
 const LIST_MAX_HEIGHT: f32 = 300.0;
 const MARK: f32 = theme::ICON_ROW;
 const WAIT_DOT: f32 = 6.0;
@@ -30,6 +33,9 @@ pub struct State {
     bar: Option<Tween>,
     since: Instant,
     plan: Vec<PlanRow>,
+    /// Browser add-ons the person can pick from, and the ones picked. Nothing starts picked.
+    addons: Vec<Addon>,
+    addons_picked: BTreeSet<String>,
     /// Putting back chosen settings, not the last fixes.
     chosen: bool,
     /// A protection was added to the list because another one needs it.
@@ -81,6 +87,8 @@ impl Default for State {
             bar: None,
             since: Instant::now(),
             plan: Vec::new(),
+            addons: Vec::new(),
+            addons_picked: BTreeSet::new(),
             chosen: false,
             together: false,
             checking: false,
@@ -102,12 +110,49 @@ struct Held {
     technical: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Addon {
+    key: String,
+    name: String,
+    browser: &'static str,
+    why: Vec<&'static str>,
+}
+
+impl Addon {
+    fn of(item: &secblitz::model::ItemLabel) -> Option<Self> {
+        let browser = if item.key.starts_with("chromium:chrome:") {
+            "Chrome"
+        } else if item.key.starts_with("chromium:edge:") {
+            "Edge"
+        } else {
+            return None;
+        };
+        let why = item
+            .why
+            .split(',')
+            .filter_map(|w| match w {
+                "sites" => Some("Can read every site you visit"),
+                "programs" => Some("Can talk to other programs on your PC"),
+                _ => None,
+            })
+            .collect();
+        Some(Self {
+            key: item.key.clone(),
+            name: item.name.clone(),
+            browser,
+            why,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct PlanRow {
     id: String,
     name: String,
     line: Option<String>,
     restart: bool,
+    managed: bool,
+    undoable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +192,7 @@ enum Stage {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
+    PickAddon(String),
     Confirm,
     Cancel,
     Done,
@@ -184,7 +230,19 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     }
 }
 
+fn notices_of(id: &str) -> secblitz::hardening::Notices {
+    secblitz::hardening::spec(id).map_or(
+        secblitz::hardening::Notices {
+            managed: false,
+            restart: false,
+            undoable: true,
+        },
+        secblitz::hardening::notices,
+    )
+}
+
 fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
+    let notices = notices_of(id);
     let impact = secblitz::advice::control_impact(id);
     let items = ctx
         .report
@@ -205,7 +263,9 @@ fn plan_row(ctx: &Ctx, id: &str, with_impact: bool) -> PlanRow {
         id: id.to_owned(),
         name: ctx.lang.control(id),
         line: (with_impact && !lines.is_empty()).then(|| lines.join("\n")),
-        restart: ctx.catalog.restart.iter().any(|x| x == id),
+        restart: ctx.catalog.restart.iter().any(|x| x == id) || notices.restart,
+        managed: with_impact && notices.managed,
+        undoable: !with_impact || notices.undoable,
     }
 }
 
@@ -233,6 +293,17 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
     ctx.explain_open = None;
     state.chosen = false;
     state.together = false;
+    state.addons = chosen
+        .iter()
+        .find(|id| id.as_str() == ADDONS)
+        .and_then(|id| report.results.iter().find(|o| o.id == *id))
+        .map(|o| o.items.iter().filter_map(Addon::of).collect())
+        .unwrap_or_default();
+    state.addons_picked.clear();
+    chosen.retain(|id| id != ADDONS || !state.addons.is_empty());
+    if chosen.is_empty() {
+        return Task::none();
+    }
     state.plan = chosen.iter().map(|id| plan_row(ctx, id, true)).collect();
     state.stage = Stage::Review {
         ids: chosen,
@@ -254,6 +325,8 @@ fn undo_row(ctx: &Ctx, id: &str) -> PlanRow {
             )
         }),
         restart: ctx.catalog.restart.iter().any(|x| x == id),
+        managed: false,
+        undoable: true,
     }
 }
 
@@ -328,6 +401,8 @@ pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 }
 
 fn close(state: &mut State) {
+    state.addons.clear();
+    state.addons_picked.clear();
     state.held = None;
     state.stage = Stage::Closed;
     state.bar = None;
@@ -350,6 +425,15 @@ fn bar_target(planned: usize, finished: usize, verifying: bool) -> f32 {
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
+        Msg::PickAddon(key) => {
+            if matches!(state.stage, Stage::Review { undo: false, .. })
+                && state.addons.iter().any(|a| a.key == key)
+                && !state.addons_picked.remove(&key)
+            {
+                state.addons_picked.insert(key);
+            }
+            Task::none()
+        }
         Msg::Frame(at) => {
             state.now = at;
             state.frames_seen = true;
@@ -418,10 +502,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Confirm => {
-            let Stage::Review { undo, .. } = &state.stage else {
+            let Stage::Review { ids, undo } = &state.stage else {
                 return Task::none();
             };
-            if ctx.busy || state.checking {
+            if ctx.busy || state.checking || (!*undo && waiting_for_a_pick(state, ids)) {
                 return Task::none();
             }
             let undo = *undo;
@@ -429,6 +513,25 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::run(ctx.worker.run(Job::Preflight { undo }), Message::Worker)
         }
     }
+}
+
+/// Browser add-ons are only touched when some were picked; with none picked that fix is left out.
+fn apply_job(state: &State, mut ids: Vec<String>) -> Job {
+    if state.addons_picked.is_empty() {
+        ids.retain(|id| id != ADDONS);
+        return Job::Apply(ids);
+    }
+    let picked = ItemChoice::from([(
+        ADDONS.to_owned(),
+        state.addons_picked.iter().cloned().collect(),
+    )]);
+    Job::ApplyPicked { ids, picked }
+}
+
+fn waiting_for_a_pick(state: &State, ids: &[String]) -> bool {
+    ids.iter().any(|id| id == ADDONS)
+        && state.addons_picked.is_empty()
+        && ids.iter().all(|id| id == ADDONS)
 }
 
 fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task<Message> {
@@ -440,7 +543,7 @@ fn start(state: &mut State, ids: Vec<String>, undo: bool, ctx: &mut Ctx) -> Task
     } else if undo {
         Job::Undo
     } else {
-        Job::Apply(ids)
+        apply_job(state, ids)
     };
     state.now = Instant::now();
     state.work = Clock::at(state.now);
@@ -522,8 +625,10 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
             result,
             verify,
         } if !*undo => {
+            let picked: Vec<String> = state.addons_picked.iter().cloned().collect();
             let summary = flow::summarize(
                 Some(attempted),
+                &picked,
                 result.as_deref().map_err(String::as_str),
                 verify.as_deref().map_err(String::as_str),
             );
@@ -546,7 +651,7 @@ pub fn on_worker(state: &mut State, event: &worker::Event, ctx: &mut Ctx) -> Tas
                 verify.as_deref().map_err(String::as_str),
             );
             let summary = if chosen.is_empty() {
-                flow::summarize(None, result, verify)
+                flow::summarize(None, &[], result, verify)
             } else {
                 flow::summarize_chosen(chosen, result, verify)
             };
@@ -764,7 +869,7 @@ fn bounded<'a>(p: Palette, content: Element<'a, Message>) -> Element<'a, Message
 
 fn below_art<'a>(state: &State, p: Palette, content: Element<'a, Message>) -> Element<'a, Message> {
     fade_below(
-        scrollable(content)
+        scrollable(container(content).padding([0.0, theme::S3]))
             .on_scroll(|v| Message::Fix(Msg::ResultList(v)))
             .direction(scrollbar())
             .style(scroll_style(p))
@@ -890,12 +995,56 @@ fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a
             line = line.push(info);
         }
         let mut item = column![line].spacing(theme::S2);
+        if r.managed {
+            item = item.push(note(
+                p,
+                Icon::Info,
+                ctx.t("Your browser will say 'Managed by your organization'."),
+            ));
+        }
+        if !r.undoable {
+            item = item.push(note(p, Icon::AlertTriangle, ctx.t("Can't be undone")));
+        }
         if let Some(inset) = widgets::explain::panel(ctx, "plan", &r.id, false, 0.0) {
             item = item.push(inset);
         }
         list = list.push(item);
     }
     bounded(p, list.into())
+}
+
+fn addon_picker<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let mut list = column![].spacing(theme::S2);
+    for addon in &state.addons {
+        let mut parts = vec![addon.browser.to_owned()];
+        parts.extend(addon.why.iter().map(|w| ctx.t(w)));
+        list = list.push(
+            row![
+                widgets::checkbox(
+                    p,
+                    CheckState::from(state.addons_picked.contains(&addon.key)),
+                    None,
+                    Some(Message::Fix(Msg::PickAddon(addon.key.clone()))),
+                ),
+                row_text(p, addon.name.clone(), Some(parts.join(" · "))),
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
+        );
+    }
+    let mut c = column![
+        widgets::section_label(p, ctx.t("Choose the add-ons to turn off")),
+        bounded(p, list.into()),
+    ]
+    .spacing(theme::S2);
+    if state.addons_picked.is_empty() {
+        c = c.push(widgets::small(
+            p,
+            ctx.t("Tick at least one add-on. Nothing is turned off until you do."),
+        ));
+    }
+    c.into()
 }
 
 fn review_view<'a>(
@@ -971,6 +1120,9 @@ fn review_view<'a>(
     } else {
         c = c.push(widgets::muted(p, ctx.t("Here's what we'll change:")));
         c = c.push(plan_list(ctx, &state.plan, &restart_label));
+        if !state.addons.is_empty() && ids.iter().any(|id| id == ADDONS) {
+            c = c.push(addon_picker(state, ctx));
+        }
         if state.plan.iter().any(|r| r.restart) {
             c = c.push(note(
                 p,
@@ -978,11 +1130,13 @@ fn review_view<'a>(
                 ctx.t("Some fixes need a restart. We'll never restart without asking."),
             ));
         }
-        c = c.push(note(
-            p,
-            Icon::History,
-            ctx.t("You can undo this later from History."),
-        ));
+        if state.plan.iter().all(|r| r.undoable) {
+            c = c.push(note(
+                p,
+                Icon::History,
+                ctx.t("You can undo this later from History."),
+            ));
+        }
     }
     let confirm = widgets::action(
         p,
@@ -1001,7 +1155,8 @@ fn review_view<'a>(
             "Fix now"
         }),
         None,
-        (!state.checking).then_some(Message::Fix(Msg::Confirm)),
+        (!state.checking && (undo || !waiting_for_a_pick(state, ids)))
+            .then_some(Message::Fix(Msg::Confirm)),
     );
     c.push(space::vertical().height(theme::S3))
         .push(footer(vec![
@@ -1377,6 +1532,19 @@ pub fn result_summary(state: &State) -> Option<&Summary> {
         Stage::Result { summary, .. } => Some(summary),
         _ => None,
     }
+}
+
+#[cfg(test)]
+pub fn addons_waiting(state: &State) -> bool {
+    match &state.stage {
+        Stage::Review { ids, undo: false } => waiting_for_a_pick(state, ids),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+pub fn addon_apply_job(state: &State) -> Job {
+    apply_job(state, vec![ADDONS.to_owned()])
 }
 
 #[cfg(test)]

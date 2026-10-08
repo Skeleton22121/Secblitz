@@ -5,6 +5,7 @@ use super::fsio::{
     io_boundary, metadata_safe, open_file, read_bytes, same_file, sync_directory,
     validate_update_file,
 };
+use super::recover::{DamageReport, JournalDamaged, OtherPc, Unrelated};
 use super::{
     Engine, JournalRecoveryRequired, LEGACY_UPDATE_FILES, LOCK_NAME, MAX_EVIDENCE, MAX_LINE,
     MAX_TRANSACTIONS, MAX_WAL, SCHEMA,
@@ -218,10 +219,16 @@ struct Scan {
     evidence: usize,
 }
 
+/// Controls whose later picks are recorded in batches of their own, next to the ones still active.
+pub(super) fn adds_batches(id: &str) -> bool {
+    crate::hardening::spec(id).is_some_and(|s| s.adds_batches())
+}
+
 /// Validate the whole active stack before any caller probes or replays.
 /// Only the newest active batch can be incomplete; originals must have
 /// exactly one owner that is not yet put back, even when each WAL is valid in
-/// isolation. A control put back inside a batch that is still active owns nothing.
+/// isolation (controls that [`adds_batches`] may have several). A control put
+/// back inside a batch that is still active owns nothing.
 fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
     let active: Vec<_> = transactions.iter().filter(|t| !t.reverted).collect();
     let mut owners = HashSet::new();
@@ -232,7 +239,7 @@ fn check_active_stack(transactions: &[Transaction]) -> Result<()> {
         );
         for entry in tx.entries.iter().filter(|e| e.state != State::Restored) {
             ensure!(
-                owners.insert(&entry.id),
+                owners.insert(&entry.id) || adds_batches(&entry.id),
                 "Duplicate active control owner; journal history is invalid"
             );
         }
@@ -297,12 +304,12 @@ impl Engine {
                 sequence,
             } => {
                 ensure!(
-                    schema == SCHEMA
-                        && machine == self.machine
-                        && transaction == stem
-                        && sequence == seq,
+                    schema == SCHEMA && transaction == stem && sequence == seq,
                     "Journal schema, machine, or transaction identity mismatch"
                 );
+                if machine != self.machine {
+                    return Err(OtherPc.into());
+                }
                 Ok(())
             }
             _ => bail!("Journal must start with a header"),
@@ -393,6 +400,19 @@ impl Engine {
     }
 
     pub(super) fn load(&self) -> Result<Vec<Transaction>> {
+        let (transactions, staged) = self.validate_directory().map_err(|e| self.damaged(e))?;
+        for tx in &transactions {
+            if tx.bytes != tx.disk_bytes {
+                self.preserve_evidence(&tx.name, &tx.disk_bytes)?;
+            }
+        }
+        for snapshot in staged {
+            self.retire_staged(snapshot)?;
+        }
+        Ok(transactions)
+    }
+
+    fn validate_directory(&self) -> Result<(Vec<Transaction>, Vec<StagedSnapshot>)> {
         let Scan {
             mut transactions,
             staged,
@@ -410,15 +430,80 @@ impl Engine {
         for (stem, _, bytes) in &staged {
             self.validate_staged(stem, bytes, &transactions)?;
         }
-        for tx in &transactions {
-            if tx.bytes != tx.disk_bytes {
-                self.preserve_evidence(&tx.name, &tx.disk_bytes)?;
+        Ok((transactions, staged))
+    }
+
+    /// Marks a validation failure as damage to the saved history. Storage and permission
+    /// problems keep their own error, since starting fresh would not help.
+    fn damaged(&self, error: anyhow::Error) -> anyhow::Error {
+        if error.downcast_ref::<std::io::Error>().is_some()
+            || error.downcast_ref::<Unrelated>().is_some()
+        {
+            return error;
+        }
+        let (kind, files) = match self.survey() {
+            Ok(DamageReport {
+                kind: Some(kind),
+                files,
+                ..
+            }) => (kind, files),
+            Ok(_) => (super::recover::DamageKind::Total, 1),
+            Err(_) => return error,
+        };
+        error.context(JournalDamaged { kind, files })
+    }
+
+    /// Reads every entry on its own, so one bad file cannot hide the state of the rest.
+    pub(super) fn survey(&self) -> Result<DamageReport> {
+        let mut scan = Scan::default();
+        let mut bad: Vec<(String, anyhow::Error)> = Vec::new();
+        for entry in fs::read_dir(&self.dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let result = match entry.file_name().into_string() {
+                Ok(_) => self.scan_entry(&mut scan, &name, &entry.path()),
+                Err(_) => Err(anyhow::anyhow!("Non-UTF8 journal filename")),
+            };
+            if let Err(e) = result {
+                if e.downcast_ref::<std::io::Error>().is_some()
+                    || e.downcast_ref::<Unrelated>().is_some()
+                {
+                    return Err(e);
+                }
+                bad.push((name, e));
             }
         }
-        for snapshot in staged {
-            self.retire_staged(snapshot)?;
+        let Scan {
+            mut transactions,
+            staged,
+            ..
+        } = scan;
+        transactions.sort_by_key(|t| t.sequence);
+        let mut shared: Vec<String> = Vec::new();
+        if !transactions
+            .windows(2)
+            .all(|w| w[0].sequence < w[1].sequence)
+        {
+            shared.push("Duplicate transaction sequence".into());
         }
-        Ok(transactions)
+        if let Err(e) = check_active_stack(&transactions) {
+            shared.push(format!("{e:#}"));
+        }
+        if let Err(e) = self.check_incomplete_appends(&transactions) {
+            shared.push(format!("{e:#}"));
+        }
+        for (stem, _, bytes) in &staged {
+            if let Err(e) = self.validate_staged(stem, bytes, &transactions) {
+                shared.push(format!("{stem}: {e:#}"));
+            }
+        }
+        Ok(DamageReport::of(
+            transactions.len(),
+            bad.iter()
+                .map(|(name, e)| (name.as_str(), e))
+                .collect::<Vec<_>>(),
+            shared,
+        ))
     }
 
     fn scan_directory(&self) -> Result<Scan> {
@@ -440,14 +525,19 @@ impl Engine {
         }
         if matches!(
             name,
-            "Updates" | "operations" | "Patching" | "App" | crate::platform::WEB_PROTECTION
+            "Updates"
+                | "operations"
+                | "Patching"
+                | "App"
+                | super::recover::DAMAGED
+                | crate::platform::WEB_PROTECTION
         ) {
             // Module-owned protected namespaces, never journal payloads.
             // Production platform validation supplies ACL/owner protection.
-            return metadata_safe(&fs::symlink_metadata(path)?, true);
+            return metadata_safe(&fs::symlink_metadata(path)?, true).map_err(Unrelated::wrap);
         }
         if LEGACY_UPDATE_FILES.contains(&name) {
-            return validate_update_file(path);
+            return validate_update_file(path).map_err(Unrelated::wrap);
         }
         if let Some((stem, digest)) = name.split_once(".evidence-") {
             journal_name(stem)?;

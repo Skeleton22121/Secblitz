@@ -2,6 +2,12 @@ use secblitz::advice::{self, Group, NextStep};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 
+const ADDONS: &str = "browser.extensions_off";
+
+fn is_addon(item: &secblitz::model::ItemLabel) -> bool {
+    item.key.starts_with("chromium:chrome:") || item.key.starts_with("chromium:edge:")
+}
+
 pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
     if report
         .findings
@@ -20,6 +26,7 @@ pub fn candidates(report: &Report, available: &[String]) -> Vec<String> {
             && available.contains(&r.id)
             && advice::for_outcome(r).step == NextStep::Repair
             && !ids.contains(&r.id)
+            && (r.id != ADDONS || r.items.iter().any(is_addon))
         {
             ids.push(r.id.clone());
         }
@@ -34,8 +41,21 @@ pub fn recommended(report: &Report, available: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Turning off some add-ons is done once none of the picked ones is flagged, even while others are.
+fn confirmed(verified: &Report, id: &str, picked: &[String]) -> bool {
+    verified.results.iter().any(|o| {
+        o.id == id
+            && (advice::for_outcome(o).group == Group::Protected
+                || (id == ADDONS
+                    && !picked.is_empty()
+                    && o.status == CheckStatus::Attention
+                    && !o.items.iter().any(|i| picked.contains(&i.key))))
+    })
+}
+
 pub fn payoff(
     attempted: &[String],
+    picked: &[String],
     applied: &Report,
     verified: &Report,
 ) -> (Vec<String>, Vec<String>) {
@@ -50,11 +70,7 @@ pub fn payoff(
         else {
             continue;
         };
-        let confirmed = verified
-            .results
-            .iter()
-            .any(|r| r.id == *id && advice::for_outcome(r).group == Group::Protected);
-        if impact.is_empty() || !confirmed {
+        if impact.is_empty() || !confirmed(verified, id, picked) {
             continue;
         }
         let list =
@@ -232,6 +248,7 @@ fn restart_needed(r: &secblitz::engine::Outcome) -> bool {
 
 pub fn summarize(
     attempted: Option<&[String]>,
+    picked: &[String],
     result: Result<&Report, &str>,
     verify: Result<&Report, &str>,
 ) -> Summary {
@@ -254,12 +271,7 @@ pub fn summarize(
                                 && advice::for_control(&r.id, &r.status, &r.detail).group
                                     == Group::Protected) =>
                     {
-                        let confirmed = verified.is_none_or(|v| {
-                            v.results.iter().any(|o| {
-                                o.id == *id && advice::for_outcome(o).group == Group::Protected
-                            })
-                        });
-                        if confirmed {
+                        if verified.is_none_or(|v| confirmed(v, id, picked)) {
                             s.restart |= r.status == CheckStatus::Applied && restart_needed(r);
                             s.done.push(id.clone());
                         } else {
@@ -273,7 +285,7 @@ pub fn summarize(
                 }
             }
             if let Some(v) = verified {
-                let (now, later) = payoff(ids, report, v);
+                let (now, later) = payoff(ids, picked, report, v);
                 s.protected_now = now;
                 s.after_restart = later;
             }
@@ -424,12 +436,12 @@ mod tests {
     fn payoff_only_counts_verified_protected_ids_from_attempted_list() {
         let applied = rep(vec![out("uac.enabled", "applied", "")]);
         let verified = rep(vec![out("uac.enabled", "compliant", "")]);
-        let (now, restart) = payoff(&ids(&["uac.enabled"]), &applied, &verified);
+        let (now, restart) = payoff(&ids(&["uac.enabled"]), &[], &applied, &verified);
         assert!(now[0].contains("system-wide"), "{now:?}");
         assert!(restart.is_empty());
-        let (none, _) = payoff(&[], &applied, &verified);
+        let (none, _) = payoff(&[], &[], &applied, &verified);
         assert!(none.is_empty());
-        let (none, _) = payoff(&ids(&["uac.enabled"]), &applied, &Report::default());
+        let (none, _) = payoff(&ids(&["uac.enabled"]), &[], &applied, &Report::default());
         assert!(none.is_empty());
     }
 
@@ -441,7 +453,7 @@ mod tests {
             "Preference applied; restart required",
         )]);
         let verified = rep(vec![out("uac.enabled", "compliant", "")]);
-        let (now, restart) = payoff(&ids(&["uac.enabled"]), &applied, &verified);
+        let (now, restart) = payoff(&ids(&["uac.enabled"]), &[], &applied, &verified);
         assert!(now.is_empty());
         assert_eq!(restart.len(), 1);
     }
@@ -450,18 +462,18 @@ mod tests {
     fn payoff_still_broken_or_unknown_or_duplicate() {
         let applied = rep(vec![out("uac.enabled", "applied", "")]);
         let verified = rep(vec![out("uac.enabled", "attention", "")]);
-        let (now, restart) = payoff(&ids(&["uac.enabled"]), &applied, &verified);
+        let (now, restart) = payoff(&ids(&["uac.enabled"]), &[], &applied, &verified);
         assert!(now.is_empty() && restart.is_empty());
 
         let applied = rep(vec![out("unknown.control", "applied", "")]);
         let verified = rep(vec![out("unknown.control", "compliant", "")]);
-        let (now, restart) = payoff(&ids(&["unknown.control"]), &applied, &verified);
+        let (now, restart) = payoff(&ids(&["unknown.control"]), &[], &applied, &verified);
         assert!(now.is_empty() && restart.is_empty());
 
         let both = ["permissions.service.bits", "permissions.service.wuauserv"];
         let applied = rep(both.iter().map(|i| out(i, "applied", "")).collect());
         let verified = rep(both.iter().map(|i| out(i, "compliant", "")).collect());
-        let (now, _) = payoff(&ids(&both), &applied, &verified);
+        let (now, _) = payoff(&ids(&both), &[], &applied, &verified);
         assert_eq!(now.len(), 1);
     }
 
@@ -479,7 +491,7 @@ mod tests {
             authority: Some(Authority::Local),
             ..out(id, "applied", "")
         }]);
-        let (now, restart) = payoff(&ids(&[id]), &applied, &verified);
+        let (now, restart) = payoff(&ids(&[id]), &[], &applied, &verified);
         assert!(now.is_empty() && restart.is_empty());
     }
 
@@ -518,7 +530,7 @@ mod tests {
         let a = ids(&["uac.enabled"]);
         let applied = rep(vec![out("uac.enabled", "applied", "")]);
         let verified = rep(vec![out("uac.enabled", "compliant", "")]);
-        let s = summarize(Some(&a), Ok(&applied), Ok(&verified));
+        let s = summarize(Some(&a), &[], Ok(&applied), Ok(&verified));
         assert_eq!(s.kind, SummaryKind::Success);
         assert_eq!(s.done, a);
         assert_eq!(s.protected_now.len(), 1);
@@ -534,7 +546,7 @@ mod tests {
             "Preference applied; restart required",
         )]);
         let verified = rep(vec![out("uac.enabled", "compliant", "")]);
-        let s = summarize(Some(&a), Ok(&applied), Ok(&verified));
+        let s = summarize(Some(&a), &[], Ok(&applied), Ok(&verified));
         assert_eq!(s.kind, SummaryKind::Success);
         assert!(s.restart && s.protected_now.is_empty());
         assert_eq!(s.after_restart.len(), 1);
@@ -557,7 +569,7 @@ mod tests {
             out("uac.consent", "attention", ""),
             out("defender.ioav", "attention", ""),
         ]);
-        let s = summarize(Some(&a), Ok(&applied), Ok(&verified));
+        let s = summarize(Some(&a), &[], Ok(&applied), Ok(&verified));
         assert_eq!(s.kind, SummaryKind::Partial);
         assert_eq!(s.done, ids(&["uac.enabled"]));
         assert_eq!(
@@ -573,7 +585,7 @@ mod tests {
     fn failed_apply_is_failed_and_never_claims_protection() {
         let a = ids(&["uac.enabled"]);
         let verified = rep(vec![out("uac.enabled", "compliant", "")]);
-        let s = summarize(Some(&a), Err("disk full"), Ok(&verified));
+        let s = summarize(Some(&a), &[], Err("disk full"), Ok(&verified));
         assert_eq!(s.kind, SummaryKind::Failed);
         assert!(s.protected_now.is_empty() && s.after_restart.is_empty() && s.done.is_empty());
         assert_eq!(s.not_done.len(), 1);
@@ -586,11 +598,11 @@ mod tests {
     fn failed_post_check_is_unverified_and_has_no_payoff() {
         let a = ids(&["uac.enabled"]);
         let applied = rep(vec![out("uac.enabled", "applied", "")]);
-        let s = summarize(Some(&a), Ok(&applied), Err("scan unavailable"));
+        let s = summarize(Some(&a), &[], Ok(&applied), Err("scan unavailable"));
         assert!(s.unverified);
         assert!(s.protected_now.is_empty() && s.after_restart.is_empty());
         assert_eq!(s.done, a);
-        let s = summarize(Some(&a), Err("x"), Err("y"));
+        let s = summarize(Some(&a), &[], Err("x"), Err("y"));
         assert!(s.unverified);
         assert_eq!(s.kind, SummaryKind::Failed);
     }
@@ -600,8 +612,35 @@ mod tests {
         let a = ids(&["uac.enabled"]);
         let applied = rep(vec![out("uac.enabled", "applied", "")]);
         let verified = rep(vec![out("uac.enabled", "attention", "")]);
-        let s = summarize(Some(&a), Ok(&applied), Ok(&verified));
+        let s = summarize(Some(&a), &[], Ok(&applied), Ok(&verified));
         assert_eq!(s.kind, SummaryKind::Failed);
+        assert_eq!(s.not_done[0].1, REASON_STILL_OPEN);
+    }
+
+    #[test]
+    fn turning_off_some_add_ons_is_done_while_others_stay_on() {
+        let a = ids(&[ADDONS]);
+        let addon = |n: char| secblitz::model::ItemLabel {
+            kind: "addon".into(),
+            name: n.to_string(),
+            key: format!("chromium:edge:{}", n.to_string().repeat(32)),
+            why: "sites".into(),
+        };
+        let applied = rep(vec![out(ADDONS, "applied", "")]);
+        let left = |items| {
+            rep(vec![Outcome {
+                items,
+                ..out(ADDONS, "attention", "")
+            }])
+        };
+        let picked = vec![addon('a').key];
+        let s = summarize(Some(&a), &picked, Ok(&applied), Ok(&left(vec![addon('b')])));
+        assert_eq!(s.kind, SummaryKind::Success);
+        assert_eq!(s.done, a);
+        assert_eq!(s.protected_now.len(), 1);
+        let s = summarize(Some(&a), &picked, Ok(&applied), Ok(&left(vec![addon('a')])));
+        assert_eq!(s.not_done[0].1, REASON_STILL_OPEN);
+        let s = summarize(Some(&a), &[], Ok(&applied), Ok(&left(vec![addon('b')])));
         assert_eq!(s.not_done[0].1, REASON_STILL_OPEN);
     }
 
@@ -609,7 +648,7 @@ mod tests {
     fn missing_result_and_restart_detail_reasons() {
         let a = ids(&["uac.enabled", "uac.consent"]);
         let applied = rep(vec![out("uac.consent", "skipped", "restart the PC first")]);
-        let s = summarize(Some(&a), Ok(&applied), Ok(&Report::default()));
+        let s = summarize(Some(&a), &[], Ok(&applied), Ok(&Report::default()));
         assert_eq!(s.not_done[0].1, REASON_BLOCKED);
         assert_eq!(s.not_done[1].1, REASON_RESTART);
     }
@@ -618,7 +657,7 @@ mod tests {
     fn undo_success_partial_failed() {
         let verified = rep(vec![]);
         let ok = rep(vec![out("uac.enabled", "restored", "")]);
-        let s = summarize(None, Ok(&ok), Ok(&verified));
+        let s = summarize(None, &[], Ok(&ok), Ok(&verified));
         assert_eq!(s.kind, SummaryKind::Success);
         assert_eq!(s.done, ids(&["uac.enabled"]));
         assert!(s.protected_now.is_empty());
@@ -631,17 +670,17 @@ mod tests {
             ),
             out("uac.consent", "conflict", ""),
         ]);
-        let s = summarize(None, Ok(&mixed), Err("no"));
+        let s = summarize(None, &[], Ok(&mixed), Err("no"));
         assert_eq!(s.kind, SummaryKind::Partial);
         assert!(s.restart && s.unverified);
         assert_eq!(s.not_done[0].1, REASON_CHANGED);
 
         assert_eq!(
-            summarize(None, Err("boom"), Ok(&verified)).kind,
+            summarize(None, &[], Err("boom"), Ok(&verified)).kind,
             SummaryKind::Failed
         );
         assert_eq!(
-            summarize(None, Ok(&Report::default()), Ok(&verified)).kind,
+            summarize(None, &[], Ok(&Report::default()), Ok(&verified)).kind,
             SummaryKind::Failed
         );
     }
@@ -821,6 +860,7 @@ mod tests {
         let verified = rep(vec![out("uac.enabled", "compliant", "")]);
         let s = summarize(
             Some(&a),
+            &[],
             Err("Another Secblitz operation holds the journal lock"),
             Ok(&verified),
         );
@@ -868,7 +908,7 @@ mod tests {
             "skipped",
             "Repair readiness blocks new changes",
         )]);
-        let s = summarize(Some(&ids(&["defender.realtime"])), Ok(&r), Ok(&r));
+        let s = summarize(Some(&ids(&["defender.realtime"])), &[], Ok(&r), Ok(&r));
         assert_eq!(s.not_done[0].1, REASON_DISK);
     }
 
@@ -876,6 +916,7 @@ mod tests {
     fn a_failed_undo_says_why() {
         let s = summarize(
             None,
+            &[],
             Err("Another Secblitz operation holds the journal lock"),
             Err("x"),
         );

@@ -60,6 +60,7 @@ fn descriptor(dir: bool) -> Result<Local> {
     Ok(Local(p))
 }
 fn inspect(f: &File, dir: bool, private: bool, ancestor: bool) -> Result<()> {
+    let root = ancestor && crate::platform::security::is_volume_root(f);
     unsafe {
         let mut i: BY_HANDLE_FILE_INFORMATION = zeroed();
         ensure!(
@@ -154,6 +155,11 @@ fn inspect(f: &File, dir: bool, private: bool, ancestor: bool) -> Result<()> {
                             | FILE_ADD_SUBDIRECTORY
                             | FILE_WRITE_EA
                             | FILE_WRITE_ATTRIBUTES
+                            | if root {
+                                crate::platform::security::VOLUME_ROOT_EXTRA
+                            } else {
+                                0
+                            }
                     } else {
                         0
                     };
@@ -369,8 +375,8 @@ pub(super) struct Store {
 impl Store {
     pub fn open() -> Result<Self> {
         ensure!(
-            cfg!(target_arch = "x86_64"),
-            "Patching requires elevated Windows x64"
+            crate::platform::NATIVE_64,
+            "Patching requires elevated 64-bit Windows"
         );
         crate::platform::require_admin("Patching requires elevated Windows x64")?;
         let base = crate::platform::state_dir()?;

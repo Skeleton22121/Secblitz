@@ -55,6 +55,16 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         "Not offered: Web protection is off" => {
             "Turn on Web protection first, then check again."
         }
+        r if r == crate::engine::cfa::NOT_WATCHED => {
+            "Turn on the folder watch first, then come back after a week."
+        }
+        r if r == crate::engine::cfa::STILL_WATCHING => {
+            "Windows is still watching your files. Full protection is offered after a week of watching."
+        }
+        r if r == crate::engine::cfa::COVERED => {
+            "Putting full protection back turns this on too."
+        }
+        "Not offered: folder protection is off" => "Turn on the folder watch first, then check again.",
         "Not offered: Defender cloud protection is off" => {
             "Turn on cloud threat lookups first, then check again."
         }
@@ -156,6 +166,12 @@ pub(super) fn not_offered(reason: &str) -> Option<&'static str> {
         }
         "Not offered: the Wi-Fi settings of this PC could not be read" => {
             "We couldn't read this PC's Wi-Fi settings, so we leave them alone."
+        }
+        "Not offered: a browser rule already turns off every add-on" => {
+            "A rule on this PC already turns off browser add-ons, so we leave it alone."
+        }
+        "Not offered: the browser add-on rules on this PC could not be read" => {
+            "We couldn't read this PC's browser add-on rules, so we leave them alone."
         }
         _ => return None,
     })

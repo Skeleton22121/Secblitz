@@ -9,6 +9,7 @@ pub mod control;
 pub mod dns;
 pub mod doh;
 pub mod fetch;
+pub mod gaps;
 pub mod lists;
 pub mod matcher;
 #[cfg(windows)]

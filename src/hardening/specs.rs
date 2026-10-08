@@ -195,6 +195,7 @@ pub(super) const TERMINAL_SERVICES_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
 pub(super) const EDGE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
 pub(super) const CHROME_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
+const BRAVE_POLICY: &str = r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave";
 const FIREFOX_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox";
 const FIREFOX_TRACKING_POLICY: &str =
     r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\EnableTrackingProtection";
@@ -203,6 +204,13 @@ const FIREFOX_DOH_POLICY: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\DNSOv
 const BROWSER_MANAGEMENT: &[(&str, &str)] = &[
     (CHROME_POLICY, "CloudManagementEnrollmentToken"),
     (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+];
+
+const ADDON_GATE: &[(&str, &str)] = &[
+    (CHROME_POLICY, "CloudManagementEnrollmentToken"),
+    (EDGE_POLICY, "EdgeManagementEnrollmentToken"),
+    (CHROME_POLICY, "ExtensionSettings"),
+    (EDGE_POLICY, "ExtensionSettings"),
 ];
 
 const BROWSER_AREAS: &[&str] = &["Browser", "Edge", "ADMX_MicrosoftEdge"];
@@ -1369,7 +1377,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "browser.dns_bypass",
         title: "Browsers use Web protection",
-        description: "Set the Edge and Chrome policy DnsOverHttpsMode to off and the Firefox policy DNSOverHTTPS to disabled and locked, so the browsers use the PC's own lookups, which Web protection filters, instead of their own private lookups. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
+        description: "Set the Edge, Chrome and Brave policy DnsOverHttpsMode to off and the Firefox policy DNSOverHTTPS to disabled and locked, so the browsers use the PC's own lookups, which Web protection filters, instead of their own private lookups. Browsers then show that a setting was made for the whole PC. Undo puts back every value exactly, or removes it if it was not there.",
         source: Source::Registry,
         reboot: false,
         ask: true,
@@ -1381,6 +1389,10 @@ pub(super) static SPECS: &[Spec] = &[
             Key {
                 value: "DnsOverHttpsMode",
                 ..text("ChromeDnsOverHttpsMode", CHROME_POLICY, &["off"], false, Some("off"))
+            },
+            Key {
+                value: "DnsOverHttpsMode",
+                ..text("BraveDnsOverHttpsMode", BRAVE_POLICY, &["off"], false, Some("off"))
             },
             Key {
                 value: "Enabled",
@@ -1399,6 +1411,21 @@ pub(super) static SPECS: &[Spec] = &[
         },
     },
     Spec {
+        id: "browser.extensions_off",
+        title: "Turn off a browser add-on",
+        description: "Turn off the Chrome or Edge add-ons you pick, from those that can read every site you visit or talk to other programs, by adding each one to the browser's block list. Only the entry Secblitz adds is ever removed again, so undo turns the add-on back on with its data. Other entries, a block-everything rule and managed browsers are left alone. This applies to everyone who uses the browser on this PC.",
+        source: Source::BrowserExtensions,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", HANDLED_SAFE, false, Some(0), 2)],
+        gate: Gate {
+            areas: BROWSER_AREAS,
+            pattern: "ExtensionInstall|ExtensionSettings",
+            policy_values: ADDON_GATE,
+            ..NO_GATE
+        },
+    },
+    Spec {
         id: "recovery.winre_enabled",
         title: "Windows recovery tools",
         description: "Turn the Windows recovery tools back on with the inbox ReAgentc.exe /enable, only when they are off and their image is still in Windows\\System32\\Recovery. Partitions, BitLocker and start-up settings are never edited by Secblitz. Undo runs ReAgentc.exe /disable, which puts the image back where it was.",
@@ -1407,5 +1434,54 @@ pub(super) static SPECS: &[Spec] = &[
         ask: false,
         keys: &[set("Enabled", "", &[1], false, Some(1), 1)],
         gate: NO_GATE,
+    },
+    Spec {
+        id: "clickfix.run_box",
+        title: "Turn off the Run box",
+        description: "Turn off the Run box (Win+R and Run in the Start menu) for every account on this PC by setting NoRun=1. Task Manager, Command Prompt and everything else still work. Undo restores the earlier value.",
+        source: Source::Registry,
+        reboot: false,
+        ask: true,
+        keys: &[set("NoRun", EXPLORER, &[1], false, Some(1), 1)],
+        gate: Gate {
+            areas: &["ADMX_StartMenu"],
+            ..NO_GATE
+        },
+    },
+    Spec {
+        id: "defender.cfa_watch",
+        title: "Watch for apps changing your files",
+        description: "Set Defender folder protection to watch only: it records which apps change files in folders like Documents and Pictures, and blocks nothing. Only offered while folder protection is off. The earlier mode is restored on undo.",
+        source: Source::DefenderPref,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2, 3, 4],
+            ..set("EnableControlledFolderAccess", "", &[1, 2, 3, 4], false, Some(2), 4)
+        }],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
+    },
+    Spec {
+        id: "defender.cfa_block",
+        title: "Protect your files from ransomware",
+        description: "Turn on Defender folder protection so apps Windows does not trust cannot change files in folders like Documents and Pictures. Only offered after a week of watching. The earlier mode is restored on undo.",
+        source: Source::DefenderPref,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2, 3, 4],
+            ..set("EnableControlledFolderAccess", "", &[1, 3], false, Some(1), 4)
+        }],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
+    },
+    Spec {
+        id: "defender.cfa_allowed_apps",
+        title: "Apps allowed to change your files",
+        description: "Add the apps that folder protection watched or blocked to its list of allowed apps. Only .exe files that exist are added, never script tools or wildcards. Each app Secblitz adds is recorded and undo removes exactly that one.",
+        source: Source::CfaAllowedApps,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[1], false, Some(1), 1)],
+        gate: Gate { tamper_exempt: true, ..NO_GATE },
     },
 ];

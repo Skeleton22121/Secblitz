@@ -5,7 +5,7 @@ anything. CONTRIBUTING.md has the short version for first-time contributors.
 
 ## What Secblitz is
 
-A Windows 11 (x64) desktop app, written in Rust with the iced GUI toolkit, that
+A Windows 11 (x64 and arm64) desktop app, written in Rust with the iced GUI toolkit, that
 checks a PC's security, privacy and cleanup settings and fixes them when the
 user says yes. The users are not technical. Everything follows from that:
 
@@ -61,6 +61,9 @@ cargo test --locked --all-targets
 # The Windows app, cross-built from Linux with MinGW-w64
 cargo clippy --locked --target x86_64-pc-windows-gnu --all-targets -- -D warnings
 cargo build --locked --release --target x86_64-pc-windows-gnu
+
+# Native Windows on ARM, cross-built from Linux (llvm-mingw, see CONTRIBUTING.md)
+cargo clippy --locked --target aarch64-pc-windows-gnullvm --all-targets -- -D warnings
 
 # Tool and website checks (Python 3, run from the repository root)
 python3 installer/check-locales.py

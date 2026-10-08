@@ -34,20 +34,30 @@ jobs:
         run: '"$RUNNER_TEMP/cargo-audit/bin/cargo-audit" audit --file Cargo.lock'
 
   windows:
-    name: Build and installer harness tests (Windows)
+    name: Build and installer harness tests (Windows ${{ matrix.arch }})
     needs: dependency-audit
-    runs-on: windows-2022
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-2022
+            sums: SHA256SUMS.txt
+          - arch: arm64
+            os: windows-11-arm
+            sums: SHA256SUMS-arm64.txt
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Initialize x64 MSVC tools
+      - name: Initialize MSVC tools
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
-          arch: x64
+          arch: ${{ matrix.arch }}
       - name: Install Rust checks
         shell: pwsh
         run: |
@@ -63,7 +73,7 @@ jobs:
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
-          foreach ($file in @('scripts/build-release.ps1', 'installer/maintenance.ps1', 'installer/test-maintenance.ps1', 'installer/test-lifecycle.ps1', 'installer/test-setup-exit.ps1')) {
+          foreach ($file in @('scripts/build-release.ps1', 'scripts/install-inno.ps1', 'installer/maintenance.ps1', 'installer/test-maintenance.ps1', 'installer/test-lifecycle.ps1', 'installer/test-setup-exit.ps1')) {
             $tokens = $null
             $parseErrors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$parseErrors)
@@ -72,9 +82,20 @@ jobs:
       - name: Test installer path and ACL validation (Windows PowerShell 5.1)
         shell: powershell
         run: ./installer/test-maintenance.ps1
+      - name: Run the PowerShell fixture tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $failed = @()
+          foreach ($test in Get-ChildItem src -Recurse -Include '*.tests.ps1', '*_tests.ps1') {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $test.FullName
+            if ($LASTEXITCODE) { $failed += $test.Name }
+          }
+          if ($failed) { throw "Failed: $($failed -join ', ')" }
       - name: Test, lint, build static-CRT executable and compile installer
         shell: pwsh
-        run: ./scripts/build-release.ps1 -DownloadInno
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/build-release.ps1 -DownloadInno -Arch $env:ARCH
       - name: Test setup failure exit codes with isolated harnesses
         shell: powershell
         run: ./installer/test-setup-exit.ps1 -IsccPath "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -92,17 +113,19 @@ jobs:
           }
       - name: Test running monitor upgrade and uninstall preservation
         shell: powershell
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          $setup = @(Get-ChildItem dist/secblitz-*-windows-x64-setup.exe)
+          $setup = @(Get-ChildItem "dist/secblitz-*-windows-$env:ARCH-setup.exe")
           if ($setup.Count -ne 1) { throw 'Expected exactly one built installer.' }
           ./installer/test-lifecycle.ps1 -SetupPath $setup[0].FullName
       - name: Upload unsigned build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: secblitz-windows-x64-unsigned
+          name: secblitz-windows-${{ matrix.arch }}-unsigned
           path: |
-            dist/secblitz-*-windows-x64.exe
-            dist/secblitz-*-windows-x64-setup.exe
-            dist/SHA256SUMS.txt
+            dist/secblitz-*-windows-${{ matrix.arch }}.exe
+            dist/secblitz-*-windows-${{ matrix.arch }}-setup.exe
+            dist/${{ matrix.sums }}
           if-no-files-found: error
           retention-days: 14

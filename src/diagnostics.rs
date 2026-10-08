@@ -8,8 +8,14 @@ mod checks;
 #[cfg(any(windows, test))]
 #[path = "diagnostics/parse.rs"]
 mod parse;
+#[path = "diagnostics/renewal.rs"]
+mod renewal;
+pub use renewal::{Blocker, Renewal};
 #[path = "diagnostics/rules.rs"]
 mod rules;
+#[cfg(any(windows, test))]
+#[path = "diagnostics/runbox.rs"]
+mod runbox;
 #[cfg(test)]
 #[path = "diagnostics/tests.rs"]
 mod tests;
@@ -154,6 +160,7 @@ fn assemble(profile: Profile, context: &Context, mut probes: Vec<Diagnostic>) ->
     } else {
         "Inventory omitted: original non-elevated desktop-user identity was not established, not requested, unavailable, or the probe failed. Elevated administrator profiles are never substituted."
     }));
+    omissions.push(Omission::new(Scope::OriginalUser, "Run box history", "Only the signed-in desktop user's recent Run box entries, reduced to counts of known trick shapes. Command text is never kept, and a user other than the desktop user is never read."));
     Report {
         schema_version: SCHEMA_VERSION,
         rule_mapping_version: RULE_MAPPING_VERSION.into(),

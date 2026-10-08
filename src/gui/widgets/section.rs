@@ -540,19 +540,20 @@ fn collapsible_group<'a>(
             .font(theme::SEMIBOLD)
             .color(p.text)
             .wrapping(Wrapping::None),
-        iced::widget::space::horizontal(),
     ]
     .spacing(theme::S4)
     .align_y(Alignment::Center);
-    if let Some((s, color)) = summary {
-        head = head.push(
+    head = match summary {
+        Some((s, color)) => head.push(
             text(s)
                 .size(theme::SMALL)
                 .font(theme::REGULAR)
                 .color(color)
-                .wrapping(Wrapping::None),
-        );
-    }
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right),
+        ),
+        None => head.push(iced::widget::space::horizontal()),
+    };
     let header = arrow(
         super::press::button(
             container(head)

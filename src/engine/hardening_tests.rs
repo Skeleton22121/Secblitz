@@ -1,6 +1,22 @@
 // Included into engine::tests: exercises every extended hardening control through the real engine.
 use crate::hardening::{self, Rule, Source, Spec};
 
+const ADDON_A: &str = "chromium:chrome:abcdefghijklmnopabcdefghijklmnop";
+const ADDON_B: &str = "chromium:edge:ponmlkjihgfedcbaponmlkjihgfedcba";
+const ADDON_OLD: &str = "chromium:chrome:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn pick(e: &mut Engine, id: &str, names: &[&str]) {
+    let names = names.iter().map(|n| (*n).to_owned()).collect();
+    e.choose_items(ItemChoice::from([(id.to_owned(), names)])).unwrap();
+}
+
+fn pick_all(e: &mut Engine, spec: &Spec, state: &Value) {
+    if spec.needs_choice() {
+        let names: Vec<&str> = state["items"].as_object().unwrap().keys().map(String::as_str).collect();
+        pick(e, spec.id, &names);
+    }
+}
+
 fn hardening_unsafe_state(spec: &Spec) -> Value {
     if spec.source == Source::FirewallExposure {
         return json!({"items": {"FPS-A": 15, "FPS-B": 12, "FPS-C": 3, "NETDIS-D": 7}});
@@ -45,6 +61,20 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
             "run-user:Updater": 1,
             "folder-user:Helper.lnk": 1,
             "task:\\Vendor\\Sync": 1,
+        }});
+    }
+    if spec.source == Source::BrowserExtensions {
+        return json!({"items": {
+            ADDON_A: 1,
+            ADDON_B: 1,
+            ADDON_OLD: 0,
+        }});
+    }
+    if spec.source == Source::CfaAllowedApps {
+        return json!({"items": {
+            "app:C:\\Tools\\PhotoTool.exe": 0,
+            "app:D:\\Games\\Save Helper\\helper.exe": 0,
+            "app:C:\\Program Files\\Sync\\sync.exe": 1,
         }});
     }
     if spec.source == Source::StaleAccounts {
@@ -97,6 +127,26 @@ fn hardening_unsafe_state(spec: &Spec) -> Value {
     json!({ "items": items })
 }
 
+fn write_watch_record(dir: &TempDir, started: u64) {
+    let app = dir.path().join("App");
+    let _ = fs::create_dir(&app);
+    fs::write(app.join("cfa-watch.json"), json!({"started": started}).to_string()).unwrap();
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// Full protection is only offered after a week of watching.
+fn watched_for_a_week(dir: &TempDir, id: &str) {
+    if id == cfa::BLOCK {
+        write_watch_record(dir, now_secs() - cfa::WATCH_SECONDS - 60);
+    }
+}
+
 fn hardening_safe_state(spec: &Spec) -> Value {
     let unsafe_state = hardening_unsafe_state(spec);
     let mut safe = spec.derive_target(&unsafe_state).unwrap();
@@ -123,8 +173,13 @@ fn hardening_safe_state(spec: &Spec) -> Value {
 fn every_hardening_control_audits_applies_and_undoes_exactly() {
     for spec in hardening::all() {
         let id = spec.id;
-        let before = hardening_unsafe_state(spec);
+        let mut before = hardening_unsafe_state(spec);
+        if id == cfa::BLOCK {
+            before["items"]["EnableControlledFolderAccess"] = json!(2);
+        }
         let (dir, state, mut e) = fixture(id, before.clone());
+        pick_all(&mut e, spec, &before);
+        watched_for_a_week(&dir, id);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
         assert_eq!(e.audit().unwrap().results[0].detail, "Eligible", "{id}");
 
@@ -161,7 +216,8 @@ fn hardening_safe_and_default_states_are_protected_and_never_written() {
     for spec in hardening::all() {
         let id = spec.id;
         let safe = hardening_safe_state(spec);
-        let (_dir, state, mut e) = fixture(id, safe);
+        let (_dir, state, mut e) = fixture(id, safe.clone());
+        pick_all(&mut e, spec, &safe);
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant, "{id}");
         let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
         assert!(
@@ -190,6 +246,7 @@ fn managed_hardening_controls_are_left_alone_but_safe_ones_stay_protected() {
     for spec in hardening::all() {
         let id = spec.id;
         let (_dir, state, mut e) = fixture(id, hardening_unsafe_state(spec));
+        pick_all(&mut e, spec, &hardening_unsafe_state(spec));
         state.borrow_mut().blocked = true;
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped, "{id}");
         let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
@@ -473,11 +530,12 @@ fn absent_windows_defaults_are_protected_for_the_system_controls() {
         ("ai.click_to_do", json!({"DisableClickToDo": null})),
         ("ai.paint", json!({"DisableCocreator": null, "DisableGenerativeFill": null, "DisableImageCreator": null})),
         ("ai.notepad", json!({"DisableAIFeatures": null})),
+        ("clickfix.run_box", json!({"NoRun": null})),
         ("debloat.widgets_policy", json!({"AllowNewsAndInterests": null})),
         ("debloat.device_companion_apps", json!({"PreventDeviceMetadataFromNetwork": null})),
         ("printer.spooler_remote", json!({"RegisterSpoolerRemoteRpcEndPoint": null})),
         ("browser.shopping_ai", json!({"EdgeShoppingAssistantEnabled": null, "HubsSidebarEnabled": null, "ShoppingListEnabled": null, "GeminiSettings": null})),
-        ("browser.dns_bypass", json!({"EdgeDnsOverHttpsMode": null, "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": null, "FirefoxDnsOverHttpsLocked": null})),
+        ("browser.dns_bypass", json!({"EdgeDnsOverHttpsMode": null, "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": null, "FirefoxDnsOverHttpsLocked": null})),
     ] {
         let (_dir, _state, mut e) = fixture(id, json!({ "items": items }));
         assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention, "{id}");
@@ -498,6 +556,21 @@ fn optional_switches_change_only_the_chosen_setting_and_undo_restores_the_exact_
     assert_eq!(state.borrow().values[id], before);
     let done = json!({"items": {"AllowNewsAndInterests": 0}});
     let (_dir, state, mut e) = fixture("debloat.widgets_policy", done);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    assert!(state.borrow().writes.is_empty());
+}
+
+#[test]
+fn the_run_box_is_turned_off_with_one_value_and_undo_restores_the_earlier_one() {
+    let id = "clickfix.run_box";
+    for before in [json!({"items": {"NoRun": null}}), json!({"items": {"NoRun": 0}})] {
+        let (_dir, state, mut e) = fixture(id, before.clone());
+        e.apply_selected(&[id.into()], |_| {}).unwrap();
+        assert_eq!(state.borrow().values[id], json!({"items": {"NoRun": 1}}));
+        e.revert(|_| {}).unwrap();
+        assert_eq!(state.borrow().values[id], before);
+    }
+    let (_dir, state, mut e) = fixture(id, json!({"items": {"NoRun": 1}}));
     assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
     assert!(state.borrow().writes.is_empty());
 }
@@ -577,7 +650,7 @@ fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_
     let id = "browser.dns_bypass";
     let before = json!({"items": {
         "EdgeDnsOverHttpsMode": "secure",
-        "ChromeDnsOverHttpsMode": null,
+        "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null,
         "FirefoxDnsOverHttpsEnabled": 1,
         "FirefoxDnsOverHttpsLocked": null,
     }});
@@ -589,6 +662,7 @@ fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_
         json!({"items": {
             "EdgeDnsOverHttpsMode": "off",
             "ChromeDnsOverHttpsMode": "off",
+            "BraveDnsOverHttpsMode": "off",
             "FirefoxDnsOverHttpsEnabled": 0,
             "FirefoxDnsOverHttpsLocked": 1,
         }})
@@ -612,9 +686,9 @@ fn browser_lookup_settings_keep_the_exact_original_text_and_undo_only_what_they_
 fn a_browser_setting_of_the_wrong_kind_is_never_offered_or_replaced() {
     let id = "browser.dns_bypass";
     for items in [
-        json!({"EdgeDnsOverHttpsMode": 0, "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
-        json!({"EdgeDnsOverHttpsMode": "secure", "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": "1", "FirefoxDnsOverHttpsLocked": null}),
-        json!({"EdgeDnsOverHttpsMode": "line\nbreak", "ChromeDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": 0, "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": "secure", "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": "1", "FirefoxDnsOverHttpsLocked": null}),
+        json!({"EdgeDnsOverHttpsMode": "line\nbreak", "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null, "FirefoxDnsOverHttpsEnabled": 1, "FirefoxDnsOverHttpsLocked": null}),
     ] {
         let (_dir, state, mut e) = fixture(id, json!({ "items": items }));
         let audited = e.audit().unwrap();
@@ -635,7 +709,7 @@ fn journal_images_of_text_settings_keep_the_exact_text_and_refuse_the_wrong_kind
     let items = |edge: Value| {
         json!({"items": {
             "EdgeDnsOverHttpsMode": edge,
-            "ChromeDnsOverHttpsMode": null,
+            "ChromeDnsOverHttpsMode": null, "BraveDnsOverHttpsMode": null,
             "FirefoxDnsOverHttpsEnabled": 1,
             "FirefoxDnsOverHttpsLocked": null,
         }})
@@ -663,7 +737,7 @@ fn journal_images_of_text_settings_keep_the_exact_text_and_refuse_the_wrong_kind
         )
         .unwrap()
     };
-    let rest = r#""ChromeDnsOverHttpsMode":null,"FirefoxDnsOverHttpsEnabled":1,"FirefoxDnsOverHttpsLocked":null"#;
+    let rest = r#""ChromeDnsOverHttpsMode":null,"BraveDnsOverHttpsMode":null,"FirefoxDnsOverHttpsEnabled":1,"FirefoxDnsOverHttpsLocked":null"#;
     for (i, edge) in [
         r#"0"#,
         r#"1"#,
@@ -703,7 +777,9 @@ fn a_chosen_fix_that_was_switched_back_is_written_again_and_undo_keeps_the_origi
     e.apply_selected(&[id.into()], |_| {}).unwrap();
     let fixed = state.borrow().values[id].clone();
     state.borrow_mut().values.insert(id.into(), switched_back.clone());
-    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    let seen = e.audit().unwrap();
+    assert_eq!(seen.results[0].status, CheckStatus::Attention);
+    assert!(seen.results[0].switched_back);
 
     // Applying everything never rewrites what someone else changed.
     let writes = state.borrow().writes.len();
@@ -736,4 +812,284 @@ fn a_chosen_fix_that_drifted_to_a_value_of_another_kind_is_left_alone() {
     let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
     assert_ne!(report.results[0].status, CheckStatus::Applied);
     assert_eq!(state.borrow().writes.len(), writes);
+}
+
+fn add_on_fixture(before: Value) -> (TempDir, Rc<RefCell<FakeState>>, Engine) {
+    let (dir, state, e) = fixture("browser.extensions_off", before);
+    state.borrow_mut().merge_items = true;
+    (dir, state, e)
+}
+
+#[test]
+fn only_the_picked_add_ons_are_turned_off_and_undo_turns_exactly_those_back_on() {
+    let id = "browser.extensions_off";
+    let before = json!({"items": {ADDON_A: 1, ADDON_B: 1, ADDON_OLD: 0}});
+    let (_dir, state, mut e) = add_on_fixture(before);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    pick(&mut e, id, &[ADDON_A]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Applied
+    );
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {ADDON_A: 0, ADDON_B: 1, ADDON_OLD: 0}})
+    );
+    assert_eq!(
+        state.borrow().writes,
+        vec![(id.to_string(), json!({"items": {ADDON_A: 0}}))]
+    );
+    let recorded = e.load().unwrap().pop().unwrap();
+    assert_eq!(recorded.entries[0].before, json!({"items": {ADDON_A: 1}}));
+    drop(recorded);
+    let seen = e.audit().unwrap();
+    assert_eq!(seen.results[0].status, CheckStatus::Attention);
+    assert!(seen.results[0].undoable);
+    assert!(
+        !seen.results[0].switched_back,
+        "an add-on that was not picked is not switched back"
+    );
+    let turned_on = json!({"items": {ADDON_A: 1, ADDON_B: 1, ADDON_OLD: 0}});
+    state.borrow_mut().values.insert(id.into(), turned_on);
+    assert!(e.audit().unwrap().results[0].switched_back);
+    state
+        .borrow_mut()
+        .values
+        .insert(id.into(), json!({"items": {ADDON_A: 0, ADDON_B: 1, ADDON_OLD: 0}}));
+    e.choose_items(ItemChoice::new()).unwrap();
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {ADDON_A: 1, ADDON_B: 1, ADDON_OLD: 0}})
+    );
+}
+
+#[test]
+fn nothing_is_turned_off_unless_the_person_picked_an_add_on() {
+    let id = "browser.extensions_off";
+    let (_dir, state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1, ADDON_B: 1}}));
+    let report = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(report.results[0].status, CheckStatus::Skipped);
+    pick(&mut e, id, &[]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Skipped
+    );
+    assert_eq!(e.apply(|_| {}).unwrap().results[0].status, CheckStatus::Skipped);
+    assert!(state.borrow().writes.is_empty() && e.history().unwrap().is_empty());
+}
+
+#[test]
+fn an_add_on_picked_later_gets_its_own_record_and_each_one_undoes_separately() {
+    let id = "browser.extensions_off";
+    let (_dir, state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1, ADDON_B: 1}}));
+    pick(&mut e, id, &[ADDON_A]);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    pick(&mut e, id, &[ADDON_B]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Applied
+    );
+    assert_eq!(state.borrow().values[id], json!({"items": {ADDON_A: 0, ADDON_B: 0}}));
+    assert_eq!(e.load().unwrap().len(), 2);
+    pick(&mut e, id, &[ADDON_A, ADDON_B]);
+    assert_eq!(
+        e.apply_selected(&[id.into()], |_| {}).unwrap().results[0].status,
+        CheckStatus::Unchanged
+    );
+    e.choose_items(ItemChoice::new()).unwrap();
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], json!({"items": {ADDON_A: 0, ADDON_B: 1}}));
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], json!({"items": {ADDON_A: 1, ADDON_B: 1}}));
+}
+
+#[test]
+fn an_add_on_rule_changed_since_is_never_undone() {
+    let id = "browser.extensions_off";
+    let (_dir, state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1}}));
+    pick(&mut e, id, &[ADDON_A]);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    state.borrow_mut().values.insert(id.into(), json!({"items": {ADDON_A: 2}}));
+    e.choose_items(ItemChoice::new()).unwrap();
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    let writes = state.borrow().writes.len();
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    assert_eq!(state.borrow().writes.len(), writes);
+}
+
+#[test]
+fn only_legal_items_of_a_control_that_asks_can_be_picked() {
+    let (_dir, _state, mut e) = add_on_fixture(json!({"items": {ADDON_A: 1}}));
+    let id = "browser.extensions_off".to_string();
+    for bad in [
+        "chromium:chrome:short",
+        "chromium:firefox:abcdefghijklmnopabcdefghijklmnop",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmnoz",
+        "abcdefghijklmnopabcdefghijklmnop",
+        "",
+    ] {
+        assert!(e
+            .choose_items(ItemChoice::from([(id.clone(), vec![bad.to_string()])]))
+            .is_err());
+    }
+    assert!(e
+        .choose_items(ItemChoice::from([("net.hosts_file".to_string(), vec!["hosts".to_string()])]))
+        .is_err());
+    assert!(e
+        .choose_items(ItemChoice::from([(id, vec![ADDON_A.to_string(); 65])]))
+        .is_err());
+}
+
+#[test]
+fn full_folder_protection_waits_for_a_week_of_watching() {
+    let id = cfa::BLOCK;
+    let watching = json!({"items": {"EnableControlledFolderAccess": 2}});
+
+    let (dir, state, mut e) = fixture(id, json!({"items": {"EnableControlledFolderAccess": 0}}));
+    let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::NOT_WATCHED));
+    assert!(!dir.path().join("App").exists());
+    let applied = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(applied.results[0].status, CheckStatus::Skipped);
+    assert!(state.borrow().writes.is_empty());
+
+    let (dir, state, mut e) = fixture(id, watching.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    assert!(!dir.path().join("App").exists());
+    write_watch_record(&dir, now_secs() - 60);
+    let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::STILL_WATCHING));
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS + 3600);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped);
+    write_watch_record(&dir, now_secs() + 3600);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Skipped);
+    assert!(state.borrow().writes.is_empty());
+
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS - 5);
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    let applied = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(applied.results[0].status, CheckStatus::Applied);
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"EnableControlledFolderAccess": 1}})
+    );
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], watching);
+}
+
+#[test]
+fn full_folder_protection_switched_off_by_someone_else_can_be_put_back() {
+    let id = cfa::BLOCK;
+    let watching = json!({"items": {"EnableControlledFolderAccess": 2}});
+    let off = json!({"items": {"EnableControlledFolderAccess": 0}});
+    let (dir, state, mut e) = fixture(id, watching.clone());
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS - 5);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    let full = state.borrow().values[id].clone();
+
+    state.borrow_mut().values.insert(id.into(), off.clone());
+    let seen = e.audit().unwrap().results.remove(0);
+    assert_eq!(seen.status, CheckStatus::Attention);
+    assert!(seen.switched_back);
+    let again = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(again.results[0].status, CheckStatus::Applied);
+    assert_eq!(state.borrow().values[id], full);
+
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], watching);
+    state.borrow_mut().values.insert(id.into(), off);
+    let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::NOT_WATCHED));
+}
+
+#[test]
+fn switched_off_full_folder_protection_is_put_back_alone_not_with_the_watch() {
+    let mode = |m: u64| json!({"items": {"EnableControlledFolderAccess": m}});
+    let set = |state: &Rc<RefCell<FakeState>>, m: u64| {
+        for id in [cfa::WATCH, cfa::BLOCK] {
+            state.borrow_mut().values.insert(id.into(), mode(m));
+        }
+    };
+    let (dir, state, _) = fixture(cfa::WATCH, mode(0));
+    set(&state, 0);
+    let mut e = reopen(&dir, &state, &[cfa::WATCH, cfa::BLOCK]);
+    e.apply_selected(&[cfa::WATCH.into()], |_| {}).unwrap();
+    set(&state, 2);
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS - 5);
+    e.apply_selected(&[cfa::BLOCK.into()], |_| {}).unwrap();
+
+    set(&state, 0);
+    let report = e.audit().unwrap();
+    let of = |id: &str| report.results.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(of(cfa::WATCH).status, CheckStatus::Skipped);
+    assert_eq!(of(cfa::WATCH).detail, cfa::COVERED);
+    assert_eq!(of(cfa::BLOCK).status, CheckStatus::Attention);
+    assert!(of(cfa::BLOCK).switched_back);
+
+    e.apply_selected(&[cfa::BLOCK.into()], |_| {}).unwrap();
+    assert_eq!(state.borrow().values[cfa::BLOCK], mode(1));
+}
+
+#[test]
+fn the_watch_week_starts_when_watching_is_applied_and_ends_when_it_is_undone() {
+    let id = cfa::WATCH;
+    let before = json!({"items": {"EnableControlledFolderAccess": 0}});
+    let (dir, state, mut e) = fixture(id, before.clone());
+    let record = dir.path().join("App/cfa-watch.json");
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    assert!(!record.exists());
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(
+        state.borrow().values[id],
+        json!({"items": {"EnableControlledFolderAccess": 2}})
+    );
+    let started: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert!(now_secs().abs_diff(started["started"].as_u64().unwrap()) < 60);
+    e.revert(|_| {}).unwrap();
+    assert!(!record.exists());
+    assert_eq!(state.borrow().values[id], before);
+}
+
+#[test]
+fn the_watch_week_counts_from_a_recorded_start_with_injected_time() {
+    use cfa::{verdict, Verdict::*, NOT_WATCHED, STILL_WATCHING, WATCH_SECONDS};
+    let t = 10_000_000;
+    assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS), Offer);
+    assert_eq!(verdict(Some(t), Some(4), t + WATCH_SECONDS + 1), Wait(NOT_WATCHED));
+    assert_eq!(verdict(Some(t), Some(0), t + WATCH_SECONDS + 1), Wait(NOT_WATCHED));
+    assert_eq!(verdict(Some(t), Some(2), t + WATCH_SECONDS - 1), Wait(STILL_WATCHING));
+    assert_eq!(verdict(Some(t), Some(2), t), Wait(STILL_WATCHING));
+    assert_eq!(verdict(Some(t + 5), Some(2), t), Wait(STILL_WATCHING));
+    assert_eq!(verdict(None, Some(2), t), Offer);
+    assert_eq!(verdict(None, Some(4), t), Wait(NOT_WATCHED));
+    assert_eq!(verdict(None, Some(0), t), Wait(NOT_WATCHED));
+    assert_eq!(verdict(None, None, t), Wait(NOT_WATCHED));
+}
+
+#[test]
+fn allowed_apps_are_added_one_by_one_and_undo_removes_exactly_those() {
+    let id = "defender.cfa_allowed_apps";
+    let a = "app:C:\\Tools\\PhotoTool.exe";
+    let b = "app:D:\\Games\\helper.exe";
+    let mine = "app:C:\\Program Files\\Sync\\sync.exe";
+    let before = json!({"items": {a: 0, b: 0, mine: 1}});
+    let (_dir, state, mut e) = fixture(id, before.clone());
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Attention);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(state.borrow().values[id], json!({"items": {a: 1, b: 1, mine: 1}}));
+    assert_eq!(e.audit().unwrap().results[0].status, CheckStatus::Compliant);
+    // An allowed app the person removed by hand is not written back by undo.
+    state.borrow_mut().values.insert(
+        id.into(),
+        json!({"items": {a: 1, b: 0, mine: 1, "app:C:\\New\\other.exe": 0}}),
+    );
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Conflict);
+    state
+        .borrow_mut()
+        .values
+        .insert(id.into(), json!({"items": {a: 1, b: 1, mine: 1}}));
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().writes.last().unwrap().1, json!({"items": {a: 0, b: 0, mine: 1}}));
 }

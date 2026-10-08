@@ -897,6 +897,7 @@ fn system_controls_follow_the_research_exclusions() {
         "browser.data_collection",
         "browser.safety_mode",
         "browser.dns_bypass",
+        "browser.extensions_off",
     ] {
         assert!(is_ask_check_id(id), "{id} must be a choice");
     }
@@ -1485,6 +1486,7 @@ fn the_script_description_of_a_text_key_carries_the_text_rule() {
 
 const BROWSER_EDGE: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Edge";
 const BROWSER_CHROME: &str = r"HKLM:\SOFTWARE\Policies\Google\Chrome";
+const BROWSER_BRAVE: &str = r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave";
 const BROWSER_FIREFOX: &str = r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox";
 
 #[test]
@@ -1610,6 +1612,12 @@ fn browser_controls_set_exactly_the_documented_policy_values() {
                     json!("off"),
                 ),
                 (
+                    "BraveDnsOverHttpsMode",
+                    BROWSER_BRAVE,
+                    "DnsOverHttpsMode",
+                    json!("off"),
+                ),
+                (
                     "FirefoxDnsOverHttpsEnabled",
                     doh.as_str(),
                     "Enabled",
@@ -1686,7 +1694,7 @@ fn browser_lookup_texts_are_off_only_and_other_kinds_are_refused() {
     let state = |edge: Value| {
         json!({"items": {
             "EdgeDnsOverHttpsMode": edge, "ChromeDnsOverHttpsMode": "off",
-            "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
+            "BraveDnsOverHttpsMode": "off", "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
         }})
     };
     assert!(!s.any_unsafe(&state(json!("off"))));
@@ -1702,12 +1710,22 @@ fn browser_lookup_texts_are_off_only_and_other_kinds_are_refused() {
     }
     let bad_firefox = json!({"items": {
         "EdgeDnsOverHttpsMode": "off", "ChromeDnsOverHttpsMode": "off",
-        "FirefoxDnsOverHttpsEnabled": "0", "FirefoxDnsOverHttpsLocked": 1,
+        "BraveDnsOverHttpsMode": "off", "FirefoxDnsOverHttpsEnabled": "0", "FirefoxDnsOverHttpsLocked": 1,
     }});
     assert!(s.validate(&bad_firefox).is_err());
     let by_name = |n: &str| s.keys.iter().find(|k| k.name == n).unwrap();
     assert_eq!(by_name("EdgeDnsOverHttpsMode").value, "DnsOverHttpsMode");
     assert_eq!(by_name("ChromeDnsOverHttpsMode").value, "DnsOverHttpsMode");
+    assert_eq!(by_name("BraveDnsOverHttpsMode").value, "DnsOverHttpsMode");
+    assert_eq!(
+        by_name("BraveDnsOverHttpsMode").path,
+        r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave"
+    );
+    let brave_wrong = json!({"items": {
+        "EdgeDnsOverHttpsMode": "off", "ChromeDnsOverHttpsMode": "off",
+        "BraveDnsOverHttpsMode": 0, "FirefoxDnsOverHttpsEnabled": 0, "FirefoxDnsOverHttpsLocked": 1,
+    }});
+    assert!(s.validate(&brave_wrong).is_err());
     assert_ne!(
         by_name("EdgeDnsOverHttpsMode").path,
         by_name("ChromeDnsOverHttpsMode").path
@@ -1739,20 +1757,315 @@ fn browser_stronger_modes_accept_the_safe_levels_and_flag_the_rest() {
 }
 
 #[test]
-fn every_browser_control_says_before_the_person_agrees_that_browsers_show_a_managed_notice() {
-    for id in [
-        "browser.shopping_ai",
-        "browser.data_collection",
-        "browser.safety_mode",
-        "browser.dns_bypass",
-    ] {
-        let explain = crate::explain::for_check(id).unwrap();
-        for line in [explain.change, crate::advice::choice_consequence(id)] {
-            assert!(
-                line.contains("managed by your organization")
-                    && line.contains("only means a setting was made"),
-                "{id}: {line}"
-            );
+fn notices_follow_the_table() {
+    for s in all() {
+        let n = notices(s);
+        assert_eq!(n.restart, s.reboot, "{}", s.id);
+        assert!(n.undoable, "{}", s.id);
+    }
+    assert!(notices(spec("browser.shopping_ai").unwrap()).managed);
+    assert!(notices(spec("browser.dns_bypass").unwrap()).managed);
+    assert!(notices(spec("browser.extensions_off").unwrap()).managed);
+    assert!(!notices(spec("smartscreen.browser_policy").unwrap()).managed);
+    assert!(!notices(spec("smb1.disabled").unwrap()).managed);
+}
+
+#[test]
+fn only_real_browser_policy_paths_count_as_managed() {
+    assert!(is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS"
+    ));
+    assert!(is_browser_policy(r"hklm:\software\policies\microsoft\edge"));
+    assert!(is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\BraveSoftware\Brave"
+    ));
+    assert!(!is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate"
+    ));
+    assert!(!is_browser_policy(
+        r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI"
+    ));
+    assert!(!is_browser_policy("é"));
+}
+
+fn says_restart(text: &str) -> bool {
+    let t = text.to_lowercase();
+    [
+        "needs a restart",
+        "needs restart",
+        "restart to apply",
+        "restart your pc",
+        "after a restart",
+        "after you restart",
+        "you restart",
+    ]
+    .iter()
+    .any(|p| t.contains(p))
+}
+
+fn says_managed(text: &str) -> bool {
+    text.to_lowercase().contains("managed by your organization")
+}
+
+#[test]
+fn every_fix_says_before_the_person_agrees_what_the_notices_promise() {
+    let mut problems = Vec::new();
+    for s in all() {
+        let n = notices(s);
+        let choice = crate::advice::choice_consequence(s.id);
+        let impact = crate::advice::control_impact(s.id);
+        let explain = crate::explain::for_check(s.id).unwrap();
+        let before_yes = [choice, impact, explain.change];
+        if n.managed {
+            if ![choice, explain.change]
+                .iter()
+                .all(|l| says_managed(l) && l.contains("only means a setting was made"))
+            {
+                problems.push(format!("{}: managed notice missing", s.id));
+            }
+        } else if before_yes.iter().any(|l| says_managed(l)) {
+            problems.push(format!(
+                "{}: mentions the managed notice but is not flagged",
+                s.id
+            ));
+        }
+        let mentions_restart = before_yes.iter().any(|l| says_restart(l));
+        if n.restart && !mentions_restart {
+            problems.push(format!("{}: needs a restart but never says so", s.id));
+        }
+        if !n.restart && mentions_restart {
+            problems.push(format!("{}: mentions a restart but is not flagged", s.id));
         }
     }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+#[test]
+fn the_run_box_switch_sets_one_machine_wide_value_without_a_restart() {
+    let s = spec("clickfix.run_box").unwrap();
+    assert!(s.ask && !s.reboot && !s.dynamic());
+    assert_eq!(s.source, Source::Registry);
+    assert_eq!(s.keys.len(), 1);
+    let k = &s.keys[0];
+    assert_eq!((k.name, k.path), ("NoRun", EXPLORER));
+    assert!(k.path.starts_with("HKLM:"));
+    assert!(s.any_unsafe(&items(s, &[None])));
+    assert!(s.any_unsafe(&items(s, &[Some(0)])));
+    assert!(!s.any_unsafe(&items(s, &[Some(1)])));
+    assert_eq!(
+        s.derive_target(&items(s, &[None])).unwrap(),
+        items(s, &[Some(1)])
+    );
+    assert!(s.validate(&items(s, &[Some(2)])).is_err());
+    assert!(s.gate.own_policy_key.is_empty());
+}
+
+const ADDON_A: &str = "chromium:chrome:abcdefghijklmnopabcdefghijklmnop";
+const ADDON_B: &str = "chromium:edge:ponmlkjihgfedcbaponmlkjihgfedcba";
+
+#[test]
+fn browser_add_ons_are_named_by_browser_and_extension_id() {
+    let s = spec("browser.extensions_off").unwrap();
+    assert!(s.ask && s.dynamic() && !s.reboot && s.needs_choice() && s.adds_batches());
+    assert_eq!(s.source, Source::BrowserExtensions);
+    s.validate(&json!({"items": {ADDON_A: 1, ADDON_B: 0}}))
+        .unwrap();
+    s.validate(&json!({"items": {ADDON_A: 2}})).unwrap();
+    for bad in [
+        "",
+        "chromium:chrome:",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmno",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmnopp",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmnoq",
+        "chromium:chrome:ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP",
+        "chromium:chrome:abcdefghijklmnopabcdefghijklmno\n",
+        "chromium:opera:abcdefghijklmnopabcdefghijklmnop",
+        "firefox:abcdefghijklmnopabcdefghijklmnop",
+        "chrome:abcdefghijklmnopabcdefghijklmnop",
+        " chromium:chrome:abcdefghijklmnopabcdefghijklmnop",
+        "*",
+    ] {
+        assert!(
+            s.validate(&json!({"items": {bad: 1}})).is_err(),
+            "accepted {bad:?}"
+        );
+        assert!(!s.item_name_ok(bad), "{bad:?}");
+    }
+    assert!(s.validate(&json!({"items": {ADDON_A: 3}})).is_err());
+    assert!(s.item_name_ok(ADDON_A) && s.item_name_ok(ADDON_B));
+    assert!(spec("net.hosts_file").unwrap().item_name_ok("hosts"));
+    assert!(!s.item_name_ok("hosts"));
+}
+
+#[test]
+fn browser_add_on_targets_views_and_picks_only_touch_what_was_named() {
+    let s = spec("browser.extensions_off").unwrap();
+    let before = json!({"items": {ADDON_A: 1}});
+    assert!(s.any_unsafe(&before));
+    assert_eq!(
+        s.derive_target(&before).unwrap(),
+        json!({"items": {ADDON_A: 0}})
+    );
+    for safe in [0, 2] {
+        let state = json!({"items": {ADDON_A: safe}});
+        assert!(!s.any_unsafe(&state));
+        assert_eq!(s.derive_target(&state).unwrap(), state);
+    }
+    assert_eq!(
+        s.view(&json!({"items": {ADDON_A: 2, ADDON_B: 1}}), &before),
+        json!({"items": {ADDON_A: 2}})
+    );
+    let seen = json!({"items": {ADDON_A: 1, ADDON_B: 1}});
+    assert_eq!(
+        s.narrow(&seen, &[ADDON_B.to_string()]),
+        json!({"items": {ADDON_B: 1}})
+    );
+    assert_eq!(s.narrow(&seen, &[]), json!({"items": {}}));
+    assert!(!s.any_unsafe(&s.narrow(&seen, &[])));
+    assert!(s.has_unrecorded_unsafe(&seen, &before));
+    assert!(!s.has_unrecorded_unsafe(&json!({"items": {ADDON_A: 1}}), &before));
+    assert!(!s.has_unrecorded_unsafe(&json!({"items": {ADDON_A: 0, ADDON_B: 0}}), &before));
+    assert!(!s.has_recorded_unsafe(&seen, &json!({"items": {}})));
+    assert!(!s.has_recorded_unsafe(&json!({"items": {ADDON_A: 2, ADDON_B: 1}}), &before));
+    assert!(s.has_recorded_unsafe(&seen, &before));
+    assert!(!spec("persistence.run_and_tasks").unwrap().needs_choice());
+}
+
+#[test]
+fn browser_add_ons_are_left_alone_where_the_browser_is_managed() {
+    let s = spec("browser.extensions_off").unwrap();
+    let guarded: Vec<_> = s.gate.policy_values.iter().map(|(_, n)| *n).collect();
+    for name in [
+        "CloudManagementEnrollmentToken",
+        "EdgeManagementEnrollmentToken",
+        "ExtensionSettings",
+    ] {
+        assert!(guarded.contains(&name), "{name}");
+    }
+    assert!(s
+        .gate
+        .policy_values
+        .iter()
+        .all(|(p, _)| p.starts_with(r"HKLM:\SOFTWARE\Policies\")));
+    let script = include_str!("../platform/hardening.handled.ps1");
+    assert!(script.contains(r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist"));
+    assert!(script.contains(r"SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist"));
+}
+
+#[test]
+fn folder_protection_controls_set_only_the_documented_modes() {
+    let watch = spec("defender.cfa_watch").unwrap();
+    let block = spec("defender.cfa_block").unwrap();
+    for s in [watch, block] {
+        assert_eq!(s.source, Source::DefenderPref);
+        assert!(s.ask && !s.reboot && !s.dynamic());
+        assert_eq!(s.keys.len(), 1);
+        assert_eq!(s.keys[0].name, "EnableControlledFolderAccess");
+        assert_eq!(s.keys[0].allowed, &[0, 1, 2, 3, 4]);
+        assert!(s.validate(&items(s, &[Some(5)])).is_err());
+    }
+    let state = |n| items(watch, &[Some(n)]);
+    for (mode, watch_unsafe, block_unsafe) in [
+        (0, true, true),
+        (1, false, false),
+        (2, false, true),
+        (3, false, false),
+        (4, false, true),
+    ] {
+        assert_eq!(watch.any_unsafe(&state(mode)), watch_unsafe, "watch {mode}");
+        assert_eq!(block.any_unsafe(&state(mode)), block_unsafe, "block {mode}");
+    }
+    assert_eq!(watch.derive_target(&state(0)).unwrap(), state(2));
+    assert_eq!(block.derive_target(&state(2)).unwrap(), state(1));
+    assert_eq!(block.derive_target(&state(4)).unwrap(), state(1));
+    assert_eq!(watch.derive_target(&state(3)).unwrap(), state(3));
+    assert!(watch.gate.tamper_exempt && block.gate.tamper_exempt);
+    assert!(
+        spec("defender.cfa_allowed_apps")
+            .unwrap()
+            .gate
+            .tamper_exempt
+    );
+}
+
+#[test]
+fn allowed_apps_name_one_existing_style_exe_and_never_a_script_tool() {
+    let apps = spec("defender.cfa_allowed_apps").unwrap();
+    assert!(apps.dynamic() && apps.exact_recorded() && apps.ask);
+    apps.validate(&json!({"items": {
+        "app:C:\\Tools\\PhotoTool.exe": 0,
+        "app:D:\\Games\\Save Helper\\helper.EXE": 1,
+        "app:C:\\Program Files (x86)\\Vendor\\app.exe": 1,
+        "app:E:\\Ünï\\ápp.exe": 0,
+    }}))
+    .unwrap();
+    for bad in [
+        "",
+        "app:",
+        "C:\\Tools\\a.exe",
+        "App:C:\\Tools\\a.exe",
+        "app:Tools\\a.exe",
+        "app:\\\\server\\share\\a.exe",
+        "app:C:a.exe",
+        "app:C:\\",
+        "app:C:\\a.exe\\",
+        "app:C:\\Tools\\a.dll",
+        "app:C:\\Tools\\.exe",
+        "app:C:\\Tools\\*.exe",
+        "app:C:\\Tools\\a?.exe",
+        "app:C:\\*\\a.exe",
+        "app:C:\\Tools\\..\\a.exe",
+        "app:C:\\Tools\\.\\a.exe",
+        "app:C:\\Tools\\\\a.exe",
+        "app:%ProgramFiles%\\a.exe",
+        "app:C:/Tools/a.exe",
+        "app:C:\\Tools\\a.exe:stream",
+        "app:C:\\Tools\\a\".exe",
+        "app:C:\\Tools\\a\n.exe",
+        "app: C:\\Tools\\a.exe",
+        "app:C:\\Tools\\a.exe ",
+        "app:C:\\Tools \\a.exe",
+        "app:C:\\Tools\\a|b.exe",
+        "app:C:\\Windows\\System32\\cmd.exe",
+        "app:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\POWERSHELL.EXE",
+        "app:C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "app:C:\\Windows\\System32\\wscript.exe",
+        "app:C:\\Windows\\System32\\cscript.exe",
+        "app:C:\\Windows\\System32\\mshta.exe",
+        "app:C:\\Windows\\System32\\rundll32.exe",
+    ] {
+        assert!(
+            apps.validate(&json!({"items": {bad: 0}})).is_err(),
+            "accepted {bad:?}"
+        );
+    }
+    assert!(apps
+        .validate(&json!({"items": {"app:C:\\Tools\\a.exe": 2}}))
+        .is_err());
+    let long = format!("app:C:\\{}.exe", "a".repeat(260));
+    assert!(apps.validate(&json!({"items": {long: 0}})).is_err());
+
+    let a = "app:C:\\Tools\\a.exe";
+    let b = "app:C:\\Tools\\b.exe";
+    let before = json!({"items": {a: 0, b: 1}});
+    assert!(apps.any_unsafe(&before));
+    assert_eq!(
+        apps.derive_target(&before).unwrap(),
+        json!({"items": {a: 1, b: 1}})
+    );
+    assert_eq!(
+        apps.view(&json!({"items": {b: 1, "app:C:\\new.exe": 0}}), &before),
+        json!({"items": {a: 0, b: 1}})
+    );
+}
+
+#[test]
+fn the_script_tool_list_matches_the_powershell_backend() {
+    let script = include_str!("../platform/hardening.ps1");
+    let start = script.find("function HCfaScriptHosts").unwrap();
+    let body = &script[start..start + script[start..].find('\n').unwrap()];
+    for host in SCRIPT_HOSTS {
+        assert!(body.contains(&format!("'{host}'")), "{host}");
+    }
+    assert_eq!(body.matches('\'').count(), SCRIPT_HOSTS.len() * 2);
 }

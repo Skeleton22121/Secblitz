@@ -160,32 +160,95 @@ pub(super) fn update_freshness(
     }
 }
 
-/// Backup evidence: Windows Backup success events (last 90 days, supplied by
-/// the probe) and same-PC shadow copies. Neither proves what is covered or that
-/// a restore works, so this is never more than "a backup was seen".
-pub(super) fn backup_coverage(
-    events: Option<&[BackupEvent]>,
-    shadow_copies: Option<u32>,
-    now: Option<u64>,
-) -> (Status, String) {
-    let (Some(events), Some(now)) = (events, now) else {
-        return (
-            Status::Unknown,
-            "Backup history could not be read, so backups are unknown.".into(),
-        );
-    };
-    let shadows = match shadow_copies {
+/// Everything the backup probe could read. A `None` means that source could
+/// not be read, which is different from "read and found nothing".
+pub(super) struct BackupSources<'a> {
+    pub events: Option<&'a [BackupEvent]>,
+    pub shadow_copies: Option<u32>,
+    pub file_history_last: Option<u64>,
+    pub onedrive_folders: Option<u32>,
+    pub file_history_drive_plugged_in: Option<bool>,
+}
+
+fn days_ago(days: u64) -> String {
+    match days {
+        0 => "today".into(),
+        1 => "1 day ago".into(),
+        n => format!("{n} days ago"),
+    }
+}
+
+/// Backup evidence from Windows Backup events, File History and OneDrive
+/// folder backup, plus same-PC restore points. None of it proves what is
+/// covered or that a restore works, so this is never more than "a backup was
+/// seen", and a source that cannot be read is never counted as a backup.
+pub(super) fn backup_coverage(src: &BackupSources, now: Option<u64>) -> (Status, String) {
+    let shadows = match src.shadow_copies {
         Some(0) => "No restore points on this PC.",
         Some(_) => {
             "This PC has restore points, but those live on the same drive and are not a backup."
         }
         None => "Restore points could not be counted.",
     };
-    match newest_age_days(events.iter().map(|e| e.date_unix_seconds), now) {
-        Some(days) if days <= BACKUP_MAX_AGE_DAYS => (Status::Healthy, format!("A Windows Backup finished {days} day(s) ago. What it covers and whether a restore works are not tested. {shadows}")),
-        Some(days) => (Status::Attention, format!("No recent backup found: the last Windows Backup finished {days} days ago. {shadows}")),
-        None => (Status::Attention, format!("No backup found. Cloud backups such as OneDrive and third-party backup tools are not checked. {shadows}")),
+    let Some(now) = now else {
+        return (
+            Status::Unknown,
+            "Backup history could not be read, so backups are unknown.".into(),
+        );
+    };
+    let mut seen: Vec<(u64, &str)> = Vec::new();
+    if let Some(days) = src
+        .events
+        .and_then(|e| newest_age_days(e.iter().map(|x| x.date_unix_seconds), now))
+    {
+        seen.push((days, "Windows Backup"));
     }
+    if let Some(days) = src
+        .file_history_last
+        .and_then(|t| newest_age_days(std::iter::once(t), now))
+    {
+        seen.push((days, "File History"));
+    }
+    let onedrive = match src.onedrive_folders {
+        Some(0) => " OneDrive does not back up Documents, Pictures or Desktop.".to_string(),
+        Some(n) => format!(" OneDrive backs up {n} of Documents, Pictures and Desktop."),
+        None => String::new(),
+    };
+    let unplug = if src.file_history_drive_plugged_in == Some(true) {
+        " Unplug your backup drive when it's not backing up. Ransomware can scramble a drive that stays plugged in."
+    } else {
+        ""
+    };
+    seen.sort();
+    if let Some((days, name)) = seen.first() {
+        let line = format!(
+            "Last backup: {} ({name}).{onedrive} {shadows}{unplug}",
+            days_ago(*days)
+        );
+        let note = " What it covers and whether a restore works are not tested.";
+        return if *days <= BACKUP_MAX_AGE_DAYS {
+            (Status::Healthy, format!("{line}{note}"))
+        } else {
+            (Status::Attention, format!("No recent backup found. {line}"))
+        };
+    }
+    if src.onedrive_folders.is_some_and(|n| n > 0) {
+        return (
+            Status::Informational,
+            format!("No backup time could be read.{onedrive} {shadows}{unplug}"),
+        );
+    }
+    let unreadable = src.events.is_none() && src.file_history_last.is_none();
+    if unreadable {
+        return (
+            Status::Unknown,
+            "Backup history could not be read, so backups are unknown.".into(),
+        );
+    }
+    (
+        Status::Attention,
+        format!("No backup found.{onedrive} Backup tools other than Windows Backup, File History and OneDrive are not checked. {shadows}{unplug}"),
+    )
 }
 
 pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
@@ -301,7 +364,7 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
             out.push(inventory("browser.inventory", &v.extensions, "Bounded original-user extension inventory. Chromium version directories can include stale copies; installation does not establish enabled state."));
             if let Some(exts) = v.extensions.known() {
                 for extension in &exts.items {
-                    if extension.broad_host_access.known() == Some(&true) || extension.native_messaging.known() == Some(&true) { out.push(a("browser.permissions", Attention, format!("{:?} extension {} declares broad host access or native messaging. Review necessity and publisher; this is not a malware verdict.", extension.browser, extension.id))); }
+                    if extension.broad_host_access.known() == Some(&true) || extension.native_messaging.known() == Some(&true) { out.push(a("browser.permissions", Attention, format!("{:?} extension {} declares broad host access or native messaging. Review necessity and publisher; this is not a malware verdict.", extension.browser, extension_label(extension)))); }
                 }
             }
         }
@@ -337,7 +400,19 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::Backup(v) => {
             out.push(a("backup.shadow_copies", if v.shadow_copy_count.known().is_some() { Informational } else { Unknown }, "Local shadow copies are same-device recovery evidence, not an independent backup."));
             out.push(inventory("backup.events", &v.success_events, "At most 64 Windows Backup success event timestamps from the last 90 days. Success-event evidence does not identify protected data or prove restore viability."));
-            let (coverage, detail) = backup_coverage(v.success_events.known().map(|x| x.items.as_slice()), v.shadow_copy_count.known().copied(), super::now());
+            let (coverage, detail) = backup_coverage(
+                &BackupSources {
+                    events: v.success_events.known().map(|x| x.items.as_slice()),
+                    shadow_copies: v.shadow_copy_count.known().copied(),
+                    file_history_last: v.file_history_last_unix_seconds.known().copied(),
+                    onedrive_folders: v.onedrive_folders.known().copied(),
+                    file_history_drive_plugged_in: v
+                        .file_history_drive_removable_connected
+                        .known()
+                        .copied(),
+                },
+                super::now(),
+            );
             out.push(a("backup.coverage", coverage, detail));
         }
         Evidence::Adapters(v) => {
@@ -377,6 +452,7 @@ pub(super) fn assess(probe: &Diagnostic) -> Vec<Assessment> {
         Evidence::DnsEncryption(v) => out.extend(super::checks::dns_encryption(v)),
         Evidence::WifiSecurity(v) => out.extend(super::checks::wifi_security(v)),
         Evidence::Autostart(v) => out.extend(super::checks::autostart(v)),
+        Evidence::RunHistory(v) => out.extend(super::checks::run_history(v)),
     }
     // A healthy subset must not turn a partially unreadable probe into Healthy.
     // Walk the typed serialization (never raw/native input) so newly added facts
@@ -472,4 +548,12 @@ pub(super) fn profile_recommendations(
         management,
         needs,
     )]
+}
+
+fn extension_label(extension: &BrowserExtension) -> String {
+    if extension.name.is_empty() {
+        extension.id.clone()
+    } else {
+        format!("\"{}\" ({})", extension.name, extension.id)
+    }
 }

@@ -308,7 +308,12 @@ fn check_ancestor(file: &File) -> Result<()> {
         | FILE_WRITE_EA
         | FILE_WRITE_ATTRIBUTES
         | GENERIC_READ
-        | GENERIC_EXECUTE;
+        | GENERIC_EXECUTE
+        | if crate::platform::security::is_volume_root(file) {
+            crate::platform::security::VOLUME_ROOT_EXTRA
+        } else {
+            0
+        };
     for ace in &s.aces {
         // Inherit-only entries do not apply here; deny entries only restrict.
         if ace.flags & INHERIT_ONLY_ACE as u8 != 0 || ace.kind == 1 {
@@ -569,8 +574,8 @@ fn wait_for(service: &Service, goal: Scm) -> Result<bool> {
 pub fn install() -> Result<()> {
     crate::platform::require_admin(NEEDS_ADMIN)?;
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Web protection requires Windows x64"
+        crate::platform::NATIVE_64,
+        "Web protection requires 64-bit Windows"
     );
     let binary = installed_binary()?;
     let _held = pin_path(binary.parent().context("Missing program folder")?)?;

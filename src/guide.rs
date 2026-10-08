@@ -296,6 +296,16 @@ static SECURE_BOOT_CERTS: Guide = g(
         "Select Check for updates and install everything offered.",
         "Restart when Windows asks. You may need to do this more than once.",
         "Then look for a startup (BIOS) update on your PC maker's website.",
+        "Your PC maker may need to release one before the renewal can finish.",
+    ],
+);
+static RUN_HISTORY: Guide = g(
+    Page::WindowsSecurity,
+    &[
+        "Run a full scan first. Choose Scan options, then Full scan, then Scan now.",
+        "Then use another phone or PC to change your passwords. Start with your email, then your bank.",
+        "Turn on two-step sign-in wherever it is offered.",
+        "Watch your bank and card statements for anything you don't know.",
     ],
 );
 static UPDATES: Guide = g(
@@ -418,6 +428,7 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
         "net.dns_encryption" => &DNS,
         "defender.threats" => &THREATS,
         "persistence.wmi_subscriptions" => &HIDDEN_TASKS,
+        "clickfix.run_history" => &RUN_HISTORY,
         _ => return None,
     })
 }
@@ -474,6 +485,7 @@ mod tests {
         "net.dns_encryption",
         "defender.threats",
         "persistence.wmi_subscriptions",
+        "clickfix.run_history",
     ];
 
     #[test]

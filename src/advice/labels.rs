@@ -33,6 +33,7 @@ pub fn control_label(id: &str) -> &'static str {
         "net.llmnr" => "Name-lookup reply blocking",
         "accounts.lockout_policy" => "Password guessing lockout",
         "autorun.disabled" => "USB stick auto-start",
+        "clickfix.run_box" => "Run box",
         "wifi.risky_profiles" => "Wi-Fi networks that join by themselves",
         "lsa.restrict_anonymous" => "Anonymous account listing",
         "remote_assistance.disabled" => "Remote Assistance invitations",
@@ -45,6 +46,9 @@ pub fn control_label(id: &str) -> &'static str {
         "defender.asr.office" => "Office attack shields",
         "defender.asr.ransomware_usb" => "Ransomware and USB shields",
         "defender.network_protection" => "Harmful website blocking",
+        "defender.cfa_watch" => "Watch for apps changing your files",
+        "defender.cfa_block" => "Protect your files from ransomware",
+        "defender.cfa_allowed_apps" => "Apps allowed to change your files",
         "defender.cloud_block_level" => "Stricter cloud blocking",
         "net.stack_hardening" => "Network traffic hardening",
         "net.netbios" => "Old name service (NetBIOS)",
@@ -94,6 +98,7 @@ pub fn control_label(id: &str) -> &'static str {
         "browser.data_collection" => "Usage data your browsers send",
         "browser.safety_mode" => "Stronger protection in your browsers",
         "browser.dns_bypass" => "Browsers use Web protection",
+        "browser.extensions_off" => "Turn off a browser add-on",
         "findings" => "Additional protection checks",
         _ => "Protection check",
     }
@@ -176,6 +181,7 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "net.llmnr"
         | "accounts.lockout_policy"
         | "autorun.disabled"
+        | "clickfix.run_box"
         | "wifi.risky_profiles"
         | "lsa.restrict_anonymous"
         | "remote_assistance.disabled"
@@ -187,6 +193,9 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "defender.asr.ransomware_usb"
         | "defender.network_protection"
         | "defender.cloud_block_level"
+        | "defender.cfa_watch"
+        | "defender.cfa_block"
+        | "defender.cfa_allowed_apps"
         | "net.stack_hardening"
         | "net.netbios"
         | "net.mdns"
@@ -227,6 +236,7 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "browser.data_collection"
         | "browser.safety_mode"
         | "browser.dns_bypass"
+        | "browser.extensions_off"
         | "recovery.winre_enabled" => (
             "We can't change this one safely for you. If you're not sure, leave it as it is.",
             ReviewWithAdministrator,

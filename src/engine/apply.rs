@@ -16,6 +16,12 @@ struct Owned {
     again: Vec<(String, Value)>,
 }
 
+/// A control that records each batch of picked items separately, with picked items that no earlier batch holds.
+fn adds_batch(id: &str, observed: &Value, recorded: &Value) -> bool {
+    crate::hardening::spec(id)
+        .is_some_and(|s| s.adds_batches() && s.has_unrecorded_unsafe(observed, recorded))
+}
+
 enum Preflight {
     Resolved(Outcome),
     Write {
@@ -139,6 +145,7 @@ impl Engine {
             &mut report,
             &mut callback,
         )?;
+        self.cfa_note(&report.results);
         report.findings = self.findings();
         Ok(report)
     }
@@ -233,6 +240,7 @@ impl Engine {
             };
             let expected = target_for(&c.id, &entry.before)?;
             let result = match self.observe(&c.id) {
+                Ok(o) if adds_batch(&c.id, &o.value, &entry.before) => continue,
                 Ok(o) if scope(&c.id, &o.value, Some(&entry.before)) == expected => {
                     Self::observed_outcome(
                         c,
@@ -308,6 +316,15 @@ impl Engine {
     /// Before Prepare there is no uncertain write to recover. A runtime
     /// unsupported control must not strand earlier selected successes.
     fn preflight(&mut self, c: &Control, selected: bool) -> Result<Preflight> {
+        if crate::hardening::spec(&c.id).is_some_and(|s| s.needs_choice())
+            && self.chosen(&c.id).is_none_or(<[String]>::is_empty)
+        {
+            return Ok(Preflight::Resolved(Self::outcome(
+                c,
+                CheckStatus::Skipped,
+                "Nothing was picked",
+            )));
+        }
         let observed = self.observe(&c.id).and_then(|o| {
             let protected = firewall_control(&c.id) && firewall_protected(&o)?;
             let expected = if permission_control(&c.id) && !o.eligible {

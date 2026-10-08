@@ -107,7 +107,8 @@ fn inspect_pinned(
             "Security inspection failed"
         );
         let _sd = Local(sd);
-        inspect_acl(owner, acl, directory, strict, ancestor)?;
+        let root = ancestor && crate::platform::security::is_volume_root(f);
+        inspect_acl(owner, acl, directory, strict, ancestor, root)?;
     }
     Ok(())
 }
@@ -117,6 +118,7 @@ unsafe fn inspect_acl(
     directory: bool,
     strict: bool,
     ancestor: bool,
+    root: bool,
 ) -> Result<()> {
     unsafe {
         let sy = sid("S-1-5-18")?;
@@ -168,6 +170,11 @@ unsafe fn inspect_acl(
                         | FILE_WRITE_ATTRIBUTES
                         | GENERIC_READ
                         | GENERIC_EXECUTE
+                        | if root {
+                            crate::platform::security::VOLUME_ROOT_EXTRA
+                        } else {
+                            0
+                        }
                 } else {
                     FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | GENERIC_READ | GENERIC_EXECUTE
                 };
@@ -353,11 +360,11 @@ fn read_bounded(root: &Path, name: &str, limit: usize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 fn read_delivery(root: &Path, origin: &reqwest::Url) -> Result<Option<delivery::Authorization>> {
-    if !exists_no_follow(&root.join("delivery-floor.json"))? {
+    if !exists_no_follow(&root.join(arch::DELIVERY_FLOOR))? {
         return Ok(None);
     }
     Ok(Some(delivery::decode(
-        &read_bounded(root, "delivery-floor.json", MANIFEST_LIMIT)?,
+        &read_bounded(root, arch::DELIVERY_FLOOR, MANIFEST_LIMIT)?,
         &key()?,
         origin,
     )?))
@@ -397,7 +404,7 @@ fn select_delivery(
     origin: &reqwest::Url,
 ) -> Result<Option<delivery::Authorization>> {
     let previous = read_delivery(root, origin)?;
-    let response = client.get(origin.join("releases/delivery.json")?).send()?;
+    let response = client.get(origin.join(arch::DELIVERY_FEED)?).send()?;
     if response.status() == reqwest::StatusCode::NOT_FOUND && previous.is_none() {
         return Ok(None);
     }
@@ -419,7 +426,7 @@ fn select_delivery(
     // Commit authorization before fetching the candidate: stale keys cannot be
     // revived by a failed download, crash, deletion/404, or v1 fallback.
     if previous.as_ref() != Some(&a) {
-        replace(root, "delivery-floor.json", &raw)?;
+        replace(root, arch::DELIVERY_FLOOR, &raw)?;
     }
     Ok(Some(a))
 }
@@ -488,8 +495,8 @@ fn require_local_path(path: &Path) -> Result<()> {
 }
 fn trusted_image(path: &Path, system_image: bool) -> Result<Vec<File>> {
     ensure!(
-        cfg!(target_arch = "x86_64"),
-        "Updates require native Windows x64"
+        crate::platform::NATIVE_64,
+        "Updates require native 64-bit Windows"
     );
     require_local_path(path)?;
     let mut prefix = PathBuf::new();
@@ -1046,6 +1053,36 @@ fn validate_installed_health(
     }
     Ok(())
 }
+fn remove_leftover(root: &Path, name: &str) -> Result<()> {
+    let path = root.join(name);
+    if !exists_no_follow(&path)? {
+        return Ok(());
+    }
+    drop(open(&path, false, true)?);
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+// A file that cannot go now (scanner, sharing, rights) is left for the next
+// hourly check. Cleanup never changes the update status or fails the check.
+fn clean_leftovers(root: &Path, from_worker: bool) {
+    let attempt = match read_attempt(root) {
+        Ok(attempt) => attempt,
+        Err(_) => return,
+    };
+    for name in leftover_files(attempt.as_ref(), from_worker) {
+        if let Err(error) = remove_leftover(root, name) {
+            eprintln!("Update leftover {name} kept: {error:#}");
+        }
+    }
+}
+fn read_attempt(root: &Path) -> Result<Option<InstallAttempt>> {
+    if !exists_no_follow(&root.join("install-attempt.json"))? {
+        return Ok(None);
+    }
+    parse_attempt(&read_bounded(root, "install-attempt.json", ATTEMPT_LIMIT)?)
+}
 fn write_attempt(root: &Path, attempt: Option<&InstallAttempt>) -> Result<()> {
     let bytes = serde_json::to_vec(&attempt)?;
     parse_attempt(&bytes)?;
@@ -1134,6 +1171,7 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
         let name = String::from_utf16(&entry.exe[..n])?;
         if name.eq_ignore_ascii_case("secblitz.exe")
             || name.eq_ignore_ascii_case("update-installer.exe")
+            || name.eq_ignore_ascii_case("update-worker.exe")
         {
             candidates.push(entry.pid);
         }
@@ -1178,7 +1216,9 @@ fn scan_busy(path: &Path, root: &Path) -> Result<(bool, Vec<u32>)> {
         unsafe {
             CloseHandle(h);
         }
-        if same(&image, &root.join("update-installer.exe")) {
+        if same(&image, &root.join("update-installer.exe"))
+            || same(&image, &root.join("update-worker.exe"))
+        {
             return Ok((true, trays));
         }
     }
@@ -1263,6 +1303,7 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
         if let Some(outcome) = recover_installation(&root, &path)? {
             return Ok(outcome);
         }
+        clean_leftovers(&root, false);
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
             .https_only(true)
@@ -1275,9 +1316,9 @@ pub(super) fn check_and_stage() -> Result<UpdateOutcome> {
         let raw = fetch_manifest(
             &client,
             origin.join(if authorization.is_some() {
-                "releases/candidate.json"
+                arch::CANDIDATE_FEED
             } else {
-                "releases/stable.json"
+                arch::STABLE_FEED
             })?,
         )?;
         let m = match authorization.as_ref() {
@@ -1483,7 +1524,10 @@ pub(super) fn install_staged() -> Result<UpdateOutcome> {
         drop(executable);
         attempt.phase = InstallPhase::Exited;
         write_attempt(&root, Some(&attempt))?;
-        recover_installation(&root, &path)?.context("Missing completed installation attempt")
+        let outcome = recover_installation(&root, &path)?
+            .context("Missing completed installation attempt")?;
+        clean_leftovers(&root, true);
+        Ok(outcome)
     })();
     if result.is_err() {
         let _ = record(
@@ -1686,6 +1730,15 @@ mod tests {
         fs::remove_dir(test_root).unwrap();
     }
     fn check_acl(sddl: &str, directory: bool, strict: bool, ancestor: bool) -> Result<()> {
+        check_acl_at(sddl, directory, strict, ancestor, false)
+    }
+    fn check_acl_at(
+        sddl: &str,
+        directory: bool,
+        strict: bool,
+        ancestor: bool,
+        root: bool,
+    ) -> Result<()> {
         unsafe {
             let mut sd = null_mut();
             ensure!(
@@ -1709,7 +1762,7 @@ mod tests {
                     && present != 0,
                 "Test DACL query failed"
             );
-            inspect_acl(owner, acl, directory, strict, ancestor)
+            inspect_acl(owner, acl, directory, strict, ancestor, root)
         }
     }
     #[test]
@@ -1750,6 +1803,29 @@ mod tests {
                     .unwrap_err()
                     .to_string()
                     .contains("Untrusted update write/execution rights"),
+                "{right:#x}"
+            );
+        }
+    }
+    #[test]
+    fn fresh_volume_root_acl_is_allowed_only_at_a_volume_root() {
+        let sddl = "O:SYG:SYD:(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1301bf;;;AU)(A;OICIIO;GA;;;SY)(A;;FA;;;SY)(A;OICIIO;GA;;;BA)(A;;FA;;;BA)(A;OICIIO;GXGR;;;BU)(A;;0x1200a9;;;BU)";
+        check_acl_at(sddl, true, false, true, true).unwrap();
+        assert!(check_acl(sddl, true, false, true).is_err());
+        assert!(check_acl_at(sddl, true, true, false, true).is_err());
+        for right in [
+            WRITE_DAC,
+            WRITE_OWNER,
+            FILE_DELETE_CHILD,
+            GENERIC_WRITE,
+            GENERIC_ALL,
+        ] {
+            let sddl = format!(
+                "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x{:x};;;AU)",
+                0x1301bf | right
+            );
+            assert!(
+                check_acl_at(&sddl, true, false, true, true).is_err(),
                 "{right:#x}"
             );
         }
@@ -1970,6 +2046,68 @@ mod tests {
     }
     #[test]
     #[ignore = "requires elevated Windows runner"]
+    fn cleanup_removes_only_staged_payloads_and_tolerates_held_files() {
+        let (root, _pins) = update_root().unwrap();
+        let dir = root.join(format!("leftover-test-{}", uuid::Uuid::new_v4()));
+        let pin = protected_update_directory(&dir).unwrap();
+        let staged = [
+            "update-installer.exe",
+            "update-manifest.json",
+            "update-worker.exe",
+        ];
+        let kept = [
+            "release-floor.json",
+            "delivery-floor.json",
+            "rollout-device-id",
+            "update-status.json",
+        ];
+        for name in staged.iter().chain(&kept) {
+            replace(&dir, name, b"x").unwrap();
+        }
+        replace(&dir, "update-tmp-stranded.tmp", b"x").unwrap();
+        let lock = lock(&dir, "update.lock").unwrap().unwrap();
+
+        write_attempt(
+            &dir,
+            Some(&super::super::tests::attempt(InstallPhase::Started)),
+        )
+        .unwrap();
+        clean_leftovers(&dir, false);
+        assert!(staged.iter().all(|n| dir.join(n).exists()));
+
+        write_attempt(&dir, None).unwrap();
+        clean_leftovers(&dir, true);
+        assert!(!dir.join("update-installer.exe").exists());
+        assert!(!dir.join("update-manifest.json").exists());
+        assert!(dir.join("update-worker.exe").exists());
+
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(dir.join("update-worker.exe"))
+            .unwrap();
+        clean_leftovers(&dir, false);
+        assert!(dir.join("update-worker.exe").exists());
+        drop(held);
+        clean_leftovers(&dir, false);
+        assert!(!dir.join("update-worker.exe").exists());
+        clean_leftovers(&dir, false);
+
+        for name in kept.iter().chain(&["update-tmp-stranded.tmp"]) {
+            assert!(dir.join(name).exists(), "{name} must stay");
+        }
+        for name in kept
+            .iter()
+            .chain(&["update-tmp-stranded.tmp", "install-attempt.json"])
+        {
+            fs::remove_file(dir.join(name)).unwrap();
+        }
+        drop((lock, pin));
+        fs::remove_file(dir.join("update.lock")).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    #[ignore = "requires elevated Windows runner"]
     fn data_access_directory_pin_blocks_prefix_rename() {
         let (root, _pins) = update_root().unwrap();
         let path = root.join(format!("update-prefix-test-{}", std::process::id()));
@@ -2059,21 +2197,21 @@ mod tests {
         let mut m = Manifest {
             schema: 1,
             version: "9.2.0".into(),
-            filename: "secblitz-9.2.0-windows-x64-setup.exe".into(),
+            filename: setup_filename("9.2.0"),
             sha256: hex::encode(Sha256::digest(b"test")),
             size: 4,
             published_at: 1000,
             expires_at: 2000,
-            target: "windows-x86_64".into(),
+            target: arch::TARGET.into(),
         };
         remember_release(&test_root, &m, "9.0.0").unwrap();
         assert!(installer(&b"fail"[..], &m).is_err());
         assert_eq!(read_floor(&test_root).unwrap().unwrap().version, "9.2.0");
         m.version = "9.1.0".into();
-        m.filename = "secblitz-9.1.0-windows-x64-setup.exe".into();
+        m.filename = setup_filename("9.1.0");
         assert!(remember_release(&test_root, &m, "9.0.0").is_err());
         m.version = "9.3.0".into();
-        m.filename = "secblitz-9.3.0-windows-x64-setup.exe".into();
+        m.filename = setup_filename("9.3.0");
         let floor_path = test_root.join("release-floor.json");
         let payload_pin = open(&floor_path, false, true).unwrap();
         assert!(remember_release(&test_root, &m, "9.0.0").is_err());

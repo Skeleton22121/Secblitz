@@ -270,9 +270,9 @@ function Gate([string]$id) {
     }
 }
 function TamperExempt([string]$id) {
-    # Strengthening-only Defender preferences that tamper protection does not
-    # guard. Kept equal to src/hardening.rs (a Rust test enforces it).
-    return ($id -in @('defender.pua','defender.script_nis','defender.asr.standard','defender.asr.web_script_email','defender.asr.office','defender.asr.ransomware_usb','defender.network_protection','defender.cloud_block_level'))
+    # Defender preferences that tamper protection does not guard.
+    # Kept equal to src/hardening.rs (a Rust test enforces it).
+    return ($id -in @('defender.pua','defender.script_nis','defender.asr.standard','defender.asr.web_script_email','defender.asr.office','defender.asr.ransomware_usb','defender.network_protection','defender.cloud_block_level','defender.cfa_watch','defender.cfa_block','defender.cfa_allowed_apps'))
 }
 $uacPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 $defenderNames = @{ 'defender.realtime'='DisableRealtimeMonitoring'; 'defender.behavior'='DisableBehaviorMonitoring'; 'defender.ioav'='DisableIOAVProtection'; 'defender.archive'='DisableArchiveScanning' }

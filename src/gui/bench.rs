@@ -45,6 +45,8 @@ fn app() -> App {
         broker: None,
         start: None,
     });
+    // Whether the what's new note opens depends on this PC's earlier use of Secblitz.
+    app.whats_new = false;
     let report = report();
     app.ctx.catalog.available = report.results.iter().map(|r| r.id.clone()).collect();
     app.ctx.checking = None;
@@ -100,6 +102,24 @@ fn checking_again_shows_the_whole_checking_screen_then_hands_off() {
     );
     drop(app.update(Message::Navigate(Page::Tools)));
     assert!(!app.ctx.finishing && app.ctx.checking.is_none());
+}
+
+#[test]
+fn a_fresh_start_checks_the_pc_instead_of_waiting_on_a_check_that_never_began() {
+    let mut app = app();
+    app.ctx.damage = Some(pages::recovery::DamageInfo::new(
+        secblitz::engine::recover::JournalDamaged {
+            kind: secblitz::engine::recover::DamageKind::Total,
+            files: 1,
+        },
+    ));
+    let catalog = app.ctx.catalog.clone();
+    drop(app.update(Message::Worker(worker::Event::Recovered(Ok(catalog)))));
+    assert!(app.ctx.damage.is_none() && app.ctx.report.is_none());
+    assert!(
+        app.ctx.checking.is_some(),
+        "the checking screen must belong to a check that is running"
+    );
 }
 
 #[test]
@@ -580,6 +600,25 @@ fn the_protection_page_lays_out_with_changed_settings_chosen_and_while_busy() {
 
 fn type_into_clean_up(app: &mut App, text: &str) {
     drop(app.update(Message::Debloat(debloat::Msg::Search(text.into()))));
+}
+
+#[test]
+fn the_copilot_row_follows_the_app_scan_and_opens_clean_up_apps_on_it() {
+    let mut scanned = app();
+    assert!(scanned.ctx.copilot_installed);
+    drop(scanned.update(Message::Debloat(debloat::Msg::Scanned(0, Ok(Vec::new())))));
+    assert!(!scanned.ctx.copilot_installed);
+
+    let mut app = app();
+    app.page = Page::Fixes;
+    drop(app.update(Message::OpenCleanUp(debloat::COPILOT_APP)));
+    assert_eq!(app.page, Page::Debloat);
+    let names: Vec<&str> = debloat::visible_apps(&app.debloat, &app.ctx)
+        .into_iter()
+        .map(|i| secblitz::debloat::catalog()[i as usize].name)
+        .collect();
+    assert!(names.contains(&"Copilot") && !names.contains(&"Solitaire games"));
+    drop(app.view());
 }
 
 #[test]
@@ -1175,6 +1214,7 @@ fn report_with(app: &mut App, open: &[&str], changed: &[&str]) {
                 CheckStatus::Compliant
             };
             o.undoable = changed.contains(&o.id.as_str());
+            o.switched_back = o.undoable;
         }
     });
 }
@@ -1309,6 +1349,35 @@ fn a_topic_counts_only_its_own_chosen_fixes() {
         fixes::chosen_in_topic(&app.fixes, &app.ctx, Topic::Network),
         ["net.llmnr"]
     );
+}
+
+#[test]
+fn an_add_on_left_on_after_others_were_turned_off_is_not_switched_back() {
+    let mut app = app();
+    let id = "browser.extensions_off";
+    let set = |app: &mut App, undoable: bool, switched_back: bool| {
+        with_report(app, |r| {
+            for o in &mut r.results {
+                o.status = CheckStatus::Compliant;
+            }
+            let o = r.results.iter_mut().find(|o| o.id == id).expect("the spec");
+            o.status = CheckStatus::Attention;
+            o.items = vec![secblitz::model::ItemLabel {
+                kind: "addon".into(),
+                name: "Add-on".into(),
+                key: format!("chromium:edge:{}", "b".repeat(32)),
+                why: "sites".into(),
+            }];
+            o.undoable = undoable;
+            o.switched_back = switched_back;
+        });
+    };
+    set(&mut app, false, false);
+    let untouched = line_of(&app, Topic::Browsers);
+    set(&mut app, true, false);
+    assert_eq!(line_of(&app, Topic::Browsers), untouched);
+    set(&mut app, true, true);
+    assert_eq!(line_of(&app, Topic::Browsers), Line::SwitchedBack(1));
 }
 
 #[test]
@@ -1711,4 +1780,56 @@ fn the_app_access_panel_lays_out_in_every_language() {
     }
     app.ctx.helper = Helper::Reopen;
     drop(app_access::view(&app.app_access, &app.ctx));
+}
+
+#[test]
+fn browser_add_ons_start_unpicked_and_only_the_picked_ones_are_turned_off() {
+    let _motion = widgets::anim::forced::set(false);
+    let mut app = app();
+    let id = "browser.extensions_off";
+    let key = |n: char| format!("chromium:chrome:{}", n.to_string().repeat(32));
+    with_report(&mut app, |r| {
+        let o = r.results.iter_mut().find(|o| o.id == id).expect("the spec");
+        o.status = "attention".into();
+        o.items = ['a', 'b']
+            .iter()
+            .map(|c| secblitz::model::ItemLabel {
+                kind: "addon".into(),
+                name: format!("Add-on {c}"),
+                key: key(*c),
+                why: "sites,programs".into(),
+            })
+            .collect();
+    });
+    drop(app.update(Message::ReviewFixes(vec![id.into()])));
+    assert_eq!(fixflow::stage_name(&app.fix), "review");
+    assert!(fixflow::addons_waiting(&app.fix), "nothing starts picked");
+    assert_eq!(
+        fixflow::addon_apply_job(&app.fix),
+        worker::Job::Apply(Vec::new()),
+        "with nothing picked the fix is left out"
+    );
+    drop(app.view());
+
+    drop(app.update(Message::Fix(fixflow::Msg::PickAddon("not.listed".into()))));
+    assert!(
+        fixflow::addons_waiting(&app.fix),
+        "unknown keys are ignored"
+    );
+    drop(app.update(Message::Fix(fixflow::Msg::PickAddon(key('b')))));
+    assert!(!fixflow::addons_waiting(&app.fix));
+    assert_eq!(
+        fixflow::addon_apply_job(&app.fix),
+        worker::Job::ApplyPicked {
+            ids: vec![id.into()],
+            picked: [(id.to_owned(), vec![key('b')])].into(),
+        }
+    );
+    drop(app.view());
+    drop(app.update(Message::Fix(fixflow::Msg::PickAddon(key('b')))));
+    assert!(fixflow::addons_waiting(&app.fix), "a second tap unpicks");
+
+    drop(app.update(Message::Fix(fixflow::Msg::Cancel)));
+    drop(app.update(Message::ReviewFixes(vec![id.into()])));
+    assert!(fixflow::addons_waiting(&app.fix), "picks do not carry over");
 }

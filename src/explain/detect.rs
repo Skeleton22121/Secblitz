@@ -10,7 +10,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         "boot.secure_boot_certs" => Explainer {
             what: "This checks that your PC's startup security has received the newer certificates from Microsoft.",
             risk: "Old startup certificates expire, and a PC without the new ones may stop getting startup security fixes.",
-            change: "Install all Windows updates and check your PC maker's website. This app never changes your PC's startup settings.",
+            change: "If Secblitz offers Renew now on the Tools page, it can't be undone and finishes after a restart. Otherwise install Windows updates.",
         },
         "defender.tamper_protection" => Explainer {
             what: "Tamper Protection stops harmful programs from switching off your virus protection.",
@@ -137,6 +137,11 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "Malware often hides in a folder like Temp or Downloads and starts again every time you turn your PC on.",
             change: "They stop starting with Windows. Nothing is deleted, and you can turn them back on by undoing this.",
         },
+        "clickfix.run_history" => Explainer {
+            what: "This looks at the commands recently typed into the Run box and counts the ones that match a known trick.",
+            risk: "Fake check pages tell you to paste a command into the Run box. It can install a program that steals your passwords.",
+            change: "Nothing changes. If something matches, scan your PC and change your passwords from another device. Your Run history is not deleted.",
+        },
         _ => return None,
     })
 }
@@ -173,6 +178,7 @@ mod tests {
         "net.dns_encryption",
         "net.wifi_security",
         "persistence.run_and_tasks",
+        "clickfix.run_history",
     ];
 
     #[test]

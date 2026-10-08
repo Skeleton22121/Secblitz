@@ -37,6 +37,9 @@ impl Engine {
         id: &str,
         transactions: &[Transaction],
     ) -> bool {
+        if super::journal::adds_batches(id) {
+            return false;
+        }
         transactions.iter().any(|other| {
             other.name != tx.name
                 && !other.reverted

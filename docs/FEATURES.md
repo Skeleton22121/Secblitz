@@ -16,7 +16,7 @@ Check your Windows security settings, choose supported fixes, and retain origina
 
 The live release is at **[secblitz.lol](https://secblitz.lol/)**. [Download 0.5.0](https://secblitz.lol/downloads/secblitz-0.5.0-windows-x64-setup.exe), or use the local installer and checksums. The genuine published **0.4.3 to 0.5.0** update passed live acceptance, including monitor resumption, release-floor advancement and real-guide deferral.
 
-Tested platform: Windows 11 Enterprise Evaluation build 26200.9457 x64. **Windows 10 is targeted but untested.** Windows binaries are unsigned by Authenticode; the updater authenticates signed Ed25519 release metadata separately. Neither is a claim of perfect protection.
+Tested platforms: Windows 11 Enterprise Evaluation x64 and, from 0.10.0, Windows 10 Enterprise Evaluation 22H2 (build 19045) x64. Windows binaries are unsigned by Authenticode; the updater authenticates signed Ed25519 release metadata separately. Neither is a claim of perfect protection.
 
 ## Scan, choose, fix, undo
 

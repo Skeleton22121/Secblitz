@@ -111,6 +111,8 @@ def site_version(readme):
 SITE_SUFFIXES = {".html", ".js", ".json", ".xml", ".txt", ".webmanifest", ".md"}
 SHA_PLACEHOLDER = "0" * 64
 SHA_ELEMENT = re.compile(r'(<code id="sha">)[0-9a-f]{64}(</code>)')
+SHA_ARM_ELEMENT = re.compile(r'(<code id="sha-arm64">)[0-9a-f]{64}(</code>)')
+FIRST_ARM64 = (0, 11, 0)
 
 
 def site_text_files(root):
@@ -128,7 +130,7 @@ def site_text_files(root):
 
 def site_patterns(old, new):
     return [
-        (r"secblitz-" + re.escape(old) + r"-windows-x64", "secblitz-" + new + "-windows-x64"),
+        (r"secblitz-" + re.escape(old) + r"-windows-(x64|arm64)", r"secblitz-" + new + r"-windows-\g<1>"),
         (r"Version " + re.escape(old) + r"\b", "Version " + new),
         (r"version-" + re.escape(old) + r"-", "version-" + new + "-"),
         (r'("softwareVersion"\s*:\s*")' + re.escape(old) + '"', r'\g<1>' + new + '"'),
@@ -143,6 +145,7 @@ def bump_site_text(text, old, new, rel, required=True):
         n_total += n
     if rel.endswith(".html"):
         text = SHA_ELEMENT.sub(lambda m: m[1] + SHA_PLACEHOLDER + m[2], text)
+        text = SHA_ARM_ELEMENT.sub(lambda m: m[1] + SHA_PLACEHOLDER + m[2], text)
     if n_total == 0 and required:
         raise BumpError(f"{rel}: no mention of version {old} found.")
     return text
@@ -155,10 +158,10 @@ def check_site(root, version):
     for rel in site_text_files(root):
         text = read(root, rel)
         found = []
-        for pat in (r"secblitz-(" + VERSION.pattern + r")-windows-x64", r"Version (" + VERSION.pattern + r")\b",
+        for pat in (r"secblitz-(" + VERSION.pattern + r")-windows-(?:x64|arm64)", r"Version (" + VERSION.pattern + r")\b",
                     r"version-(" + VERSION.pattern + r")-", r'"softwareVersion"\s*:\s*"(' + VERSION.pattern + r')"'):
             found += [m.group(1) for m in re.finditer(pat, text)]
-        seen_download = seen_download or bool(re.search(r"downloads/secblitz-" + VERSION.pattern + r"-windows-x64-setup\.exe", text))
+        seen_download = seen_download or bool(re.search(r"downloads/secblitz-" + VERSION.pattern + r"-windows-(?:x64|arm64)-setup\.exe", text))
         for shown in sorted(set(found) - {version}):
             problems.append(f"{rel} still shows version {shown}, the release is {version}.")
     if not seen_download:
@@ -166,21 +169,24 @@ def check_site(root, version):
     index = read(root, "website/index.html")
     if len(SHA_ELEMENT.findall(index)) != 1:
         problems.append('website/index.html must have exactly one <code id="sha"> with a 64-digit checksum.')
-    if not re.search(r"downloads/secblitz-" + re.escape(version) + r"-windows-x64-setup\.exe", index):
-        problems.append(f"website/index.html does not link the {version} setup.")
+    if len(SHA_ARM_ELEMENT.findall(index)) != 1:
+        problems.append('website/index.html must have exactly one <code id="sha-arm64"> with a 64-digit checksum.')
+    for arch in ("x64", "arm64"):
+        if not re.search(r"downloads/secblitz-" + re.escape(version) + rf"-windows-{arch}-setup\.exe", index):
+            problems.append(f"website/index.html does not link the {version} {arch} setup.")
     return problems
 
 
 def add_historical(text, old):
     """Add the replaced version's setup to HISTORICAL in stage-pages.py. The
     portable exe is too big for Pages, so it is offered on GitHub only."""
-    setup = f"secblitz-{old}-windows-x64-setup.exe"
-    if f'"{setup}"' in text:
-        return text
+    archs = ["x64"] + (["arm64"] if parse(old) >= FIRST_ARM64 else [])
+    setups = [f"secblitz-{old}-windows-{arch}-setup.exe" for arch in archs]
     m = re.search(r"(HISTORICAL = \(\n)(.*?)(\n\)\n)", text, re.S)
     if not m:
         raise BumpError("scripts/stage-pages.py: HISTORICAL list not found.")
-    return text[:m.end(2)] + f'\n    "{setup}",' + text[m.end(2):]
+    added = "".join(f'\n    "{setup}",' for setup in setups if f'"{setup}"' not in text)
+    return text[:m.end(2)] + added + text[m.end(2):]
 
 
 HEADING = re.compile(r"^## \[([^\]]+)\](?: - (.*))?[ \t]*$", re.M)

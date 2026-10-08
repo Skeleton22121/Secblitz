@@ -15,7 +15,7 @@ use crate::i18n::Lang;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
-use pages::{app_access, debloat, fixes, fixflow, history, home, settings, tools, web};
+use pages::{app_access, debloat, fixes, fixflow, history, home, recovery, settings, tools, web};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ use theme::{Palette, Tone};
 use persist::{forget_check, persist, Cache};
 pub use persist::{save_prefs, wait_persisted};
 pub use tasks::{blocking, blocking_stream};
-use window::window_icon;
+use window::{match_title_bar, window_icon};
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -139,6 +139,7 @@ pub struct Ctx {
     pub worker: worker::Worker,
     pub catalog: worker::Catalog,
     pub engine_error: Option<String>,
+    pub damage: Option<recovery::DamageInfo>,
     pub report: Option<Arc<Report>>,
     pub check_error: Option<String>,
     pub checked_at: Option<u64>,
@@ -150,8 +151,11 @@ pub struct Ctx {
     pub helper: Helper,
     pub state_dir: Option<PathBuf>,
     pub prefs: app::settings::Prefs,
+    /// This x64 build runs through emulation on an ARM PC.
+    pub x64_on_arm: bool,
     pub toast: Option<(String, Tone)>,
     pub explain_open: Option<String>,
+    pub copilot_installed: bool,
 }
 
 impl Ctx {
@@ -220,6 +224,8 @@ impl Ctx {
 #[derive(Debug, Clone)]
 pub enum Message {
     Navigate(Page),
+    /// Opens Clean up apps already narrowed to the app with this package name.
+    OpenCleanUp(&'static str),
     CheckNow,
     Worker(worker::Event),
     ReviewFixes(Vec<String>),
@@ -231,6 +237,7 @@ pub enum Message {
     SearchEscape,
     Find,
     Noop,
+    CloseWhatsNew,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
     Explain(String),
@@ -248,6 +255,7 @@ pub enum Message {
     Tools(tools::Msg),
     History(history::Msg),
     Settings(settings::Msg),
+    Recovery(recovery::Msg),
     AppAccess(app_access::Msg),
     PageOpened(crate::guide::Page, bool),
     WindowFocus(bool),
@@ -308,6 +316,7 @@ pub struct App {
     pub settings: settings::State,
     pub app_access: app_access::State,
     privacy_shown: bool,
+    whats_new: bool,
     toast_gen: u32,
     toast_leaving: bool,
     entered: Option<std::time::Instant>,
@@ -338,7 +347,14 @@ impl App {
     }
 
     fn new(options: Options) -> (Self, Task<Message>) {
-        let prefs = app::settings::load();
+        let used_before =
+            secblitz::platform::app_dir().is_ok_and(|dir| app::whats_new::used_before(&dir));
+        let mut prefs = app::settings::load();
+        let whats_new = app::whats_new::due(prefs.whats_new_seen.as_deref(), used_before);
+        let news_unrecorded = prefs.whats_new_seen.as_deref() != Some(app::whats_new::VERSION);
+        if news_unrecorded {
+            prefs.whats_new_seen = Some(app::whats_new::VERSION.to_owned());
+        }
         persist::sync_notify(&prefs);
         let lang = prefs
             .lang
@@ -349,13 +365,22 @@ impl App {
             app::settings::ThemeChoice::Dark => theme::Mode::Dark,
             app::settings::ThemeChoice::Light => theme::Mode::Light,
         };
-        let worker = worker::Worker::spawn(|| {
-            let engine = secblitz::engine::Engine::open(
-                secblitz::platform::state_dir()?,
-                secblitz::permissions::with_permissions(secblitz::platform::backend()?),
-            )?;
-            Ok(Box::new(engine) as Box<dyn worker::Session>)
-        });
+        let worker = worker::Worker::spawn(
+            || {
+                let engine = secblitz::engine::Engine::open(
+                    secblitz::platform::state_dir()?,
+                    secblitz::permissions::with_permissions(secblitz::platform::backend()?),
+                )?;
+                Ok(Box::new(engine) as Box<dyn worker::Session>)
+            },
+            || {
+                secblitz::engine::recover::start_fresh(
+                    &secblitz::platform::state_dir()?,
+                    secblitz::permissions::with_permissions(secblitz::platform::backend()?),
+                )
+                .map(drop)
+            },
+        );
         let broker = options
             .broker
             .as_deref()
@@ -388,6 +413,7 @@ impl App {
             worker: worker.clone(),
             catalog: worker::Catalog::default(),
             engine_error: None,
+            damage: None,
             check_error: None,
             checked_at,
             checking: report.is_none().then(CheckProgress::default),
@@ -398,8 +424,10 @@ impl App {
             helper,
             state_dir,
             prefs,
+            x64_on_arm: secblitz::platform::x64_on_arm(),
             toast: None,
             explain_open: None,
+            copilot_installed: false,
         };
         let mut app = App {
             page: options.start.unwrap_or_default(),
@@ -414,6 +442,7 @@ impl App {
             settings: Default::default(),
             app_access: Default::default(),
             privacy_shown: false,
+            whats_new,
             toast_gen: 0,
             toast_leaving: false,
             entered: None,
@@ -439,15 +468,38 @@ impl App {
         let web_state = web::on_enter(&mut app.web, &mut app.ctx);
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
+        let news = if news_unrecorded {
+            Task::perform(persist::save_prefs(app.ctx.prefs.clone()), |_| {
+                Message::Noop
+            })
+        } else {
+            Task::none()
+        };
+        let title_bar = match_title_bar(app.ctx.palette).map(|()| Message::Noop);
         (
             app,
-            Task::batch([opened, first_check, enter, web_state, pending]),
+            Task::batch([
+                opened,
+                first_check,
+                enter,
+                web_state,
+                pending,
+                news,
+                title_bar,
+            ]),
         )
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let was_busy = self.ctx.busy;
+        let mode = self.ctx.palette.mode;
         let mut task = self.handle(message);
+        if self.ctx.palette.mode != mode {
+            task = Task::batch([
+                task,
+                match_title_bar(self.ctx.palette).map(|()| Message::Noop),
+            ]);
+        }
         let privacy = self.page == Page::Fixes
             && fixes::topic_on_show(&self.fixes) == Some(crate::app::topics::Topic::Privacy);
         if privacy && !self.privacy_shown {
@@ -483,6 +535,11 @@ impl App {
                         iced::widget::operation::RelativeOffset::START,
                     ),
                 ])
+            }
+            Message::OpenCleanUp(family) => {
+                let shown =
+                    debloat::update(&mut self.debloat, debloat::Msg::Show(family), &mut self.ctx);
+                Task::batch([shown, self.update(Message::Navigate(Page::Debloat))])
             }
             Message::PageFrame(now) => self.step_frame(now),
             Message::HandoffLeave(start) => {
@@ -531,6 +588,9 @@ impl App {
                 Task::none()
             }
             Message::Escape => {
+                if std::mem::take(&mut self.whats_new) {
+                    return Task::none();
+                }
                 if self.fix.is_open() {
                     return fixflow::escape(&mut self.fix, &mut self.ctx);
                 }
@@ -576,6 +636,10 @@ impl App {
                 )
             }
             Message::Noop => Task::none(),
+            Message::CloseWhatsNew => {
+                self.whats_new = false;
+                Task::none()
+            }
             Message::PageOpened(page, ok) => {
                 let text = if ok {
                     self.recheck.arm(std::time::Instant::now(), self.focused);
@@ -653,9 +717,27 @@ impl App {
                         self.flight[WARM_DEBLOAT] = false;
                     }
                 }
-                debloat::update(&mut self.debloat, m, &mut self.ctx)
+                let task = debloat::update(&mut self.debloat, m, &mut self.ctx);
+                self.ctx.copilot_installed =
+                    debloat::is_installed(&self.debloat, debloat::COPILOT_APP);
+                task
             }
-            Message::Web(m) => web::update(&mut self.web, m, &mut self.ctx),
+            Message::Web(m) => {
+                let focus = matches!(m, web::Msg::FocusPrivacy);
+                let task = web::update(&mut self.web, m, &mut self.ctx);
+                if focus {
+                    // Privacy is the last group on the What to block tab.
+                    Task::batch([
+                        task,
+                        iced::widget::operation::snap_to(
+                            PAGE_SCROLL,
+                            iced::widget::operation::RelativeOffset::END,
+                        ),
+                    ])
+                } else {
+                    task
+                }
+            }
             Message::Tools(m) => tools::update(&mut self.tools, m, &mut self.ctx),
             Message::History(m) => {
                 if matches!(m, history::Msg::Loaded(..)) {
@@ -669,6 +751,7 @@ impl App {
                 }
                 settings::update(&mut self.settings, m, &mut self.ctx)
             }
+            Message::Recovery(m) => recovery::update(m, &mut self.ctx),
             Message::AppAccess(m) => app_access::update(&mut self.app_access, m, &mut self.ctx),
         }
     }
@@ -708,10 +791,34 @@ impl App {
 
     fn process_worker(&mut self, event: worker::Event) -> Task<Message> {
         use worker::Event as E;
+        let mut extra = Task::none();
         match &event {
             E::Opened(Ok(catalog)) => self.ctx.catalog = catalog.clone(),
             E::Opened(Err(e)) => {
                 self.ctx.engine_error = Some(self.ctx.t(crate::launcher::friendly_problem(e)));
+            }
+            E::Damaged(damage) => self.ctx.damage = Some(recovery::DamageInfo::new(*damage)),
+            E::Recovered(Ok(catalog)) => {
+                self.ctx.catalog = catalog.clone();
+                self.ctx.damage = None;
+                self.ctx.engine_error = None;
+                self.ctx.busy = false;
+                self.ctx.report = None;
+                self.ctx.checked_at = None;
+                self.ctx.check_error = None;
+                self.ctx.checking = None;
+                self.record_recovery();
+                let done = self.ctx.t(recovery::DONE);
+                extra = Task::batch([
+                    self.update(Message::Toast(done, Tone::Good)),
+                    self.preload_all(),
+                    self.update(Message::CheckNow),
+                ]);
+            }
+            E::Recovered(Err(_)) => {
+                recovery::failed(&mut self.ctx);
+                let text = self.ctx.t(recovery::FAILED);
+                extra = self.update(Message::Toast(text, Tone::Warn));
             }
             E::Progress { phase, id, status } => {
                 if matches!(phase, worker::Phase::Checking | worker::Phase::Verifying) {
@@ -777,7 +884,22 @@ impl App {
             fixflow::on_worker(&mut self.fix, &event, &mut self.ctx),
             history::on_worker(&mut self.history, &event, &mut self.ctx),
             warm,
+            extra,
         ])
+    }
+
+    fn record_recovery(&mut self) {
+        let Some(dir) = self.ctx.state_dir.clone() else {
+            return;
+        };
+        let entry = self.entry(
+            app::history::now(),
+            app::history::Kind::Recovery,
+            &Score::default(),
+            0,
+        );
+        let _ = app::history::record(&dir, &entry);
+        forget_check(Some(dir));
     }
 
     fn assessed(&mut self, outcome: &worker::Outcome, kind: app::history::Kind, n: usize) {
@@ -1059,6 +1181,11 @@ impl App {
             Some(content) => widgets::sheet_layer(p, content),
             None => none(),
         };
+        let news_layer = if self.whats_new {
+            widgets::sheet_layer(p, self.whats_new_panel(p))
+        } else {
+            none()
+        };
         let toast_layer = match &self.ctx.toast {
             Some((message, tone)) => container(widgets::toast(
                 p,
@@ -1072,7 +1199,47 @@ impl App {
             .into(),
             None => none(),
         };
-        stack![body, modal_layer, fix_layer, toast_layer].into()
+        stack![body, modal_layer, fix_layer, news_layer, toast_layer].into()
+    }
+
+    fn whats_new_panel(&self, p: Palette) -> Element<'_, Message> {
+        let mut notes = column![].spacing(theme::S2);
+        for note in app::whats_new::NOTES {
+            notes = notes.push(
+                row![
+                    widgets::icon(Icon::Check, 16.0, p.tone(Tone::Good)),
+                    widgets::body(p, self.ctx.t(note))
+                ]
+                .spacing(theme::S2)
+                .align_y(Alignment::Center),
+            );
+        }
+        column![
+            row![
+                widgets::icon(Icon::Sparkles, theme::ICON_ROW, p.text_muted),
+                widgets::h2(p, self.ctx.t("What's new in Secblitz"))
+            ]
+            .spacing(theme::S3)
+            .align_y(Alignment::Center),
+            widgets::muted(
+                p,
+                format!("{} {}", self.ctx.t("Version"), app::whats_new::VERSION)
+            ),
+            notes,
+            row![
+                iced::widget::space::horizontal(),
+                widgets::action(
+                    p,
+                    widgets::ButtonKind::Primary,
+                    self.ctx.t("Got it"),
+                    None,
+                    Some(Message::CloseWhatsNew),
+                )
+            ],
+        ]
+        .spacing(theme::S4)
+        .width(Length::Fill)
+        .into()
     }
 
     fn verdict_tone(&self) -> Tone {

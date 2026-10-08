@@ -48,6 +48,10 @@ pub struct Prefs {
     pub notify_reverted: bool,
     #[serde(default = "on")]
     pub notify_dangerous: bool,
+    #[serde(default)]
+    pub processor_tip_seen: bool,
+    #[serde(default)]
+    pub whats_new_seen: Option<String>,
 }
 
 fn on() -> bool {
@@ -63,6 +67,8 @@ impl Default for Prefs {
             protection_topic: None,
             notify_reverted: true,
             notify_dangerous: true,
+            processor_tip_seen: false,
+            whats_new_seen: None,
         }
     }
 }
@@ -73,7 +79,7 @@ impl Prefs {
     }
 }
 
-const FILE: &str = "gui-prefs.json";
+pub const FILE: &str = "gui-prefs.json";
 const LIMIT: u64 = 8 * 1024;
 
 fn path() -> anyhow::Result<PathBuf> {
@@ -110,6 +116,15 @@ pub fn parse(bytes: &[u8]) -> Prefs {
     ] {
         *slot = map.get(key).and_then(|v| v.as_bool()).unwrap_or(true);
     }
+    prefs.processor_tip_seen = map
+        .get("processor_tip_seen")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    prefs.whats_new_seen = map
+        .get("whats_new_seen")
+        .and_then(|v| v.as_str())
+        .filter(|v| v.len() <= 32 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+        .map(str::to_owned);
     if let Some(tab) = map
         .get("tools_tab")
         .and_then(|v| v.as_str())
@@ -191,6 +206,19 @@ pub fn tray_enabled() -> bool {
     #[cfg(windows)]
     {
         run_key::get().is_some()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// True only when Windows confirms the startup entry is gone, never on a failed read,
+/// so a running tray closes when the user turns it off and not on a passing error.
+pub fn tray_turned_off() -> bool {
+    #[cfg(windows)]
+    {
+        run_key::absent()
     }
     #[cfg(not(windows))]
     {
@@ -296,6 +324,26 @@ mod run_key {
         } else {
             None
         }
+    }
+
+    pub fn absent() -> bool {
+        let Ok(key) = open(KEY_QUERY_VALUE) else {
+            return false;
+        };
+        let name = wide(TRAY_VALUE);
+        let mut size = 0u32;
+        // SAFETY: a null data pointer only asks for the value size.
+        let status = unsafe {
+            RegQueryValueExW(
+                key.0,
+                name.as_ptr(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut size,
+            )
+        };
+        status == ERROR_FILE_NOT_FOUND
     }
 
     pub fn set(command: &str) -> anyhow::Result<()> {
@@ -428,12 +476,37 @@ mod tests {
             protection_topic: Some(crate::app::topics::Topic::Browsers),
             notify_reverted: false,
             notify_dangerous: true,
+            processor_tip_seen: true,
+            whats_new_seen: Some("0.11.0".into()),
         };
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
         assert!(!dir.path().join("gui-prefs.json.tmp").exists());
         std::fs::write(&file, b"{broken").unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), Prefs::default());
+    }
+
+    #[test]
+    fn the_processor_tip_is_unseen_until_recorded() {
+        assert!(!Prefs::default().processor_tip_seen);
+        assert!(!parse(b"{}").processor_tip_seen);
+        assert!(!parse(br#"{"processor_tip_seen":"yes"}"#).processor_tip_seen);
+        let seen = parse(br#"{"processor_tip_seen":true,"theme":"dark"}"#);
+        assert!(seen.processor_tip_seen);
+        assert_eq!(seen.theme, ThemeChoice::Dark);
+    }
+
+    #[test]
+    fn only_a_version_number_is_kept_as_the_last_news_seen() {
+        assert_eq!(parse(b"{}").whats_new_seen, None);
+        assert_eq!(
+            parse(br#"{"whats_new_seen":"0.10.0"}"#)
+                .whats_new_seen
+                .as_deref(),
+            Some("0.10.0")
+        );
+        assert_eq!(parse(br#"{"whats_new_seen":"<b>"}"#).whats_new_seen, None);
+        assert_eq!(parse(br#"{"whats_new_seen":10}"#).whats_new_seen, None);
     }
 
     #[test]

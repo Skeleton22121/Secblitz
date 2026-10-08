@@ -22,9 +22,19 @@ env:
 
 jobs:
   rust:
-    name: Rust tests and lints (Windows, MSVC)
-    runs-on: windows-latest
+    name: Rust tests and lints (Windows ${{ matrix.arch }}, MSVC)
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
     permissions:
       contents: read
     steps:
@@ -33,18 +43,24 @@ jobs:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
         shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           # The version lives in rust-toolchain.toml only.
           $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
-          rustup toolchain install $channel --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
+          rustup toolchain install $channel --profile minimal --component clippy --component rustfmt --target $env:TARGET
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           rustc --version --verbose
       - name: Cache cargo downloads and build output
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Tests
-        run: cargo test --locked --all-targets --target x86_64-pc-windows-msvc
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo test --locked --all-targets --target $env:TARGET
       - name: Clippy
-        run: cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo clippy --locked --all-targets --target $env:TARGET -- -D warnings
 
   scripts:
     name: Locales, release tools, version bump and website tests
