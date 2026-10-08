@@ -718,6 +718,192 @@ HWrite (Input '{"items":{"path:C:\\Users\\Bob\\Downloads":1}}')
 Assert (@($script:exPaths) -contains 'C:\Users\Bob\Downloads' -and @($script:exPaths).Count -eq 2) 'exclusion undo verified through the reader'
 Reject { HWrite (Input '{"items":{"path:D:\\Games":0}}') } 'Unknown hardening item'
 
+# Folder protection: the mode, the app names that may be allowed and the allow list.
+& {
+function HSet([string]$name, $v) { & $realHSet $name $v }
+$cfaWatchJson = '{"id":"defender.cfa_watch","source":"DefenderPref","dynamic":false,"reboot":false,"keys":[{"name":"EnableControlledFolderAccess","path":"","rule":"set","safe":[1,2,3,4],"absentSafe":false,"fix":2,"max":4}],' + $noGate + '}'
+$cfaBlockJson = '{"id":"defender.cfa_block","source":"DefenderPref","dynamic":false,"reboot":false,"keys":[{"name":"EnableControlledFolderAccess","path":"","rule":"set","safe":[1,3],"absentSafe":false,"fix":1,"max":4}],' + $noGate + '}'
+$cfaAppsJson = '{"id":"defender.cfa_allowed_apps","source":"CfaAllowedApps","dynamic":true,"reboot":false,"keys":[{"name":"*","path":"","rule":"set","safe":[1],"absentSafe":false,"fix":1,"max":1}],' + $noGate + '}'
+$script:hCfaPrefs = @{}
+function Get-MpPreference { return [pscustomobject]$script:hCfaPrefs }
+$script:cfaSet = @{}
+function Set-MpPreference { param($EnableControlledFolderAccess); $script:cfaSet['mode'] = $EnableControlledFolderAccess; $script:hCfaPrefs['EnableControlledFolderAccess'] = $EnableControlledFolderAccess }
+MakeSpec $cfaWatchJson
+foreach ($pair in @(@('Disabled', 0), @('Enabled', 1), @('AuditMode', 2), @('BlockDiskModificationsOnly', 3), @('AuditDiskModificationsOnly', 4), @(2, 2))) {
+    $script:hCfaPrefs = @{ EnableControlledFolderAccess = $pair[0] }
+    Assert ((HReadDefenderPref)['EnableControlledFolderAccess'] -eq $pair[1]) "folder protection mode $($pair[0])"
+    Assert ((HCfaMode) -eq $pair[1]) "folder protection preflight mode $($pair[0])"
+}
+foreach ($bad in @('Other', 5, $null)) {
+    $script:hCfaPrefs = @{ EnableControlledFolderAccess = $bad }
+    Reject { HReadDefenderPref } 'not readable'
+}
+$script:hCfaPrefs = @{}
+Reject { HCfaMode } 'not readable'
+$def = HDef 'EnableControlledFolderAccess'
+foreach ($mode in 0..4) {
+    Assert ((HIsSafe $def $mode) -eq ($mode -ne 0)) "watch safe at $mode"
+    Assert ((HFixOf $def $mode) -eq $(if ($mode -eq 0) { 2 } else { $mode })) "watch fix at $mode"
+}
+MakeSpec $cfaBlockJson
+$def = HDef 'EnableControlledFolderAccess'
+foreach ($mode in 0..4) {
+    Assert ((HIsSafe $def $mode) -eq ($mode -eq 1 -or $mode -eq 3)) "block safe at $mode"
+    Assert ((HFixOf $def $mode) -eq $(if ($mode -eq 1 -or $mode -eq 3) { $mode } else { 1 })) "block fix at $mode"
+}
+$script:hCfaPrefs = @{ EnableControlledFolderAccess = 'AuditMode' }
+HSetDefenderPref $def 1
+Assert ($script:cfaSet['mode'] -ceq 'Enabled') 'full protection is Enabled'
+MakeSpec $cfaWatchJson
+HSetDefenderPref (HDef 'EnableControlledFolderAccess') 2
+Assert ($script:cfaSet['mode'] -ceq 'AuditMode') 'watching is AuditMode'
+HSetDefenderPref (HDef 'EnableControlledFolderAccess') 0
+Assert ($script:cfaSet['mode'] -ceq 'Disabled') 'undo of watching is Disabled'
+
+# The preflight offers each step only at the right moment.
+$script:cfaStatusOn = $true
+function Get-MpComputerStatus { return [pscustomobject]@{ RealTimeProtectionEnabled = $script:cfaStatusOn } }
+$script:fakePaths = @()
+function Test-Path { param($LiteralPath, $Path); return (@($script:fakePaths) -contains $(if ($LiteralPath) { $LiteralPath } else { $Path })) }
+foreach ($case in @(
+    @($cfaWatchJson, 0, $true, ''),
+    @($cfaWatchJson, 2, $true, ''),
+    @($cfaBlockJson, 0, $false, 'has not been watched yet'),
+    @($cfaBlockJson, 1, $false, 'has not been watched yet'),
+    @($cfaBlockJson, 2, $true, ''),
+    @($cfaBlockJson, 4, $true, ''),
+    @($cfaAppsJson, 0, $false, 'folder protection is off'),
+    @($cfaAppsJson, 1, $true, ''),
+    @($cfaAppsJson, 2, $true, '')
+)) {
+    MakeSpec $case[0]
+    $script:hCfaPrefs = @{ EnableControlledFolderAccess = $case[1] }
+    if ($case[2]) { & $realHPreflight }
+    else { Reject { & $realHPreflight } $case[3] }
+}
+MakeSpec $cfaWatchJson
+$script:hCfaPrefs = @{ EnableControlledFolderAccess = 0 }
+$script:cfaStatusOn = $false
+Reject { & $realHPreflight } 'real-time protection is off'
+$script:cfaStatusOn = $true
+$script:fakePaths = @('HKLM:\SOFTWARE\Microsoft\CCM')
+Reject { & $realHPreflight } 'Configuration Manager'
+$script:fakePaths = @()
+
+# App names: one drive-letter path to one .exe, never a script tool.
+MakeSpec $cfaAppsJson
+foreach ($ok in @('app:C:\Tools\PhotoTool.exe', 'app:D:\Games\Save Helper\helper.EXE', 'app:C:\Program Files (x86)\V\a.exe')) { Assert (HNameOk $ok) "app name $ok" }
+foreach ($bad in @('', 'app:', 'C:\Tools\a.exe', 'App:C:\a.exe', 'app:Tools\a.exe', 'app:\\server\share\a.exe', 'app:C:a.exe', 'app:C:\', 'app:C:\a.exe\',
+        'app:C:\Tools\a.dll', 'app:C:\Tools\.exe', 'app:C:\Tools\*.exe', 'app:C:\*\a.exe', 'app:C:\Tools\a?.exe', 'app:C:\Tools\..\a.exe', 'app:C:\Tools\.\a.exe',
+        'app:C:\Tools\\a.exe', 'app:%ProgramFiles%\a.exe', 'app:C:/Tools/a.exe', 'app:C:\Tools\a.exe:s', 'app:C:\Tools\a".exe', "app:C:\Tools\a`n.exe",
+        'app: C:\Tools\a.exe', 'app:C:\Tools\a.exe ', 'app:C:\Tools \a.exe', 'app:C:\Tools\a|b.exe', ('app:C:\' + ('a' * 260) + '.exe'),
+        'app:C:\Windows\System32\cmd.exe', 'app:C:\Windows\System32\WindowsPowerShell\v1.0\POWERSHELL.EXE', 'app:C:\Program Files\PowerShell\7\pwsh.exe',
+        'app:C:\Windows\System32\wscript.exe', 'app:C:\Windows\System32\cscript.exe', 'app:C:\Windows\System32\mshta.exe', 'app:C:\Windows\System32\rundll32.exe')) {
+    Assert (!(HNameOk $bad)) "app name accepted: $bad"
+}
+
+# Events become app paths: the "Process Name" field first, the position as the fallback.
+$eventXml = '<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><EventID>1124</EventID></System><EventData><Data Name="Product Name">Microsoft Defender Antivirus</Data><Data Name="Path">C:\Users\Bob\Documents\a.docx</Data><Data Name="Process Name">C:\Tools\PhotoTool.exe</Data></EventData></Event>'
+Assert ((HCfaEventPath $eventXml @()) -ceq 'C:\Tools\PhotoTool.exe') 'event process name by field name'
+$positional = '<Event><EventData><Data>x</Data></EventData></Event>'
+$props = @(1..5 | ForEach-Object { [pscustomobject]@{ Value = "p$_" } }) + @([pscustomobject]@{ Value = 'D:\Apps\sync.exe' })
+Assert ((HCfaEventPath $positional $props) -ceq 'D:\Apps\sync.exe') 'event process name by position'
+Assert ([string]::IsNullOrEmpty((HCfaEventPath 'not xml' @()))) 'an unreadable event names no app'
+
+$script:cfaFiles = @('C:\Tools\PhotoTool.exe', 'C:\Tools\Edit.exe', 'D:\Apps\sync.exe', 'C:\Windows\System32\cmd.exe')
+function HCfaFileExists([string]$path) { return (@($script:cfaFiles) -contains $path) }
+$allowedMap = @{ 'd:\apps\sync.exe' = 'D:\Apps\sync.exe' }
+$seenPaths = @('C:\Tools\PhotoTool.exe', 'C:\Tools\Edit.exe', 'c:\tools\edit.exe', 'C:\Tools\Edit.exe', 'D:\Apps\sync.exe', 'C:\Windows\System32\cmd.exe', 'C:\Gone\missing.exe', 'C:\Tools\*.exe', 'relative.exe', $null, 5)
+$picked = @(HCfaPickApps $seenPaths $allowedMap)
+Assert ($picked.Count -eq 2 -and $picked[0] -ceq 'C:\Tools\Edit.exe' -and $picked[1] -ceq 'C:\Tools\PhotoTool.exe') "most seen first; allowed, missing, odd and script tools left out: $($picked -join ',')"
+Assert (@(HCfaPickApps @() @{}).Count -eq 0) 'no events, no apps'
+$many = @(1..40 | ForEach-Object { "C:\Tools\app$_.exe" })
+$script:cfaFiles = $many
+Assert (@(HCfaPickApps $many @{}).Count -eq 24) 'at most 24 apps are offered'
+$script:cfaFiles = @('C:\Tools\PhotoTool.exe', 'C:\Tools\Edit.exe', 'D:\Apps\sync.exe')
+
+# Reading: candidates read 0, allowed apps Secblitz added read 1, other allowed apps are not listed.
+$script:cfaState = @{}
+function HStateNames() { return @($script:cfaState.Keys) }
+function HStateGet([string]$name) { if ($script:cfaState.ContainsKey($name)) { return $script:cfaState[$name] }; return $null }
+function HStateSet([string]$name, $data) { $script:cfaState[$name] = $data }
+function HStateRemove([string]$name) { $null = $script:cfaState.Remove($name) }
+$script:hCfaAllowed = @('D:\Apps\sync.exe')
+$script:hCfaEvents = @('C:\Tools\PhotoTool.exe', 'C:\Tools\PhotoTool.exe', 'C:\Tools\Edit.exe', 'D:\Apps\sync.exe')
+function Get-MpPreference { return [pscustomobject]@{ ControlledFolderAccessAllowedApplications = $script:hCfaAllowed; EnableControlledFolderAccess = 2 } }
+function Get-WinEvent { param($FilterHashtable, $MaxEvents, $ErrorAction); $script:cfaQuery = $FilterHashtable; return @($script:hCfaEvents | ForEach-Object { $e = [pscustomobject]@{ Path = $_ }; $e | Add-Member ScriptMethod ToXml { return ('<Event><EventData><Data Name="Process Name">' + $this.Path + '</Data></EventData></Event>') }; $e | Add-Member NoteProperty Properties @(); $e }) }
+$script:hWanted = @{}
+$r = HReadCfaApps
+Assert ($r.Count -eq 2 -and $r['app:C:\Tools\PhotoTool.exe'] -eq 0 -and $r['app:C:\Tools\Edit.exe'] -eq 0) "candidates read 0, an app that is already allowed is not listed: $($r.Keys -join ',')"
+Assert ($script:cfaQuery.LogName -ceq 'Microsoft-Windows-Windows Defender/Operational' -and @($script:cfaQuery.Id) -contains 1123 -and @($script:cfaQuery.Id) -contains 1124) 'both the audited and the blocked events are read'
+Assert (([datetime]::Now - $script:cfaQuery.StartTime).TotalDays -lt 7.1 -and ([datetime]::Now - $script:cfaQuery.StartTime).TotalDays -gt 6.9) 'the last seven days are read'
+Assert ($script:hLabels.Count -eq 2 -and $script:hLabels['app:C:\Tools\Edit.exe'] -ceq 'C:\Tools\Edit.exe') 'each flagged app is named by its path'
+$labels = @(HLabelList $r)
+Assert ($labels.Count -eq 2 -and $labels[0].kind -ceq 'app' -and $labels[0].name -ceq 'C:\Tools\Edit.exe') 'flagged apps are shown as apps'
+# Each app is shown with who published it; an unsigned one in a download folder is called out.
+function Get-AuthenticodeSignature { param($LiteralPath); $script:cfaSig[$LiteralPath] }
+$script:cfaSig = @{
+    'C:\Users\a\Downloads\x.exe' = [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+    'C:\Tools\Edit.exe' = [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+    'C:\Tools\Bad.exe' = [pscustomobject]@{ Status = 'HashMismatch'; SignerCertificate = $null }
+}
+Assert ((HCfaLabel 'C:\Users\a\Downloads\x.exe') -ceq 'C:\Users\a\Downloads\x.exe (not signed, in a temporary or download folder)') 'unsigned download is called out'
+Assert ((HCfaLabel 'C:\Tools\Edit.exe') -ceq 'C:\Tools\Edit.exe (not signed)') 'unsigned app is named'
+Assert ((HCfaLabel 'C:\Tools\Bad.exe') -ceq 'C:\Tools\Bad.exe (signature not valid)') 'broken signature is named'
+Remove-Item function:Get-AuthenticodeSignature
+$script:hCfaEvents = @()
+Assert ((HReadCfaApps).Count -eq 0) 'no events, nothing to offer'
+$script:hCfaAllowed = @('N/A: Must be an administrator to view exclusions')
+Reject { HReadCfaApps } 'not readable'
+$script:hCfaAllowed = @('D:\Apps\sync.exe')
+
+# Allowing one app records it, undo removes exactly that one and nothing the person added.
+$script:cfaAdded = @()
+function Add-MpPreference { param($ControlledFolderAccessAllowedApplications); $script:cfaAdded += @($ControlledFolderAccessAllowedApplications); $script:hCfaAllowed = @($script:hCfaAllowed) + @($ControlledFolderAccessAllowedApplications) }
+function Remove-MpPreference { param($ControlledFolderAccessAllowedApplications); $script:hCfaAllowed = @($script:hCfaAllowed | Where-Object { $_ -ne $ControlledFolderAccessAllowedApplications }) }
+function HRead { & $realHRead }
+function HGate { }
+function HPreflight { }
+$script:hCfaEvents = @('C:\Tools\PhotoTool.exe', 'C:\Tools\Edit.exe')
+HWrite (Input '{"items":{"app:C:\\Tools\\PhotoTool.exe":1,"app:C:\\Tools\\Edit.exe":1}}')
+Assert (@($script:cfaAdded).Count -eq 2 -and @($script:hCfaAllowed).Count -eq 3) 'both apps were allowed'
+Assert ($script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe') -and $script:cfaState.ContainsKey('app:C:\Tools\Edit.exe') -and $script:cfaState.Count -eq 2) 'each allowed app is recorded'
+$r = HReadCfaApps
+Assert ($r['app:C:\Tools\PhotoTool.exe'] -eq 1 -and $r['app:C:\Tools\Edit.exe'] -eq 1 -and $r.Count -eq 2) 'allowed apps read 1'
+HWrite (Input '{"items":{"app:C:\\Tools\\PhotoTool.exe":0,"app:C:\\Tools\\Edit.exe":0}}')
+Assert (@($script:hCfaAllowed).Count -eq 1 -and $script:hCfaAllowed[0] -ceq 'D:\Apps\sync.exe' -and $script:cfaState.Count -eq 0) 'undo removes exactly the apps Secblitz added'
+# Windows can ignore the change without an error (Tamper Protection): nothing is recorded as done.
+function Add-MpPreference { param($ControlledFolderAccessAllowedApplications) }
+$script:hCfaSeen['c:\tools\phototool.exe'] = $true
+Reject { HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 1 } 'Tamper Protection'
+Assert (!$script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'a refused allow is not recorded'
+function Add-MpPreference { param($ControlledFolderAccessAllowedApplications); $script:hCfaAllowed = @($script:hCfaAllowed) + @($ControlledFolderAccessAllowedApplications) }
+HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 1
+Assert ($script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'an accepted allow is recorded'
+function Remove-MpPreference { param($ControlledFolderAccessAllowedApplications) }
+Reject { HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 0 } 'Tamper Protection'
+Assert ($script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'a refused removal keeps the record'
+function Remove-MpPreference { param($ControlledFolderAccessAllowedApplications); $script:hCfaAllowed = @($script:hCfaAllowed | Where-Object { $_ -ne $ControlledFolderAccessAllowedApplications }) }
+HSetCfaApp 'app:C:\Tools\PhotoTool.exe' 0
+Assert (!$script:cfaState.ContainsKey('app:C:\Tools\PhotoTool.exe')) 'an accepted removal clears the record'
+Reject { HSetCfaApp 'app:D:\Apps\sync.exe' 0 } 'Unknown hardening item'
+Reject { HSetCfaApp 'app:C:\Windows\System32\cmd.exe' 1 } 'Unknown hardening item'
+Reject { HSetCfaApp 'app:C:\Tools\*.exe' 1 } 'Unknown hardening item'
+Reject { HSetCfaApp 'app:C:\Missing\gone.exe' 1 } 'was not seen changing your files'
+$script:hCfaSeen['c:\missing\gone.exe'] = $true
+Reject { HSetCfaApp 'app:C:\Missing\gone.exe' 1 } 'could not be found'
+Reject { HSetCfaApp 'app:C:\Tools\Edit.exe' 2 } 'Invalid allowed app state'
+Reject { HSetCfaApp 'app:C:\Tools\Edit.exe' $null } 'Invalid allowed app state'
+Assert (@($script:hCfaAllowed).Count -eq 1) 'refused requests change nothing'
+Reject { HWrite (Input '{"items":{"app:C:\\Tools\\Gone.exe":1}}') } 'was not seen changing your files'
+Assert (@($script:hCfaAllowed).Count -eq 1 -and $script:cfaState.Count -eq 0) 'an app that was never seen is not allowed'
+Reject { HWrite (Input '{"items":{"cmd.exe":1}}') } 'Unknown hardening item'
+function Add-MpPreference { param($ControlledFolderAccessAllowedApplications); throw 'fixture add failure' }
+Reject { HSetCfaApp 'app:C:\Tools\Edit.exe' 1 } 'fixture add failure'
+Assert ($script:cfaState.Count -eq 0) 'a failed allow leaves no record behind'
+$script:hWanted = @{}
+}
+
 MakeSpec $svcJson
 foreach ($ok in @('RemoteRegistry', 'WinRM', 'sshd', 'TlntSvr', 'FTPSVC', 'W3SVC', 'SNMP')) { Assert (HNameOk $ok) "service $ok" }
 foreach ($bad in @('Spooler', 'winrm', 'WinRM ', "WinRM'; calc", '')) { Assert (!(HNameOk $bad)) "service name accepted: $bad" }

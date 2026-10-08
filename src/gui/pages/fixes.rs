@@ -339,6 +339,7 @@ fn item_names(r: &secblitz::engine::Outcome) -> Option<(&'static str, Vec<&str>)
     let (key, kind) = match r.id.as_str() {
         "accounts.stale_enabled" => ("Accounts: {names}", "account"),
         "smb.shares_exposed" => ("Folders: {names}", "share"),
+        "defender.cfa_allowed_apps" => ("Apps: {names}", "app"),
         _ => return None,
     };
     let mut names: Vec<&str> = Vec::new();
@@ -643,7 +644,7 @@ fn ensure(state: &State, ctx: &Ctx, report: &Arc<Report>) {
 fn item_lines(ctx: &Ctx, items: &[secblitz::model::ItemLabel]) -> Vec<String> {
     items
         .iter()
-        .filter(|item| !matches!(item.kind.as_str(), "account" | "share"))
+        .filter(|item| !matches!(item.kind.as_str(), "account" | "share" | "app"))
         .map(|item| match item.kind.as_str() {
             "skip_missing" => format!(
                 "{}: {}. {}",

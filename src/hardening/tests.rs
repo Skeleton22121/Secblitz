@@ -1948,3 +1948,115 @@ fn browser_add_ons_are_left_alone_where_the_browser_is_managed() {
     assert!(script.contains(r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist"));
     assert!(script.contains(r"SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist"));
 }
+
+#[test]
+fn folder_protection_controls_set_only_the_documented_modes() {
+    let watch = spec("defender.cfa_watch").unwrap();
+    let block = spec("defender.cfa_block").unwrap();
+    for s in [watch, block] {
+        assert_eq!(s.source, Source::DefenderPref);
+        assert!(s.ask && !s.reboot && !s.dynamic());
+        assert_eq!(s.keys.len(), 1);
+        assert_eq!(s.keys[0].name, "EnableControlledFolderAccess");
+        assert_eq!(s.keys[0].allowed, &[0, 1, 2, 3, 4]);
+        assert!(s.validate(&items(s, &[Some(5)])).is_err());
+    }
+    let state = |n| items(watch, &[Some(n)]);
+    for (mode, watch_unsafe, block_unsafe) in [
+        (0, true, true),
+        (1, false, false),
+        (2, false, true),
+        (3, false, false),
+        (4, false, true),
+    ] {
+        assert_eq!(watch.any_unsafe(&state(mode)), watch_unsafe, "watch {mode}");
+        assert_eq!(block.any_unsafe(&state(mode)), block_unsafe, "block {mode}");
+    }
+    assert_eq!(watch.derive_target(&state(0)).unwrap(), state(2));
+    assert_eq!(block.derive_target(&state(2)).unwrap(), state(1));
+    assert_eq!(block.derive_target(&state(4)).unwrap(), state(1));
+    assert_eq!(watch.derive_target(&state(3)).unwrap(), state(3));
+    assert!(!watch.gate.tamper_exempt && !block.gate.tamper_exempt);
+}
+
+#[test]
+fn allowed_apps_name_one_existing_style_exe_and_never_a_script_tool() {
+    let apps = spec("defender.cfa_allowed_apps").unwrap();
+    assert!(apps.dynamic() && apps.exact_recorded() && apps.ask);
+    apps.validate(&json!({"items": {
+        "app:C:\\Tools\\PhotoTool.exe": 0,
+        "app:D:\\Games\\Save Helper\\helper.EXE": 1,
+        "app:C:\\Program Files (x86)\\Vendor\\app.exe": 1,
+        "app:E:\\Ünï\\ápp.exe": 0,
+    }}))
+    .unwrap();
+    for bad in [
+        "",
+        "app:",
+        "C:\\Tools\\a.exe",
+        "App:C:\\Tools\\a.exe",
+        "app:Tools\\a.exe",
+        "app:\\\\server\\share\\a.exe",
+        "app:C:a.exe",
+        "app:C:\\",
+        "app:C:\\a.exe\\",
+        "app:C:\\Tools\\a.dll",
+        "app:C:\\Tools\\.exe",
+        "app:C:\\Tools\\*.exe",
+        "app:C:\\Tools\\a?.exe",
+        "app:C:\\*\\a.exe",
+        "app:C:\\Tools\\..\\a.exe",
+        "app:C:\\Tools\\.\\a.exe",
+        "app:C:\\Tools\\\\a.exe",
+        "app:%ProgramFiles%\\a.exe",
+        "app:C:/Tools/a.exe",
+        "app:C:\\Tools\\a.exe:stream",
+        "app:C:\\Tools\\a\".exe",
+        "app:C:\\Tools\\a\n.exe",
+        "app: C:\\Tools\\a.exe",
+        "app:C:\\Tools\\a.exe ",
+        "app:C:\\Tools \\a.exe",
+        "app:C:\\Tools\\a|b.exe",
+        "app:C:\\Windows\\System32\\cmd.exe",
+        "app:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\POWERSHELL.EXE",
+        "app:C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "app:C:\\Windows\\System32\\wscript.exe",
+        "app:C:\\Windows\\System32\\cscript.exe",
+        "app:C:\\Windows\\System32\\mshta.exe",
+        "app:C:\\Windows\\System32\\rundll32.exe",
+    ] {
+        assert!(
+            apps.validate(&json!({"items": {bad: 0}})).is_err(),
+            "accepted {bad:?}"
+        );
+    }
+    assert!(apps
+        .validate(&json!({"items": {"app:C:\\Tools\\a.exe": 2}}))
+        .is_err());
+    let long = format!("app:C:\\{}.exe", "a".repeat(260));
+    assert!(apps.validate(&json!({"items": {long: 0}})).is_err());
+
+    let a = "app:C:\\Tools\\a.exe";
+    let b = "app:C:\\Tools\\b.exe";
+    let before = json!({"items": {a: 0, b: 1}});
+    assert!(apps.any_unsafe(&before));
+    assert_eq!(
+        apps.derive_target(&before).unwrap(),
+        json!({"items": {a: 1, b: 1}})
+    );
+    assert_eq!(
+        apps.view(&json!({"items": {b: 1, "app:C:\\new.exe": 0}}), &before),
+        json!({"items": {a: 0, b: 1}})
+    );
+}
+
+#[test]
+fn the_script_tool_list_matches_the_powershell_backend() {
+    let script = include_str!("../platform/hardening.ps1");
+    let start = script.find("function HCfaScriptHosts").unwrap();
+    let body = &script[start..start + script[start..].find('\n').unwrap()];
+    for host in SCRIPT_HOSTS {
+        assert!(body.contains(&format!("'{host}'")), "{host}");
+    }
+    assert_eq!(body.matches('\'').count(), SCRIPT_HOSTS.len() * 2);
+}

@@ -33,6 +33,7 @@ function HNameOk([string]$name) {
     if ($spec.source -ceq 'StaleAccounts') { return (HStaleNameOk $name) }
     if ($spec.source -ceq 'ShareGrants') { return (HShareNameOk $name) }
     if ($spec.source -ceq 'BrowserExtensions') { return (HAddonNameOk $name) }
+    if ($spec.source -ceq 'CfaAllowedApps') { return (HCfaAppNameOk $name) }
     return ($name.Length -ge 1 -and $name.Length -le 64 -and $name -cnotmatch '[\x00-\x1f\x7f"]' -and $name.Trim() -ceq $name)
 }
 function HIsSafe($def, $v) {
@@ -87,6 +88,10 @@ function HReadRegistry($def) {
 $hMaps = @('Disabled','Basic','Advanced')
 $hPua = @('Disabled','Enabled','AuditMode')
 $hNp = @('Disabled','Enabled','AuditMode')
+$hCfa = @('Disabled','Enabled','AuditMode','BlockDiskModificationsOnly','AuditDiskModificationsOnly')
+$hCfaMaxApps = 24
+$hCfaEventDays = 7
+$hCfaSeen = @{}
 $hCbl = @{ Default = 0; Moderate = 1; High = 2; HighPlus = 4; ZeroTolerance = 6 }
 function HCloudLevel($v) {
     if ($null -eq $v) { throw 'Defender preference is not readable' }
@@ -122,6 +127,7 @@ function HReadDefenderPref() {
             # Editions without the feature may not report it: treat as off, never as protected.
             if ($null -eq $raw) { $out[$def.name] = 0 } else { $out[$def.name] = HEnumNumber $raw $hNp }
         }
+        elseif ($def.name -ceq 'EnableControlledFolderAccess') { $out[$def.name] = HCfaModeNumber $raw }
         elseif ($def.name -ceq 'CloudBlockLevel') { $out[$def.name] = HCloudLevel $raw }
         elseif ($def.name -ceq 'CloudExtendedTimeout') {
             if ($null -eq $raw) { throw 'Defender preference is not readable' }
@@ -366,6 +372,7 @@ function HRead() {
         'StaleAccounts' { return (HReadStale) }
         'ShareGrants' { return (HReadShares) }
         'BrowserExtensions' { return (HReadExtensions) }
+        'CfaAllowedApps' { return (HReadCfaApps) }
         'RecoveryTools' { return (HReadRecovery) }
     }
     throw 'Unknown hardening source'
@@ -514,6 +521,15 @@ function HPreflight() {
                 if (!(HEditionHasNetworkProtection)) { throw 'Not offered: this edition of Windows does not include it' }
                 if ($status.BehaviorMonitorEnabled -ne $true) { throw 'Not offered: Defender behavior monitoring is off' }
             }
+        }
+        { $_ -in @('defender.cfa_watch','defender.cfa_block','defender.cfa_allowed_apps') } {
+            Load 'Defender'
+            $status = Get-MpComputerStatus
+            if ($status.RealTimeProtectionEnabled -ne $true) { throw 'Not offered: Defender real-time protection is off' }
+            if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\CCM') { throw 'Not offered: this PC uses Configuration Manager' }
+            $mode = HCfaMode
+            if ($spec.id -ceq 'defender.cfa_block' -and $mode -ne 2 -and $mode -ne 4) { throw 'Not offered: folder protection has not been watched yet' }
+            if ($spec.id -ceq 'defender.cfa_allowed_apps' -and $mode -eq 0) { throw 'Not offered: folder protection is off' }
         }
         'browser.dns_bypass' {
             # Only offered while the filter is really answering lookups.
@@ -721,6 +737,7 @@ function HSetDefenderPref($def, $v) {
     if ($def.name -ceq 'MAPSReporting') { $p[$def.name] = $hMaps[[int]$v] }
     elseif ($def.name -ceq 'PUAProtection') { $p[$def.name] = $hPua[[int]$v] }
     elseif ($def.name -ceq 'EnableNetworkProtection') { $p[$def.name] = $hNp[[int]$v] }
+    elseif ($def.name -ceq 'EnableControlledFolderAccess') { $p[$def.name] = $hCfa[[int]$v] }
     elseif ($def.name -ceq 'CloudBlockLevel') {
         $level = @($hCbl.Keys | Where-Object { $hCbl[$_] -eq [int]$v })
         if ($level.Count -ne 1) { throw 'Invalid cloud block level' }
@@ -865,6 +882,7 @@ function HSet([string]$name, $v) {
         'StaleAccounts' { HSetStale $name $v }
         'ShareGrants' { HSetShare $name $v }
         'BrowserExtensions' { HSetExtension $name $v }
+        'CfaAllowedApps' { HSetCfaApp $name $v }
         'RecoveryTools' { HSetRecovery $name $v }
         default { throw 'Unknown hardening source' }
     }
@@ -1357,6 +1375,165 @@ function HSetExclusion([string]$name, $v) {
         'path' { if ($add) { Add-MpPreference -ExclusionPath $p.value } else { Remove-MpPreference -ExclusionPath $p.value } }
         'ext' { if ($add) { Add-MpPreference -ExclusionExtension $p.value } else { Remove-MpPreference -ExclusionExtension $p.value } }
         'proc' { if ($add) { Add-MpPreference -ExclusionProcess $p.value } else { Remove-MpPreference -ExclusionProcess $p.value } }
+    }
+}
+
+# ---- defender.cfa_*: folder protection mode and the apps it may let through
+function HCfaModeNumber($raw) {
+    $n = HEnumNumber $raw $hCfa
+    if ($n -lt 0 -or $n -gt 4) { throw 'Defender preference is not readable' }
+    return $n
+}
+function HCfaMode() {
+    Load 'Defender'
+    $prop = (Get-MpPreference).PSObject.Properties['EnableControlledFolderAccess']
+    if ($null -eq $prop) { throw 'Defender preference is not readable' }
+    return (HCfaModeNumber $prop.Value)
+}
+function HCfaScriptHosts() { return @('powershell.exe', 'pwsh.exe', 'powershell_ise.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'cmd.exe', 'rundll32.exe', 'regsvr32.exe') }
+function HCfaAppNameOk([string]$name) {
+    if (!$name.StartsWith('app:', [StringComparison]::Ordinal)) { return $false }
+    $path = $name.Substring(4)
+    if ($path.Length -lt 7 -or $path.Length -gt 260 -or $path.Trim() -cne $path) { return $false }
+    if ($path -cnotmatch '^[A-Za-z]:\\') { return $false }
+    if ($path -cmatch '[\x00-\x1f\x7f-\x9f"*?<>|%/]' -or $path.IndexOf(':', 2) -ge 0) { return $false }
+    $parts = $path.Substring(3).Split([char]92)
+    foreach ($part in $parts) {
+        if ($part.Length -eq 0 -or $part -ceq '.' -or $part -ceq '..' -or $part.TrimEnd() -cne $part) { return $false }
+    }
+    $leaf = $parts[$parts.Length - 1].ToLowerInvariant()
+    return ($leaf.Length -gt 4 -and $leaf.EndsWith('.exe', [StringComparison]::Ordinal) -and ((HCfaScriptHosts) -cnotcontains $leaf))
+}
+function HCfaFileExists([string]$path) { return [IO.File]::Exists($path) }
+function HCfaAllowedMap() {
+    Load 'Defender'
+    $map = @{}
+    $prop = (Get-MpPreference).PSObject.Properties['ControlledFolderAccessAllowedApplications']
+    if ($null -eq $prop) { return $map }
+    foreach ($entry in @($prop.Value)) {
+        if ($null -eq $entry) { continue }
+        if ($entry -isnot [string] -or $entry.StartsWith('N/A:')) { throw 'The allowed apps are not readable' }
+        $map[$entry.ToLowerInvariant()] = $entry
+    }
+    return $map
+}
+# The program that changed a protected file. The event names it "Process Name"; the position is the fallback.
+function HCfaEventPath([string]$xmlText, $props) {
+    $path = $null
+    try {
+        $xml = New-Object Xml.XmlDocument
+        $xml.LoadXml($xmlText)
+        foreach ($d in @($xml.GetElementsByTagName('Data'))) {
+            if ($d.GetAttribute('Name') -ceq 'Process Name') { $path = [string]$d.InnerText }
+        }
+    } catch { $path = $null }
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $list = @($props)
+        if ($list.Count -gt 5 -and $null -ne $list[5]) {
+            $item = $list[5]
+            $path = if ($item.PSObject.Properties['Value']) { [string]$item.Value } else { [string]$item }
+        }
+    }
+    return $path
+}
+function HCfaAuditedPaths() {
+    Load 'Microsoft.PowerShell.Diagnostics'
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1123, 1124; StartTime = (Get-Date).AddDays(-$hCfaEventDays) } -MaxEvents 500 -ErrorAction Stop)
+    } catch { return @() }
+    $paths = @()
+    foreach ($e in $events) {
+        $path = HCfaEventPath ([string]$e.ToXml()) @($e.Properties)
+        if (![string]::IsNullOrWhiteSpace($path)) { $paths += $path.Trim() }
+    }
+    return $paths
+}
+# Apps seen most often first; only ones that pass the name rules, exist and are not allowed yet.
+function HCfaPickApps($paths, $allowed) {
+    $count = @{}
+    $first = @{}
+    foreach ($raw in @($paths)) {
+        if ($raw -isnot [string]) { continue }
+        $path = $raw.Trim()
+        if (!(HCfaAppNameOk ('app:' + $path))) { continue }
+        $key = $path.ToLowerInvariant()
+        if ($allowed.ContainsKey($key)) { continue }
+        if (!$count.ContainsKey($key)) { $count[$key] = 0; $first[$key] = $path }
+        $count[$key]++
+    }
+    $keys = @($count.Keys | Where-Object { HCfaFileExists $first[$_] } | Sort-Object @{ Expression = { -$count[$_] } }, @{ Expression = { $_ } })
+    return @($keys | Select-Object -First $hCfaMaxApps | ForEach-Object { $first[$_] })
+}
+# The path with who published the program, so an unknown or unsigned one stands out.
+function HCfaSignerNote([string]$path) {
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $path
+        $status = [string]$sig.Status
+        if ($status -ceq 'NotSigned') {
+            if ($path -match '(?i)\\(temp|downloads|appdata)\\') { return 'not signed, in a temporary or download folder' }
+            return 'not signed'
+        }
+        if ($status -ceq 'Valid' -and $null -ne $sig.SignerCertificate) {
+            $who = HClean ([string]$sig.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false))
+            if ($who.Length -gt 0) { return ('by ' + $who) }
+        }
+        return 'signature not valid'
+    } catch { return '' }
+}
+function HCfaLabel([string]$path) {
+    $note = HCfaSignerNote $path
+    if ($note.Length -eq 0) { return $path }
+    if ($note.Length -gt 50) { $note = $note.Substring(0, 50) }
+    $tail = ' (' + $note + ')'
+    $room = 120 - $tail.Length
+    $shown = if ($path.Length -gt $room) { $path.Substring(0, $room - 3) + '...' } else { $path }
+    return ($shown + $tail)
+}
+function HReadCfaApps() {
+    $allowed = HCfaAllowedMap
+    $out = @{}
+    $seen = @{}
+    $script:hLabels = @{}
+    $known = @(HStateNames) + @(HWantedNames)
+    foreach ($name in $known) {
+        if (!(HCfaAppNameOk $name)) { continue }
+        $key = $name.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $out[$name] = if ($allowed.ContainsKey($name.Substring(4).ToLowerInvariant())) { 1 } else { 0 }
+    }
+    $script:hCfaSeen = @{}
+    foreach ($path in @(HCfaPickApps (HCfaAuditedPaths) $allowed)) {
+        $script:hCfaSeen[$path.ToLowerInvariant()] = $true
+        $name = 'app:' + $path
+        if ($seen.ContainsKey($name.ToLowerInvariant())) { continue }
+        $seen[$name.ToLowerInvariant()] = $true
+        $out[$name] = 0
+    }
+    foreach ($name in @($out.Keys)) { if ($out[$name] -eq 0) { HLabel $name (HCfaLabel $name.Substring(4)) } }
+    if ($out.Count -gt 256) { throw 'Too many apps to handle at once' }
+    return $out
+}
+function HSetCfaApp([string]$name, $v) {
+    if (!(HCfaAppNameOk $name)) { throw 'Unknown hardening item' }
+    if ($null -eq $v -or ([int]$v -ne 0 -and [int]$v -ne 1)) { throw 'Invalid allowed app state' }
+    Load 'Defender'
+    $path = $name.Substring(4)
+    if ([int]$v -eq 1) {
+        # Only an app that was seen changing files in the last week, or one Secblitz allowed before, can be allowed.
+        if ($null -eq (HStateGet $name) -and !$script:hCfaSeen.ContainsKey($path.ToLowerInvariant())) { throw 'An app to allow was not seen changing your files' }
+        if (!(HCfaFileExists $path)) { throw 'An app to allow could not be found' }
+        HStateSet $name @{ path = $path }
+        try {
+            Add-MpPreference -ControlledFolderAccessAllowedApplications $path
+            if (!(HCfaAllowedMap).ContainsKey($path.ToLowerInvariant())) { throw 'Windows did not accept the change. Tamper Protection may be on.' }
+        } catch { HStateRemove $name; throw }
+    } else {
+        # Only an app Secblitz allowed is ever taken off the list.
+        if ($null -eq (HStateGet $name)) { throw 'Unknown hardening item' }
+        Remove-MpPreference -ControlledFolderAccessAllowedApplications $path
+        if ((HCfaAllowedMap).ContainsKey($path.ToLowerInvariant())) { throw 'Windows did not accept the change. Tamper Protection may be on.' }
+        HStateRemove $name
     }
 }
 

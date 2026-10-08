@@ -61,6 +61,9 @@ pub fn control_impact(id: &str) -> &'static str {
         "defender.network_protection" => {
             "Programs connecting to known harmful websites and servers"
         }
+        "defender.cfa_watch" => "Not knowing which apps change your personal files",
+        "defender.cfa_block" => "Ransomware locking your photos and documents",
+        "defender.cfa_allowed_apps" => "A trusted app being stopped from saving your work",
         "defender.cloud_block_level" => {
             "Brand-new harmful files slipping through before anyone has judged them"
         }

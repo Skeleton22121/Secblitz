@@ -179,7 +179,48 @@ try {
                 $items = @($rows | Select-Object -First 64 | ForEach-Object { @{date_unix_seconds=(UnixTime $_.TimeCreated)} })
                 Items $items ($rows.Count -gt 64)
             }
-            @{shadow_copy_count=$shadows;success_events=$events}
+            $fileHistory = Fact {
+                Load 'Microsoft.PowerShell.Diagnostics'
+                $log = Get-WinEvent -ListLog 'Microsoft-Windows-FileHistory-Core/WHC' -ErrorAction Stop
+                if (!$log.IsEnabled -and $log.RecordCount -eq 0) { throw 'File History log unavailable' }
+                $rows = @()
+                try { $rows = @(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-FileHistory-Core/WHC';Id=201;StartTime=[DateTime]::Now.AddDays(-400)} -MaxEvents 1) }
+                catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound,*') { throw } }
+                if ($rows.Count -eq 0) { [uint64]0 } else { [uint64](UnixTime $rows[0].TimeCreated) }
+            }
+            $oneDrive = Fact {
+                $sid = InteractiveSid
+                $key = [Microsoft.Win32.Registry]::Users.OpenSubKey($sid + '\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders', $false)
+                if ($null -eq $key) { throw 'Folders unreadable' }
+                try {
+                    $covered = 0
+                    foreach ($name in @('Personal','My Pictures','Desktop')) {
+                        $value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                        if ($value -is [string] -and $value -match '(?i)(^|[\\/%])OneDrive') { $covered++ }
+                    }
+                    $covered
+                } finally { $key.Dispose() }
+            }
+            $fileHistoryDrive = Fact {
+                $sid = InteractiveSid
+                $profileKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $sid, $false)
+                if ($null -eq $profileKey) { throw 'Profile unreadable' }
+                try { $profilePath = $profileKey.GetValue('ProfileImagePath', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } finally { $profileKey.Dispose() }
+                if ($profilePath -isnot [string] -or $profilePath -cnotmatch '^[A-Za-z]:\\') { throw 'Profile unreadable' }
+                $config = [IO.Path]::Combine($profilePath, 'AppData\Local\Microsoft\Windows\FileHistory\Configuration\Config1.xml')
+                if (![IO.File]::Exists($config)) { throw 'File History not set up' }
+                $m = [regex]::Match([IO.File]::ReadAllText($config), '<TargetUrl>([^<]{1,260})</TargetUrl>')
+                if (!$m.Success) { throw 'Target unreadable' }
+                $target = $m.Groups[1].Value.Trim()
+                $volumes = @(Cim 'Win32_Volume' | Select-Object -First 64)
+                $hit = $null
+                if ($target -match '^([A-Za-z]:)') { $hit = @($volumes | Where-Object { $_.DriveLetter -ieq $Matches[1] }) }
+                elseif ($target -match '(?i)Volume\{[0-9a-f-]{36}\}') { $id = $Matches[0]; $hit = @($volumes | Where-Object { [string]$_.DeviceID -like "*$id*" }) }
+                else { throw 'Target is not a local drive' }
+                if ($hit.Count -ne 1) { throw 'Drive not connected' }
+                [int]$hit[0].DriveType -eq 2
+            }
+            @{shadow_copy_count=$shadows;success_events=$events;file_history_last_unix_seconds=$fileHistory;onedrive_folders=$oneDrive;file_history_drive_removable_connected=$fileHistoryDrive}
         }
         'Adapters' {
             Load 'NetAdapter'

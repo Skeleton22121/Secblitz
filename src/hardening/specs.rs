@@ -1448,4 +1448,40 @@ pub(super) static SPECS: &[Spec] = &[
             ..NO_GATE
         },
     },
+    Spec {
+        id: "defender.cfa_watch",
+        title: "Watch for apps changing your files",
+        description: "Set Defender folder protection to watch only: it records which apps change files in folders like Documents and Pictures, and blocks nothing. Only offered while folder protection is off. The earlier mode is restored on undo.",
+        source: Source::DefenderPref,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2, 3, 4],
+            ..set("EnableControlledFolderAccess", "", &[1, 2, 3, 4], false, Some(2), 4)
+        }],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "defender.cfa_block",
+        title: "Protect your files from ransomware",
+        description: "Turn on Defender folder protection so apps Windows does not trust cannot change files in folders like Documents and Pictures. Only offered after a week of watching. The earlier mode is restored on undo.",
+        source: Source::DefenderPref,
+        reboot: false,
+        ask: true,
+        keys: &[Key {
+            allowed: &[0, 1, 2, 3, 4],
+            ..set("EnableControlledFolderAccess", "", &[1, 3], false, Some(1), 4)
+        }],
+        gate: NO_GATE,
+    },
+    Spec {
+        id: "defender.cfa_allowed_apps",
+        title: "Apps allowed to change your files",
+        description: "Add the apps that folder protection watched or blocked to its list of allowed apps. Only .exe files that exist are added, never script tools or wildcards. Each app Secblitz adds is recorded and undo removes exactly that one.",
+        source: Source::CfaAllowedApps,
+        reboot: false,
+        ask: true,
+        keys: &[set("*", "", &[1], false, Some(1), 1)],
+        gate: NO_GATE,
+    },
 ];

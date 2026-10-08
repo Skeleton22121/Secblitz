@@ -145,6 +145,7 @@ impl Engine {
             &mut report,
             &mut callback,
         )?;
+        self.cfa_note(&report.results);
         report.findings = self.findings();
         Ok(report)
     }

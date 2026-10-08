@@ -46,6 +46,9 @@ pub fn control_label(id: &str) -> &'static str {
         "defender.asr.office" => "Office attack shields",
         "defender.asr.ransomware_usb" => "Ransomware and USB shields",
         "defender.network_protection" => "Harmful website blocking",
+        "defender.cfa_watch" => "Watch for apps changing your files",
+        "defender.cfa_block" => "Protect your files from ransomware",
+        "defender.cfa_allowed_apps" => "Apps allowed to change your files",
         "defender.cloud_block_level" => "Stricter cloud blocking",
         "net.stack_hardening" => "Network traffic hardening",
         "net.netbios" => "Old name service (NetBIOS)",
@@ -190,6 +193,9 @@ pub(super) fn control_help(id: &str) -> (&'static str, NextStep) {
         | "defender.asr.ransomware_usb"
         | "defender.network_protection"
         | "defender.cloud_block_level"
+        | "defender.cfa_watch"
+        | "defender.cfa_block"
+        | "defender.cfa_allowed_apps"
         | "net.stack_hardening"
         | "net.netbios"
         | "net.mdns"

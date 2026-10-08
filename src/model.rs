@@ -65,7 +65,7 @@ pub struct ItemLabel {
 }
 
 impl ItemLabel {
-    pub const KINDS: [&'static str; 11] = [
+    pub const KINDS: [&'static str; 12] = [
         "service",
         "rule",
         "startup",
@@ -74,6 +74,7 @@ impl ItemLabel {
         "account",
         "share",
         "addon",
+        "app",
         "skip_missing",
         "skip_shadow",
         "more",

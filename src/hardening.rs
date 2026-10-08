@@ -98,6 +98,9 @@ pub enum Source {
     /// list, 2 turned off by us and changed since). Only the add-ons the person
     /// picks are ever looked at (see [`Spec::narrow`]).
     BrowserExtensions,
+    /// Dynamic: programs that folder protection watched or blocked while changing files
+    /// (0 not allowed yet), and the ones Secblitz allowed (1).
+    CfaAllowedApps,
 }
 
 pub const ITEM_FIXED: u32 = 0;
@@ -351,6 +354,7 @@ fn key_name_ok(source: Source, name: &str) -> bool {
         Source::StaleAccounts => stale_account_name_ok(name),
         Source::ShareGrants => share_grant_name_ok(name),
         Source::BrowserExtensions => addon_name_ok(name),
+        Source::CfaAllowedApps => cfa_app_name_ok(name),
         _ => false,
     }
 }
@@ -378,6 +382,52 @@ fn stale_account_name_ok(name: &str) -> bool {
         && parts[3]
             .parse::<u64>()
             .is_ok_and(|rid| (1000..=u64::from(u32::MAX)).contains(&rid))
+}
+
+/// Programs that run other programs or scripts: allowing one would let anything
+/// it starts change protected files.
+pub const SCRIPT_HOSTS: &[&str] = &[
+    "powershell.exe",
+    "pwsh.exe",
+    "powershell_ise.exe",
+    "wscript.exe",
+    "cscript.exe",
+    "mshta.exe",
+    "cmd.exe",
+    "rundll32.exe",
+    "regsvr32.exe",
+];
+
+/// `app:<drive letter path to one .exe>`: no wildcards, variables, network
+/// paths, relative parts or script hosts.
+fn cfa_app_name_ok(name: &str) -> bool {
+    let Some(path) = name.strip_prefix("app:") else {
+        return false;
+    };
+    let b = path.as_bytes();
+    if path.chars().count() > 260
+        || path.len() < 7
+        || !(b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\')
+        || path.trim() != path
+        || path
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '"' | '*' | '?' | '<' | '>' | '|' | '%' | '/'))
+        || path[2..].contains(':')
+    {
+        return false;
+    }
+    let mut parts = path[3..].split('\\').peekable();
+    let mut leaf = "";
+    while let Some(part) = parts.next() {
+        if part.is_empty() || part == "." || part == ".." || part.trim_end() != part {
+            return false;
+        }
+        if parts.peek().is_none() {
+            leaf = part;
+        }
+    }
+    let leaf = leaf.to_ascii_lowercase();
+    leaf.ends_with(".exe") && leaf.len() > 4 && !SCRIPT_HOSTS.contains(&leaf.as_str())
 }
 
 pub const BROAD_SIDS: &[&str] = &["S-1-1-0", "S-1-5-7", "S-1-5-32-546"];
@@ -462,6 +512,7 @@ impl Spec {
                 | Source::StaleAccounts
                 | Source::ShareGrants
                 | Source::BrowserExtensions
+                | Source::CfaAllowedApps
         )
     }
 
@@ -610,7 +661,10 @@ impl Spec {
     /// narrowed by what is observed now): the observation is narrowed to them
     /// instead, with vanished items read as "0" (see [`Spec::view`]).
     pub fn exact_recorded(&self) -> bool {
-        matches!(self.source, Source::StaleAccounts | Source::ShareGrants)
+        matches!(
+            self.source,
+            Source::StaleAccounts | Source::ShareGrants | Source::CfaAllowedApps
+        )
     }
 
     /// Restrict an observation to the keys of a journaled template. Fixed

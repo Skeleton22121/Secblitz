@@ -61,14 +61,16 @@ function HLabelKind([string]$name) {
         'StaleAccounts' { return 'account' }
         'ShareGrants' { return 'share' }
         'BrowserExtensions' { return 'addon' }
+        'CfaAllowedApps' { return 'app' }
     }
     return ''
 }
 function HLabelList($slice) {
     $out = @()
     $more = 0
+    $flagged = if ([string]$spec.source -ceq 'CfaAllowedApps') { 0 } else { 1 }
     foreach ($name in @($slice.Keys | Sort-Object)) {
-        if (!$script:hLabels.ContainsKey($name) -or $null -eq $slice[$name] -or $slice[$name] -is [string] -or [int64]$slice[$name] -ne 1) { continue }
+        if (!$script:hLabels.ContainsKey($name) -or $null -eq $slice[$name] -or $slice[$name] -is [string] -or [int64]$slice[$name] -ne $flagged) { continue }
         $kind = HLabelKind $name
         if ($kind -eq '') { continue }
         foreach ($text in @($script:hLabels[$name])) {

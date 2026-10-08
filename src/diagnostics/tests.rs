@@ -307,25 +307,44 @@ fn backup_coverage_reports_found_stale_and_missing_backups() {
     let ev = |age: u64| BackupEvent {
         date_unix_seconds: now - age * 86_400,
     };
-    assert_eq!(
-        rules::backup_coverage(Some(&[ev(3)]), Some(0), Some(now)).0,
-        Status::Healthy
-    );
-    assert_eq!(
-        rules::backup_coverage(Some(&[ev(80)]), Some(2), Some(now)).0,
-        Status::Attention
-    );
-    let (status, detail) = rules::backup_coverage(Some(&[]), Some(4), Some(now));
+    let drive = |events: Option<&[BackupEvent]>,
+                 fh: Option<u64>,
+                 od: Option<u32>,
+                 plugged: Option<bool>| {
+        rules::backup_coverage(
+            &rules::BackupSources {
+                events,
+                shadow_copies: Some(0),
+                file_history_last: fh,
+                onedrive_folders: od,
+                file_history_drive_plugged_in: plugged,
+            },
+            Some(now),
+        )
+    };
+    let src = |events: Option<&[BackupEvent]>, fh: Option<u64>, od: Option<u32>| {
+        drive(events, fh, od, None)
+    };
+    assert_eq!(src(Some(&[ev(3)]), None, None).0, Status::Healthy);
+    assert_eq!(src(Some(&[ev(80)]), None, None).0, Status::Attention);
+    let (status, detail) = src(Some(&[]), Some(0), Some(0));
     assert_eq!(status, Status::Attention);
     assert!(detail.starts_with("No backup found"));
-    assert_ne!(
-        rules::backup_coverage(Some(&[]), Some(4), Some(now)).0,
-        Status::Healthy
-    );
-    assert_eq!(
-        rules::backup_coverage(None, Some(4), Some(now)).0,
-        Status::Unknown
-    );
+    let (status, detail) = src(Some(&[ev(20)]), Some(now - 3 * 86_400), None);
+    assert_eq!(status, Status::Healthy);
+    assert!(detail.starts_with("Last backup: 3 days ago (File History)"));
+    assert!(src(Some(&[]), Some(0), Some(3))
+        .1
+        .contains("3 of Documents"));
+    assert_ne!(src(Some(&[]), Some(0), Some(3)).0, Status::Healthy);
+    assert_eq!(src(None, None, None).0, Status::Unknown);
+    assert_eq!(src(None, None, Some(0)).0, Status::Unknown);
+    let unplug = "Unplug your backup drive when it's not backing up.";
+    let fh = Some(now - 86_400);
+    assert!(drive(Some(&[]), fh, None, Some(true)).1.contains(unplug));
+    assert!(!drive(Some(&[]), fh, None, Some(false)).1.contains(unplug));
+    assert!(!drive(Some(&[]), fh, None, None).1.contains(unplug));
+    assert!(!src(Some(&[]), Some(0), Some(0)).1.contains("plug it in"));
 }
 
 #[test]
