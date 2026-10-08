@@ -595,7 +595,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
 
     let mut details = column![
         widgets::small(p, t("A safer PC. Without headaches.")),
-        widgets::small(p, t("Fonts: IBM Plex Sans (SIL Open Font License).")),
+        widgets::small(p, t("Fonts: Lexend (SIL Open Font License).")),
         widgets::small(p, t("Icons: Fluent UI System Icons (MIT license).")),
         widgets::small(
             p,

@@ -224,7 +224,7 @@ pub const R: f32 = 8.0;
 pub const R_LARGE: f32 = 12.0;
 pub const R_PILL: f32 = 999.0;
 
-pub const FAMILY: &str = "IBM Plex Sans";
+pub const FAMILY: &str = "Lexend";
 
 pub const REGULAR: Font = Font {
     family: Family::Name(FAMILY),
@@ -248,10 +248,10 @@ pub const BOLD: Font = Font {
 };
 
 pub const FONT_FILES: [&[u8]; 4] = [
-    include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../../assets/fonts/IBMPlexSans-Medium.ttf"),
-    include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../../assets/fonts/IBMPlexSans-Bold.ttf"),
+    include_bytes!("../../assets/fonts/Lexend-Regular.ttf"),
+    include_bytes!("../../assets/fonts/Lexend-Medium.ttf"),
+    include_bytes!("../../assets/fonts/Lexend-SemiBold.ttf"),
+    include_bytes!("../../assets/fonts/Lexend-Bold.ttf"),
 ];
 
 #[cfg(test)]

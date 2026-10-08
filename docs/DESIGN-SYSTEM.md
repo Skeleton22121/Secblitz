@@ -51,7 +51,7 @@ Rules:
 `R_SMALL` 6 (inner pieces such as segments, menu rows), `R` 8 (controls,
 notices, list rows, menus), `R_LARGE` 12 (regions, sheets), `R_PILL` (pills).
 
-### Type (IBM Plex Sans, SIL OFL 1.1, bundled in the exe)
+### Type (Lexend, SIL OFL 1.1, bundled in the exe)
 
 | Token | px | Font | Use |
 |-------|----|------|-----|
@@ -61,7 +61,7 @@ notices, list rows, menus), `R_LARGE` 12 (regions, sheets), `R_PILL` (pills).
 | `BODY` | 14 | Regular / Medium | all reading text, buttons |
 | `SMALL` | 12.5 | Regular / Medium | captions, pills, helper text |
 
-Plex's natural line height is 1.3 em, which iced applies by default. Fixed
+Text uses iced's default line height of 1.3 em. Fixed
 height controls set an absolute line height (`LINE_BODY` 18, `LINE_SMALL` 16)
 so 36 px stays exactly 36 px. Use at most three weights on a screen.
 

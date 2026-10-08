@@ -5,10 +5,15 @@ work of others, listed here with the terms each one comes under.
 
 ## Fonts
 
-IBM Plex Sans (Regular, Medium, SemiBold and Bold) is bundled in
-`assets/fonts`. Copyright 2017 IBM Corp., with Reserved Font Name "Plex". It is
-licensed under the SIL Open Font License 1.1. The full text is in
-`assets/fonts/IBMPlexSans-LICENSE.txt`.
+Lexend (Regular, Medium, SemiBold and Bold) is bundled in the app from
+`assets/fonts`. Copyright 2018 The Lexend Project Authors
+(https://github.com/googlefonts/lexend), with Reserved Font Name "RevReading
+Lexend". It is licensed under the SIL Open Font License 1.1. The full text is in
+`assets/fonts/Lexend-LICENSE.txt`.
+
+IBM Plex Sans is used by the website, from `assets/fonts`. Copyright 2017 IBM
+Corp., with Reserved Font Name "Plex". It is licensed under the SIL Open Font
+License 1.1. The full text is in `assets/fonts/IBMPlexSans-LICENSE.txt`.
 
 ## Icons
 
