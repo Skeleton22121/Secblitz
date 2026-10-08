@@ -412,7 +412,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
             p,
             Icon::Bug,
             ctx.t("Scan for viruses"),
-            ctx.t("Starting the scan…"),
+            ctx.t("Scanning your PC. This can take a few minutes."),
         ),
         Run::Done(Ok(())) => finished(
             state,
@@ -421,8 +421,8 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 slot: Slot::Scan,
                 icon: Icon::Bug,
                 tone: Tone::Good,
-                title: ctx.t("Scan started"),
-                sub: Some(ctx.t("Windows Security will notify you if it finds anything.")),
+                title: ctx.t("Scan finished"),
+                sub: Some(ctx.t("Windows Security tells you if it found anything.")),
                 menu: open_security_entry(ctx)
                     .into_iter()
                     .chain([entry(Icon::Check, ctx.t("Done"), Msg::ClearScan)])
@@ -1098,7 +1098,11 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         ),
         logic::TipAction::Scan => secondary(
             p,
-            ctx.t("Scan now"),
+            if scanning {
+                ctx.t("Scanning…")
+            } else {
+                ctx.t("Scan now")
+            },
             (!scanning).then_some(Msg::Ask(Sheet::Scan)),
         ),
         logic::TipAction::Open(open) => {
