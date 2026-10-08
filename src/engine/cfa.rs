@@ -45,33 +45,50 @@ impl Engine {
         self.dir.join("App")
     }
 
-    fn cfa_started(&self) -> Option<u64> {
+    fn cfa_record(&self) -> serde_json::Map<String, serde_json::Value> {
         let path = self.cfa_dir().join(RECORD);
-        if !fs::symlink_metadata(&path).ok()?.is_file() {
-            return None;
-        }
-        let record: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-        record.get("started")?.as_u64()
+        let is_file = fs::symlink_metadata(&path).is_ok_and(|m| m.is_file());
+        is_file
+            .then(|| fs::read(&path).ok())
+            .flatten()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default()
     }
 
-    fn cfa_write(&self, started: u64) {
+    fn cfa_started(&self) -> Option<u64> {
+        self.cfa_record().get("started")?.as_u64()
+    }
+
+    /// Whether Secblitz turned full protection on and has not undone it.
+    fn cfa_protected(&self) -> bool {
+        self.cfa_record().get("protected") == Some(&serde_json::Value::Bool(true))
+    }
+
+    fn cfa_update(&self, change: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) {
+        let mut record = self.cfa_record();
+        change(&mut record);
         let dir = self.cfa_dir();
-        let _ = fs::create_dir(&dir);
         let path = dir.join(RECORD);
+        if record.is_empty() {
+            let _ = fs::remove_file(&path);
+            return;
+        }
+        let _ = fs::create_dir(&dir);
         let tmp = dir.join(format!("{RECORD}.tmp"));
-        let data = serde_json::json!({ "started": started }).to_string();
+        let data = serde_json::Value::Object(record).to_string();
         if fs::write(&tmp, data).is_ok() && fs::rename(&tmp, &path).is_err() {
             let _ = fs::remove_file(&tmp);
         }
     }
 
-    /// Full protection waits for a week of watching. This only narrows what is offered; it never changes a setting.
+    /// Full protection waits for a week of watching. Once Secblitz has turned it on, it stays offered so a switch back can be put back. This only narrows what is offered; it never changes a setting.
     pub(super) fn cfa_gate(&self, id: &str, obs: &mut Observation) {
         if id != BLOCK || !obs.eligible {
             return;
         }
         let unsafe_now = crate::hardening::spec(id).is_some_and(|s| s.any_unsafe(&obs.value));
-        if !unsafe_now {
+        if !unsafe_now || self.cfa_protected() {
             return;
         }
         let mode = obs.value["items"][MODE].as_u64();
@@ -85,14 +102,26 @@ impl Engine {
         }
     }
 
-    /// Starts the week when watching is turned on and forgets it when watching is undone.
+    /// Starts the week when watching is turned on and forgets it when watching is undone, and remembers whether full protection is Secblitz's.
     pub(super) fn cfa_note(&self, results: &[Outcome]) {
-        for r in results.iter().filter(|r| r.id == WATCH) {
+        for r in results.iter().filter(|r| r.id == WATCH || r.id == BLOCK) {
+            let key = if r.id == WATCH {
+                "started"
+            } else {
+                "protected"
+            };
             match r.status {
-                CheckStatus::Applied => self.cfa_write(now()),
-                CheckStatus::Restored => {
-                    let _ = fs::remove_file(self.cfa_dir().join(RECORD));
-                }
+                CheckStatus::Applied => self.cfa_update(|record| {
+                    let value = if r.id == WATCH {
+                        now().into()
+                    } else {
+                        true.into()
+                    };
+                    record.insert(key.into(), value);
+                }),
+                CheckStatus::Restored => self.cfa_update(|record| {
+                    record.remove(key);
+                }),
                 _ => {}
             }
         }

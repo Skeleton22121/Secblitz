@@ -980,6 +980,31 @@ fn full_folder_protection_waits_for_a_week_of_watching() {
 }
 
 #[test]
+fn full_folder_protection_switched_off_by_someone_else_can_be_put_back() {
+    let id = cfa::BLOCK;
+    let watching = json!({"items": {"EnableControlledFolderAccess": 2}});
+    let off = json!({"items": {"EnableControlledFolderAccess": 0}});
+    let (dir, state, mut e) = fixture(id, watching.clone());
+    write_watch_record(&dir, now_secs() - cfa::WATCH_SECONDS - 5);
+    e.apply_selected(&[id.into()], |_| {}).unwrap();
+    let full = state.borrow().values[id].clone();
+
+    state.borrow_mut().values.insert(id.into(), off.clone());
+    let seen = e.audit().unwrap().results.remove(0);
+    assert_eq!(seen.status, CheckStatus::Attention);
+    assert!(seen.switched_back);
+    let again = e.apply_selected(&[id.into()], |_| {}).unwrap();
+    assert_eq!(again.results[0].status, CheckStatus::Applied);
+    assert_eq!(state.borrow().values[id], full);
+
+    assert_eq!(e.revert(|_| {}).unwrap().results[0].status, CheckStatus::Restored);
+    assert_eq!(state.borrow().values[id], watching);
+    state.borrow_mut().values.insert(id.into(), off);
+    let r = e.audit().unwrap().results.remove(0);
+    assert_eq!((r.status, r.detail.as_str()), (CheckStatus::Skipped, cfa::NOT_WATCHED));
+}
+
+#[test]
 fn the_watch_week_starts_when_watching_is_applied_and_ends_when_it_is_undone() {
     let id = cfa::WATCH;
     let before = json!({"items": {"EnableControlledFolderAccess": 0}});
