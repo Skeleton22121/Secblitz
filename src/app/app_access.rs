@@ -185,7 +185,7 @@ pub fn sort_entries(entries: &mut [Entry]) {
     });
 }
 
-const KNOWN_PACKAGES: [(&str, &str); 24] = [
+const KNOWN_PACKAGES: [(&str, &str); 32] = [
     ("Microsoft.WindowsCamera", "Windows Camera"),
     ("Microsoft.WindowsSoundRecorder", "Sound Recorder"),
     ("Microsoft.Windows.Photos", "Photos"),
@@ -210,6 +210,14 @@ const KNOWN_PACKAGES: [(&str, &str); 24] = [
     ("Microsoft.LockApp", "Lock screen"),
     ("Microsoft.AAD.BrokerPlugin", "Work or school sign-in"),
     ("Microsoft.Windows.CloudExperienceHost", "Windows setup"),
+    ("Microsoft.Microsoft3DViewer", "3D Viewer"),
+    ("Microsoft.Office.OneNote", "OneNote"),
+    ("Microsoft.Win32WebViewHost", "Desktop App Web Viewer"),
+    ("Microsoft.WindowsFeedbackHub", "Feedback Hub"),
+    ("Microsoft.WindowsStore", "Microsoft Store"),
+    ("Microsoft.XboxGamingOverlay", "Xbox Game Bar"),
+    ("Microsoft.MicrosoftStickyNotes", "Sticky Notes"),
+    ("Microsoft.People", "People"),
 ];
 
 pub fn package_name(key: &str) -> String {
@@ -921,6 +929,12 @@ mod tests {
                 "Windows X Gpu Eject Dialog",
             ),
             ("Microsoft.549981C3F5F10_8wekyb3d8bbwe", "Cortana"),
+            ("Microsoft.Microsoft3DViewer_8wekyb3d8bbwe", "3D Viewer"),
+            ("Microsoft.Office.OneNote_8wekyb3d8bbwe", "OneNote"),
+            (
+                "Microsoft.Win32WebViewHost_cw5n1h2txyewy",
+                "Desktop App Web Viewer",
+            ),
             ("Vendor.123ABCDEF45_abcdefghijklm", "123ABCDEF45"),
             ("weird_x", "weird"),
         ] {

@@ -16,6 +16,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ### Changed
 - The app uses the Lexend font, which is easier to read.
 
+### Fixed
+- Camera, microphone and location lists show the usual names of the apps that come with Windows 10.
+
 ## [0.10.0] - 2026-10-07
 
 ### Added
