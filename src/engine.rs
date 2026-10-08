@@ -24,9 +24,15 @@ use fsio::metadata_safe;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, fs::File, path::PathBuf};
 
-/// The rule an audit uses to judge one setting, for callers without the journal.
+/// The audit's rule for one setting, judged on its value alone, for the background check.
+/// Its account can read settings it may not open for change, and it only raises settings
+/// Secblitz already fixed, so who may change them now does not matter.
 pub fn assessment(id: &str, o: &Observation) -> Result<CheckStatus> {
-    catalog::assessment_status(id, o)
+    let o = Observation {
+        eligible: true,
+        ..o.clone()
+    };
+    catalog::assessment_status(id, &o)
 }
 
 const SCHEMA: u32 = 1;

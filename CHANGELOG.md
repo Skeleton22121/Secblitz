@@ -35,6 +35,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The Copilot key note only shows on Windows 11, where those keyboards exist.
 - The link to turn on private lookups now goes straight to its switch.
 - Background checks work on Windows 10, where they could not read any settings.
+- You are told when Windows switches back a virus protection setting Secblitz fixed.
 
 ## [0.9.3] - 2026-10-07
 

@@ -2398,3 +2398,21 @@ fn progress_steps_keep_their_stable_text() {
     }
 }
 include!("selective_undo_tests.rs");
+
+#[test]
+fn background_judgement_uses_the_value_even_when_the_account_cannot_change_it() {
+    let seen = |value: Value| Observation {
+        value,
+        eligible: false,
+        reason: "Requested registry access is not allowed.".into(),
+        ..Observation::default()
+    };
+    assert_eq!(
+        assessment("defender.pua", &seen(json!({"items":{"PUAProtection":0}}))).unwrap(),
+        CheckStatus::Attention
+    );
+    assert_eq!(
+        assessment("defender.pua", &seen(json!({"items":{"PUAProtection":1}}))).unwrap(),
+        CheckStatus::Compliant
+    );
+}
