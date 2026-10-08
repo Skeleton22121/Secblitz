@@ -22,6 +22,7 @@ pub enum UpdateView {
     Ready,
     Checking,
     Unknown,
+    NotChecked,
     Off,
 }
 
@@ -32,7 +33,7 @@ pub fn update_view(status: &secblitz::updater::UpdateStatus) -> UpdateView {
         O::DeferredBusy if status.checked_at == 0 => UpdateView::Checking,
         O::WorkerStarted { .. } | O::DeferredBusy => UpdateView::Ready,
         O::Failed { .. } => UpdateView::Unknown,
-        O::NotConfigured if status.checked_at == 0 => UpdateView::Off,
+        O::NotConfigured if status.checked_at == 0 => UpdateView::NotChecked,
         O::NotConfigured => UpdateView::Off,
     }
 }
@@ -581,6 +582,10 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             widgets::pill(p, t("Update ready"), Tone::Warn),
             t("An update is ready. It installs when Secblitz is closed."),
         ),
+        Remote::Ready(UpdateView::NotChecked) => (
+            widgets::pill(p, t("Not checked yet"), Tone::Neutral),
+            t("Automatic updates are on. Secblitz looks for new versions every hour."),
+        ),
         Remote::Ready(UpdateView::Off) => (
             widgets::pill(p, t("Not set up"), Tone::Neutral),
             t("Automatic updates aren't turned on for this copy of Secblitz."),
@@ -808,7 +813,11 @@ mod tests {
             update_view(&status(O::Failed { reason: "x".into() }, 5)),
             UpdateView::Unknown
         );
-        assert_eq!(update_view(&status(O::NotConfigured, 0)), UpdateView::Off);
+        assert_eq!(
+            update_view(&status(O::NotConfigured, 0)),
+            UpdateView::NotChecked
+        );
+        assert_eq!(update_view(&status(O::NotConfigured, 5)), UpdateView::Off);
     }
 
     #[test]

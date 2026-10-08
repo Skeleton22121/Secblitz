@@ -57,6 +57,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Background checks start again on their own if they stop unexpectedly.
 - Installing a new version or removing Secblitz while it is open now closes it first, so nothing is left behind.
 - Fixes, undo and updates are no longer held back while Windows Defender or Windows Update works in the background.
+- Settings no longer says automatic updates aren't set up before their first hourly check.
 
 ## [0.9.3] - 2026-10-07
 
