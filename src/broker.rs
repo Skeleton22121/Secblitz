@@ -804,7 +804,11 @@ mod tests {
         for kind in [0u8, 44, 45, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
-        for kind in (1..=6u8).chain(8..=12).chain(20..=38).chain([17, 41, 42, 43]) {
+        for kind in (1..=6u8)
+            .chain(8..=12)
+            .chain(20..=38)
+            .chain([17, 41, 42, 43])
+        {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
         }
