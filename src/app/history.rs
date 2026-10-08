@@ -142,7 +142,8 @@ pub fn label(kind: Kind, n: usize) -> &'static str {
         (Kind::UndoSome, _) => "Put back {n} settings",
         (Kind::Debloat, 0 | 1) => "Removed 1 app",
         (Kind::Debloat, _) => "Removed {n} apps",
-        (Kind::Restore, _) => "Restored an app",
+        (Kind::Restore, 0 | 1) => "Restored an app",
+        (Kind::Restore, _) => "Restored {n} apps",
         (Kind::Recovery, _) => "Undo history started fresh",
         (Kind::SecureBootRenewal, _) => {
             "Started the startup security renewal. This can't be undone."
@@ -327,6 +328,7 @@ mod tests {
         assert_eq!(label(Kind::Debloat, 12), "Removed {n} apps");
         assert_eq!(label(Kind::Debloat, 1), "Removed 1 app");
         assert_eq!(label(Kind::Restore, 1), "Restored an app");
+        assert_eq!(label(Kind::Restore, 4), "Restored {n} apps");
         assert_eq!(label(Kind::Recovery, 0), "Undo history started fresh");
     }
 

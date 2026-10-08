@@ -27,6 +27,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - A check that warns when something typed into the Run box looks like a fake check page trick.
 - The AI features topic shows when the Copilot app is installed, with a way to remove it.
 - A way to start fresh when Secblitz's undo history is damaged, keeping a copy of the damaged files.
+- Restore all brings back every removed app in one go.
 
 ### Changed
 - Before you agree, every fix says if it can't be undone, needs a restart, or makes your browser say "Managed by your organization".
@@ -35,6 +36,12 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ### Fixed
 - Files left over from an update are removed once the update is confirmed.
+- Removing apps that came with Windows 10 now works.
+- White app icons on Windows 10 show on a colored tile instead of disappearing, including Maps and People.
+- An app you chose to remove is closed first if it is open, so its copy is complete.
+- Bringing back an app works when Windows already has a newer version of a part it needs.
+- An app is no longer reported as already back when Windows only left a folder behind, which removed its saved copy.
+- The Copilot key note only shows on Windows 11, where those keyboards exist.
 
 ## [0.9.3] - 2026-10-07
 

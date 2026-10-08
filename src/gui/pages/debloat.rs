@@ -91,6 +91,9 @@ pub struct State {
     journal: Vec<Batch>,
     restoring: Option<u16>,
     restoring_copy: bool,
+    /// Apps still waiting in a Restore all run, in list order.
+    queue: Vec<u16>,
+    batch: Option<BatchRestore>,
     probing: bool,
     icons: BTreeMap<u16, Handle>,
     copies: BTreeSet<u16>,
@@ -129,6 +132,8 @@ impl Default for State {
             journal: Vec::new(),
             restoring: None,
             restoring_copy: false,
+            queue: Vec::new(),
+            batch: None,
             probing: false,
             icons: BTreeMap::new(),
             copies: BTreeSet::new(),
@@ -148,6 +153,13 @@ impl Default for State {
             ads: ads::State::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BatchRestore {
+    pub total: usize,
+    pub back: usize,
+    pub failed: Vec<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +192,7 @@ pub enum Msg {
     ToggleDetails,
     CloseResult,
     Restore(u16),
+    RestoreAll,
     RestoreStore(u16),
     StoreProbed(u16, bool),
     Restored(u16, Result<crate::broker::Reply, String>),
@@ -320,7 +333,7 @@ fn is_animating(state: &State) -> bool {
     if !anim::animating() {
         return false;
     }
-    if matches!(state.scan, Scan::Loading) || state.restoring.is_some() {
+    if matches!(state.scan, Scan::Loading) || state.restoring.is_some() || state.batch.is_some() {
         return true;
     }
     match &state.sheet {
@@ -528,6 +541,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             Task::none()
         }
         Msg::Restore(index) => restore(state, ctx, index),
+        Msg::RestoreAll => restore_all(state, ctx),
         Msg::RestoreStore(index) => restore_from_store(state, ctx, index),
         Msg::StoreProbed(index, offline) => on_store_probed(state, ctx, index, offline),
         Msg::Restored(index, result) => on_restored(state, ctx, index, result),
@@ -680,6 +694,110 @@ fn restore(state: &mut State, ctx: &mut Ctx, index: u16) -> Task<Message> {
         );
     }
     store_restore(state, ctx, index)
+}
+
+/// Apps that Restore all would bring back: every removed app with a saved copy.
+pub fn restorable(state: &State) -> Vec<u16> {
+    state
+        .removed
+        .iter()
+        .map(|(i, _)| *i)
+        .filter(|i| state.copies.contains(i))
+        .collect()
+}
+
+fn restore_all(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    if state.batch.is_some() || state.restoring.is_some() || state.probing || ctx.busy {
+        return Task::none();
+    }
+    let mut targets = restorable(state);
+    if targets.is_empty() {
+        return Task::none();
+    }
+    let first = targets.remove(0);
+    state.batch = Some(BatchRestore {
+        total: targets.len() + 1,
+        ..BatchRestore::default()
+    });
+    state.queue = targets;
+    restore(state, ctx, first)
+}
+
+fn on_batch_restored(
+    state: &mut State,
+    ctx: &mut Ctx,
+    index: u16,
+    result: Result<Restored, String>,
+) -> Task<Message> {
+    let back = matches!(
+        result,
+        Ok(Restored::Back | Restored::BackWithoutSomeData | Restored::AlreadyThere)
+    );
+    let mut tasks = Vec::new();
+    if back {
+        tasks.push(mark_back(state, index));
+    }
+    if let Some(next) = batch_step(state, index, back) {
+        tasks.push(restore(state, ctx, next));
+        return Task::batch(tasks);
+    }
+    let batch = state.batch.take().unwrap_or_default();
+    if batch.back > 0 {
+        record_restore(ctx, batch.back);
+    }
+    tasks.push(inventory_task(state));
+    tasks.push(copies_task());
+    tasks.push(batch_toast(ctx, &batch));
+    Task::batch(tasks)
+}
+
+/// Counts one finished app and picks the next one that still has a copy.
+/// `None` means the run is over.
+fn batch_step(state: &mut State, index: u16, back: bool) -> Option<u16> {
+    let batch = state.batch.as_mut()?;
+    if back {
+        batch.back += 1;
+    } else {
+        batch.failed.push(index);
+    }
+    while !state.queue.is_empty() {
+        let next = state.queue.remove(0);
+        if state.copies.contains(&next) {
+            return Some(next);
+        }
+        batch.failed.push(next);
+    }
+    None
+}
+
+fn batch_toast(ctx: &Ctx, batch: &BatchRestore) -> Task<Message> {
+    let names: Vec<String> = batch
+        .failed
+        .iter()
+        .map(|i| ctx.t(app_of(*i).name))
+        .collect();
+    if names.is_empty() {
+        let text = if batch.back == 1 {
+            ctx.t("1 app is back on your PC.")
+        } else {
+            ctx.t("{n} apps are back on your PC.")
+                .replace("{n}", &batch.back.to_string())
+        };
+        return toast(text, Tone::Good);
+    }
+    let text = ctx
+        .t("{n} of {total} apps are back. These couldn't be brought back: {names}. Try them one at a time below.")
+        .replace("{n}", &batch.back.to_string())
+        .replace("{total}", &batch.total.to_string())
+        .replace("{names}", &names.join(", "));
+    toast(
+        text,
+        if batch.back > 0 {
+            Tone::Warn
+        } else {
+            Tone::Bad
+        },
+    )
 }
 
 fn on_restored(
@@ -860,12 +978,35 @@ fn restored_ok(
     text: String,
     tone: Tone,
 ) -> Task<Message> {
+    record_restore(ctx, 1);
+    Task::batch([
+        mark_back(state, index),
+        inventory_task(state),
+        toast(text, tone),
+    ])
+}
+
+fn mark_back(state: &mut State, index: u16) -> Task<Message> {
     for batch in &mut state.journal {
         for r in batch.removed.iter_mut().filter(|r| r.index == index) {
             r.restored = true;
         }
     }
     refresh_removed(state);
+    Task::batch([
+        Task::perform(
+            blocking(move || {
+                let _ = debloat::journal::mark_restored(index);
+                debloat::journal::load()
+            }),
+            |j| wrap(Msg::JournalLoaded(j)),
+        ),
+        Task::perform(blocking(move || debloat::finish_restore(index)), |_| ())
+            .then(|_| copies_task()),
+    ])
+}
+
+fn record_restore(ctx: &Ctx, n: usize) {
     if let Some(dir) = &ctx.state_dir {
         let score = ctx.score().unwrap_or_default();
         let _ = crate::app::history::record(
@@ -875,23 +1016,10 @@ fn restored_ok(
                 kind: crate::app::history::Kind::Restore,
                 protected: score.protected,
                 total: score.total,
-                n: 1,
+                n,
             },
         );
     }
-    Task::batch([
-        Task::perform(
-            blocking(move || {
-                let _ = debloat::journal::mark_restored(index);
-                debloat::journal::load()
-            }),
-            |j| wrap(Msg::JournalLoaded(j)),
-        ),
-        inventory_task(state),
-        Task::perform(blocking(move || debloat::finish_restore(index)), |_| ())
-            .then(|_| copies_task()),
-        toast(text, tone),
-    ])
 }
 
 fn on_restored_offline(
@@ -902,6 +1030,9 @@ fn on_restored_offline(
 ) -> Task<Message> {
     state.restoring = None;
     state.restoring_copy = false;
+    if state.batch.is_some() {
+        return on_batch_restored(state, ctx, index, result);
+    }
     let name = ctx.t(app_of(index).name);
     let can_use_store = app_of(index).store_id.is_some();
     match result {
@@ -956,6 +1087,56 @@ fn flip(list: &mut Vec<Group>, g: Group) {
 
 fn pal(ctx: &Ctx) -> Palette {
     Palette::of(ctx.palette.mode)
+}
+
+#[cfg(test)]
+mod restore_all_tests {
+    use super::*;
+
+    #[test]
+    fn restore_all_takes_every_app_with_a_copy_in_list_order() {
+        let mut state = State {
+            removed: vec![(4, 0), (9, 0), (2, 0), (7, 0)],
+            copies: [2, 4, 7].into_iter().collect(),
+            ..State::default()
+        };
+        assert_eq!(restorable(&state), vec![4, 2, 7]);
+
+        state.batch = Some(BatchRestore {
+            total: 3,
+            ..BatchRestore::default()
+        });
+        state.queue = vec![2, 7];
+        assert_eq!(batch_step(&mut state, 4, true), Some(2));
+        assert_eq!(batch_step(&mut state, 2, false), Some(7));
+        assert_eq!(batch_step(&mut state, 7, true), None);
+        let batch = state.batch.as_ref().unwrap();
+        assert_eq!((batch.back, batch.failed.clone()), (2, vec![2]));
+    }
+
+    #[test]
+    fn an_app_whose_copy_went_missing_counts_as_not_back() {
+        let mut state = State {
+            copies: [5].into_iter().collect(),
+            queue: vec![3, 5],
+            batch: Some(BatchRestore {
+                total: 3,
+                ..BatchRestore::default()
+            }),
+            ..State::default()
+        };
+        assert_eq!(batch_step(&mut state, 1, true), Some(5));
+        assert_eq!(batch_step(&mut state, 5, true), None);
+        let batch = state.batch.as_ref().unwrap();
+        assert_eq!((batch.back, batch.failed.clone()), (2, vec![3]));
+    }
+
+    #[test]
+    fn a_single_restore_is_not_part_of_a_run() {
+        let mut state = State::default();
+        assert_eq!(batch_step(&mut state, 1, true), None);
+        assert!(state.batch.is_none());
+    }
 }
 
 #[cfg(test)]

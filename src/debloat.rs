@@ -23,7 +23,7 @@ mod tests;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub use catalog::{is_protected, matches as pattern_matches, note};
+pub use catalog::{is_protected, matches as pattern_matches, note, note_on};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -322,6 +322,22 @@ pub(crate) fn remove_with_checkpoint(
     Ok(batch)
 }
 
+/// Windows 11 starts at build 22000. A build that can't be read counts as
+/// Windows 11, the more common case.
+pub fn is_windows_11() -> bool {
+    #[cfg(windows)]
+    {
+        static BUILD: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        BUILD
+            .get_or_init(winfs::windows_build)
+            .is_none_or(|b| b >= 22000)
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     let indices = validate_indices(indices)?;
     let installed = inventory()?;
@@ -348,6 +364,7 @@ pub fn remove(indices: &[u16], emit: &dyn Fn(Progress)) -> Result<Batch> {
     let backup = |p: &Installed| -> std::result::Result<(), Kept> {
         match &store {
             Ok(store) => {
+                winfs::close_package(&p.package);
                 offline::backup_family_with(&offline::WindowsHost, store, p.index, &p.package)
                     .map(|_| ())
             }

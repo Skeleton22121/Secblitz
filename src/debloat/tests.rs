@@ -601,10 +601,18 @@ fn the_duolingo_row_matches_its_real_package_and_nothing_wider() {
 }
 
 #[test]
-fn the_office_hub_row_uses_its_current_name_and_warns_about_the_copilot_key() {
+fn the_office_hub_row_uses_its_current_name_and_warns_about_the_copilot_key_on_windows_11() {
     let hub = &catalog()[idx("Microsoft.MicrosoftOfficeHub") as usize];
     assert_eq!(hub.name, "Microsoft 365 Copilot app");
     assert!(catalog::note(hub.family).unwrap().contains("Copilot key"));
+    assert!(catalog::note_on(hub.family, true)
+        .unwrap()
+        .contains("Copilot key"));
+    assert_eq!(catalog::note_on(hub.family, false), None);
+    assert_eq!(
+        catalog::note_on("microsoft.windowscommunicationsapps", false),
+        catalog::note("microsoft.windowscommunicationsapps")
+    );
 }
 
 #[test]
