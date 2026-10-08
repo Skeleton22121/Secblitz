@@ -18,7 +18,7 @@ foreach ($name in @('Get-Acl', 'Set-Acl')) {
 }
 $native = $ast.Find({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type' }, $true)
 . ([scriptblock]::Create($native.Extent.Text))
-foreach ($name in @('Assert-SafeItem', 'Assert-Tree', 'Protect-Item', 'Invoke-MonitorCommand', 'Invoke-ExeCommand', 'Assert-PurgeItem', 'Assert-PurgeTree', 'Remove-OwnedTree', 'Remove-OwnedRunValue')) {
+foreach ($name in @('Assert-SafeItem', 'Assert-Tree', 'Protect-Item', 'Invoke-MonitorCommand', 'Invoke-ExeCommand', 'Assert-PurgeItem', 'Assert-PurgeTree', 'Remove-OwnedTree', 'Remove-OwnedRunValue', 'Close-OwnedWindows')) {
     $fn = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -219,7 +219,11 @@ try {
         $runKey.Dispose()
         [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($runKeyPath, $false)
     }
-    Write-Host 'PASS: native exit 0/37 without PATHEXT, safe RX, pinning, exact locked Inno metadata validation, hard links, junctions, write/ACL/delete grants, inherit-only writes, untrusted owner, fixed filter commands, full-cleanup tree checks (junction, hard link, writable, foreign owner) and Run value ownership.'
+    $exe = $file
+    $started = [DateTime]::UtcNow
+    Close-OwnedWindows
+    if (([DateTime]::UtcNow - $started).TotalSeconds -gt 5) { throw 'Closing windows waited with nothing open.' }
+    Write-Host 'PASS: native exit 0/37 without PATHEXT, safe RX, pinning, exact locked Inno metadata validation, hard links, junctions, write/ACL/delete grants, inherit-only writes, untrusted owner, fixed filter commands, full-cleanup tree checks (junction, hard link, writable, foreign owner), Run value ownership and closing windows with none open.'
 } finally {
     Release-Pins
     if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
