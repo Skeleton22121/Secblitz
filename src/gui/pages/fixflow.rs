@@ -1044,12 +1044,7 @@ fn addon_picker<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("Tick at least one add-on. Nothing is turned off until you do."),
         ));
     }
-    c.push(note(
-        p,
-        Icon::Info,
-        ctx.t("Your browser will show 'Managed by your organization'. That only means a setting was applied. Nothing is sent anywhere. This turns the add-on off for everyone who uses this browser on this PC. You can turn it back on from History."),
-    ))
-    .into()
+    c.into()
 }
 
 fn review_view<'a>(
