@@ -33,6 +33,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - An app is no longer reported as already back when Windows only left a folder behind, which removed its saved copy.
 - Bringing back apps no longer fails after other apps have been brought back.
 - The Copilot key note only shows on Windows 11, where those keyboards exist.
+- The link to turn on private lookups now goes straight to its switch.
 
 ## [0.9.3] - 2026-10-07
 

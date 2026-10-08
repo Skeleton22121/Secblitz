@@ -679,7 +679,22 @@ impl App {
                     debloat::is_installed(&self.debloat, debloat::COPILOT_APP);
                 task
             }
-            Message::Web(m) => web::update(&mut self.web, m, &mut self.ctx),
+            Message::Web(m) => {
+                let focus = matches!(m, web::Msg::FocusPrivacy);
+                let task = web::update(&mut self.web, m, &mut self.ctx);
+                if focus {
+                    // Privacy is the last group on the What to block tab.
+                    Task::batch([
+                        task,
+                        iced::widget::operation::snap_to(
+                            PAGE_SCROLL,
+                            iced::widget::operation::RelativeOffset::END,
+                        ),
+                    ])
+                } else {
+                    task
+                }
+            }
             Message::Tools(m) => tools::update(&mut self.tools, m, &mut self.ctx),
             Message::History(m) => {
                 if matches!(m, history::Msg::Loaded(..)) {

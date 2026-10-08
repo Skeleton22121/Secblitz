@@ -174,6 +174,7 @@ pub enum Msg {
     Done(u32, Result<(), String>),
     ToggleDetail(Switch),
     SetTab(Tab),
+    FocusPrivacy,
     AskAllow(String),
     CancelAllow,
     Allow(String),
@@ -728,6 +729,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.confirm = None;
             Task::none()
         }
+        Msg::FocusPrivacy => update(state, Msg::SetTab(Tab::Block), ctx),
         Msg::AskAllow(name) => {
             state.confirm = Some(name);
             Task::none()
@@ -1287,7 +1289,7 @@ fn private_row<'a>(ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> {
         } else {
             "Change"
         }),
-        wrap(Msg::SetTab(Tab::Block)),
+        wrap(Msg::FocusPrivacy),
     );
     widgets::row_item(
         p,
