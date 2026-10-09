@@ -223,6 +223,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::SetLang(LangItem(lang)) => {
             ctx.lang = lang;
+            ctx.info = None;
             ctx.prefs.lang = Some(lang.code().to_owned());
             save_prefs(ctx)
         }

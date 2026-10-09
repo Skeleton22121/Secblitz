@@ -217,7 +217,6 @@ pub const CHECK: f32 = 18.0;
 pub const DOT: f32 = 8.0;
 pub const HAIRLINE: f32 = 1.0;
 pub const MAX_READABLE: f32 = 420.0;
-pub const DETAILS_MAX: f32 = 140.0;
 
 pub const R_SMALL: f32 = 6.0;
 pub const R: f32 = 8.0;

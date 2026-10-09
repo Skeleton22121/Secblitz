@@ -9,6 +9,7 @@ use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::anim;
 use crate::gui::widgets::hairline::magnifier::{self, Labels, Magnifier, Status};
 use crate::gui::widgets::hairline::Plate;
+use crate::gui::widgets::info::InfoSheet;
 use crate::gui::widgets::scan;
 use crate::gui::widgets::tile::{self, Tile};
 use crate::gui::widgets::{self, ButtonKind, CheckState};
@@ -30,8 +31,6 @@ pub const SEARCH_ID: &str = "fixes-search";
 const FIRST_ROWS: usize = 8;
 const FEW_PROTECTED: usize = 5;
 const TICKER_LINES: usize = 6;
-const INDENT: f32 =
-    theme::CHECK + theme::S1 * 2.0 + theme::S1 + theme::S4 + theme::ICON_ROW + theme::S4;
 const INDENT_PLAIN: f32 = theme::S4 + theme::ICON_ROW + theme::S4;
 
 #[derive(Debug)]
@@ -40,13 +39,11 @@ pub struct State {
     selected: HashSet<String>,
     /// Settings Secblitz changed that the person ticked to put back. Never filled for them.
     undo_selected: HashSet<String>,
-    expanded: HashSet<String>,
     flipped_protected: HashSet<Topic>,
     open_more: HashSet<Topic>,
     topic: Cell<Option<Topic>>,
     all_attention: bool,
     all_protected: bool,
-    show_error: bool,
     search: String,
     cache: RefCell<Option<Cached>>,
     scan: Option<Instant>,
@@ -61,13 +58,11 @@ impl Default for State {
             synced_at: None,
             selected: HashSet::new(),
             undo_selected: HashSet::new(),
-            expanded: HashSet::new(),
             flipped_protected: HashSet::new(),
             open_more: HashSet::new(),
             topic: Cell::new(None),
             all_attention: false,
             all_protected: false,
-            show_error: false,
             search: String::new(),
             cache: RefCell::new(None),
             scan: None,
@@ -88,7 +83,6 @@ pub enum Msg {
     UndoSelectNone,
     /// Opens the group of protected settings, with the ones Secblitz changed first.
     FocusUndo,
-    Expand(String),
     ShowProtected(Topic),
     ToggleMore(Topic),
     Topic(Topic),
@@ -100,7 +94,6 @@ pub enum Msg {
     PutBack,
     AllAttention,
     AllProtected,
-    ErrorDetails,
     Search(String),
     ClearSearch,
     Frame(Instant),
@@ -259,20 +252,19 @@ struct Att {
     switched_back: bool,
     name: String,
     line: String,
-    why: String,
-    tech: String,
     restart: bool,
     choice: bool,
-    items: Vec<String>,
+    info: Option<InfoSheet>,
     hay: Haystack,
 }
 
 #[derive(Debug)]
 struct Other {
+    #[cfg(test)]
     key: String,
     topic: Topic,
+    #[cfg(test)]
     explain: String,
-    report_only: bool,
     name: String,
     line: String,
     status: String,
@@ -280,7 +272,7 @@ struct Other {
     tone: Tone,
     bucket: Bucket,
     icon: Icon,
-    tech: String,
+    info: Option<InfoSheet>,
     guide: Option<&'static Guide>,
     page: Option<Page>,
     hay: Haystack,
@@ -294,6 +286,7 @@ struct Prot {
     line: String,
     /// Secblitz changed this setting and can put it back.
     undoable: bool,
+    info: Option<InfoSheet>,
     hay: Haystack,
 }
 
@@ -305,11 +298,26 @@ enum Bucket {
     GoodToKnow,
 }
 
-fn with_names(ctx: &Ctx, tech: String, template: &str, names: Option<String>) -> String {
-    match names {
-        Some(names) => format!("{tech} · {}", ctx.t(template).replace("{names}", &names)),
-        None => tech,
-    }
+fn named(ctx: &Ctx, template: &str, names: Option<String>) -> Option<String> {
+    names.map(|names| ctx.t(template).replace("{names}", &names))
+}
+
+/// The setting's explainer, then what will change and anything new, minus what the row shows.
+fn sheet(
+    ctx: &Ctx,
+    id: &str,
+    name: &str,
+    report_only: bool,
+    changes: Vec<String>,
+    more: Vec<String>,
+    shown: &[&str],
+) -> Option<InfoSheet> {
+    let sheet = widgets::info::for_check(ctx, name.to_owned(), id, report_only)
+        .unwrap_or_else(|| InfoSheet::new(name))
+        .list(ctx.t("What will change"), changes)
+        .list(ctx.t("More details"), more)
+        .without(shown);
+    (!sheet.is_empty()).then_some(sheet)
 }
 
 /// What a typed search is compared with: the row as shown, the same row in
@@ -325,9 +333,9 @@ fn search_text(shown: &[&str], sources: &[&str], id: &str) -> Haystack {
     )
 }
 
-fn tech_line(status: &CheckStatus, a: &advice::Advice, lang: Lang) -> String {
+fn plain_status(status: &CheckStatus, a: &advice::Advice, lang: Lang) -> (String, String) {
     let (st, next) = crate::app::flow::plain_detail(status, a);
-    format!("{} · {}", lang.t(st), lang.t(next))
+    (lang.t(st), lang.t(next))
 }
 
 pub fn items_line(ctx: &Ctx, r: &secblitz::engine::Outcome) -> Option<String> {
@@ -406,17 +414,40 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             &[advice::control_label(id), a.next, impact],
             id,
         );
+        let (status, next) = plain_status(&r.status, &a, lang);
+        let (back, restart_text, choice_text) = (
+            ctx.t("Switched back"),
+            ctx.t("Restart needed"),
+            ctx.t("Your choice"),
+        );
+        let mut shown = vec![line.as_str(), status.as_str()];
+        if r.switched_back {
+            shown.push(&back);
+        }
+        if restart {
+            shown.push(&restart_text);
+        }
+        if choice {
+            shown.push(&choice_text);
+        }
+        let info = sheet(
+            ctx,
+            id,
+            &name,
+            false,
+            item_lines(ctx, &r.items),
+            vec![next],
+            &shown,
+        );
         list.push(Att {
             id: id.clone(),
             topic: Topic::of(id),
             switched_back: r.switched_back,
             name,
             line,
-            why: ctx.t(a.next),
-            tech: tech_line(&r.status, &a, lang),
             restart,
             choice,
-            items: item_lines(ctx, &r.items),
+            info,
             hay,
         });
     }
@@ -446,12 +477,14 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 &[advice::control_label(&r.id), a.next, impact],
                 &r.id,
             );
+            let info = sheet(ctx, &r.id, &name, false, Vec::new(), Vec::new(), &[&line]);
             rows.protected.push(Prot {
                 id: r.id.clone(),
                 topic: Topic::of(&r.id),
                 name,
                 line,
                 undoable: r.undoable,
+                info,
                 hay,
             });
             continue;
@@ -473,6 +506,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             ctx,
             &a,
             OtherSource {
+                #[cfg(test)]
                 index: rows.others.len(),
                 topic: Topic::of(&r.id),
                 explain: (r.id.as_str(), false),
@@ -480,12 +514,15 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 name_source: advice::control_label(&r.id),
                 bucket,
                 tone,
-                tech: with_names(
-                    ctx,
-                    tech_line(&r.status, &a, lang),
-                    "Drivers we were unsure about: {names}",
-                    secblitz::vbs::reason_names(&r.detail),
-                ),
+                more: vec![
+                    plain_status(&r.status, &a, lang).1,
+                    named(
+                        ctx,
+                        "Drivers we were unsure about: {names}",
+                        secblitz::vbs::reason_names(&r.detail),
+                    )
+                    .unwrap_or_default(),
+                ],
                 detail: if finding_listed {
                     None
                 } else {
@@ -509,10 +546,11 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             Class::Unknown => (Bucket::Unavailable, Tone::Neutral),
             Class::Protected | Class::Fixable | Class::Review => (Bucket::Look, Tone::Warn),
         };
-        let mut row = other(
+        let row = other(
             ctx,
             &a,
             OtherSource {
+                #[cfg(test)]
                 index: rows.others.len(),
                 topic: Topic::of_finding(&f.title),
                 explain: (f.title.as_str(), true),
@@ -520,27 +558,25 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
                 name_source: a.label,
                 bucket,
                 tone,
-                tech: with_names(
-                    ctx,
-                    tech_line(&f.status, &a, lang),
-                    "Windows blocked: {names}",
-                    secblitz::vbs::blocked_names(&f.detail),
-                ),
+                more: vec![
+                    plain_status(&f.status, &a, lang).1,
+                    named(
+                        ctx,
+                        "Windows blocked: {names}",
+                        secblitz::vbs::blocked_names(&f.detail),
+                    )
+                    .unwrap_or_default(),
+                ],
                 detail: None,
             },
         );
-        if a.step == NextStep::Restart {
-            row.guide = None;
-            row.page = None;
-            row.line = ctx.t(a.next);
-            row.status = ctx.t(a.status);
-        }
         rows.others.push(row);
     }
     rows
 }
 
 struct OtherSource<'a> {
+    #[cfg(test)]
     index: usize,
     topic: Topic,
     explain: (&'a str, bool),
@@ -548,12 +584,13 @@ struct OtherSource<'a> {
     name_source: &'a str,
     bucket: Bucket,
     tone: Tone,
-    tech: String,
+    more: Vec<String>,
     detail: Option<&'a str>,
 }
 
 fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
     let OtherSource {
+        #[cfg(test)]
         index,
         topic,
         explain,
@@ -561,16 +598,22 @@ fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
         name_source,
         bucket,
         tone,
-        tech,
+        more,
         detail,
     } = source;
     let managed = bucket == Bucket::Managed;
+    let restart_finding = explain.1 && a.step == NextStep::Restart;
     let guide = match bucket {
+        _ if restart_finding => None,
         Bucket::Look => guide::guide(explain.0),
         Bucket::GoodToKnow => detail.and_then(|d| guide::guide_not_offered(explain.0, d)),
         _ => None,
     };
-    let page = other_page(bucket, explain, guide, a.step);
+    let page = if restart_finding {
+        None
+    } else {
+        other_page(bucket, explain, guide, a.step)
+    };
     let icon = match bucket {
         Bucket::Managed => Icon::Lock,
         Bucket::Unavailable => Icon::Info,
@@ -578,33 +621,47 @@ fn other(ctx: &Ctx, a: &advice::Advice, source: OtherSource<'_>) -> Other {
         Bucket::Look => Icon::AlertTriangle,
     };
     let line = match other_line(bucket, guide.is_some(), a) {
+        _ if restart_finding => ctx.t(a.next),
         (Some(prefix), text) => format!("{} {}", ctx.t(prefix), ctx.t(text)),
         (None, text) => ctx.t(text),
     };
+    let status = if restart_finding {
+        ctx.t(a.status)
+    } else if managed {
+        ctx.t("For your information")
+    } else if guide.is_some() && bucket == Bucket::Look {
+        ctx.t("To do")
+    } else {
+        ctx.t(a.status)
+    };
+    let info = sheet(
+        ctx,
+        explain.0,
+        &name,
+        explain.1,
+        Vec::new(),
+        more,
+        &[&line, &status],
+    );
     let hay = search_text(
         &[&name, &line, &ctx.t(a.impact)],
         &[name_source, a.next, a.impact],
         explain.0,
     );
     Other {
+        #[cfg(test)]
         key: format!("other:{index}"),
         topic,
+        #[cfg(test)]
         explain: explain.0.to_owned(),
-        report_only: explain.1,
         name,
         line,
-        status: if managed {
-            ctx.t("For your information")
-        } else if guide.is_some() && bucket == Bucket::Look {
-            ctx.t("To do")
-        } else {
-            ctx.t(a.status)
-        },
+        status,
         step: if managed { NextStep::None } else { a.step },
         tone,
         bucket,
         icon,
-        tech,
+        info,
         guide,
         page,
         hay,
@@ -732,7 +789,6 @@ fn sync(state: &mut State, ctx: &Ctx) {
     if state.synced_at != ctx.checked_at || state.synced_at.is_none() {
         state.synced_at = ctx.checked_at;
         state.selected = starting_choice(ctx).into_iter().collect();
-        state.expanded.clear();
         let undoable = |id: &String| {
             ctx.report
                 .as_deref()
@@ -840,13 +896,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.search.clear();
             return iced::widget::operation::focus(SEARCH_ID);
         }
-        Msg::Expand(id) => flip(&mut state.expanded, id),
         Msg::ShowProtected(topic) => flip_topic(&mut state.flipped_protected, topic),
         Msg::ToggleMore(topic) => flip_topic(&mut state.open_more, topic),
         Msg::AllAttention => state.all_attention = !state.all_attention,
         Msg::AllProtected => state.all_protected = !state.all_protected,
         Msg::Frame(now) => track_scan(state, ctx, now),
-        Msg::ErrorDetails => state.show_error = !state.show_error,
         Msg::Open(page) => return open_page(ctx, page),
     }
     Task::none()
@@ -1098,12 +1152,6 @@ fn track_scan(state: &mut State, ctx: &Ctx, now: Instant) {
     state.lines.drain(..extra);
 }
 
-fn flip(set: &mut HashSet<String>, id: String) {
-    if !set.remove(&id) {
-        set.insert(id);
-    }
-}
-
 pub fn open_page(ctx: &Ctx, page: Page) -> Task<Message> {
     ctx.broker_task(page.request(), move |reply| {
         Message::PageOpened(page, matches!(reply, Ok(Reply::Done | Reply::OpenedStore)))
@@ -1133,70 +1181,6 @@ fn line<'a>(
         r = r.push(container(l).padding([0.0, theme::S2]));
     }
     r.push(content).push(trailing).into()
-}
-
-struct More {
-    why: Option<String>,
-    items: Option<(String, Vec<String>)>,
-    tech: Option<String>,
-}
-
-/// Details under a row, minus anything the row already shows.
-fn details(
-    shown: &[&str],
-    why: Option<String>,
-    items: Option<(String, Vec<String>)>,
-    tech: &str,
-) -> Option<More> {
-    let seen = |text: &str| {
-        shown
-            .iter()
-            .any(|s| s.lines().any(|line| line.trim() == text.trim()))
-    };
-    let why = why.filter(|w| !w.trim().is_empty() && !seen(w));
-    let items = items.filter(|(_, lines)| !lines.is_empty());
-    // A short status such as "Can fix" adds nothing under "We can fix this."
-    let echoed = |part: &str| {
-        let part = part.to_lowercase();
-        part.split_whitespace().count() >= 2
-            && shown
-                .iter()
-                .copied()
-                .chain(why.as_deref())
-                .any(|s| s.to_lowercase().contains(&part))
-    };
-    let mut parts: Vec<&str> = Vec::new();
-    for part in tech.split(" · ").map(str::trim) {
-        if !part.is_empty() && !seen(part) && !echoed(part) && !parts.contains(&part) {
-            parts.push(part);
-        }
-    }
-    let tech = (!parts.is_empty()).then(|| parts.join(" · "));
-    (why.is_some() || items.is_some() || tech.is_some()).then_some(More { why, items, tech })
-}
-
-fn expanded<'a>(
-    p: Palette,
-    indent: f32,
-    More { why, items, tech }: More,
-    label: String,
-) -> Element<'a, Message> {
-    let mut c = column![].spacing(theme::S2);
-    if let Some(w) = why {
-        c = c.push(widgets::body(p, w));
-    }
-    if let Some((heading, lines)) = items {
-        c = c.push(widgets::section_label(p, heading));
-        for line in lines {
-            c = c.push(widgets::small(p, line));
-        }
-    }
-    if let Some(tech) = tech {
-        c = c
-            .push(widgets::section_label(p, label))
-            .push(widgets::small(p, tech));
-    }
-    row![space::horizontal().width(indent), widgets::well(p, c)].into()
 }
 
 pub fn guide_block<'a>(
@@ -1237,7 +1221,6 @@ fn nothing<'a>() -> Element<'a, Message> {
 }
 
 fn attention_row<'a>(
-    state: &State,
     ctx: &Ctx,
     a: &Att,
     checked: bool,
@@ -1246,7 +1229,6 @@ fn attention_row<'a>(
     extra: bool,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
-    let open = state.expanded.contains(&a.id);
     let mut pills = row![].spacing(theme::S3).align_y(Alignment::Center);
     if a.switched_back {
         pills = pills.push(widgets::pill(p, ctx.t("Switched back"), Tone::Warn));
@@ -1264,23 +1246,8 @@ fn attention_row<'a>(
     let trailing: Element<'a, Message> = pills.into();
     let toggle = Message::Fixes(Msg::Toggle(a.id.clone()));
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
-    if let Some(t) = widgets::explain::toggle(ctx, "fixes", &a.id) {
+    if let Some(t) = widgets::info::button(ctx, a.info.clone()) {
         tools = tools.push(t);
-    }
-    let more = details(
-        &[a.line.as_str()],
-        Some(a.why.clone()),
-        Some((ctx.t("What will change"), a.items.clone())),
-        &a.tech,
-    );
-    if more.is_some() {
-        tools = tools.push(widgets::action(
-            p,
-            ButtonKind::Ghost,
-            ctx.t(if open { "Hide details" } else { "Details" }),
-            None,
-            Some(Message::Fixes(Msg::Expand(a.id.clone()))),
-        ));
     }
     let head = line(
         Some(widgets::checkbox(
@@ -1304,30 +1271,13 @@ fn attention_row<'a>(
         ),
         tools.into(),
     );
-    let mut rows = column![head].spacing(theme::S1);
-    if let Some(inset) = widgets::explain::panel(ctx, "fixes", &a.id, false, INDENT) {
-        rows = rows.push(inset);
-    }
-    if let Some(more) = more.filter(|_| open) {
-        rows = rows.push(expanded(p, INDENT, more, ctx.t("More details")));
-    }
-    rows.into()
+    head
 }
 
-fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
+fn other_row<'a>(ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     let p = ctx.palette;
-    let open = state.expanded.contains(&o.key);
-    let more = details(&[o.line.as_str(), o.status.as_str()], None, None, &o.tech);
-    let menu = more.as_ref().map(|_| {
-        (
-            Icon::Info,
-            ctx.t(if open { "Hide details" } else { "Details" }),
-            Message::Fixes(Msg::Expand(o.key.clone())),
-            false,
-        )
-    });
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
-    if let Some(t) = widgets::explain::toggle(ctx, "fixes", &o.explain) {
+    if let Some(t) = widgets::info::button(ctx, o.info.clone()) {
         tools = tools.push(t);
     }
     if o.bucket == Bucket::Unavailable || o.step == NextStep::CheckAgain {
@@ -1370,9 +1320,6 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
         ]),
         _ => None,
     };
-    if let Some(item) = menu {
-        tools = tools.push(widgets::overflow_menu(p, vec![item]));
-    }
     let head = line(
         None,
         widgets::row_item_tinted(
@@ -1393,14 +1340,6 @@ fn other_row<'a>(state: &State, ctx: &Ctx, o: &Other) -> Element<'a, Message> {
     if let Some(bar) = page_bar {
         rows = rows.push(bar);
     }
-    if let Some(inset) =
-        widgets::explain::panel(ctx, "fixes", &o.explain, o.report_only, INDENT_PLAIN)
-    {
-        rows = rows.push(inset);
-    }
-    if let Some(more) = more.filter(|_| open) {
-        rows = rows.push(expanded(p, INDENT_PLAIN, more, ctx.t("More details")));
-    }
     rows.into()
 }
 
@@ -1415,7 +1354,11 @@ fn protected_row<'a>(ctx: &Ctx, r: &Prot) -> Element<'a, Message> {
         nothing(),
         None,
     );
-    widgets::explain::with_disclosure(ctx, "fixes", &r.id, false, INDENT_PLAIN, head)
+    line(
+        None,
+        head,
+        widgets::info::button(ctx, r.info.clone()).unwrap_or_else(nothing),
+    )
 }
 
 fn undoable_row<'a>(ctx: &Ctx, r: &Prot, checked: bool, tag: &str) -> Element<'a, Message> {
@@ -1423,7 +1366,7 @@ fn undoable_row<'a>(ctx: &Ctx, r: &Prot, checked: bool, tag: &str) -> Element<'a
     let ready = !ctx.busy && ctx.checking.is_none() && ctx.check_error.is_none();
     let toggle = Message::Fixes(Msg::ToggleUndo(r.id.clone()));
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
-    if let Some(t) = widgets::explain::toggle(ctx, "fixes", &r.id) {
+    if let Some(t) = widgets::info::button(ctx, r.info.clone()) {
         tools = tools.push(t);
     }
     tools = tools.push(widgets::action(
@@ -1451,11 +1394,7 @@ fn undoable_row<'a>(ctx: &Ctx, r: &Prot, checked: bool, tag: &str) -> Element<'a
         ),
         tools.into(),
     );
-    let mut rows = column![head].spacing(theme::S1);
-    if let Some(inset) = widgets::explain::panel(ctx, "fixes", &r.id, false, INDENT) {
-        rows = rows.push(inset);
-    }
-    rows.into()
+    head
 }
 
 fn more<'a>(ctx: &Ctx, total: usize, all: bool, msg: Msg) -> Option<Element<'a, Message>> {
@@ -1613,7 +1552,11 @@ pub fn view<'a>(
                     ctx.t(
                         "Close Secblitz and open it again. If this keeps happening, restart your PC.",
                     ),
-                    Some(error_details(state, ctx, error)),
+                    Some(error_details(
+                        ctx,
+                        "We couldn't start the protection check",
+                        error,
+                    )),
                 ),
             )),
         );
@@ -1627,7 +1570,7 @@ pub fn view<'a>(
     }
     let Some(report) = ctx.report.as_ref() else {
         if let Some(error) = &ctx.check_error {
-            return page(Vec::new(), body.push(check_failed(state, ctx, error)));
+            return page(Vec::new(), body.push(check_failed(ctx, error)));
         }
         return page(Vec::new(), body);
     };
@@ -1902,18 +1845,15 @@ fn no_matches<'a>(ctx: &Ctx, typed: &str) -> Element<'a, Message> {
     widgets::no_matches(ctx, typed, Message::Fixes(Msg::ClearSearch))
 }
 
-fn error_details<'a>(state: &State, ctx: &Ctx, error: &str) -> Element<'a, Message> {
-    let p = ctx.palette;
-    widgets::expander(
-        p,
+fn error_details<'a>(ctx: &Ctx, title: &str, error: &str) -> Element<'a, Message> {
+    let sheet = InfoSheet::new(ctx.t(title)).text(
         ctx.t("More details"),
-        state.show_error,
-        Message::Fixes(Msg::ErrorDetails),
-        widgets::small(p, ctx.t(crate::app::flow::plain_failure(error))),
-    )
+        ctx.t(crate::app::flow::plain_failure(error)),
+    );
+    widgets::info::link(ctx, ctx.t("More details"), Some(sheet)).unwrap_or_else(nothing)
 }
 
-fn check_failed<'a>(state: &State, ctx: &Ctx, error: &str) -> Element<'a, Message> {
+fn check_failed<'a>(ctx: &Ctx, error: &str) -> Element<'a, Message> {
     let p = ctx.palette;
     let again = widgets::action(
         p,
@@ -1930,10 +1870,13 @@ fn check_failed<'a>(state: &State, ctx: &Ctx, error: &str) -> Element<'a, Messag
             ctx.t("We couldn't finish checking"),
             ctx.t("Nothing was changed. Press Check again. If it keeps failing, restart your PC."),
             Some(
-                column![again, error_details(state, ctx, error)]
-                    .spacing(theme::S3)
-                    .align_x(Alignment::Center)
-                    .into(),
+                column![
+                    again,
+                    error_details(ctx, "We couldn't finish checking", error)
+                ]
+                .spacing(theme::S3)
+                .align_x(Alignment::Center)
+                .into(),
             ),
         ),
     )
@@ -2101,7 +2044,6 @@ fn topic_groups<'a>(
         list.iter()
             .map(|a| {
                 attention_row(
-                    state,
                     ctx,
                     a,
                     chosen.contains(&a.id),
@@ -2173,7 +2115,7 @@ fn topic_groups<'a>(
                 ctx.t("Most of these are done in Windows itself. Steps are shown where they help."),
             ),
             None,
-            look.iter().map(|o| other_row(state, ctx, o)).collect(),
+            look.iter().map(|o| other_row(ctx, o)).collect(),
         ));
     }
     if !shown.protected.is_empty() {
@@ -2238,7 +2180,7 @@ fn more_group<'a>(
             container(widgets::section_label(p, ctx.t(title))).padding([theme::S2, theme::S4]),
         );
         for o in list {
-            body = body.push(other_row(state, ctx, o));
+            body = body.push(other_row(ctx, o));
         }
     }
     (total > 0).then(|| {
@@ -2420,56 +2362,118 @@ mod tests {
         );
     }
 
+    fn test_ctx() -> Ctx {
+        let (app, _) = crate::gui::App::new(crate::gui::Options {
+            lang: Lang::En,
+            broker: None,
+            start: None,
+        });
+        app.ctx
+    }
+
+    fn report_with(status: &str) -> Report {
+        Report {
+            results: secblitz::hardening::all()
+                .iter()
+                .map(|spec| secblitz::engine::Outcome {
+                    id: spec.id.into(),
+                    title: spec.title.into(),
+                    status: status.into(),
+                    detail: spec.description.into(),
+                    ..secblitz::engine::Outcome::default()
+                })
+                .collect(),
+            ..Report::default()
+        }
+    }
+
+    fn assert_clean(who: &str, sheet: &Option<InfoSheet>, shown: &[&str]) {
+        let Some(sheet) = sheet else { return };
+        let mut seen: Vec<String> = shown
+            .iter()
+            .flat_map(|s| s.lines())
+            .map(str::to_owned)
+            .collect();
+        let mut check = |text: &str| {
+            assert!(!text.trim().is_empty(), "{who}: an empty line");
+            let same = |s: &String| {
+                let (a, b) = (s.trim().to_lowercase(), text.trim().to_lowercase());
+                a == b || (a.split(' ').count() >= 2 && b.contains(&a) && b.len() < a.len() * 2)
+            };
+            assert!(!seen.iter().any(same), "{who}: {text:?} is said twice");
+            seen.push(text.to_owned());
+        };
+        assert!(!sheet.is_empty(), "{who}: an empty sheet");
+        for block in &sheet.blocks {
+            match block {
+                widgets::info::InfoBlock::Text { label, body } => {
+                    assert!(!label.trim().is_empty(), "{who}: a block without a label");
+                    check(body);
+                }
+                widgets::info::InfoBlock::List { label, items } => {
+                    assert!(!label.trim().is_empty(), "{who}: a list without a label");
+                    assert!(!items.is_empty(), "{who}: an empty list");
+                    items.iter().for_each(|i| check(i));
+                }
+            }
+        }
+    }
+
     #[test]
-    fn details_never_repeat_what_the_row_shows() {
-        let row = "Turn on Windows Firewall.\nAccounts: bob";
-        assert!(details(
-            &[row, "Not protected"],
-            None,
-            None,
-            "Not protected · Turn on Windows Firewall."
-        )
-        .is_none());
-        let more = details(
-            &[row],
-            Some("Turn on Windows Firewall.".into()),
-            Some(("What will change".into(), vec!["Firewall: on".into()])),
-            "Not protected · Turn on Windows Firewall.",
-        )
-        .unwrap();
-        assert_eq!(more.why, None);
-        assert_eq!(more.tech.as_deref(), Some("Not protected"));
-        assert_eq!(more.items.unwrap().1, vec!["Firewall: on".to_string()]);
-        let more = details(
-            &["Turning it on protects you from: x"],
-            Some("Do y.".into()),
-            None,
-            "Not protected · Do y.",
-        )
-        .unwrap();
-        assert_eq!(
-            (more.why.as_deref(), more.tech.as_deref()),
-            (Some("Do y."), Some("Not protected"))
-        );
-        let more = details(
-            &["Turning it on protects you from: x"],
-            Some("We can fix this. Junk is blocked.".into()),
-            None,
-            "Can fix",
-        )
-        .unwrap();
-        assert_eq!(more.tech, None);
-        let more = details(
-            &["Turn it on"],
-            None,
-            None,
-            "On · Managed by your organization",
-        )
-        .unwrap();
-        assert_eq!(
-            more.tech.as_deref(),
-            Some("On · Managed by your organization")
-        );
+    fn a_row_dialog_never_repeats_the_row_the_pill_or_itself() {
+        let mut ctx = test_ctx();
+        let mut choices = 0;
+        for status in ["attention", "compliant", "applied", "skipped", "unknown"] {
+            let report = report_with(status);
+            ctx.catalog.available = report.results.iter().map(|r| r.id.clone()).collect();
+            ctx.report = Some(Arc::new(report));
+            let report = ctx.report.clone().unwrap();
+            let rows = build(&ctx, &report);
+            for a in rows.attention.iter().chain(&rows.privacy) {
+                let r = report.results.iter().find(|r| r.id == a.id).unwrap();
+                let status = plain_status(&r.status, &advice::for_outcome(r), Lang::En).0;
+                let mut shown = vec![a.line.as_str(), status.as_str()];
+                if a.choice {
+                    choices += 1;
+                    assert_eq!(status, "Your choice", "{}", a.id);
+                    shown.push("Your choice");
+                }
+                assert_clean(&a.id, &a.info, &shown);
+                let pill = status.trim().to_lowercase();
+                if let Some(sheet) = &a.info {
+                    let text = format!("{:?}", sheet.blocks).to_lowercase();
+                    assert!(
+                        !text.contains(&format!("\"{pill}\"")),
+                        "{}: the status {pill:?} is in the dialog",
+                        a.id
+                    );
+                }
+            }
+            for o in &rows.others {
+                assert_clean(&o.name, &o.info, &[&o.line, &o.status]);
+            }
+            for r in &rows.protected {
+                assert_clean(&r.id, &r.info, &[&r.line]);
+            }
+        }
+        assert!(choices > 0, "no choice check was built");
+    }
+
+    #[test]
+    fn a_choice_row_gets_no_dialog_that_only_says_your_choice() {
+        let mut ctx = test_ctx();
+        let report = report_with("attention");
+        ctx.catalog.available = report.results.iter().map(|r| r.id.clone()).collect();
+        let rows = build(&ctx, &Arc::new(report));
+        for a in rows
+            .attention
+            .iter()
+            .chain(&rows.privacy)
+            .filter(|a| a.choice)
+        {
+            let text = format!("{:?}", a.info).to_lowercase();
+            assert!(!text.contains("your choice"), "{}", a.id);
+        }
     }
 
     #[test]
@@ -2597,14 +2601,5 @@ mod tests {
             protected_open(&state, Topic::Network, 1),
             "other topics keep their own state"
         );
-    }
-
-    #[test]
-    fn flip_toggles_membership() {
-        let mut set = HashSet::new();
-        flip(&mut set, "a".into());
-        assert!(set.contains("a"));
-        flip(&mut set, "a".into());
-        assert!(set.is_empty());
     }
 }

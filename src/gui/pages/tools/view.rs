@@ -11,6 +11,7 @@ use crate::broker;
 use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::widgets::info::InfoSheet;
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{Ctx, Helper, Message, Page};
 use iced::widget::{column, container, row, space, text};
@@ -201,7 +202,7 @@ struct Outcome {
     title: String,
     sub: Option<String>,
     menu: Vec<MenuEntry>,
-    raw: Option<(Detail, String)>,
+    raw: Option<String>,
 }
 
 fn finished<'a>(state: &State, ctx: &Ctx, o: Outcome) -> El<'a> {
@@ -223,16 +224,9 @@ fn finished_with<'a>(
         _ => anim::warn_draw(MARK, color, t),
     };
     let mut menu = o.menu;
-    let mut below = Vec::new();
-    if let Some((which, raw)) = o.raw {
-        menu.push(entry(
-            Icon::Info,
-            ctx.t("More details"),
-            Msg::ToggleDetail(which),
-        ));
-        if state.detail_open(which) {
-            below.push(raw_text(ctx, &raw));
-        }
+    let below = Vec::new();
+    if let Some(raw) = o.raw {
+        menu.push(more_details(ctx, &o.title, &raw));
     }
     widgets::row_item_below(
         p,
@@ -259,14 +253,22 @@ fn finished_with<'a>(
     )
 }
 
-fn raw_text<'a>(ctx: &Ctx, plain: &str) -> El<'a> {
-    let p = ctx.palette;
-    let shown = if plain.trim().is_empty() {
+fn raw_text(ctx: &Ctx, plain: &str) -> String {
+    if plain.trim().is_empty() {
         ctx.t("No extra details.")
     } else {
         ctx.t(plain.trim())
-    };
-    text(shown).size(theme::SMALL).color(p.text_muted).into()
+    }
+}
+
+fn more_details(ctx: &Ctx, title: &str, raw: &str) -> MenuEntry {
+    let sheet = InfoSheet::new(title).text(ctx.t("More details"), raw_text(ctx, raw));
+    (
+        Icon::Info,
+        ctx.t("More details"),
+        Message::Info(Some(Box::new(sheet))),
+        false,
+    )
 }
 
 fn elapsed_phrase(ctx: &Ctx, secs: u64) -> String {
@@ -282,14 +284,10 @@ fn running_for(ctx: &Ctx, secs: u64) -> String {
         .replace("{time}", &elapsed_phrase(ctx, secs))
 }
 
-fn details<'a>(state: &State, ctx: &Ctx, which: Detail, raw: &str) -> El<'a> {
-    widgets::expander(
-        ctx.palette,
-        ctx.t("More details"),
-        state.detail_open(which),
-        tools(Msg::ToggleDetail(which)),
-        raw_text(ctx, raw),
-    )
+fn details<'a>(ctx: &Ctx, title: &str, raw: &str) -> El<'a> {
+    let sheet = InfoSheet::new(title).text(ctx.t("More details"), raw_text(ctx, raw));
+    widgets::info::link(ctx, ctx.t("More details"), Some(sheet))
+        .unwrap_or_else(|| space::horizontal().width(0).into())
 }
 
 fn open_security_entry(ctx: &Ctx) -> Option<MenuEntry> {
@@ -390,7 +388,7 @@ fn threats_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     .into_iter()
                     .chain([again(ctx.t("Done"))])
                     .collect(),
-                raw: Some((Detail::Threats, logic::friendly_why(raw).to_owned())),
+                raw: Some(logic::friendly_why(raw).to_owned()),
             },
         ),
     }
@@ -443,7 +441,7 @@ fn scan_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     .into_iter()
                     .chain([entry(Icon::Refresh, ctx.t("Try again"), Msg::ClearScan)])
                     .collect(),
-                raw: Some((Detail::Scan, logic::friendly_why(raw).to_owned())),
+                raw: Some(logic::friendly_why(raw).to_owned()),
             },
         ),
     }
@@ -505,7 +503,7 @@ fn defender_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     title: ctx.t("We couldn't update right now"),
                     sub: Some(sub),
                     menu,
-                    raw: Some((Detail::Defender, logic::friendly_why(raw).to_owned())),
+                    raw: Some(logic::friendly_why(raw).to_owned()),
                 },
             )
         }
@@ -662,7 +660,7 @@ fn repair_done<'a>(
             title: ctx.t(result.title()),
             sub: Some(detail),
             menu,
-            raw: Some((Detail::Repair, logic::repair_why(result, note).to_owned())),
+            raw: Some(logic::repair_why(result, note).to_owned()),
         },
     )
 }
@@ -798,7 +796,7 @@ fn updates_failed<'a>(state: &'a State, ctx: &'a Ctx, note: &'static str) -> El<
             title: ctx.t("We couldn't check for updates"),
             sub: Some(ctx.t(note)),
             menu,
-            raw: Some((Detail::Updates, logic::why_for_note(note).to_owned())),
+            raw: Some(logic::why_for_note(note).to_owned()),
         },
         button,
     )
@@ -870,7 +868,7 @@ fn updates_done<'a>(
             title: ctx.t(result.title()),
             sub: Some(detail),
             menu,
-            raw: Some((Detail::Updates, logic::install_why(result, note).to_owned())),
+            raw: Some(logic::install_why(result, note).to_owned()),
         },
         button,
     )
@@ -976,23 +974,18 @@ fn tips_picker<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
         },
         Some(Msg::PickTips(state.tip_choice)),
     )];
-    if done {
+    if let Tips::Done(report) = &state.tips {
         items.push(more(
             p,
-            vec![entry(
-                Icon::Info,
-                ctx.t("More details"),
-                Msg::ToggleDetail(Detail::Tips),
+            vec![more_details(
+                ctx,
+                &ctx.t("What do you use this PC for?"),
+                &tips_summary(ctx, report),
             )],
         ));
     }
     let blurb = widgets::small(p, ctx.t(state.tip_choice.blurb()));
-    let mut below = vec![picker, blurb];
-    if let Tips::Done(report) = &state.tips {
-        if state.detail_open(Detail::Tips) {
-            below.push(raw_text(ctx, &tips_summary(ctx, report)));
-        }
-    }
+    let below = vec![picker, blurb];
     widgets::row_item_below(
         p,
         Some(Icon::ShieldCheck),
@@ -1123,28 +1116,29 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         Some(icon),
         Some(tone),
         ctx.t(tip.title),
-        Some(words),
+        Some(words.clone()),
         action,
         None,
     );
     let head = match (guide, tip.state) {
         (Some(g), TipState::Look) => column![
             head,
-            crate::gui::pages::fixes::guide_block(
-                ctx,
-                g,
-                widgets::explain::INDENT,
-                ctx.can_open_pages()
-            )
+            crate::gui::pages::fixes::guide_block(ctx, g, widgets::INDENT, ctx.can_open_pages())
         ]
         .spacing(theme::S1)
         .into(),
         _ => head,
     };
-    match &tip.explain {
-        Some(id) => {
-            widgets::explain::with_disclosure(ctx, "tips", id, true, widgets::explain::INDENT, head)
-        }
+    let sheet = tip
+        .explain
+        .as_deref()
+        .and_then(|id| widgets::info::for_check(ctx, ctx.t(tip.title), id, true))
+        .map(|s| s.without(&[words.as_str()]));
+    match widgets::info::button(ctx, sheet) {
+        Some(info) => row![head, info]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into(),
         None => head,
     }
 }
@@ -1227,7 +1221,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("Bitwarden can't be installed from this account"),
                 sub: Some(ctx.t("You can get it from bitwarden.com instead.")),
                 menu: vec![entry(Icon::Check, ctx.t("Done"), Msg::ClearBitwarden)],
-                raw: Some((Detail::Bitwarden, logic::WHY_BITWARDEN_UNAVAILABLE.to_owned())),
+                raw: Some(logic::WHY_BITWARDEN_UNAVAILABLE.to_owned()),
             },
         ),
         Run::Done(Err(_)) if state.bitwarden_why == Some(broker::Reply::Offline) => finished_with(
@@ -1240,7 +1234,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                 title: ctx.t("We couldn't install Bitwarden"),
                 sub: Some(ctx.t("You're offline. Connect to the internet and try again.")),
                 menu: vec![entry(Icon::X, ctx.t("Done"), Msg::ClearBitwarden)],
-                raw: Some((Detail::Bitwarden, logic::WHY_BITWARDEN_OFFLINE.to_owned())),
+                raw: Some(logic::WHY_BITWARDEN_OFFLINE.to_owned()),
             },
             Some((ctx.t("Retry"), Icon::Refresh, Msg::Ask(Sheet::Bitwarden))),
         ),
@@ -1258,7 +1252,7 @@ fn manager_row<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
                     ctx.t("Try again"),
                     Msg::ClearBitwarden,
                 )],
-                raw: Some((Detail::Bitwarden, logic::bitwarden_why(raw).to_owned())),
+                raw: Some(logic::bitwarden_why(raw).to_owned()),
             },
         ),
     }
@@ -1437,7 +1431,7 @@ pub(super) fn sheet_copy(sheet: Sheet) -> SheetCopy {
     }
 }
 
-fn install_updates_extra<'a>(state: &'a State, ctx: &'a Ctx, found: &logic::Found) -> Vec<El<'a>> {
+fn install_updates_extra<'a>(ctx: &'a Ctx, found: &logic::Found) -> Vec<El<'a>> {
     let p = ctx.palette;
     let mut list = column![].spacing(theme::S2);
     for u in found.updates.iter().take(5) {
@@ -1472,7 +1466,7 @@ fn install_updates_extra<'a>(state: &'a State, ctx: &'a Ctx, found: &logic::Foun
     if raw.len() > 4000 {
         raw.truncate(raw.floor_char_boundary(4000));
     }
-    vec![list.into(), details(state, ctx, Detail::Sheet, &raw)]
+    vec![list.into(), details(ctx, &ctx.t("Install updates"), &raw)]
 }
 
 fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
@@ -1520,7 +1514,7 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     }
     if sheet == Sheet::InstallUpdates {
         if let Updates::Found(found) = &state.updates {
-            for item in install_updates_extra(state, ctx, found) {
+            for item in install_updates_extra(ctx, found) {
                 content = content.push(item);
             }
         }

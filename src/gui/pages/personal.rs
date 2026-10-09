@@ -5,9 +5,8 @@ use crate::gui::pages::tools;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, progress, ButtonKind};
 use crate::gui::{blocking, Ctx, Helper, Message};
-use iced::widget::{column, space};
-use iced::{Element, Length, Task};
-use secblitz::explain;
+use iced::widget::{column, row, space};
+use iced::{Alignment, Element, Length, Task};
 use secblitz::user_apps::APPS;
 use secblitz::user_settings::{Op, Setting};
 
@@ -19,7 +18,6 @@ pub enum Msg {
     Reported(Setting, Result<Reply, String>),
     Toggle(Setting, bool),
     Changed(Setting, Result<Reply, String>),
-    ToggleDetail(Detail),
     ScanApps,
     Scanned(Result<Reply, String>),
     AppQuery(usize, Result<Reply, String>),
@@ -28,12 +26,6 @@ pub enum Msg {
     InstallerChecked(Result<Reply, String>),
     ScanOnline(bool),
     UpdateOnline(usize, bool),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Detail {
-    Setting(Setting),
-    Apps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +71,6 @@ pub struct State {
     cells: [Cell; Setting::PERSONAL.len()],
     apps: Apps,
     app_cells: [AppCell; APPS.len()],
-    open: Vec<Detail>,
 }
 
 impl Default for State {
@@ -88,7 +79,6 @@ impl Default for State {
             cells: [Cell::Idle; Setting::PERSONAL.len()],
             apps: Apps::Unchecked,
             app_cells: [AppCell::Hidden; APPS.len()],
-            open: Vec::new(),
         }
     }
 }
@@ -179,14 +169,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Some(text) => Task::batch([toast(text, Tone::Warn), reread]),
                 None => reread,
             }
-        }
-        Msg::ToggleDetail(detail) => {
-            if let Some(at) = state.open.iter().position(|d| *d == detail) {
-                state.open.remove(at);
-            } else {
-                state.open.push(detail);
-            }
-            Task::none()
         }
         Msg::ScanApps => {
             if ctx.helper != Helper::Ready
@@ -361,30 +343,6 @@ fn block<'a>(head: El<'a>, extra: Option<El<'a>>) -> El<'a> {
     }
 }
 
-fn explainer<'a>(state: &State, ctx: &Ctx, id: &str, detail: Detail) -> Option<El<'a>> {
-    let e = explain::for_check(id)?;
-    let p = ctx.palette;
-    let lines = column![
-        line(p, ctx.t("What it is"), ctx.t(e.what)),
-        line(p, ctx.t("If it's off"), ctx.t(e.risk)),
-        line(p, ctx.t("If you turn it on"), ctx.t(e.change)),
-    ]
-    .spacing(theme::S2);
-    Some(widgets::under_row(vec![widgets::expander(
-        p,
-        ctx.t("More details"),
-        state.open.contains(&detail),
-        wrap(Msg::ToggleDetail(detail)),
-        lines,
-    )]))
-}
-
-fn line<'a>(p: Palette, label: String, text: String) -> El<'a> {
-    column![widgets::small(p, label), widgets::body(p, text)]
-        .spacing(2)
-        .into()
-}
-
 fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
     match setting {
         Setting::StoreAppsWebCheck => (Icon::Package, ctx.t("Web check for Store apps")),
@@ -485,10 +443,23 @@ fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<E
             widgets::switch(p, is_on(reply), None::<fn(bool) -> Message>),
         ),
     };
-    let head = widgets::row_item(p, Some(icon), title, Some(sub), control, None);
-    Some(block(
-        head,
-        explainer(state, ctx, setting.id(), Detail::Setting(setting)),
+    let control = match widgets::info::button(
+        ctx,
+        widgets::info::for_check(ctx, title.clone(), setting.id(), false),
+    ) {
+        Some(info) => row![info, control]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into(),
+        None => control,
+    };
+    Some(widgets::row_item(
+        p,
+        Some(icon),
+        title,
+        Some(sub),
+        control,
+        None,
     ))
 }
 
@@ -602,8 +573,14 @@ fn apps_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
             }
         }
     }
-    if let Some(e) = explainer(state, ctx, "software.outdated_winget", Detail::Apps) {
-        rows.push(e);
+    let sheet = widgets::info::for_check(
+        ctx,
+        ctx.t("Look for app updates"),
+        "software.outdated_winget",
+        false,
+    );
+    if let Some(more) = widgets::info::link(ctx, ctx.t("More details"), sheet) {
+        rows.push(widgets::under_row(vec![more]));
     }
     rows
 }
@@ -690,7 +667,7 @@ mod tests {
         assert_eq!(state.cells.len(), Setting::PERSONAL.len());
         for (i, setting) in Setting::PERSONAL.iter().enumerate() {
             assert_eq!(cell(*setting), i);
-            assert!(explain::for_check(setting.id()).is_some());
+            assert!(secblitz::explain::for_check(setting.id()).is_some());
         }
     }
 

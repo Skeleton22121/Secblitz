@@ -9,6 +9,12 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+- Each setting has one info button that opens a small window with what it is, what happens if it is off and what will change.
+- The Details button on the Fixes page is gone, and no more panels open under the rows.
+- The window no longer repeats a setting's status or the line already on its row.
+- The "More details" text on results and errors opens in the same small window.
+
 ## [0.11.0] - 2026-10-08
 
 ### Added

@@ -12,7 +12,6 @@ use iced::widget::{column, container, row, text_input};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Pixels, Subscription, Task,
 };
-use secblitz::explain;
 use secblitz::filter::config::{
     self, BlockHistory, Config, ErrorCode, Lookups, RecentItem, State as ListState, Status,
     MAX_ALLOWED, STATS_DAYS,
@@ -168,7 +167,6 @@ pub struct State {
     busy: Option<Busy>,
     polling: bool,
     generation: u32,
-    open: Vec<Switch>,
     look: Option<(web_globe::Guard, Instant)>,
     tab: Tab,
     pause_choices: bool,
@@ -191,7 +189,6 @@ pub enum Msg {
     Resume,
     Retry,
     Done(u32, Result<(), String>),
-    ToggleDetail(Switch),
     SetTab(Tab),
     FocusPrivacy,
     AskAllow(String),
@@ -784,14 +781,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 ]),
             }
         }
-        Msg::ToggleDetail(switch) => {
-            if let Some(at) = state.open.iter().position(|s| *s == switch) {
-                state.open.remove(at);
-            } else {
-                state.open.push(switch);
-            }
-            Task::none()
-        }
         Msg::SetTab(tab) => {
             state.tab = tab;
             state.confirm = None;
@@ -1156,15 +1145,11 @@ fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
     }
 }
 
-fn detail_line<'a>(p: Palette, label: String, text: String) -> El<'a> {
-    column![widgets::small(p, label), widgets::body(p, text)]
-        .spacing(2)
-        .into()
-}
-
 fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Snapshot) -> El<'a> {
     let p = ctx.palette;
     let (icon, title, sentence) = switch_text(ctx, switch);
+    let sheet = widgets::info::for_check(ctx, title.clone(), switch.id(), false)
+        .map(|s| s.without(&[sentence.as_str()]));
     let enabled = controls_enabled(Some(snapshot), state.busy.is_some());
     let working = state.busy == Some(Busy::Switch(switch));
     let on = switch.get(&snapshot.config);
@@ -1178,26 +1163,19 @@ fn switch_row<'a>(state: &'a State, ctx: &'a Ctx, switch: Switch, snapshot: &Sna
     } else {
         sentence
     };
+    let control = match widgets::info::button(ctx, sheet) {
+        Some(info) => row![info, control]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into(),
+        None => control,
+    };
     let head = widgets::row_item(p, Some(icon), title, Some(sub), control, None);
     let mut rows = vec![head];
     if working {
         rows.push(widgets::under_row(vec![progress::indeterminate(
             p,
             Tone::Brand,
-        )]));
-    }
-    if let Some(e) = explain::for_check(switch.id()) {
-        rows.push(widgets::under_row(vec![widgets::expander(
-            p,
-            ctx.t("More details"),
-            state.open.contains(&switch),
-            wrap(Msg::ToggleDetail(switch)),
-            column![
-                detail_line(p, ctx.t("What it is"), ctx.t(e.what)),
-                detail_line(p, ctx.t("If it's off"), ctx.t(e.risk)),
-                detail_line(p, ctx.t("If you turn it on"), ctx.t(e.change)),
-            ]
-            .spacing(theme::S2),
         )]));
     }
     column(rows).width(Length::Fill).into()
@@ -2255,7 +2233,7 @@ mod tests {
     #[test]
     fn every_switch_has_an_explainer() {
         for s in Switch::ALL {
-            assert!(explain::for_check(s.id()).is_some());
+            assert!(secblitz::explain::for_check(s.id()).is_some());
         }
     }
 

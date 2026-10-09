@@ -77,16 +77,8 @@ impl Shortcut {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detail {
-    Scan,
-    Threats,
-    Defender,
-    Repair,
-    Updates,
-    Tips,
     TipsList,
     TipsGood,
-    Bitwarden,
-    Sheet,
 }
 
 #[derive(Debug, Clone)]
@@ -297,7 +289,6 @@ pub fn escape(state: &mut State) {
         state.sheet = None;
         state.sheet_block = None;
         state.sheet_checking = false;
-        state.close_detail(Detail::Sheet);
     }
 }
 
@@ -373,7 +364,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.sheet = None;
             state.sheet_block = None;
             state.sheet_checking = false;
-            state.close_detail(Detail::Sheet);
             Task::none()
         }
         Msg::Confirm => {
@@ -388,7 +378,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return check_ready(sheet, true);
             }
             state.sheet = None;
-            state.close_detail(Detail::Sheet);
             confirm(state, sheet, ctx)
         }
         Msg::Ready(sheet, note, start) => {
@@ -401,7 +390,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             state.sheet_block = note;
             if start && note.is_none() {
                 state.sheet = None;
-                state.close_detail(Detail::Sheet);
                 return confirm(state, sheet, ctx);
             }
             Task::none()
@@ -498,7 +486,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::ClearThreats => {
             state.threats = Run::Idle;
-            state.close_detail(Detail::Threats);
             Task::none()
         }
         Msg::DefenderDone(r) => {
@@ -508,12 +495,10 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::ClearScan => {
             state.scan = Run::Idle;
-            state.close_detail(Detail::Scan);
             Task::none()
         }
         Msg::ClearDefender => {
             state.defender = Run::Idle;
-            state.close_detail(Detail::Defender);
             Task::none()
         }
         Msg::Repair(event) => {
@@ -552,7 +537,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         Msg::ClearRepair => {
             if matches!(state.repair, Repair::Done { .. }) {
                 state.repair = Repair::Idle;
-                state.close_detail(Detail::Repair);
             }
             Task::none()
         }
@@ -568,7 +552,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.updates = Updates::Looking;
-            state.close_detail(Detail::Updates);
             Task::perform(blocking(logic::discover_updates), |r| tools(Msg::Found(r)))
         }
         Msg::Found(result) => {
@@ -624,7 +607,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 Updates::Done { .. } | Updates::Failed { .. } | Updates::UpToDate
             ) {
                 state.updates = Updates::Idle;
-                state.close_detail(Detail::Updates);
             }
             Task::none()
         }
@@ -633,7 +615,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.tips = Tips::Running(profile);
-            state.close_detail(Detail::Tips);
             state.close_detail(Detail::TipsList);
             state.tip_choice = profile;
             Task::perform(blocking(move || logic::run_tips(profile)), |r| {
@@ -680,7 +661,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::ClearBitwarden => {
             state.bitwarden = Run::Idle;
-            state.close_detail(Detail::Bitwarden);
             Task::none()
         }
         Msg::Open(shortcut) => super::fixes::open_page(ctx, shortcut.page()),
@@ -870,7 +850,6 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                 cancel: cancel.clone(),
                 progress: None,
             };
-            state.close_detail(Detail::Repair);
             Task::run(
                 blocking_stream(move |emit| logic::run_repair(kind, cancel, emit)),
                 |event| tools(Msg::Repair(event)),
@@ -893,7 +872,6 @@ fn confirm(state: &mut State, sheet: Sheet, ctx: &mut Ctx) -> Task<Message> {
                 elapsed: 0,
                 count,
             };
-            state.close_detail(Detail::Updates);
             Task::run(
                 blocking_stream(move |emit| logic::run_install(reviewed, cancel, emit)),
                 |event| tools(Msg::Install(event)),

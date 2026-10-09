@@ -24,7 +24,6 @@ struct Count {
 
 #[derive(Debug)]
 pub struct State {
-    details_open: bool,
     now: Instant,
     scan: Option<anim::Clock>,
     ready_since: Instant,
@@ -41,7 +40,6 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            details_open: false,
             now: Instant::now(),
             scan: None,
             ready_since: Instant::now(),
@@ -60,7 +58,6 @@ impl Default for State {
 #[derive(Debug, Clone)]
 pub enum Msg {
     Frame(Instant),
-    ToggleDetails,
     ToggleProtected,
     ToggleProtectedAll,
     WebSuggest(bool),
@@ -77,7 +74,6 @@ const ATTENTION_ROWS: usize = 4;
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
         Msg::Frame(now) => frame(state, ctx, now),
-        Msg::ToggleDetails => state.details_open = !state.details_open,
         Msg::ToggleProtected => state.protected_open = !state.protected_open,
         Msg::ToggleProtectedAll => state.protected_all = !state.protected_all,
         Msg::WebSuggest(on) => state.web_suggest = on,
@@ -187,14 +183,14 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         return super::recovery::card(ctx, info);
     }
     if let Some(error) = &ctx.engine_error {
-        return error_card(state, ctx, "We couldn't start Secblitz", error, false);
+        return error_card(ctx, "We couldn't start Secblitz", error, false);
     }
     if let Some(progress) = ctx.full_check() {
         return scanning(state, ctx, progress);
     }
     let Some(report) = ctx.report.as_deref() else {
         if let Some(error) = &ctx.check_error {
-            return error_card(state, ctx, "We couldn't check your PC", error, true);
+            return error_card(ctx, "We couldn't check your PC", error, true);
         }
         let art = Magnifier {
             p,
@@ -271,7 +267,6 @@ fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Ele
 }
 
 fn error_card<'a>(
-    state: &State,
     ctx: &'a Ctx,
     title: &str,
     reason: &'a str,
@@ -299,13 +294,11 @@ fn error_card<'a>(
             Some(Message::CheckNow),
         ));
     }
-    content = content.push(widgets::expander(
-        p,
-        ctx.t("More details"),
-        state.details_open,
-        Message::Home(Msg::ToggleDetails),
-        widgets::small(p, reason.to_owned()),
-    ));
+    let sheet =
+        widgets::info::InfoSheet::new(ctx.t(title)).text(ctx.t("More details"), reason.to_owned());
+    if let Some(more) = widgets::info::link(ctx, ctx.t("More details"), Some(sheet)) {
+        content = content.push(more);
+    }
     widgets::region(p, content).into()
 }
 
@@ -699,6 +692,8 @@ fn attention_group<'a>(ctx: &'a Ctx, report: &Report, items: &[ToCheck]) -> Elem
                     (f.title.as_str(), true, ctx.t(a.label), ctx.t(a.next))
                 }
             };
+            let sheet = widgets::info::for_check(ctx, title.clone(), id, report_only)
+                .map(|s| s.without(&[line.as_str()]));
             let head = widgets::row_item_tinted(
                 p,
                 Some(Icon::AlertTriangle),
@@ -708,14 +703,13 @@ fn attention_group<'a>(ctx: &'a Ctx, report: &Report, items: &[ToCheck]) -> Elem
                 widgets::icon(Icon::ChevronRight, 16.0, p.text_muted),
                 Some(Message::Navigate(Page::Fixes)),
             );
-            widgets::explain::with_disclosure(
-                ctx,
-                "home",
-                id,
-                report_only,
-                widgets::explain::INDENT,
-                head,
-            )
+            match widgets::info::button(ctx, sheet) {
+                Some(info) => row![head, info]
+                    .spacing(theme::S1)
+                    .align_y(Alignment::Center)
+                    .into(),
+                None => head,
+            }
         })
         .collect();
     if items.len() > ATTENTION_ROWS {

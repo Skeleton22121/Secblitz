@@ -263,7 +263,7 @@ fn group_card<'a>(
             top: theme::S1,
             right: theme::S4,
             bottom: theme::S1,
-            left: widgets::explain::INDENT,
+            left: widgets::INDENT,
         }),
     );
     if group == Group::Gaming {
@@ -916,7 +916,7 @@ fn result_sheet<'a>(state: &'a State, done: &'a Finished, ctx: &'a Ctx) -> Eleme
         report.body.push(suggested_note(state, done, ctx));
     }
     if !report.technical.is_empty() {
-        report.body.push(details(state, ctx, report.technical));
+        report.body.push(details(ctx, report.technical));
     }
     let mut sheet = column![report.head].spacing(theme::S3);
     if !report.body.is_empty() {
@@ -1110,24 +1110,11 @@ fn suggested_note<'a>(state: &State, done: &Finished, ctx: &Ctx) -> Element<'a, 
     }
 }
 
-fn details<'a>(state: &'a State, ctx: &'a Ctx, lines: Vec<String>) -> Element<'a, Message> {
-    let p = pal(ctx);
-    let mut block = column![].spacing(theme::S1);
-    for line in lines {
-        block = block.push(widgets::small(p, line));
-    }
-    widgets::expander(
-        p,
-        ctx.t("More details"),
-        state.details,
-        wrap(Msg::ToggleDetails),
-        container(
-            scrollable(block)
-                .direction(widgets::controls::scrollbar())
-                .style(widgets::controls::scroll_style(p)),
-        )
-        .max_height(theme::DETAILS_MAX),
-    )
+fn details<'a>(ctx: &Ctx, lines: Vec<String>) -> Element<'a, Message> {
+    let sheet =
+        widgets::info::InfoSheet::new(ctx.t("What happened")).list(ctx.t("More details"), lines);
+    widgets::info::link(ctx, ctx.t("More details"), Some(sheet))
+        .unwrap_or_else(|| iced::widget::space().into())
 }
 
 #[cfg(test)]
