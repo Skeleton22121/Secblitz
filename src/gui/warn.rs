@@ -146,12 +146,10 @@ fn spin() -> impl iced::futures::Stream<Item = Message> {
     })
 }
 
+/// The address bar, unlike a title, cannot be set by the page.
 fn tab_shows(browser: Browser, window: usize, site: &str) -> bool {
-    match browser {
-        Browser::Chromium => warn_logic::title_shows(&sys::title(window), site),
-        Browser::Firefox => sys::address(window, browser, ADDRESS_WAIT)
-            .is_some_and(|address| warn_logic::address_shows(&address, site)),
-    }
+    sys::address(window, browser, ADDRESS_WAIT)
+        .is_some_and(|address| warn_logic::address_shows(&address, site))
 }
 
 fn glyph<'a>(bytes: &'static [u8], size: f32, color: iced::Color) -> Element<'a, Message> {
