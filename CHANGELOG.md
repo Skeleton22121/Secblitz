@@ -18,6 +18,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The roadmap is now a short, plain list of what is planned.
 - Secblitz no longer checks your PC on its own the first time it opens.
 - Details and dialogs show one line per point; open a point to read more.
+- Every switch, tab and menu works with the keyboard, and Tab stays inside an open window.
 
 ## [0.12.0] - 2026-10-09
 

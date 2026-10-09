@@ -174,10 +174,12 @@ pub fn toast<'a>(
         p.tone(tone)
     };
     let close = arrow(
-        button(icon(Icon::X, 14.0, p.on_brand))
+        super::press::button(icon(Icon::X, 14.0, p.on_brand))
             .padding(theme::S1)
+            .scale(false)
             .on_press(Message::DismissToast)
             .style(move |_, status| button::Style {
+                text_color: p.on_brand,
                 background: match status {
                     button::Status::Hovered | button::Status::Pressed => {
                         Some(Background::Color(theme::mix(p.brand, p.on_brand, 0.18)))

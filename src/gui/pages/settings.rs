@@ -111,7 +111,9 @@ pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>>
 }
 
 pub fn escape(state: &mut State) {
-    remove::escape(&mut state.remove);
+    if !remove::escape(&mut state.remove) {
+        state.confirm = None;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

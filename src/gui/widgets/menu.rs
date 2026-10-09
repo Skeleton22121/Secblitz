@@ -384,7 +384,7 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_> {
                 shell.request_redraw();
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
-                key: Key::Named(Named::Enter),
+                key: Key::Named(Named::Enter | Named::Space),
                 ..
             }) => {
                 if let Some(item) = self.state.hover.and_then(|i| self.items.get(i)) {

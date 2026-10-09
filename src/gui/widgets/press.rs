@@ -14,7 +14,7 @@ use iced::{
 use std::time::{Duration, Instant};
 
 const PRESS_SCALE: f32 = 0.03;
-const FOCUS_ALPHA: f32 = 0.14;
+pub const FOCUS_ALPHA: f32 = 0.14;
 const HOVER: Duration = Duration::from_millis(110);
 const DOWN: Duration = anim::FASTER;
 const UP: Duration = Duration::from_millis(220);

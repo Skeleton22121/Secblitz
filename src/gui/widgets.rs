@@ -6,6 +6,7 @@ pub mod bars;
 pub mod chart;
 pub mod controls;
 pub mod cursor;
+pub mod focus;
 pub mod hairline;
 pub mod handoff;
 pub mod info;
@@ -328,7 +329,12 @@ fn sheet_over<'a>(
         }
         None => Element::from(container(panel).center(Length::Fill).padding(theme::S6)),
     };
-    opaque(appear::pop(layer, p.scrim, p.surface, theme::R_LARGE))
+    opaque(appear::pop(
+        focus::window(layer),
+        p.scrim,
+        p.surface,
+        theme::R_LARGE,
+    ))
 }
 
 pub fn page_header<'a>(

@@ -334,6 +334,7 @@ pub struct App {
     recheck: Recheck,
     switch_backs_seen: std::collections::HashSet<String>,
     focused: bool,
+    page_first_tab: bool,
     user: Option<String>,
     welcome: Option<welcome::State>,
     /// The person has agreed to a check, now or in an earlier run.
@@ -472,6 +473,7 @@ impl App {
             recheck: Recheck::default(),
             switch_backs_seen: reverted.into_iter().collect(),
             focused: true,
+            page_first_tab: false,
             user,
             welcome: launch.welcome.then(welcome::State::default),
             may_check: has_history,
@@ -546,9 +548,11 @@ impl App {
                 let finished = self.finish_handoff();
                 self.page = page;
                 self.ctx.info = None;
+                self.page_first_tab = true;
                 self.begin_entrance();
                 Task::batch([
                     finished,
+                    iced::advanced::widget::operate(widgets::focus::clear()),
                     self.enter_page(page),
                     iced::widget::operation::snap_to(
                         PAGE_SCROLL,
@@ -569,11 +573,12 @@ impl App {
                 Task::none()
             }
             Message::Tab(back) => {
-                if back {
-                    iced::widget::operation::focus_previous()
-                } else {
-                    iced::widget::operation::focus_next()
-                }
+                let step = match (back, std::mem::take(&mut self.page_first_tab)) {
+                    (true, _) => widgets::focus::Move::Previous,
+                    (false, true) => widgets::focus::Move::PageStart,
+                    (false, false) => widgets::focus::Move::Next,
+                };
+                iced::advanced::widget::operate(widgets::focus::step(step))
             }
             Message::CheckNow => {
                 if self.ctx.checking.is_some() || self.ctx.busy {
@@ -630,6 +635,7 @@ impl App {
                 }
                 match self.page {
                     Page::Fixes => fixes::escape(&mut self.fixes),
+                    Page::Web => web::escape(&mut self.web),
                     Page::Debloat => debloat::escape(&mut self.debloat),
                     Page::Tools => tools::escape(&mut self.tools),
                     Page::Settings => settings::escape(&mut self.settings),
@@ -1219,7 +1225,7 @@ impl App {
             .height(Length::Fill)
             .into()
         };
-        let main = container(column![scroll, footer_bar])
+        let main = container(widgets::focus::page(column![scroll, footer_bar]))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(move |_| container::Style {
