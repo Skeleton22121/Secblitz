@@ -245,7 +245,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "defender.script_nis",
         title: "Defender script scanning and network inspection",
-        description: "Repair only explicitly disabled script scanning or network attack inspection. Absent values already mean on.",
+        description: "Repair only explicitly disabled script scanning or network traffic inspection. Absent values already mean on.",
         source: Source::DefenderPref,
         reboot: false,
         ask: false,
