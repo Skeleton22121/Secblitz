@@ -18,24 +18,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The Protection page sections now run in the same order: needs you, your choices, good to know, already protected.
 - Fix lines no longer start with "We can fix this".
 - The approval window drops the lead-in line and the long "put back" sentence.
-||||||| parent of 243f776a (Shorten the text on Home and the Web page)
-- Home, the Web page and their lists have shorter lines, with no sentence that repeats a heading or the line above it.
-||||||| parent of 2206f019 (Say each thing once on the apps, ads and tips, and app access pages)
-- Clean up apps, Ads and tips, and app updates say each thing once, with shorter lines under headings and rows.
-- Camera, microphone and location switches no longer repeat the same advice on every page.
-||||||| parent of fe42087b (Shorten and de-duplicate text on Settings, History, Tools and the tray)
-- Settings, History and Tools use shorter lines and no longer repeat a heading or a status.
-- The History page no longer shows the same "nothing to undo" line twice.
-- The tray alert for a drop in protection is shorter.
-||||||| parent of f1dc0105 (Say Secblitz checks settings, add uninstall steps and a network FAQ)
-### Added
-- A code signing policy page on the website and in the README.
-- The installer tells you that web protection, if you turn it on later, downloads block lists and passes website lookups on.
 
-### Changed
-- The website and README say Secblitz checks your settings, and describe what each part does in plainer words.
-- The privacy policy names every site the block lists come from and links their privacy policies.
-- The privacy policy describes the download counter correctly.
+- Check names and explanations now describe each Windows setting and what it protects, in plain words.
 
 ## [0.11.0] - 2026-10-08
 

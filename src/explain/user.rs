@@ -15,7 +15,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "net.nearby_sharing" => Explainer {
             what: "Nearby sharing lets this PC send and receive files with other devices close to you.",
-            risk: "While it is open to everyone nearby, people on a train or in a cafe can try to send you files.",
+            risk: "While anyone nearby is allowed, people on a train or in a cafe can try to send you files.",
             change: "Only your own devices can share with this PC. Sending to a friend's PC may need you to switch it back.",
         },
         "privacy.tailored_experiences" => Explainer {

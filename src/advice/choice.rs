@@ -27,7 +27,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Very old devices may stop showing your shared folders. Needs a restart."
         }
         "remote_assistance.disabled" => {
-            "Nobody can invite a helper to take over this PC. Quick Assist still works."
+            "Nobody can invite a helper to control this PC this way. Quick Assist still works."
         }
         "wsh.disabled" => "Old .vbs and .js script files will stop running when you open them.",
         "update.auto_policy_disabled" => {

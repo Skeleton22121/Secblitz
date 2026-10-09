@@ -188,7 +188,7 @@ pub(super) fn repair_help(id: &str) -> &'static str {
             "It stops uninvited connections to your PC."
         }
         "permissions.service.bits" | "permissions.service.wuauserv" => {
-            "It keeps Windows updates from being tampered with."
+            "It keeps Windows updates safe from unwanted changes."
         }
         "wdigest.use_logon_credential" => {
             "Your password will no longer be kept where other programs can read it."
@@ -207,7 +207,7 @@ pub(super) fn repair_help(id: &str) -> &'static str {
         "defender.pua" => "Junk apps bundled with downloads will be blocked.",
         "defender.script_nis" => "It turns scanning for harmful scripts back on.",
         "defender.asr.standard" => {
-            "It blocks common ways harmful programs read passwords."
+            "It stops harmful programs from reading your sign-in details."
         }
         "net.public_sharing_exposure" => {
             "Your shared files and printers stay hidden on public Wi-Fi."

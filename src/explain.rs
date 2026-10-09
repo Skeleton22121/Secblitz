@@ -87,7 +87,7 @@ mod tests {
         "Kernel stack protection not running",
         "A device may not be working",
         "Assessment unavailable",
-        "Service permission audit",
+        "Windows service settings",
         "Service permissions: BITS",
         "Service permissions: wuauserv",
         "Service permissions: WinDefend",

@@ -317,7 +317,7 @@ pub fn for_finding(title: &str, status: &CheckStatus, detail: &str) -> Advice {
         "Service permissions: Schedule" => ("Scheduled task service permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
         "Service permissions: SecblitzMonitor" => ("Protection monitor permissions", "We leave this one alone. If a fix is available, it appears under Needs your attention.", ReviewWithAdministrator),
         "Journal recovery" => ("Saved changes", "Undo your last fixes before making new ones.", ReviewUndo),
-        "Assessment unavailable" | "Service permission audit" => ("Additional protection checks", "Check again in a moment. Nothing has been changed.", CheckAgain),
+        "Assessment unavailable" | "Windows service settings" => ("Additional protection checks", "Check again in a moment. Nothing has been changed.", CheckAgain),
         _ => ("Protection check", "Check again in a moment. Nothing has been changed.", CheckAgain),
     };
     let mut a = base(label, status, (next, step));

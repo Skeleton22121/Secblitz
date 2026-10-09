@@ -45,17 +45,17 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "ntlm.extras" => e(
             "Windows can keep a weak, old-style copy of your password and let a background process sign in without a name.",
-            "Someone who got hold of that weak copy could work out your password quickly, or reach shared items without signing in.",
+            "That old copy is much easier to misuse than the modern one, and the fallback allows sign-in without a name.",
             "Nothing you'll notice day to day. Very old network drives or scanners may stop connecting. Needs a restart.",
         ),
         "driver.vulnerable_blocklist" => e(
-            "Windows keeps a list of hardware programs, called drivers, that are known to be dangerous and refuses to load them.",
-            "Malware can bring along a trusted but flawed driver and use it to switch off your security software.",
+            "Windows keeps a list of hardware programs, called drivers, that are known to be unsafe and refuses to load them.",
+            "A flawed driver that is on the list could be used to switch off your security software.",
             "Nothing you'll notice. A very old hardware tool may stop working if its driver is on the list. Needs a restart.",
         ),
         "system.exploit_mitigations" => e(
-            "Windows has built-in protections that make it harder for a flaw in a program to be used to take over your PC.",
-            "With one of them switched off, a small program bug is easier to use for taking control of your PC.",
+            "Windows has built-in memory protections that make it harder for a bug in a program to cause serious trouble on your PC.",
+            "With one of them switched off, a small program bug is more likely to cause serious trouble.",
             "Nothing you'll notice. A very old, badly written program may close unexpectedly. Needs a restart.",
         ),
         "ps.v2_engine" => e(
@@ -65,12 +65,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         ),
         "printer.spooler_remote" => e(
             "The part of Windows that handles printing can accept requests from other computers on your network.",
-            "Someone on the same network could use printing flaws to take over a PC that does not need to share printers.",
+            "A PC that does not need to share printers is safer not accepting print requests from other computers.",
             "You can print as usual. Other computers can no longer print through this PC. Printing restarts for a moment.",
         ),
         "services.legacy_remote" => e(
             "Some old remote-access services are running or set to start by themselves, such as ones for remote control or file transfer.",
-            "Anyone on your network who guesses a password could use them to get into your PC from far away.",
+            "They are old, rarely needed ways to control a PC from far away, so they are safer switched off.",
             "Nothing you'll notice unless you use them on purpose. Remote tools that rely on them stop until you turn them back on.",
         ),
         "session.lock_on_wake" => e(
@@ -174,8 +174,8 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             "Browsers stop sending that usage data. They will then say they are managed by your organization, which only means a setting was made for this whole PC.",
         ),
         "browser.safety_mode" => e(
-            "Edge and Firefox have stronger modes that make it harder for harmful sites and trackers to attack your browser or follow you.",
-            "Without them, a harmful site has more room to attack your browser, and trackers can follow you from site to site.",
+            "Edge and Firefox have stronger modes that make it harder for harmful sites and trackers to harm your browser or follow you.",
+            "Without them, a harmful site has more room to harm your browser, and trackers can follow you from site to site.",
             "A few sites may load a little slower. Browsers will say they are managed by your organization, which only means a setting was made for this whole PC.",
         ),
         "browser.dns_bypass" => e(

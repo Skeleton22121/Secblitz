@@ -48,7 +48,7 @@ Account name privacy
 Remote sign-in safeguards
 Sign-in secret protection
 Update download protection
-Windows Update tamper protection
+Windows Update protection
 Additional protection checks
 Protection check
 Your security apps
@@ -155,7 +155,7 @@ Uninvited incoming connections on public networks like cafes or airports
 Apps silently making system-wide changes without asking you
 Apps making administrator changes without asking for approval
 Any app installer quietly getting full control of your PC
-Someone on the network listing your account names to guess passwords
+Other devices on the network seeing your account names
 Someone signing in over the network to an account with no password
 Altered Windows updates reaching your PC
 ```
@@ -166,7 +166,7 @@ Altered Windows updates reaching your PC
 Running Windows that no longer gets security fixes
 Someone who finds your PC reading your files if it is lost or stolen
 Hidden malware loading before Windows starts
-Known security holes staying open on your PC
+Missing security fixes on your PC
 Old file-sharing flaws used by worms like WannaCry
 Scam websites and unrecognized apps you open by mistake
 Malicious drivers taking over the core of Windows

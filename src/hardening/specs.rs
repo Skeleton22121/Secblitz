@@ -257,8 +257,8 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "defender.asr.standard",
-        title: "Defender standard attack surface rules",
-        description: "Block vulnerable-driver abuse, credential theft from LSASS and WMI persistence. Only rules that are off are set to Block; Block and Warn settings are preserved. Rules are added, never replaced as a list.",
+        title: "Defender app and script protections",
+        description: "Turn on Microsoft Defender protections that stop unsafe drivers from loading, keep other programs from reading your sign-in details, and stop programs from quietly setting themselves up to run in the background. Only rules that are off are set to Block; Block and Warn settings are preserved. Rules are added, never replaced as a list.",
         source: Source::DefenderAsr,
         reboot: false,
         ask: false,
@@ -301,7 +301,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "net.public_sharing_exposure",
-        title: "Hide file sharing and discovery on public networks",
+        title: "Turn off file sharing on public networks",
         description: "Remove the Public profile from enabled built-in file and printer sharing and network discovery rules (or disable a rule that is Public-only). Rules are never deleted and the network type is never changed.",
         source: Source::FirewallExposure,
         reboot: false,
@@ -357,7 +357,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "accounts.lockout_policy",
-        title: "Lock out password guessers",
+        title: "Lock an account after repeated wrong passwords",
         description: "Where local accounts never lock, set the lockout threshold to 10 failed sign-ins. Lockout duration and window are not changed.",
         source: Source::Lockout,
         reboot: false,
@@ -404,7 +404,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "lsa.restrict_anonymous",
-        title: "Block anonymous account and share listing",
+        title: "Keep account and shared folder lists private",
         description: "Set RestrictAnonymous to 1 and keep Everyone from including anonymous users and null sessions off. Very old devices may no longer list shared folders. Restart required.",
         source: Source::Registry,
         reboot: true,
@@ -431,7 +431,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "remote_assistance.disabled",
         title: "Block unsolicited Remote Assistance",
-        description: "Set fAllowToGetHelp to 0 so nobody can be invited to take over this PC through Remote Assistance. Quick Assist is separate and unaffected.",
+        description: "Set fAllowToGetHelp to 0 so nobody can be invited to control this PC through Remote Assistance. Quick Assist is separate and unaffected.",
         source: Source::Registry,
         reboot: false,
         ask: true,
@@ -513,7 +513,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "accounts.builtin_administrator",
-        title: "Hidden built-in Administrator account",
+        title: "Unused built-in Administrator account",
         description: "Disable the built-in Administrator (RID 500) account when another enabled administrator exists. Never deletes it; undo enables it again.",
         source: Source::BuiltinAdmin,
         reboot: false,
@@ -657,8 +657,8 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "defender.asr.office",
-        title: "Defender Office attack rules",
-        description: "Block Office from starting other programs, writing risky files, injecting code or having its apps launch child programs. Only offered when Office is installed. Rules are added, never replaced as a list.",
+        title: "Defender protections for Office files",
+        description: "Turn on Microsoft Defender protections that stop Office from starting other programs, saving risky files or running code inside other programs. Only offered when Office is installed. Rules are added, never replaced as a list.",
         source: Source::DefenderAsr,
         reboot: false,
         ask: true,
@@ -819,8 +819,8 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "ntlm.extras",
-        title: "No stored old password hashes, no anonymous sign-in fallback",
-        description: "Keep Windows from storing the old LM password hash (NoLMHash=1) and from letting the system account fall back to an anonymous sign-in (allownullsessionfallback=0). Absent values already mean safe on current Windows. UseMachineId is deliberately not set because it can break network drives. Restart required.",
+        title: "Stricter old sign-in settings",
+        description: "Turn off two old Windows sign-in settings: keeping a weak old copy of passwords (NoLMHash=1) and letting the system account fall back to signing in without a name (allownullsessionfallback=0). Absent values already mean safe on current Windows. UseMachineId is deliberately not set because it can break network drives. Restart required.",
         source: Source::Registry,
         reboot: true,
         ask: true,
@@ -837,8 +837,8 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "driver.vulnerable_blocklist",
-        title: "Block known-dangerous drivers",
-        description: "Turn Windows' list of known-dangerous drivers back on (VulnerableDriverBlocklistEnable=1). A missing value already means on. Old hardware tools may stop loading a driver. Restart required.",
+        title: "Block drivers Windows knows are unsafe",
+        description: "Turn the Windows list of drivers that are known to be unsafe back on. A missing value already means on. Old hardware tools may stop loading a driver. Restart required.",
         source: Source::Registry,
         reboot: true,
         ask: true,
@@ -848,7 +848,7 @@ pub(super) static SPECS: &[Spec] = &[
     Spec {
         id: "system.exploit_mitigations",
         title: "Windows built-in memory protections",
-        description: "Turn back on only the system-wide exploit protections (DEP, SEHOP, bottom-up ASLR, high-entropy ASLR, Control Flow Guard) that were explicitly switched off. Protections that are on or left at the Windows default are never touched; forced image relocation is never changed. Restart required.",
+        description: "Turn back on only the system-wide memory protections (DEP, SEHOP, bottom-up ASLR, high-entropy ASLR, Control Flow Guard) that were explicitly switched off. Protections that are on or left at the Windows default are never touched; forced image relocation is never changed. Restart required.",
         source: Source::ExploitMitigations,
         reboot: true,
         ask: false,
@@ -873,7 +873,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "printer.spooler_remote",
-        title: "Printing service reachable from the network",
+        title: "Print sharing on this PC",
         description: "Stop the Print Spooler accepting connections from other computers (RegisterSpoolerRemoteRpcEndPoint=2) when no printer on this PC is shared and nothing is waiting to print. The Spooler restarts once; local printing is unaffected.",
         source: Source::Registry,
         reboot: false,
@@ -889,7 +889,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "services.legacy_remote",
-        title: "Leftover remote-access services",
+        title: "Old remote tools that start by themselves",
         description: "Stop and disable Remote Registry, WinRM, OpenSSH server, Telnet, FTP, IIS web and SNMP services that are running or start automatically. Services that are not installed are ignored; undo restores each start type and running state.",
         source: Source::LegacyServices,
         reboot: false,
@@ -1267,7 +1267,7 @@ pub(super) static SPECS: &[Spec] = &[
     },
     Spec {
         id: "smb.shares_exposed",
-        title: "Shared folders open to everyone",
+        title: "Who can open your shared folders",
         description: "Remove only the Everyone, Anonymous or Guests entry that gives Change or Full access from a shared folder's permission list. Every removed entry is recorded exactly and undo adds it back. Built-in shares (C$, ADMIN$, IPC$, print$) and all other entries are never touched.",
         source: Source::ShareGrants,
         reboot: false,
