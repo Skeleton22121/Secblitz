@@ -332,6 +332,8 @@ class AssembleTests(unittest.TestCase):
             shutil.copyfile(REPO / rel, self.root / rel)
         for rel in ("website/assets/intro-6bb434a9c067.mp4", "website/assets/secblitz-demo.mp4"):
             (self.root / rel).write_bytes(b"\0\0\0\x18ftypmp42")
+        for video in (REPO / "website/assets").glob("intro-*.mp4"):
+            shutil.copyfile(video, self.root / "website/assets" / video.name)
         key = Ed25519PrivateKey.generate()
         public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
         (self.root / "assets/update-public-key.hex").write_text(public.hex() + "\n")

@@ -11,10 +11,7 @@ Secblitz maximizes Windows security and privacy by fixing security holes and mis
 
 ![Version 0.11.0](https://img.shields.io/badge/version-0.11.0-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="website/assets/app-home-dark.webp">
-  <img src="website/assets/app-home-light.webp" width="900" alt="The Secblitz home screen: how many protections are on, and what needs attention.">
-</picture>
+<img src="docs/tour.gif" width="900" alt="A tour of Secblitz: checking the PC, fixing problems, and each page of the app.">
 
 </div>
 
