@@ -69,6 +69,7 @@ cargo clippy --locked --target aarch64-pc-windows-gnullvm --all-targets -- -D wa
 python3 installer/check-locales.py
 python3 scripts/release-tests.py          # needs scripts/requirements-release.txt
 python3 scripts/bump-version-tests.py
+python3 scripts/make-sbom-tests.py
 python3 scripts/build-site-assets.py --check
 python3 scripts/historical-downloads.py check
 ```

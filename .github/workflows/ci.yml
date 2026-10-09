@@ -84,6 +84,8 @@ jobs:
         run: python3 scripts/release-tests.py
       - name: Version bump, website assembly and release notes tools
         run: python3 scripts/bump-version-tests.py
+      - name: Parts list (SBOM) tool
+        run: python3 scripts/make-sbom-tests.py
       - name: Older downloads all have a pinned checksum
         run: python3 scripts/historical-downloads.py check
 
