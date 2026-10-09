@@ -1,4 +1,4 @@
-//! Per-user settings (the signed-in person's own account) and app updates.
+//! Per-user settings (the signed-in person's own account).
 use super::Explainer;
 
 pub(super) fn get(id: &str) -> Option<Explainer> {
@@ -53,11 +53,6 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             risk: "After you remove Game Bar, you may see a message asking you to get a new app.",
             change: "The controller button stops opening Game Bar and game clip recording stops. The Game Bar app is not removed.",
         },
-        "software.outdated_winget" => Explainer {
-            what: "Popular programs like your browser, Java and PDF reader get safety fixes from time to time.",
-            risk: "An out-of-date browser or PDF reader can be taken over by a harmful web page or file.",
-            change: "The program updates itself and may close for a moment. You can't go back to the old version afterwards.",
-        },
         _ => return None,
     })
 }
@@ -66,13 +61,12 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
 mod tests {
     use super::*;
 
-    const IDS: [&str; 11] = [
+    const IDS: [&str; 10] = [
         "smartscreen.store_apps",
         "files.show_extensions",
         "net.nearby_sharing",
         "privacy.tailored_experiences",
         "office.internet_macros",
-        "software.outdated_winget",
         "debloat.lockscreen_tips",
         "debloat.start_settings_tips",
         "debloat.explorer_ads",
@@ -107,11 +101,5 @@ mod tests {
         for setting in crate::user_settings::Setting::ADS_AND_TIPS {
             assert!(get(setting.id()).is_some(), "{}", setting.id());
         }
-    }
-
-    #[test]
-    fn app_update_text_says_there_is_no_way_back() {
-        let e = get("software.outdated_winget").unwrap();
-        assert!(e.change.contains("can't go back"));
     }
 }

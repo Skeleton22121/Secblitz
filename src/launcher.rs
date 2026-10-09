@@ -208,7 +208,6 @@ mod imp {
     use crate::broker::{self, Reply, Request};
     use crate::i18n::Lang;
     use anyhow::{ensure, Context, Result};
-    use secblitz::user_apps::{self, AppState};
     use secblitz::user_settings::{self, Op, Setting, SystemRegistry};
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut, time::Duration};
     use windows_sys::core::BOOL;
@@ -699,34 +698,11 @@ mod imp {
                     Err(_) => Reply::Unknown,
                 },
             },
-            Request::AppInstallerStatus => {
-                match secblitz::software_install::bitwarden_installable() {
-                    Ok(()) => Reply::Done,
-                    Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
-                    Err(_) => Reply::Unknown,
-                }
-            }
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
             Request::StartStoreApp(index) => start_store_app(index),
             Request::StoreAppStatus(index) => store_app_status(index),
             Request::UserSetting(setting, op) => user_setting(setting, op),
-            Request::AppUpdatesScan => match scan_apps() {
-                Ok(states) => {
-                    user_apps::remember(states);
-                    Reply::Done
-                }
-                Err(reply) => {
-                    user_apps::forget();
-                    reply
-                }
-            },
-            Request::AppUpdateQuery(index) => match user_apps::remembered(usize::from(index)) {
-                Some(AppState::Available) => Reply::UpdateAvailable,
-                Some(AppState::NothingToDo) => Reply::NotApplicable,
-                Some(AppState::Unknown) | None => Reply::Unknown,
-            },
-            Request::AppUpdate(index) => update_app(usize::from(index)),
             Request::StartTray => start_tray(),
             Request::AppAccessList(capability) => app_access_list(capability),
             Request::AppAccessSet {
@@ -806,67 +782,6 @@ mod imp {
             Ok(()) => Reply::Done,
             Err(app_access::SetError::Unknown) => Reply::Unavailable,
             Err(app_access::SetError::Failed | app_access::SetError::Controlled) => Reply::Failed,
-        }
-    }
-
-    fn scan_apps() -> Result<[AppState; user_apps::APPS.len()], Reply> {
-        let run = user_apps::run_winget(&user_apps::list_args(), Duration::from_secs(150));
-        if run
-            .code
-            .is_some_and(secblitz::software_install::is_offline_code)
-        {
-            return Err(Reply::Offline);
-        }
-        if run.code.is_none() && run.output.trim().is_empty() {
-            return Err(Reply::Unavailable);
-        }
-        match user_apps::parse_upgrades(&run.output, run.code) {
-            user_apps::Scan::Apps(states) => Ok(states),
-            user_apps::Scan::Unreadable if secblitz::software_install::dns_offline() => {
-                Err(Reply::Offline)
-            }
-            user_apps::Scan::Unreadable => Err(Reply::Unknown),
-        }
-    }
-
-    fn update_app(index: usize) -> Reply {
-        let Some(args) = user_apps::upgrade_args(index) else {
-            return Reply::Unavailable;
-        };
-        let run = user_apps::run_winget(&args, Duration::from_secs(13 * 60));
-        if run
-            .code
-            .is_some_and(secblitz::software_install::is_offline_code)
-        {
-            return Reply::Offline;
-        }
-        if run.code.is_none() {
-            return Reply::Failed;
-        }
-        match scan_apps() {
-            Ok(states) => {
-                let reply = match states[index] {
-                    AppState::NothingToDo => Reply::Done,
-                    AppState::Available => {
-                        if run.code != Some(0) && secblitz::software_install::dns_offline() {
-                            Reply::Offline
-                        } else {
-                            Reply::Failed
-                        }
-                    }
-                    AppState::Unknown => Reply::Unknown,
-                };
-                user_apps::remember(states);
-                reply
-            }
-            Err(_) => {
-                user_apps::forget();
-                if run.code == Some(0) {
-                    Reply::Unknown
-                } else {
-                    Reply::Failed
-                }
-            }
         }
     }
 

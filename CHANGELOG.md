@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Removed
+- App updates are gone from the Tools page. Windows updates and repair are unchanged.
+
 ## [0.11.1] - 2026-10-09
 
 ### Changed

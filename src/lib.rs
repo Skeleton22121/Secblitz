@@ -22,6 +22,5 @@ pub mod software_install;
 pub mod status;
 pub mod text;
 pub mod updater;
-pub mod user_apps;
 pub mod user_settings;
 pub mod vbs;
