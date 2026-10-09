@@ -52,6 +52,8 @@ pub struct Prefs {
     pub processor_tip_seen: bool,
     #[serde(default)]
     pub whats_new_seen: Option<String>,
+    #[serde(default)]
+    pub welcome_seen: bool,
 }
 
 fn on() -> bool {
@@ -69,6 +71,7 @@ impl Default for Prefs {
             notify_dangerous: true,
             processor_tip_seen: false,
             whats_new_seen: None,
+            welcome_seen: false,
         }
     }
 }
@@ -118,6 +121,10 @@ pub fn parse(bytes: &[u8]) -> Prefs {
     }
     prefs.processor_tip_seen = map
         .get("processor_tip_seen")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    prefs.welcome_seen = map
+        .get("welcome_seen")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     prefs.whats_new_seen = map
@@ -478,6 +485,7 @@ mod tests {
             notify_dangerous: true,
             processor_tip_seen: true,
             whats_new_seen: Some("0.11.0".into()),
+            welcome_seen: true,
         };
         write_to(&file, &prefs).unwrap();
         assert_eq!(parse(&read_bounded(&file).unwrap()), prefs);
@@ -494,6 +502,18 @@ mod tests {
         let seen = parse(br#"{"processor_tip_seen":true,"theme":"dark"}"#);
         assert!(seen.processor_tip_seen);
         assert_eq!(seen.theme, ThemeChoice::Dark);
+    }
+
+    #[test]
+    fn the_welcome_is_unseen_until_recorded() {
+        assert!(!Prefs::default().welcome_seen);
+        assert!(!parse(b"{}").welcome_seen);
+        assert!(!parse(br#"{"welcome_seen":"yes"}"#).welcome_seen);
+        let seen = parse(br#"{"welcome_seen":true,"theme":"dark"}"#);
+        assert!(seen.welcome_seen);
+        assert_eq!(seen.theme, ThemeChoice::Dark);
+        let bytes = serde_json::to_vec(&seen).unwrap();
+        assert!(parse(&bytes).welcome_seen);
     }
 
     #[test]
