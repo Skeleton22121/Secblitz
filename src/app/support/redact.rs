@@ -49,6 +49,15 @@ impl Redactor {
         self
     }
 
+    /// A folder under the profiles folder; shared ones such as Public are left alone.
+    pub fn and_profile(self, folder: &str) -> Self {
+        if SHARED_FOLDERS.contains(&folder.trim().to_lowercase().as_str()) {
+            self
+        } else {
+            self.and_user(folder)
+        }
+    }
+
     pub fn clean(&self, text: &str) -> String {
         let text: Vec<char> = text.chars().collect();
         let text = self.profile_paths(&sids(&text));
@@ -292,6 +301,22 @@ mod tests {
             r"C:\Users\[user]\Downloads and C:\Users\[user]\x by [user], [user]"
         );
         assert_eq!(r.clean("sam field signed in"), "[user] signed in");
+    }
+
+    #[test]
+    fn a_profile_folder_named_unlike_the_account_is_hidden_whole() {
+        let r = Redactor::new("maria", "PC1")
+            .and_profile("Maria Lopez")
+            .and_profile("Public")
+            .and_profile("Default User");
+        assert_eq!(
+            r.clean(r"C:\Users\Maria Lopez\AppData\x and C:\Users\Public\y"),
+            r"C:\Users\[user]\AppData\x and C:\Users\Public\y"
+        );
+        assert_eq!(
+            r.clean("the default user folder"),
+            "the default user folder"
+        );
     }
 
     #[test]

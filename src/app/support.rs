@@ -588,11 +588,14 @@ pub mod folder {
 }
 
 pub fn redactor() -> Redactor {
-    Redactor::new(
+    let redactor = Redactor::new(
         &std::env::var("USERNAME").unwrap_or_default(),
         &std::env::var("COMPUTERNAME").unwrap_or_default(),
     )
-    .and_user(&system::session_user().unwrap_or_default())
+    .and_user(&system::session_user().unwrap_or_default());
+    system::profile_folders()
+        .iter()
+        .fold(redactor, |r, folder| r.and_profile(folder))
 }
 
 /// What the person's own settings and the last check say, gathered on the window's thread.
@@ -641,13 +644,32 @@ mod system {
 
     #[cfg(windows)]
     pub fn downloads() -> Option<PathBuf> {
+        known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Downloads)
+    }
+
+    /// Every account's profile folder name. A folder keeps its old name when an account is
+    /// renamed, and under an administrator's password this window's own profile is not the person's.
+    #[cfg(windows)]
+    pub fn profile_folders() -> Vec<String> {
+        known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_UserProfiles)
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect()
+    }
+
+    #[cfg(windows)]
+    fn known_folder(id: &windows_sys::core::GUID) -> Option<PathBuf> {
         use std::os::windows::ffi::OsStringExt;
         use std::ptr::null_mut;
         use windows_sys::Win32::System::Com::CoTaskMemFree;
-        use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
+        use windows_sys::Win32::UI::Shell::SHGetKnownFolderPath;
         let mut raw = null_mut();
         // SAFETY: valid GUID and output pointer; the allocation is freed below even on failure.
-        let hr = unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, 0, null_mut(), &mut raw) };
+        let hr = unsafe { SHGetKnownFolderPath(id, 0, null_mut(), &mut raw) };
         let path = if hr >= 0 && !raw.is_null() {
             // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
             let slice = unsafe { secblitz::platform::security::wide_str(raw) };
@@ -692,6 +714,11 @@ mod system {
     #[cfg(not(windows))]
     pub fn session_user() -> Option<String> {
         None
+    }
+
+    #[cfg(not(windows))]
+    pub fn profile_folders() -> Vec<String> {
+        Vec::new()
     }
 
     #[cfg(not(windows))]
