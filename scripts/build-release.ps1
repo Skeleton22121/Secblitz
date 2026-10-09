@@ -79,8 +79,11 @@ function Sign-ReleaseFile([string]$Path) {
 
 function Assert-ProductMetadata([string]$Path, [string]$Version) {
     $info = (Get-Item -LiteralPath $Path).VersionInfo
-    if ($info.ProductName -cne 'Secblitz') { throw "$(Split-Path $Path -Leaf) has product name '$($info.ProductName)', not 'Secblitz'." }
-    if ($info.ProductVersion -cne $Version) { throw "$(Split-Path $Path -Leaf) has product version '$($info.ProductVersion)', not '$Version'." }
+    # Inno Setup pads the strings it writes into the setup's version resource with spaces.
+    $name = "$($info.ProductName)".TrimEnd(' ', [char]0)
+    $productVersion = "$($info.ProductVersion)".TrimEnd(' ', [char]0)
+    if ($name -cne 'Secblitz') { throw "$(Split-Path $Path -Leaf) has product name '$name', not 'Secblitz'." }
+    if ($productVersion -cne $Version) { throw "$(Split-Path $Path -Leaf) has product version '$productVersion', not '$Version'." }
 }
 
 function Assert-ReleasePe([string]$Path) {
