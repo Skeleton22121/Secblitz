@@ -358,6 +358,8 @@ class AssembleTests(unittest.TestCase):
         self.setup_arm.write_bytes(fake_pe(0xAA64, b"a" * 5200))
         (self.assets / f"secblitz-{self.version}-windows-arm64.exe").write_bytes(fake_pe(0xAA64, b"q" * 7000))
         (self.assets / "SHA256SUMS").write_text("unused here\n")
+        for arch in ("x64", "arm64"):
+            (self.assets / f"secblitz-{self.version}-windows-{arch}.cdx.json").write_text("{}\n")
         self.sign()
         spec = importlib.util.spec_from_file_location("stage_copy", self.root / "scripts/stage-pages.py")
         module = importlib.util.module_from_spec(spec)
@@ -485,6 +487,15 @@ class AssembleTests(unittest.TestCase):
     def test_missing_arm64_release_file_is_refused(self):
         (self.assets / "stable-arm64.json").unlink()
         self.assertNotEqual(self.assemble().returncode, 0)
+
+    def test_missing_parts_list_is_refused(self):
+        (self.assets / f"secblitz-{self.version}-windows-arm64.cdx.json").unlink()
+        self.assertNotEqual(self.assemble().returncode, 0)
+        self.assertFalse(self.out.exists())
+
+    def test_parts_lists_are_not_published_on_the_site(self):
+        self.assertEqual(self.assemble().returncode, 0)
+        self.assertEqual(list(self.out.rglob("*.cdx.json")), [])
 
     def test_feed_for_other_installer_bytes_is_refused(self):
         self.setup.write_bytes(fake_pe(0x8664, b"changed after signing"))

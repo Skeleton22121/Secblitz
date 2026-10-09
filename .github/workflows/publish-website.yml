@@ -123,13 +123,13 @@ jobs:
           if ! jq -e '(.isDraft | not) and (.isPrerelease | not)' release.json > /dev/null; then
             echo "::error::The release is a draft or a pre-release. Publish it as a normal release first."; exit 1
           fi
-          # The release must carry exactly the seven expected files: the setup and
-          # the portable exe for each architecture, SHA256SUMS and the owner's
-          # two signed update feeds.
+          # The release must carry exactly the nine expected files: the setup and
+          # the portable exe for each architecture, the parts list of each
+          # architecture, SHA256SUMS and the owner's two signed update feeds.
           gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort > assets.list
-          printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-arm64-setup.exe" "secblitz-$VERSION-windows-arm64.exe" SHA256SUMS stable.json stable-arm64.json | LC_ALL=C sort > assets.expected
+          printf '%s\n' "secblitz-$VERSION-windows-x64-setup.exe" "secblitz-$VERSION-windows-x64.exe" "secblitz-$VERSION-windows-arm64-setup.exe" "secblitz-$VERSION-windows-arm64.exe" "secblitz-$VERSION-windows-x64.cdx.json" "secblitz-$VERSION-windows-arm64.cdx.json" SHA256SUMS stable.json stable-arm64.json | LC_ALL=C sort > assets.expected
           if ! diff assets.expected assets.list; then
-            echo "::error::The release files are not exactly the expected seven (see the diff above). Attach the two signed feeds, stable.json and stable-arm64.json, and nothing else."; exit 1
+            echo "::error::The release files are not exactly the expected nine (see the diff above). The build attaches seven files; attach the two signed feeds, stable.json and stable-arm64.json, and nothing else."; exit 1
           fi
           mkdir release-assets
           gh release download "$TAG" --dir release-assets
@@ -161,6 +161,25 @@ jobs:
                       "secblitz-$VERSION-windows-arm64-setup.exe" "secblitz-$VERSION-windows-arm64.exe"; do
             gh attestation verify "$file" \
               --repo "$REPO" \
+              --signer-workflow "$REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG" \
+              --source-digest "$SHA" \
+              --deny-self-hosted-runners
+          done
+      - name: Verify the parts list attestations (same repository, workflow, tag and commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        working-directory: release-assets
+        run: |
+          set -euo pipefail
+          for arch in x64 arm64; do
+            gh attestation verify "secblitz-$VERSION-windows-$arch.exe" \
+              --repo "$REPO" \
+              --predicate-type https://cyclonedx.org/bom \
               --signer-workflow "$REPO/.github/workflows/release.yml" \
               --source-ref "refs/tags/$TAG" \
               --source-digest "$SHA" \

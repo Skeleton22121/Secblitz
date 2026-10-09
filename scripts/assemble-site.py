@@ -3,16 +3,17 @@
 
     assemble-site.py --version 0.8.1 --assets release-assets --historical historical --output dist/pages
 
---assets holds the seven release files (already checked against SHA256SUMS, the
+--assets holds the nine release files (already checked against SHA256SUMS, the
 build attestations and the pinned update key by publish-website.yml):
 
     secblitz-X.Y.Z-windows-x64-setup.exe, secblitz-X.Y.Z-windows-x64.exe,
     secblitz-X.Y.Z-windows-arm64-setup.exe, secblitz-X.Y.Z-windows-arm64.exe,
+    secblitz-X.Y.Z-windows-x64.cdx.json, secblitz-X.Y.Z-windows-arm64.cdx.json,
     SHA256SUMS, stable.json, stable-arm64.json
 
 --historical holds the older downloads fetched by historical-downloads.py.
 The portable exes are larger than the Pages file limit, so they stay on the GitHub
-release and are not copied into the site.
+release and are not copied into the site. The parts lists (.cdx.json) stay there too.
 Steps: copy website/ into a scratch tree, add the downloads and the signed
 feed, write the real checksum and size into the page (finalize-site.py), run the
 release gate (prepare-pages.py --require-feed) and then stage-pages.py, which
@@ -59,7 +60,8 @@ def assemble(version, assets, historical, output, website=None):
     setups = {arch: f"secblitz-{version}-windows-{arch}-setup.exe" for arch in ARCHES}
     portables = {arch: f"secblitz-{version}-windows-{arch}.exe" for arch in ARCHES}
     feeds = {"x64": "stable.json", "arm64": "stable-arm64.json"}
-    expected = {*setups.values(), *portables.values(), "SHA256SUMS", *feeds.values()}
+    parts_lists = {f"secblitz-{version}-windows-{arch}.cdx.json" for arch in ARCHES}
+    expected = {*setups.values(), *portables.values(), *parts_lists, "SHA256SUMS", *feeds.values()}
     release = regular_files(assets)
     if set(release) != expected:
         raise AssembleError("The release must carry exactly: " + ", ".join(sorted(expected))
