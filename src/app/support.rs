@@ -496,6 +496,29 @@ pub fn newest_file(dir: &Path) -> Option<PathBuf> {
 #[cfg(windows)]
 pub use system::downloads;
 
+/// Opens Downloads in Explorer with the newest support file selected.
+#[cfg(windows)]
+pub fn show_in_folder() -> bool {
+    use std::os::windows::process::CommandExt;
+    let Some(dir) = downloads() else {
+        return false;
+    };
+    let Some(root) = std::env::var_os("SystemRoot").filter(|r| !r.is_empty()) else {
+        return false;
+    };
+    let mut explorer = std::process::Command::new(Path::new(&root).join("explorer.exe"));
+    match newest_file(&dir) {
+        Some(file) => explorer.raw_arg(format!("/select,\"{}\"", file.display())),
+        None => explorer.arg(&dir),
+    };
+    explorer.creation_flags(0x08000000).spawn().is_ok()
+}
+
+#[cfg(not(windows))]
+pub fn show_in_folder() -> bool {
+    false
+}
+
 /// Explorer folder windows, so the one that opens for the support file can be
 /// brought to the front by the window that asked for it.
 pub mod folder {

@@ -181,6 +181,11 @@ pub fn update(state: &mut State, msg: Msg, ctx: &Ctx, facts: Facts) -> Task<Mess
         Msg::Show => match &state.sheet {
             Sheet::Saved(_) => {
                 let before = support::folder::windows();
+                if ctx.broker.is_none() && ctx.helper == Helper::NotOnThisAccount {
+                    return Task::perform(blocking(support::show_in_folder), move |shown| {
+                        wrap(Msg::Shown(shown, before))
+                    });
+                }
                 ctx.broker_task(crate::broker::Request::ShowSupportFile, move |reply| {
                     let shown = matches!(reply, Ok(crate::broker::Reply::Done));
                     wrap(Msg::Shown(shown, before.clone()))
