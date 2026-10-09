@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+- Every switch, tab and menu works with the keyboard, and Tab stays inside an open window.
+
 ## [0.12.0] - 2026-10-09
 
 ### Added
