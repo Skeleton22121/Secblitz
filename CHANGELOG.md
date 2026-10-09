@@ -24,6 +24,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Secblitz no longer checks your PC on its own the first time it opens.
 - Details and dialogs show one line per point; open a point to read more.
 - Every switch, tab and menu works with the keyboard, and Tab stays inside an open window.
+- Choosing background checks while installing starts them right away, not after the next restart.
 
 ### Fixed
 - Remove Secblitz warns you when keeping your PC as it is would leave a removed app with no way back.
