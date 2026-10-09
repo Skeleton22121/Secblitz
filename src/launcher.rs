@@ -759,6 +759,7 @@ mod imp {
             Request::StoreAppStatus(index) => store_app_status(index),
             Request::UserSetting(setting, op) => user_setting(setting, op),
             Request::StartTray => start_tray(),
+            Request::ShowSupportFile => show_support_file(),
             Request::AppAccessList(capability) => app_access_list(capability),
             Request::AppAccessSet {
                 capability,
@@ -783,6 +784,27 @@ mod imp {
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn()
         {
+            Ok(_) => Reply::Done,
+            Err(_) => Reply::Failed,
+        }
+    }
+
+    /// Runs as the signed-in person, so Explorer opens unelevated and in their own Downloads.
+    fn show_support_file() -> Reply {
+        use std::os::windows::process::CommandExt;
+        let Some(dir) = crate::app::support::downloads() else {
+            return Reply::Failed;
+        };
+        let Some(root) = std::env::var_os("SystemRoot").filter(|r| !r.is_empty()) else {
+            return Reply::Failed;
+        };
+        let mut explorer =
+            std::process::Command::new(std::path::Path::new(&root).join("explorer.exe"));
+        match crate::app::support::newest_file(&dir) {
+            Some(file) => explorer.raw_arg(format!("/select,\"{}\"", file.display())),
+            None => explorer.arg(&dir),
+        };
+        match explorer.creation_flags(0x08000000).spawn() {
             Ok(_) => Reply::Done,
             Err(_) => Reply::Failed,
         }

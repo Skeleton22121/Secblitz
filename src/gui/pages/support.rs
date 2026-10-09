@@ -170,12 +170,9 @@ pub fn update(state: &mut State, msg: Msg, ctx: &Ctx, facts: Facts) -> Task<Mess
             Task::none()
         }
         Msg::Show => match &state.sheet {
-            Sheet::Saved(path) => {
-                let path = path.clone();
-                Task::perform(blocking(move || show_in_folder(&path)), |shown| {
-                    wrap(Msg::Shown(shown))
-                })
-            }
+            Sheet::Saved(_) => ctx.broker_task(crate::broker::Request::ShowSupportFile, |reply| {
+                wrap(Msg::Shown(matches!(reply, Ok(crate::broker::Reply::Done))))
+            }),
             _ => Task::none(),
         },
         Msg::Shown(true) => Task::none(),
@@ -219,29 +216,6 @@ fn inputs(ctx: &Ctx, facts: Facts) -> Inputs {
             .unwrap_or_default(),
         problems,
     }
-}
-
-#[cfg(windows)]
-fn show_in_folder(path: &std::path::Path) -> bool {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let Some(root) = std::env::var_os("SystemRoot").filter(|r| !r.is_empty()) else {
-        return false;
-    };
-    Command::new(std::path::PathBuf::from(root).join("explorer.exe"))
-        .raw_arg(format!("/select,\"{}\"", path.display()))
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .is_ok()
-}
-
-#[cfg(not(windows))]
-fn show_in_folder(_path: &std::path::Path) -> bool {
-    false
 }
 
 pub fn questions<'a>(state: &State, ctx: &'a Ctx) -> El<'a> {

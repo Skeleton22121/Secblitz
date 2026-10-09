@@ -41,6 +41,7 @@ pub enum Request {
     OpenRecoveryKey,
     StartTray,
     OpenDownloadPage,
+    ShowSupportFile,
     UserSetting(Setting, Op),
     BitwardenStatus,
     AppAccessList(Capability),
@@ -134,7 +135,8 @@ impl Request {
             | Request::OpenSuggestFeature
             | Request::OpenPrivacyPolicy
             | Request::OpenRecoveryKey
-            | Request::OpenDownloadPage => true,
+            | Request::OpenDownloadPage
+            | Request::ShowSupportFile => true,
             Request::UserSetting(_, Op::Apply | Op::Undo)
             | Request::InstallBitwarden
             | Request::BlockSuggestedApps
@@ -214,7 +216,8 @@ impl Request {
             | Request::BitwardenStatus
             | Request::AppAccessList(_)
             | Request::AppAccessSet { .. }
-            | Request::StartTray => return None,
+            | Request::StartTray
+            | Request::ShowSupportFile => return None,
         })
     }
 
@@ -253,6 +256,7 @@ impl Request {
             Request::OpenRecoveryKey => (41, 0),
             Request::StartTray => (42, 0),
             Request::OpenDownloadPage => (43, 0),
+            Request::ShowSupportFile => (44, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
@@ -319,6 +323,7 @@ impl Request {
             41 => Request::OpenRecoveryKey,
             42 => Request::StartTray,
             43 => Request::OpenDownloadPage,
+            44 => Request::ShowSupportFile,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
             17 => Request::BitwardenStatus,
             18 if usize::from(arg) < catalog_len => Request::StartStoreApp(arg),
@@ -655,6 +660,7 @@ mod tests {
             Request::OpenRecoveryKey,
             Request::StartTray,
             Request::OpenDownloadPage,
+            Request::ShowSupportFile,
             Request::BitwardenStatus,
             Request::StartStoreApp(0),
             Request::StartStoreApp(41),
@@ -766,13 +772,13 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 44, 45, 100, 255] {
+        for kind in [0u8, 45, 46, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         for kind in (1..=6u8)
             .chain(8..=12)
             .chain(20..=38)
-            .chain([17, 41, 42, 43])
+            .chain([17, 41, 42, 43, 44])
         {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);

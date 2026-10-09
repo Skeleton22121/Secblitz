@@ -417,3 +417,22 @@ fn windows_11_is_named_by_its_build_number() {
         "Windows (unknown edition), processor unknown"
     );
 }
+
+#[test]
+fn the_newest_support_file_is_found_and_other_files_are_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(newest_file(dir.path()), None);
+    std::fs::write(dir.path().join("holiday.zip"), b"x").unwrap();
+    std::fs::write(dir.path().join("Secblitz-support-notes.txt"), b"x").unwrap();
+    assert_eq!(newest_file(dir.path()), None);
+    let old = save_new(dir.path(), "Secblitz-support-2026-10-01-0900.zip", b"old").unwrap();
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    let new = save_new(dir.path(), "Secblitz-support-2026-10-09-1200.zip", b"new").unwrap();
+    assert_eq!(newest_file(dir.path()), Some(new));
+}

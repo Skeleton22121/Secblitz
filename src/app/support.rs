@@ -467,6 +467,29 @@ pub fn save_new(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf
     ))
 }
 
+/// The newest support file in `dir`. Links and anything not named like a support file are skipped.
+pub fn newest_file(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("Secblitz-support-") && n.ends_with(".zip"))
+        })
+        .filter_map(|e| {
+            let meta = std::fs::symlink_metadata(e.path()).ok()?;
+            meta.is_file()
+                .then_some(())
+                .and(meta.modified().ok())
+                .map(|at| (at, e.path()))
+        })
+        .max()
+        .map(|(_, path)| path)
+}
+
+pub use system::downloads;
+
 pub fn redactor() -> Redactor {
     Redactor::new(
         &std::env::var("USERNAME").unwrap_or_default(),
