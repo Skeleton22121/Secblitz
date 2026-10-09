@@ -5,15 +5,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Empty for a version with nothing worth announcing: then nothing is shown.
 pub const NOTES: &[&str] = &[
-    "Secblitz now runs on PCs with an ARM processor.",
-    "Web protection can block scam sites, fake shops and pop-up spam.",
-    "Let a blocked site through for 10 minutes if you trust it.",
-    "Choose which browser add-ons to turn off.",
-    "Stop untrusted apps from changing your personal folders.",
-    "See when your files were last backed up.",
-    "Stop fake 'I'm not a robot' pages from installing password stealers.",
-    "Each fix tells you first if it can't be undone or needs a restart.",
-    "A font that is easier to read.",
+    "Press the info button next to any setting to read what it does, in plain words.",
+    "Shorter, clearer text on every page.",
 ];
 
 pub fn due(seen: Option<&str>, used_before: bool) -> bool {
