@@ -160,14 +160,18 @@ fn hashed(lists: &BTreeMap<&str, String>, role: Role) -> Option<Category> {
     let mut block = Vec::new();
     let mut allow = Vec::new();
     let mut found = false;
-    for source in SOURCES.iter().filter(|s| s.role == role) {
+    for (i, source) in SOURCES.iter().filter(|s| s.role == role).enumerate() {
         let Some(text) = lists.get(source.id) else {
             continue;
         };
         found = true;
         let (b, a) = lists::parse_hashes(source.format, text);
         block.extend(b);
-        allow.extend(a);
+        // Only the main list of a role may make exceptions, so an extra list
+        // can add blocks but never lift the main list's.
+        if i == 0 {
+            allow.extend(a);
+        }
     }
     found.then(|| Category {
         block: HashSet64::from_hashes(block),
@@ -364,6 +368,24 @@ mod tests {
         }
         assert!(filter.scam.blocks("shop.example"));
         assert!(!filter.scam.blocks("spy.example"));
+    }
+
+    #[test]
+    fn an_extra_list_cannot_lift_a_block_of_the_main_list() {
+        let mut lists = BTreeMap::new();
+        lists.insert("adguard-dns", "||ads.example^\n".to_string());
+        lists.insert(
+            "hagezi-tif",
+            "||evil.example^\n||cdn.example^\n@@||ok.cdn.example^\n".to_string(),
+        );
+        lists.insert(
+            "malware-filter-urlhaus",
+            "||files.example^\n@@||evil.example^\n".to_string(),
+        );
+        let filter = rebuild(&lists).unwrap();
+        assert!(filter.dangerous.blocks("evil.example"));
+        assert!(filter.dangerous.blocks("files.example"));
+        assert!(!filter.dangerous.blocks("ok.cdn.example"));
     }
 
     #[test]
