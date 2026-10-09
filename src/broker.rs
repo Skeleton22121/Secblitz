@@ -171,7 +171,7 @@ impl Request {
     }
 
     pub fn opens_window(self) -> bool {
-        self.page().is_some()
+        self.page().is_some() || self == Request::ShowSupportFile
     }
 
     /// The settings page or web page this request opens, if that is all it does.
@@ -730,7 +730,8 @@ mod tests {
     fn only_page_requests_bring_a_window_forward() {
         for request in all() {
             let page = format!("{request:?}").starts_with("Open");
-            assert_eq!(request.opens_window(), page, "{request:?}");
+            let folder = request == Request::ShowSupportFile;
+            assert_eq!(request.opens_window(), page || folder, "{request:?}");
         }
     }
 
@@ -742,6 +743,7 @@ mod tests {
             Request::OpenPrivacyPolicy,
             Request::OpenRecoveryKey,
             Request::OpenDownloadPage,
+            Request::ShowSupportFile,
         ];
         for request in all() {
             if request.opens_window() && !feedback.contains(&request) {

@@ -120,7 +120,7 @@ pub enum Msg {
     Save,
     Saved(Result<PathBuf, String>),
     Show,
-    Shown(bool),
+    Shown(bool, Vec<isize>),
 }
 
 pub fn wrap(msg: Msg) -> Message {
@@ -170,13 +170,20 @@ pub fn update(state: &mut State, msg: Msg, ctx: &Ctx, facts: Facts) -> Task<Mess
             Task::none()
         }
         Msg::Show => match &state.sheet {
-            Sheet::Saved(_) => ctx.broker_task(crate::broker::Request::ShowSupportFile, |reply| {
-                wrap(Msg::Shown(matches!(reply, Ok(crate::broker::Reply::Done))))
-            }),
+            Sheet::Saved(_) => {
+                let before = support::folder::windows();
+                ctx.broker_task(crate::broker::Request::ShowSupportFile, move |reply| {
+                    let shown = matches!(reply, Ok(crate::broker::Reply::Done));
+                    wrap(Msg::Shown(shown, before.clone()))
+                })
+            }
             _ => Task::none(),
         },
-        Msg::Shown(true) => Task::none(),
-        Msg::Shown(false) => Task::done(Message::Toast(
+        Msg::Shown(true, before) => Task::perform(
+            blocking(move || support::folder::bring_forward(&before)),
+            |()| Message::Noop,
+        ),
+        Msg::Shown(false, _) => Task::done(Message::Toast(
             ctx.t("We couldn't open the folder. Look for the file in your Downloads folder."),
             Tone::Warn,
         )),

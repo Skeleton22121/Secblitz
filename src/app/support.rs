@@ -492,6 +492,74 @@ pub fn newest_file(dir: &Path) -> Option<PathBuf> {
 #[cfg(windows)]
 pub use system::downloads;
 
+/// Explorer folder windows, so the one that opens for the support file can be
+/// brought to the front by the window that asked for it.
+pub mod folder {
+    /// Visible Explorer folder windows, front first.
+    #[cfg(windows)]
+    pub fn windows() -> Vec<isize> {
+        use windows_sys::core::BOOL;
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetClassNameW, IsWindowVisible,
+        };
+        unsafe extern "system" fn visit(hwnd: HWND, param: isize) -> BOOL {
+            // SAFETY: `param` is the Vec passed below, alive for the whole enumeration.
+            let found = unsafe { &mut *(param as *mut Vec<isize>) };
+            let mut class = [0u16; 32];
+            // SAFETY: the buffer and its length describe `class`.
+            let n = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
+            // SAFETY: plain query of a window handle Windows just gave us.
+            let visible = unsafe { IsWindowVisible(hwnd) } != 0;
+            if n > 0 && visible && String::from_utf16_lossy(&class[..n as usize]) == "CabinetWClass"
+            {
+                found.push(hwnd as isize);
+            }
+            1
+        }
+        let mut found = Vec::new();
+        // SAFETY: the callback only uses `found` through the pointer given here.
+        unsafe { EnumWindows(Some(visit), &mut found as *mut Vec<isize> as isize) };
+        found
+    }
+
+    #[cfg(not(windows))]
+    pub fn windows() -> Vec<isize> {
+        Vec::new()
+    }
+
+    /// Waits a moment for the folder window and brings it to the front. The
+    /// desktop's Explorer opens it, and Windows would keep it behind Secblitz.
+    #[cfg(windows)]
+    pub fn bring_forward(before: &[isize]) {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+        };
+        for tries in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let now = windows();
+            let new = now.iter().find(|h| !before.contains(h));
+            // An already open Downloads window is reused instead of a new one.
+            let Some(&hwnd) = new.or(now.first().filter(|_| tries >= 15)) else {
+                continue;
+            };
+            let hwnd = hwnd as HWND;
+            // SAFETY: plain window calls on a handle from the enumeration above.
+            unsafe {
+                if IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                }
+                SetForegroundWindow(hwnd);
+            }
+            return;
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn bring_forward(_: &[isize]) {}
+}
+
 pub fn redactor() -> Redactor {
     Redactor::new(
         &std::env::var("USERNAME").unwrap_or_default(),
