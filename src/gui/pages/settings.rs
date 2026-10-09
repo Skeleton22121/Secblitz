@@ -68,6 +68,7 @@ pub struct State {
     technical: bool,
     clock: anim::Clock,
     remove: remove::State,
+    points: widgets::point::Opened,
 }
 
 impl Default for State {
@@ -83,6 +84,7 @@ impl Default for State {
             technical: false,
             clock: anim::Clock::new(),
             remove: remove::State::default(),
+            points: widgets::point::Opened::default(),
         }
     }
 }
@@ -155,6 +157,7 @@ pub enum Msg {
     AskTray(bool),
     CancelConfirm,
     Confirmed,
+    Point(String),
     BackgroundDone(bool, Result<(), String>),
     TrayDone(bool, Result<(), String>),
     TrayStarted(bool),
@@ -235,20 +238,29 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             ctx.prefs.notify_dangerous = on;
             save_prefs(ctx)
         }
+        Msg::Point(key) => {
+            if state.confirm.is_some() {
+                state.points.toggle(&key);
+            }
+            Task::none()
+        }
         Msg::Ask(on) => {
             if !state.working {
+                state.points.clear();
                 state.confirm = Some(Confirm::Background(on));
             }
             Task::none()
         }
         Msg::AskTray(on) => {
             if !state.working && state.installed {
+                state.points.clear();
                 state.confirm = Some(Confirm::Tray(on));
             }
             Task::none()
         }
         Msg::CancelConfirm => {
             state.confirm = None;
+            state.points.clear();
             Task::none()
         }
         Msg::Confirmed => {
@@ -404,11 +416,17 @@ fn confirm_text(confirm: Confirm) -> (&'static str, &'static str, &'static str) 
     }
 }
 
-fn confirm_row<'a>(p: Palette, ctx: &Ctx, confirm: Confirm) -> Element<'a, Message> {
+fn confirm_row<'a>(p: Palette, ctx: &Ctx, state: &State, confirm: Confirm) -> Element<'a, Message> {
     let (title, text_key, yes) = confirm_text(confirm);
     let body = column![
         widgets::body(p, ctx.t(title)),
-        widgets::muted(p, ctx.t(text_key)),
+        widgets::point::text_point(
+            p,
+            &ctx.t(text_key),
+            widgets::point::Words::Muted,
+            state.points.has("confirm"),
+            Message::Settings(Msg::Point("confirm".to_owned())),
+        ),
         row![
             space::horizontal(),
             widgets::action(
@@ -512,7 +530,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         None,
     )];
     if let Some(c @ Confirm::Background(_)) = state.confirm {
-        rows.push(confirm_row(p, ctx, c));
+        rows.push(confirm_row(p, ctx, state, c));
     }
     let tray_toggle =
         (state.installed && !state.working).then_some(|v| Message::Settings(Msg::AskTray(v)));
@@ -529,7 +547,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         None,
     ));
     if let Some(c @ Confirm::Tray(_)) = state.confirm {
-        rows.push(confirm_row(p, ctx, c));
+        rows.push(confirm_row(p, ctx, state, c));
     }
     let protection = widgets::group(p, t("Background protection"), None, None, rows);
 
