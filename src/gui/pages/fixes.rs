@@ -1511,10 +1511,12 @@ pub fn view<'a>(
     let bar = shows_search(ctx).then(|| search_bar(state, ctx));
     let page =
         |strips: Vec<Element<'a, Message>>, body: Column<'a, Message>| -> Element<'a, Message> {
-            let mut top = column![header, space::vertical().height(theme::S4)];
-            for strip in strips {
-                top = top.push(strip).push(space::vertical().height(theme::S3));
-            }
+            // iced keeps widget state by position, so the strips share one slot and the
+            // search box keeps its focus when they disappear on the first typed letter.
+            let strips = strips.into_iter().fold(column![], |col, strip| {
+                col.push(strip).push(space::vertical().height(theme::S3))
+            });
+            let mut top = column![header, space::vertical().height(theme::S4), strips];
             if let Some(bar) = bar {
                 top = top.push(bar).push(space::vertical().height(theme::S6));
             }
