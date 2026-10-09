@@ -12,6 +12,7 @@ use crate::gui::icons::Icon;
 use crate::gui::pages::personal;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::info::InfoSheet;
+use crate::gui::widgets::point::{self, Words};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{Ctx, Helper, Message, Page};
 use iced::widget::{column, container, row, space, text};
@@ -1429,6 +1430,16 @@ pub(super) fn sheet_copy(sheet: Sheet) -> SheetCopy {
     }
 }
 
+/// Lines of a confirmation sheet that are read in full: they tell what the person must know before they agree.
+pub(super) fn whole_lines(sheet: Sheet) -> &'static [usize] {
+    match sheet {
+        Sheet::Renewal { .. } => &[0, 1, 2],
+        Sheet::Repair(RepairKind::Repair) => &[2],
+        Sheet::InstallUpdates => &[1, 2],
+        _ => &[],
+    }
+}
+
 fn install_updates_extra<'a>(ctx: &'a Ctx, found: &logic::Found) -> Vec<El<'a>> {
     let p = ctx.palette;
     let mut list = column![].spacing(theme::S2);
@@ -1478,8 +1489,20 @@ fn sheet_panel<'a>(state: &'a State, ctx: &'a Ctx, sheet: Sheet) -> El<'a> {
     .align_y(Alignment::Center)]
     .spacing(theme::S3)
     .width(Length::Fill);
-    for line in lines {
-        content = content.push(widgets::body(p, line));
+    let whole = whole_lines(sheet);
+    for (i, line) in lines.into_iter().enumerate() {
+        content = content.push(if whole.contains(&i) {
+            widgets::body(p, line)
+        } else {
+            let key = format!("line:{i}");
+            point::text_point(
+                p,
+                &line,
+                Words::Body,
+                state.points.has(&key),
+                tools(Msg::Point(key)),
+            )
+        });
     }
     if !sheet.notices().undoable {
         content = content.push(
