@@ -613,7 +613,7 @@ impl App {
             }
             Message::Info(mut sheet) => {
                 if let Some(sheet) = sheet.as_mut() {
-                    sheet.open.open("0");
+                    sheet.open_first();
                 }
                 self.ctx.info = sheet;
                 Task::none()

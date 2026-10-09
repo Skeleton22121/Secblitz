@@ -55,6 +55,18 @@ impl InfoSheet {
         }
     }
 
+    pub fn open_first(&mut self) {
+        match self.blocks.first() {
+            Some(InfoBlock::Text { .. }) => self.open.open(&point_key(0, None)),
+            Some(InfoBlock::List { items, .. }) => {
+                for i in 0..items.len() {
+                    self.open.open(&point_key(0, Some(i)));
+                }
+            }
+            None => {}
+        }
+    }
+
     pub fn text(mut self, label: impl Into<String>, body: impl Into<String>) -> Self {
         let body = body.into();
         if !body.trim().is_empty() {
@@ -328,5 +340,13 @@ mod tests {
         let _ = app.update(Message::Info(None));
         let _ = app.update(Message::Info(Some(Box::new(sheet))));
         assert!(open(&app, "0") && !open(&app, "1"));
+        let list_first = InfoSheet::new("x")
+            .list(
+                "More details",
+                vec!["One. Two.".into(), "Three. Four.".into()],
+            )
+            .text("b", "Five. Six.");
+        let _ = app.update(Message::Info(Some(Box::new(list_first))));
+        assert!(open(&app, "0.0") && open(&app, "0.1") && !open(&app, "1"));
     }
 }
