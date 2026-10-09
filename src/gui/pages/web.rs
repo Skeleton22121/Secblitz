@@ -638,10 +638,14 @@ fn start(
 }
 
 pub fn on_enter(state: &mut State, _ctx: &mut Ctx) -> Task<Message> {
+    escape(state);
+    poll(state)
+}
+
+pub fn escape(state: &mut State) {
     state.confirm = None;
     state.confirm_once = None;
     state.pause_choices = false;
-    poll(state)
 }
 
 /// Whether two readings would draw the same page, whatever the clock says.
