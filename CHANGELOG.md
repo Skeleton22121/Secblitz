@@ -31,6 +31,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - On a small screen set to a larger text size, the Secblitz window no longer opens partly under the taskbar.
 - Typing in the Protection search no longer stops after the first letter.
 - On Windows Home, the drive encryption steps no longer send you to BitLocker, which Home does not have.
+- Removing Secblitz from Windows Settings no longer says every removed app can come back from the Microsoft Store.
 
 ## [0.12.0] - 2026-10-09
 
