@@ -192,7 +192,7 @@ pub fn target(stops: &[Stop], step: Move) -> Option<usize> {
         ),
         None => ((0..stops.len()).collect(), false),
     };
-    if step == Move::PageStart && top.is_none() {
+    if step == Move::PageStart && top.is_none() && !stops.iter().any(|s| s.focused) {
         let page: Vec<usize> = reachable
             .iter()
             .copied()
@@ -383,5 +383,11 @@ mod tests {
         assert_eq!(target(&no_page, Move::PageStart), Some(0));
         let sheet = [stop(None, true, false), stop(Some(0), false, false)];
         assert_eq!(target(&sheet, Move::PageStart), Some(1));
+        let clicked = [
+            stop(None, true, false),
+            stop(None, true, true),
+            stop(None, true, false),
+        ];
+        assert_eq!(target(&clicked, Move::PageStart), Some(2));
     }
 }
