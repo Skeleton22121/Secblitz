@@ -229,6 +229,17 @@ fn every_planned_file_is_in_the_archive_and_reads_back() {
 }
 
 #[test]
+fn the_launcher_takes_any_support_file_this_window_can_build() {
+    let bytes = archive(&facts(), &redactor()).unwrap();
+    assert!(crate::broker::looks_like_zip(&bytes));
+    const { assert!(zip::MAX_TOTAL + 22 <= crate::broker::MAX_FILE) };
+    let mut cut = bytes.clone();
+    cut.truncate(bytes.len() - 1);
+    assert!(!crate::broker::looks_like_zip(&cut));
+    assert!(!crate::broker::looks_like_zip(&bytes[4..]));
+}
+
+#[test]
 fn the_check_file_keeps_ids_and_statuses_only() {
     let text = last_check(&facts());
     let value: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -373,9 +384,16 @@ fn local_minute(t: u64, between: &str, colon: &str) -> String {
 fn a_taken_name_gets_a_number_and_nothing_is_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let name = "Secblitz-support-2026-10-09-1010.zip";
-    let first = save_new(dir.path(), name, b"one").unwrap();
-    let second = save_new(dir.path(), name, b"two").unwrap();
-    let third = save_new(dir.path(), name, b"three").unwrap();
+    let (first, one) = save_new(dir.path(), name, b"one").unwrap();
+    let (second, two) = save_new(dir.path(), name, b"two").unwrap();
+    let (third, three) = save_new(dir.path(), name, b"three").unwrap();
+    assert_eq!((one, two, three), (1, 2, 3));
+    for (path, n) in [(&first, one), (&second, two), (&third, three)] {
+        assert_eq!(
+            path.file_name().unwrap().to_str(),
+            Some(&*numbered(name, n))
+        );
+    }
     assert_eq!(first.file_name().unwrap(), name);
     assert_eq!(
         second.file_name().unwrap(),
@@ -397,7 +415,7 @@ fn a_link_with_the_same_name_is_not_followed() {
     std::fs::write(&target, b"keep").unwrap();
     let name = "Secblitz-support-2026-10-09-1010.zip";
     std::os::unix::fs::symlink(&target, dir.path().join(name)).unwrap();
-    let saved = save_new(dir.path(), name, b"new").unwrap();
+    let (saved, _) = save_new(dir.path(), name, b"new").unwrap();
     assert_eq!(std::fs::read(target).unwrap(), b"keep");
     assert_eq!(
         saved.file_name().unwrap(),
@@ -444,7 +462,7 @@ fn the_newest_support_file_is_found_and_other_files_are_ignored() {
     std::fs::write(dir.path().join("holiday.zip"), b"x").unwrap();
     std::fs::write(dir.path().join("Secblitz-support-notes.txt"), b"x").unwrap();
     assert_eq!(newest_file(dir.path()), None);
-    let old = save_new(dir.path(), "Secblitz-support-2026-10-01-0900.zip", b"old").unwrap();
+    let (old, _) = save_new(dir.path(), "Secblitz-support-2026-10-01-0900.zip", b"old").unwrap();
     let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
     std::fs::File::options()
         .write(true)
@@ -452,6 +470,6 @@ fn the_newest_support_file_is_found_and_other_files_are_ignored() {
         .unwrap()
         .set_modified(past)
         .unwrap();
-    let new = save_new(dir.path(), "Secblitz-support-2026-10-09-1200.zip", b"new").unwrap();
+    let (new, _) = save_new(dir.path(), "Secblitz-support-2026-10-09-1200.zip", b"new").unwrap();
     assert_eq!(newest_file(dir.path()), Some(new));
 }

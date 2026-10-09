@@ -2,7 +2,7 @@
 
 #[derive(Debug, Default, Clone)]
 pub struct Redactor {
-    user: Option<Vec<char>>,
+    users: Vec<Vec<char>>,
     computer: Option<Vec<char>>,
 }
 
@@ -35,16 +35,27 @@ const SHARED_FOLDERS: [&str; 4] = ["public", "default", "all users", "default us
 impl Redactor {
     pub fn new(user: &str, computer: &str) -> Self {
         Redactor {
-            user: chars_of(user),
+            users: chars_of(user).into_iter().collect(),
             computer: chars_of(computer),
         }
+    }
+
+    /// Also hides `user`, such as the signed-in person when the window runs as another account.
+    pub fn and_user(mut self, user: &str) -> Self {
+        if let Some(user) = chars_of(user) {
+            self.users.push(user);
+            self.users.sort_by_key(|u| std::cmp::Reverse(u.len()));
+        }
+        self
     }
 
     pub fn clean(&self, text: &str) -> String {
         let text: Vec<char> = text.chars().collect();
         let text = self.profile_paths(&sids(&text));
         let text = replace_name(&text, self.computer.as_deref(), "[computer]");
-        replace_name(&text, self.user.as_deref(), "[user]")
+        self.users
+            .iter()
+            .fold(text, |text, user| replace_name(&text, Some(user), "[user]"))
             .into_iter()
             .collect()
     }
@@ -63,14 +74,12 @@ impl Redactor {
                 continue;
             }
             let start = i + marker.len();
-            let known = self
-                .user
-                .as_deref()
-                .filter(|u| matches_at(text, start, u))
-                .filter(|u| {
-                    text.get(start + u.len())
+            let known = self.users.iter().find(|u| {
+                matches_at(text, start, u)
+                    && text
+                        .get(start + u.len())
                         .is_none_or(|c| ends_segment(*c, false))
-                });
+            });
             let shared = SHARED_FOLDERS.iter().find_map(|name| {
                 let name: Vec<char> = name.chars().collect();
                 (matches_at(text, start, &name)
@@ -271,6 +280,18 @@ mod tests {
         assert_eq!(r.clean(r"\\MARIAS-PC\share"), r"\\[computer]\share");
         assert_eq!(r.clean("MARIAS-PCS"), "MARIAS-PCS");
         assert_eq!(r.clean("xMARIAS-PC"), "xMARIAS-PC");
+    }
+
+    #[test]
+    fn a_second_account_name_is_hidden_too() {
+        let r = Redactor::new("Admin", "PC1")
+            .and_user("Sam Field")
+            .and_user("Sam");
+        assert_eq!(
+            r.clean(r"C:\Users\Sam Field\Downloads and C:\Users\Admin\x by Sam, admin"),
+            r"C:\Users\[user]\Downloads and C:\Users\[user]\x by [user], [user]"
+        );
+        assert_eq!(r.clean("sam field signed in"), "[user] signed in");
     }
 
     #[test]

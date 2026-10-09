@@ -1,13 +1,12 @@
 //! The Help tab in Settings and the support file sheet.
-use crate::app::support::{self, Inputs};
+use crate::app::support::{self, Inputs, Saver};
 use crate::gui::icons::Icon;
 use crate::gui::pages::settings;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::{self, anim, ButtonKind};
-use crate::gui::{blocking, Ctx, Message};
+use crate::gui::{blocking, Ctx, Helper, Message};
 use iced::widget::{column, container, row, space};
 use iced::{Alignment, Element, Task};
-use std::path::PathBuf;
 
 type El<'a> = Element<'a, Message>;
 
@@ -67,7 +66,7 @@ pub enum Sheet {
     Closed,
     Ask,
     Saving,
-    Saved(PathBuf),
+    Saved(String),
     Failed,
 }
 
@@ -118,7 +117,7 @@ pub enum Msg {
     Ask,
     Cancel,
     Save,
-    Saved(Result<PathBuf, String>),
+    Saved(Result<String, String>),
     Show,
     Shown(bool, Vec<isize>),
 }
@@ -154,16 +153,26 @@ pub fn update(state: &mut State, msg: Msg, ctx: &Ctx, facts: Facts) -> Task<Mess
             if !matches!(state.sheet, Sheet::Ask | Sheet::Failed) {
                 return Task::none();
             }
+            let saver = match (&ctx.broker, ctx.helper) {
+                (Some(client), _) => Saver::Launcher(client.clone()),
+                (None, Helper::NotOnThisAccount) => Saver::Here,
+                (None, _) => {
+                    return Task::done(Message::Toast(
+                        ctx.t(crate::gui::REOPEN_TO_DO_THIS),
+                        Tone::Warn,
+                    ))
+                }
+            };
             state.sheet = Sheet::Saving;
             let inputs = inputs(ctx, facts);
-            Task::perform(blocking(move || support::create(inputs)), |result| {
+            Task::perform(blocking(move || support::create(inputs, saver)), |result| {
                 wrap(Msg::Saved(result))
             })
         }
         Msg::Saved(result) => {
             if state.sheet == Sheet::Saving {
                 state.sheet = match result {
-                    Ok(path) => Sheet::Saved(path),
+                    Ok(name) => Sheet::Saved(name),
                     Err(_) => Sheet::Failed,
                 };
             }
@@ -331,13 +340,13 @@ pub fn modal<'a>(state: &State, ctx: &'a Ctx, clock: &anim::Clock) -> Option<El<
         .center_x(iced::Length::Fill)
         .padding([theme::S6, theme::S5])
         .into(),
-        Sheet::Saved(path) => column![
+        Sheet::Saved(name) => column![
             widgets::h2(p, ctx.t("Support file saved")),
             widgets::muted(
                 p,
                 ctx.t("You can find it in your Downloads folder. Attach it when you report a problem."),
             ),
-            widgets::small(p, path.display().to_string()),
+            widgets::small(p, name.clone()),
             row![
                 space::horizontal(),
                 widgets::action(
@@ -445,7 +454,7 @@ mod tests {
             Sheet::Saving,
             "leaving the page cannot cancel a save"
         );
-        s.sheet = Sheet::Saved(PathBuf::from("x.zip"));
+        s.sheet = Sheet::Saved("x.zip".to_owned());
         assert!(s.escape());
         assert_eq!(s.sheet, Sheet::Closed);
     }

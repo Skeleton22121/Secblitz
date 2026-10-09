@@ -432,18 +432,22 @@ pub fn archive(f: &Facts, redactor: &Redactor) -> Result<Vec<u8>, String> {
     zip::write(&files(f, redactor), zip_time(f.at)).map_err(|e| e.to_string())
 }
 
-/// Creates a new file in `dir`, adding a number when the name is taken. An existing file or
-/// link is never opened or replaced.
-pub fn save_new(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    use std::io::Write;
+/// `name` with the number `save_new` adds when the name is taken; 1 leaves it as it is.
+pub fn numbered(name: &str, n: u8) -> String {
     let (stem, ext) = name.rsplit_once('.').unwrap_or((name, "zip"));
+    if n <= 1 {
+        name.to_owned()
+    } else {
+        format!("{stem}-{n}.{ext}")
+    }
+}
+
+/// Creates a new file in `dir`, adding a number when the name is taken. An existing file or
+/// link is never opened or replaced. Returns the path and the number used.
+pub fn save_new(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<(PathBuf, u8)> {
+    use std::io::Write;
     for n in 1..100 {
-        let candidate = if n == 1 {
-            name.to_owned()
-        } else {
-            format!("{stem}-{n}.{ext}")
-        };
-        let path = dir.join(candidate);
+        let path = dir.join(numbered(name, n));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -455,7 +459,7 @@ pub fn save_new(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf
                     let _ = std::fs::remove_file(&path);
                     return Err(e);
                 }
-                return Ok(path);
+                return Ok((path, n));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
@@ -565,6 +569,7 @@ pub fn redactor() -> Redactor {
         &std::env::var("USERNAME").unwrap_or_default(),
         &std::env::var("COMPUTERNAME").unwrap_or_default(),
     )
+    .and_user(&system::session_user().unwrap_or_default())
 }
 
 /// What the person's own settings and the last check say, gathered on the window's thread.
@@ -580,13 +585,32 @@ pub struct Inputs {
     pub problems: Vec<String>,
 }
 
-/// Collects, builds and saves the file in Downloads. Returns where it was saved.
-pub fn create(inputs: Inputs) -> Result<PathBuf, String> {
+/// Who saves the file in the person's Downloads.
+pub enum Saver {
+    /// The launcher, which runs as the person even when this window runs as another account.
+    Launcher(std::sync::Arc<crate::broker::Client>),
+    /// This window, which runs as the person.
+    Here,
+}
+
+/// Collects, builds and saves the file in Downloads. Returns the saved file's name.
+pub fn create(inputs: Inputs, saver: Saver) -> Result<String, String> {
     let at = history::now();
     let facts = system::collect(inputs, at);
     let bytes = archive(&facts, &redactor())?;
-    let dir = system::downloads().ok_or_else(|| "Downloads folder not found".to_owned())?;
-    save_new(&dir, &file_name(at), &bytes).map_err(|e| e.to_string())
+    let name = file_name(at);
+    let n = match saver {
+        Saver::Launcher(client) => match client.save_file(at, &bytes) {
+            Ok(Ok(n)) => n,
+            Ok(Err(reply)) => return Err(format!("The launcher answered {reply:?}")),
+            Err(e) => return Err(format!("{e:#}")),
+        },
+        Saver::Here => {
+            let dir = system::downloads().ok_or_else(|| "Downloads folder not found".to_owned())?;
+            save_new(&dir, &name, &bytes).map_err(|e| e.to_string())?.1
+        }
+    };
+    Ok(numbered(&name, n))
 }
 
 mod system {
@@ -611,6 +635,40 @@ mod system {
         // SAFETY: null or the allocation returned above.
         unsafe { CoTaskMemFree(raw.cast()) };
         path.filter(|p| p.is_absolute() && p.is_dir())
+    }
+
+    /// The person signed in to this session. After an administrator's password was typed in,
+    /// this window runs as that administrator, but the person is still this one.
+    #[cfg(windows)]
+    pub fn session_user() -> Option<String> {
+        use windows_sys::Win32::System::RemoteDesktop::{
+            WTSFreeMemory, WTSQuerySessionInformationW, WTSUserName, WTS_CURRENT_SESSION,
+        };
+        let (mut raw, mut bytes) = (std::ptr::null_mut(), 0u32);
+        // SAFETY: the out-pointers are valid; the returned buffer is freed below.
+        let ok = unsafe {
+            WTSQuerySessionInformationW(
+                std::ptr::null_mut(),
+                WTS_CURRENT_SESSION,
+                WTSUserName,
+                &mut raw,
+                &mut bytes,
+            )
+        };
+        if ok == 0 || raw.is_null() {
+            return None;
+        }
+        // SAFETY: success returns a NUL-terminated UTF-16 string, freed only below.
+        let name =
+            unsafe { secblitz::platform::security::wide_str(raw) }.map(String::from_utf16_lossy);
+        // SAFETY: `raw` came from WTSQuerySessionInformationW and is freed once.
+        unsafe { WTSFreeMemory(raw.cast()) };
+        name
+    }
+
+    #[cfg(not(windows))]
+    pub fn session_user() -> Option<String> {
+        None
     }
 
     #[cfg(not(windows))]

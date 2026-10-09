@@ -578,7 +578,7 @@ mod imp {
         ChildGone,
     }
 
-    fn read_request(pipe: HANDLE, event: HANDLE, child: HANDLE, buf: &mut [u8; 3]) -> Read {
+    fn read_full(pipe: HANDLE, event: HANDLE, child: HANDLE, buf: &mut [u8]) -> Read {
         let mut done = 0usize;
         while done < buf.len() {
             // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
@@ -617,13 +617,20 @@ mod imp {
         Read::Full
     }
 
-    fn write_reply(pipe: HANDLE, event: HANDLE, child: HANDLE, reply: Reply) -> bool {
-        let byte = [reply.encode()];
+    fn write_reply(pipe: HANDLE, event: HANDLE, child: HANDLE, reply: &[u8]) -> bool {
         // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event;
         unsafe { ResetEvent(event) };
-        let started = unsafe { WriteFile(pipe, byte.as_ptr(), 1, null_mut(), &mut overlapped) };
+        let started = unsafe {
+            WriteFile(
+                pipe,
+                reply.as_ptr(),
+                reply.len() as u32,
+                null_mut(),
+                &mut overlapped,
+            )
+        };
         if started == 0 {
             if unsafe { GetLastError() } != ERROR_IO_PENDING {
                 return false;
@@ -638,7 +645,9 @@ mod imp {
             }
         }
         let mut n = 0u32;
-        unsafe { GetOverlappedResult(pipe, &overlapped, &mut n, 0) != 0 && n == 1 }
+        unsafe {
+            GetOverlappedResult(pipe, &overlapped, &mut n, 0) != 0 && n as usize == reply.len()
+        }
     }
 
     fn serve(pipe: &Owned, child: &Elevated) {
@@ -684,16 +693,39 @@ mod imp {
             }
             loop {
                 let mut request = [0u8; 3];
-                match read_request(pipe.0, event.0, child_handle, &mut request) {
+                match read_full(pipe.0, event.0, child_handle, &mut request) {
                     Read::Full => {}
                     Read::Closed => break,
                     Read::ChildGone => return,
                 }
                 let reply = match Request::decode(request) {
+                    Some(Request::SaveSupportFile) => {
+                        let mut header = [0u8; broker::FileHeader::SIZE];
+                        match read_full(pipe.0, event.0, child_handle, &mut header) {
+                            Read::Full => {}
+                            Read::Closed => break,
+                            Read::ChildGone => return,
+                        }
+                        // Too big or empty: the rest can't be skipped safely, so hang up.
+                        let Some(header) = broker::FileHeader::decode(header) else {
+                            break;
+                        };
+                        let mut zip = vec![0u8; header.len];
+                        match read_full(pipe.0, event.0, child_handle, &mut zip) {
+                            Read::Full => {}
+                            Read::Closed => break,
+                            Read::ChildGone => return,
+                        }
+                        let (reply, n) = save_support_file(header.at, &zip);
+                        if !write_reply(pipe.0, event.0, child_handle, &[reply.encode(), n]) {
+                            break;
+                        }
+                        continue;
+                    }
                     Some(request) => handle(request),
                     None => Reply::Unavailable,
                 };
-                if !write_reply(pipe.0, event.0, child_handle, reply) {
+                if !write_reply(pipe.0, event.0, child_handle, &[reply.encode()]) {
                     break;
                 }
             }
@@ -786,6 +818,22 @@ mod imp {
         {
             Ok(_) => Reply::Done,
             Err(_) => Reply::Failed,
+        }
+    }
+
+    /// Runs as the signed-in person, so the file lands in their own Downloads, never in a
+    /// folder of the account the window was elevated with.
+    fn save_support_file(at: u64, zip: &[u8]) -> (Reply, u8) {
+        use crate::app::support;
+        if !broker::looks_like_zip(zip) {
+            return (Reply::Failed, 0);
+        }
+        let Some(dir) = support::downloads() else {
+            return (Reply::Unavailable, 0);
+        };
+        match support::save_new(&dir, &support::file_name(at), zip) {
+            Ok((_, n)) => (Reply::Done, n),
+            Err(_) => (Reply::Failed, 0),
         }
     }
 
