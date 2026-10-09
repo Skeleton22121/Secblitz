@@ -324,9 +324,13 @@ fn group_card<'a>(
     .into()
 }
 
+fn days_since(now: u64, t: u64) -> u64 {
+    use secblitz::clock::local_day;
+    local_day(now).saturating_sub(local_day(t))
+}
+
 fn ago(ctx: &Ctx, t: u64) -> String {
-    let days = debloat::now().saturating_sub(t) / 86_400;
-    match days {
+    match days_since(debloat::now(), t) {
         0 => ctx.t("Removed today"),
         1 => ctx.t("Removed yesterday"),
         n => ctx.t("Removed {n} days ago").replace("{n}", &n.to_string()),
@@ -1116,6 +1120,15 @@ mod tests {
     use super::*;
     use secblitz::debloat::{Failure, Removed};
     use std::time::Duration;
+
+    #[test]
+    fn removal_days_count_calendar_days_not_hours() {
+        let day = 86_400;
+        assert_eq!(days_since(10 * day + 100, 9 * day + day - 100), 1);
+        assert_eq!(days_since(10 * day + 80_000, 10 * day + 100), 0);
+        assert_eq!(days_since(10 * day, 7 * day + 5), 3);
+        assert_eq!(days_since(5 * day, 6 * day), 0);
+    }
 
     #[test]
     fn the_start_menu_follows_each_apps_real_step() {
