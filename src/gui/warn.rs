@@ -21,7 +21,10 @@ use crate::tray::browser as sys;
 use stub as sys;
 
 const FOLLOW_EVERY: Duration = Duration::from_millis(150);
-const ADDRESS_EVERY: Duration = Duration::from_secs(1);
+const ADDRESS_EVERY: Duration = Duration::from_secs(2);
+/// The spinner turns while the Windows permission prompt is up, often for a while, so it runs at
+/// a gentle rate instead of every screen refresh.
+const SPIN_EVERY: Duration = Duration::from_millis(50);
 const ADDRESS_WAIT: Duration = Duration::from_millis(1500);
 const SITE_SHOWN: usize = 36;
 /// Not the app's own window title, which the launcher uses to find a running Secblitz.
@@ -61,6 +64,7 @@ struct Panel {
     shown: bool,
     escape_was_down: bool,
     address_check: Option<Instant>,
+    address_read: Option<Instant>,
 }
 
 /// Runs the panel and returns the exit code. Anything the tray could not have sent exits quietly.
@@ -133,6 +137,21 @@ fn ticks() -> impl iced::futures::Stream<Item = Message> {
         std::thread::sleep(FOLLOW_EVERY);
         emit(Message::Follow(Instant::now()));
     })
+}
+
+fn spin() -> impl iced::futures::Stream<Item = Message> {
+    super::blocking_stream(|emit| loop {
+        std::thread::sleep(SPIN_EVERY);
+        emit(Message::Frame);
+    })
+}
+
+fn tab_shows(browser: Browser, window: usize, site: &str) -> bool {
+    match browser {
+        Browser::Chromium => warn_logic::title_shows(&sys::title(window), site),
+        Browser::Firefox => sys::firefox_address(window, ADDRESS_WAIT)
+            .is_some_and(|address| warn_logic::address_shows(&address, site)),
+    }
 }
 
 fn glyph<'a>(bytes: &'static [u8], size: f32, color: iced::Color) -> Element<'a, Message> {
@@ -210,6 +229,7 @@ impl Panel {
             shown: false,
             escape_was_down: sys::escape_down(),
             address_check: None,
+            address_read: None,
         };
         let opened = iced::window::oldest().and_then(|id| {
             iced::window::run(id, |window| native::handle_of(window)).map(Message::Opened)
@@ -227,7 +247,7 @@ impl Panel {
             _ => None,
         });
         let frames = if self.phase == Phase::Waiting {
-            iced::window::frames().map(|_| Message::Frame)
+            Subscription::run(spin)
         } else {
             Subscription::none()
         };
@@ -263,8 +283,15 @@ impl Panel {
             }
             Message::Allowed(AllowOnce::Done) => {
                 self.phase = Phase::Leaving;
-                let window = self.args.window;
-                Task::perform(super::blocking(move || sys::reload(window)), Message::Sent)
+                let (window, browser) = (self.args.window, self.browser);
+                let site = self.args.site.clone();
+                // The prompt can stay up for a while; a tab that moved on is not reloaded.
+                Task::perform(
+                    super::blocking(move || {
+                        !tab_shows(browser, window, &site) || sys::reload(window)
+                    }),
+                    Message::Sent,
+                )
             }
             Message::Allowed(AllowOnce::Declined) => {
                 self.phase = Phase::Declined;
@@ -324,10 +351,14 @@ impl Panel {
         }
         if self.browser == Browser::Firefox
             && self.address_check.is_none()
+            && self
+                .address_read
+                .is_none_or(|at| now.duration_since(at) >= ADDRESS_EVERY)
             && front == window
             && self.phase == Phase::Ready
         {
             self.address_check = Some(now);
+            self.address_read = Some(now);
             return Task::perform(
                 super::blocking(move || sys::firefox_address(window, ADDRESS_WAIT)),
                 Message::Address,

@@ -197,9 +197,10 @@ fn send(keys: &[INPUT]) -> bool {
     }
 }
 
-/// Keys go only to the window that is in front, and only when it is the browser given.
+/// Keys go only to the window that is in front, and only when it is still a browser: a closed
+/// window's handle can be reused by another program.
 fn press(window: usize, keys: &[INPUT]) -> bool {
-    bring_to_front(window) && foreground() == window && send(keys)
+    browser_of(window).is_some() && bring_to_front(window) && foreground() == window && send(keys)
 }
 
 /// Alt+Left, the browser's own "back".

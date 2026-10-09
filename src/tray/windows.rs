@@ -70,6 +70,9 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MATCH_FOR: Duration = Duration::from_secs(4);
 const MATCH_EVERY: Duration = Duration::from_millis(200);
 const ADDRESS_WAIT: Duration = Duration::from_millis(1500);
+/// Reading Firefox's address bar walks its whole accessibility tree, so it is done far less
+/// often than the cheap title check.
+const ADDRESS_EVERY: Duration = Duration::from_secs(1);
 const POLL_TIMER: usize = 1;
 const QUIESCE_TIMER: usize = 2;
 const POLL_EVERY: u32 = 60_000;
@@ -93,6 +96,8 @@ struct Tray {
 static PANEL: Mutex<Option<OpenPanel>> = Mutex::new(None);
 /// Counts the blocks being looked for, so only the newest one may open a panel.
 static NEWEST: AtomicU64 = AtomicU64::new(0);
+/// The site being looked for, so repeated blocks of it do not start the search over.
+static SEARCHING: Mutex<Option<(u64, String)>> = Mutex::new(None);
 
 struct OpenPanel {
     child: std::process::Child,
@@ -313,13 +318,19 @@ fn show_blocked(hwnd: HWND, t: &mut Tray, notice: Notice, now: u64) {
     balloon(hwnd, t, &logic::Balloon::Blocked(notice));
 }
 
-fn tab_shows(window: usize, site: &str) -> bool {
+fn tab_shows(window: usize, site: &str, address_read: &mut Option<Instant>) -> bool {
     match browser::browser_of(window) {
         Some(warn_logic::Browser::Chromium) => {
             warn_logic::title_shows(&browser::title(window), site)
         }
-        Some(warn_logic::Browser::Firefox) => browser::firefox_address(window, ADDRESS_WAIT)
-            .is_some_and(|address| warn_logic::address_shows(&address, site)),
+        Some(warn_logic::Browser::Firefox) => {
+            if address_read.is_some_and(|at| at.elapsed() < ADDRESS_EVERY) {
+                return false;
+            }
+            *address_read = Some(Instant::now());
+            browser::firefox_address(window, ADDRESS_WAIT)
+                .is_some_and(|address| warn_logic::address_shows(&address, site))
+        }
         None => false,
     }
 }
@@ -368,34 +379,54 @@ fn start_panel(lang: Lang, notice: &Notice, window: usize) -> bool {
 /// search for an older one.
 fn look_for_browser(hwnd: HWND, lang: Lang, notice: Notice) {
     let hwnd = hwnd as usize;
+    let Ok(mut searching) = SEARCHING.lock() else {
+        return;
+    };
+    if searching
+        .as_ref()
+        .is_some_and(|(_, site)| *site == notice.site)
+    {
+        return;
+    }
     let mine = NEWEST.fetch_add(1, Ordering::AcqRel) + 1;
+    *searching = Some((mine, notice.site.clone()));
+    drop(searching);
     let _ = std::thread::Builder::new()
         .name("browser-match".into())
         .spawn(move || {
-            let until = Instant::now() + MATCH_FOR;
-            loop {
-                if NEWEST.load(Ordering::Acquire) != mine {
-                    return;
+            search_browser(hwnd, lang, notice, mine);
+            if let Ok(mut searching) = SEARCHING.lock() {
+                if searching.as_ref().is_some_and(|(id, _)| *id == mine) {
+                    *searching = None;
                 }
-                let window = browser::foreground();
-                if window != 0 && tab_shows(window, &notice.site) {
-                    if NEWEST.load(Ordering::Acquire) == mine && start_panel(lang, &notice, window)
-                    {
-                        return;
-                    }
-                    break;
-                }
-                if Instant::now() >= until {
-                    break;
-                }
-                std::thread::sleep(MATCH_EVERY);
-            }
-            if let Ok(mut later) = LATER.lock() {
-                later.push(notice);
-                // SAFETY: posting to the tray window; a window that is gone just fails.
-                unsafe { PostMessageW(hwnd as HWND, BALLOON_LATER, 0, 0) };
             }
         });
+}
+
+fn search_browser(hwnd: usize, lang: Lang, notice: Notice, mine: u64) {
+    let until = Instant::now() + MATCH_FOR;
+    let mut address_read = None;
+    loop {
+        if NEWEST.load(Ordering::Acquire) != mine {
+            return;
+        }
+        let window = browser::foreground();
+        if window != 0 && tab_shows(window, &notice.site, &mut address_read) {
+            if NEWEST.load(Ordering::Acquire) == mine && start_panel(lang, &notice, window) {
+                return;
+            }
+            break;
+        }
+        if Instant::now() >= until {
+            break;
+        }
+        std::thread::sleep(MATCH_EVERY);
+    }
+    if let Ok(mut later) = LATER.lock() {
+        later.push(notice);
+        // SAFETY: posting to the tray window; a window that is gone just fails.
+        unsafe { PostMessageW(hwnd as HWND, BALLOON_LATER, 0, 0) };
+    }
 }
 
 /// Wakes the tray whenever something in the web protection folder is written, so a block is
