@@ -10,16 +10,17 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ## [Unreleased]
 
 ### Changed
-- Each setting has one info button that opens a small window with what it is, what happens if it is off and what will change.
-- The Details button on the Fixes page is gone, and no more panels open under the rows.
-- The window no longer repeats a setting's status or the line already on its row.
-- The "More details" text on results and errors opens in the same small window.
-- Each setting on the Protection page shows at most one tag, and "Your choice" is gone because the section already says it.
-- The Protection page sections now run in the same order: needs you, your choices, good to know, already protected.
-- Fix lines no longer start with "We can fix this".
-- The approval window drops the lead-in line and the long "put back" sentence.
+- Each setting has one info button that opens a small window explaining it, instead of text that opens under the row.
+- The Details button is gone, and the window never repeats a setting's status or the line on its row.
+- "More details" on results and errors opens in the same small window.
+- Each setting on the Protection page shows at most one tag, and its sections run in one order: needs you, your choices, good to know, already protected.
+- Home, Web protection, Clean up apps, Settings, History and Tools use shorter lines and say each thing once.
+- Check names and explanations describe each Windows setting and what it protects, in plain words.
+- The tray alert for a drop in protection is shorter.
+- The installer says that web protection, if you turn it on later, downloads block lists and passes website lookups on.
 
-- Check names and explanations now describe each Windows setting and what it protects, in plain words.
+### Fixed
+- The History page no longer shows the same "nothing to undo" line twice.
 
 ## [0.11.0] - 2026-10-08
 
