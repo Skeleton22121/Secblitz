@@ -429,10 +429,9 @@ pub fn serve(
         let changed = last_status
             .as_ref()
             .is_none_or(|last| !same_apart_from_counts(last, &status));
-        if changed || status_timer.due() {
-            if config::save_status(&paths.status, &status).is_ok() {
-                status_timer.reset();
-            }
+        // A write that failed is tried again on the next tick, so a block notice is not late.
+        if (changed || status_timer.due()) && config::save_status(&paths.status, &status).is_ok() {
+            status_timer.reset();
             last_status = Some(status);
         }
         thread::sleep(TICK);
