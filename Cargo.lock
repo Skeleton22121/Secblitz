@@ -3224,6 +3224,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "clap",
+ "crc32fast",
  "ed25519-dalek",
  "embed-resource",
  "fs2",

@@ -161,4 +161,19 @@ mod revert_all {
         e.revert_all(|_| {}).unwrap();
         assert_eq!(e.undoable_changes().unwrap(), 0);
     }
+
+    #[test]
+    fn change_summary_counts_sets_and_names_checks_without_values() {
+        let (_dir, _state, mut e) = three_controls();
+        assert_eq!(e.change_summary().unwrap(), ChangeSummary::default());
+        apply_one(&mut e, X);
+        apply_one(&mut e, Y);
+        let summary = e.change_summary().unwrap();
+        assert_eq!((summary.sets, summary.applied, summary.reverted), (2, 2, 0));
+        assert_eq!(summary.checks, vec![Y.to_string(), X.to_string()]);
+        e.revert_all(|_| {}).unwrap();
+        let summary = e.change_summary().unwrap();
+        assert_eq!((summary.sets, summary.applied, summary.reverted), (2, 0, 2));
+        assert!(summary.checks.is_empty());
+    }
 }

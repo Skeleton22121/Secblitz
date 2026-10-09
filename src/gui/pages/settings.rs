@@ -1,7 +1,7 @@
 //! Settings page: appearance, language, background protection, updates, about.
 use crate::app::settings::{self as prefs_store, ThemeChoice};
 use crate::gui::icons::Icon;
-use crate::gui::pages::remove;
+use crate::gui::pages::{remove, support};
 use crate::gui::theme::{self, Mode, Palette, Tone};
 use crate::gui::widgets::{self, anim, ButtonKind};
 use crate::gui::{blocking, Ctx, Message};
@@ -56,8 +56,20 @@ enum Confirm {
     Tray(bool),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    General,
+    Help,
+}
+
+impl Tab {
+    const ALL: [Tab; 2] = [Tab::General, Tab::Help];
+}
+
 #[derive(Debug)]
 pub struct State {
+    tab: Tab,
+    help: support::State,
     background: Remote<bool>,
     update: Remote<UpdateView>,
     confirm: Option<Confirm>,
@@ -74,6 +86,8 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         State {
+            tab: Tab::General,
+            help: support::State::default(),
             background: Remote::Loading,
             update: Remote::Loading,
             confirm: None,
@@ -94,6 +108,7 @@ impl State {
         self.working
             || matches!(self.background, Remote::Loading)
             || matches!(self.update, Remote::Loading)
+            || self.help.saving()
     }
 }
 
@@ -107,11 +122,11 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 }
 
 pub fn modal<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a, Message>> {
-    remove::modal(&state.remove, ctx)
+    support::modal(&state.help, ctx, &state.clock).or_else(|| remove::modal(&state.remove, ctx))
 }
 
 pub fn escape(state: &mut State) {
-    if !remove::escape(&mut state.remove) {
+    if !state.help.escape() && !remove::escape(&mut state.remove) {
         state.confirm = None;
     }
 }
@@ -170,9 +185,13 @@ pub enum Msg {
     Frame,
     PrefsSaved(bool),
     Remove(remove::Msg),
+    Help(support::Msg),
+    SetTab(Tab),
 }
 
 pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
+    state.tab = Tab::General;
+    state.help.reset();
     update(state, Msg::Load, ctx)
 }
 
@@ -196,6 +215,24 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             ctx,
         ),
         Msg::Remove(m) => remove::update(&mut state.remove, m, ctx),
+        Msg::SetTab(tab) => {
+            state.tab = tab;
+            Task::none()
+        }
+        Msg::Help(m) => {
+            if matches!(m, support::Msg::Save) {
+                state.clock.restart();
+            }
+            let facts = support::Facts {
+                background: match state.background {
+                    Remote::Ready(on) => Some(on),
+                    _ => None,
+                },
+                tray: shown_tray(state.installed, state.tray),
+                installed: state.installed,
+            };
+            support::update(&mut state.help, m, ctx, facts)
+        }
         Msg::Load => {
             state.clock.restart();
             state.background = Remote::Loading;
@@ -735,6 +772,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 space::horizontal().width(0),
                 None,
             ),
+            support::row_item(ctx),
         ],
     );
 
@@ -759,17 +797,40 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         )],
     );
 
+    let tabs = widgets::segmented(
+        p,
+        &Tab::ALL.map(|tab| {
+            (
+                tab,
+                t(match tab {
+                    Tab::General => "General",
+                    Tab::Help => "Help",
+                }),
+            )
+        }),
+        state.tab,
+        |tab| Message::Settings(Msg::SetTab(tab)),
+    );
+    let body: Element<'a, Message> = match state.tab {
+        Tab::General => column![
+            appearance,
+            protection,
+            notifications,
+            updates,
+            removal,
+            about
+        ]
+        .spacing(theme::S8)
+        .into(),
+        Tab::Help => column![support::questions(&state.help, ctx), feedback]
+            .spacing(theme::S8)
+            .into(),
+    };
     column![
         widgets::page_header(p, t("Settings"), Some(t("Make Secblitz work your way."))),
-        appearance,
-        protection,
-        notifications,
-        updates,
-        feedback,
-        removal,
-        about,
+        column![tabs, body].spacing(theme::S6),
     ]
-    .spacing(theme::S8)
+    .spacing(theme::S6)
     .into()
 }
 

@@ -8,6 +8,7 @@ pub mod open_request;
 pub mod score;
 pub mod search;
 pub mod settings;
+pub mod support;
 pub mod topics;
 pub mod welcome;
 pub mod whats_new;

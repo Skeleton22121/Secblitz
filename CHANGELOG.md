@@ -13,6 +13,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The README lists which Windows versions Secblitz supports and has been tested on.
 - Each release comes with a parts list of the code it is built from.
 - A short welcome on first start explains what Secblitz does and asks before the first check.
+- A Help tab in Settings answers common questions.
+- Save a support file to attach when you report a problem. It leaves out your files, user name and the websites you visit.
 
 ### Changed
 - The roadmap is now a short, plain list of what is planned.

@@ -8,6 +8,7 @@ pub mod personal;
 pub mod recovery;
 pub mod remove;
 pub mod settings;
+pub mod support;
 pub mod tools;
 pub mod web;
 pub mod welcome;
