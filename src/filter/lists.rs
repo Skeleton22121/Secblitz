@@ -202,6 +202,12 @@ pub const NEVER_BLOCK: &[&str] = &[
     "time.windows.com",
     "secblitz.lol",
     "beacons.lol",
+    // A list that blocked where the lists come from would stop every later update.
+    "adguardteam.github.io",
+    "malware-filter.gitlab.io",
+    "raw.githubusercontent.com",
+    "filters.adtidy.org",
+    "easylist.to",
 ];
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -678,6 +684,15 @@ mod tests {
     fn never_block_names_are_valid() {
         for n in NEVER_BLOCK {
             assert!(valid_hostname(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn the_hosts_the_lists_come_from_are_never_blocked() {
+        for source in &SOURCES {
+            let host = source.url.strip_prefix("https://").unwrap();
+            let host = &host[..host.find('/').unwrap()];
+            assert!(NEVER_BLOCK.contains(&host), "{host}");
         }
     }
 
