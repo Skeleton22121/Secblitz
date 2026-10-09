@@ -7,9 +7,9 @@
 
 Secblitz turns on the security and privacy settings Windows leaves off, in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.
 
-[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.11.1-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.12.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![Version 0.11.1](https://img.shields.io/badge/version-0.11.1-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
+![Version 0.12.0](https://img.shields.io/badge/version-0.12.0-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
 <img src="docs/tour.webp" width="900" alt="A tour of Secblitz: checking the PC, fixing problems, blocking a dangerous site, removing apps and undoing a change.">
 
@@ -37,12 +37,12 @@ Secblitz is not an antivirus. It turns on and configures the protection built in
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.11.1-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-0.11.1-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.12.0-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-0.12.0-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
 
 The installer is not code-signed yet, so Windows may show an unknown publisher warning. Choose **More info**, then **Run anyway**. To check the file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
 ```powershell
-Get-FileHash .\secblitz-0.11.1-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\secblitz-0.12.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Tested on Windows 10 (version 22H2) and Windows 11, on regular and ARM PCs.

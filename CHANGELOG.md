@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-09
+
 ### Added
 - When Web protection stops a dangerous or scam site, a warning now appears over your browser with a way to go back or let it through once.
 
