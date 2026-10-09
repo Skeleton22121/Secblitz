@@ -10,3 +10,4 @@ pub mod remove;
 pub mod settings;
 pub mod tools;
 pub mod web;
+pub mod welcome;

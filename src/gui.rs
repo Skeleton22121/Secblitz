@@ -16,7 +16,9 @@ use crate::i18n::Lang;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
-use pages::{app_access, debloat, fixes, fixflow, history, home, recovery, settings, tools, web};
+use pages::{
+    app_access, debloat, fixes, fixflow, history, home, recovery, settings, tools, web, welcome,
+};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 use std::path::PathBuf;
@@ -261,6 +263,7 @@ pub enum Message {
     PageOpened(crate::guide::Page, bool),
     WindowFocus(bool),
     OpenRequested(String),
+    Welcome(welcome::Msg),
 }
 
 const RECHECK_WINDOW: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -331,6 +334,9 @@ pub struct App {
     switch_backs_seen: std::collections::HashSet<String>,
     focused: bool,
     user: Option<String>,
+    welcome: Option<welcome::State>,
+    /// The person has agreed to a check, now or in an earlier run.
+    may_check: bool,
 }
 
 impl App {
@@ -352,6 +358,9 @@ impl App {
             secblitz::platform::app_dir().is_ok_and(|dir| app::whats_new::used_before(&dir));
         let mut prefs = app::settings::load();
         let whats_new = app::whats_new::due(prefs.whats_new_seen.as_deref(), used_before);
+        // Tests stand for a PC that has checked before; its own files must not decide the screen.
+        let has_history = cfg!(test)
+            || secblitz::platform::app_dir().is_ok_and(|dir| app::welcome::has_history(&dir));
         let news_unrecorded = prefs.whats_new_seen.as_deref() != Some(app::whats_new::VERSION);
         if news_unrecorded {
             prefs.whats_new_seen = Some(app::whats_new::VERSION.to_owned());
@@ -408,6 +417,12 @@ impl App {
             cached.filter(|(r, _)| app::last_check::missed_switch_backs(r, &reverted).is_empty());
         let checked_at = cached.as_ref().map(|(_, at)| *at);
         let report = cached.map(|(report, _)| Arc::new(report));
+        let launch = app::welcome::launch(
+            cfg!(test) || used_before,
+            prefs.welcome_seen,
+            has_history,
+            report.is_some(),
+        );
         let ctx = Ctx {
             lang,
             palette: Palette::of(mode),
@@ -417,7 +432,7 @@ impl App {
             damage: None,
             check_error: None,
             checked_at,
-            checking: report.is_none().then(CheckProgress::default),
+            checking: launch.check.then(CheckProgress::default),
             finishing: false,
             report,
             busy: false,
@@ -457,6 +472,8 @@ impl App {
             switch_backs_seen: reverted.into_iter().collect(),
             focused: true,
             user,
+            welcome: launch.welcome.then(welcome::State::default),
+            may_check: has_history,
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = if app.ctx.checking.is_some() {
@@ -469,7 +486,8 @@ impl App {
         let web_state = web::on_enter(&mut app.web, &mut app.ctx);
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
-        let news = if news_unrecorded {
+        // A first start that is closed during the welcome must show it again next time.
+        let news = if news_unrecorded && !launch.welcome {
             Task::perform(persist::save_prefs(app.ctx.prefs.clone()), |_| {
                 Message::Noop
             })
@@ -560,6 +578,7 @@ impl App {
                 if self.ctx.checking.is_some() || self.ctx.busy {
                     return Task::none();
                 }
+                self.may_check = true;
                 self.ctx.info = None;
                 self.ctx.checking = Some(CheckProgress::default());
                 Task::run(self.ctx.worker.run(worker::Job::Check), Message::Worker)
@@ -587,6 +606,9 @@ impl App {
                 Task::none()
             }
             Message::Escape => {
+                if self.welcome.is_some() {
+                    return self.leave_welcome(false);
+                }
                 if self.ctx.info.take().is_some() {
                     return Task::none();
                 }
@@ -635,6 +657,15 @@ impl App {
                 )
             }
             Message::Noop => Task::none(),
+            Message::Welcome(m) => {
+                let Some(state) = self.welcome.as_mut() else {
+                    return Task::none();
+                };
+                match welcome::update(state, m) {
+                    welcome::Outcome::Stay => Task::none(),
+                    welcome::Outcome::Leave { check } => self.leave_welcome(check),
+                }
+            }
             Message::CloseWhatsNew => {
                 self.whats_new = false;
                 Task::none()
@@ -653,7 +684,7 @@ impl App {
             }
             Message::WindowFocus(focused) => {
                 self.focused = focused;
-                let idle = self.ctx.checking.is_none() && !self.ctx.busy;
+                let idle = self.ctx.checking.is_none() && !self.ctx.busy && self.may_check;
                 let recheck = self.recheck.focus(focused, std::time::Instant::now(), idle);
                 if recheck || (focused && idle && self.switched_back_unseen()) {
                     self.update(Message::CheckNow)
@@ -811,7 +842,11 @@ impl App {
                 extra = Task::batch([
                     self.update(Message::Toast(done, Tone::Good)),
                     self.preload_all(),
-                    self.update(Message::CheckNow),
+                    if self.may_check {
+                        self.update(Message::CheckNow)
+                    } else {
+                        Task::none()
+                    },
                 ]);
             }
             E::Recovered(Err(_)) => {
@@ -1087,8 +1122,25 @@ impl App {
         })
     }
 
+    /// Leaves the welcome by any route and remembers that it was shown.
+    fn leave_welcome(&mut self, check: bool) -> Task<Message> {
+        self.welcome = None;
+        self.ctx.prefs.welcome_seen = true;
+        let saved = Task::perform(persist::save_prefs(self.ctx.prefs.clone()), |_| {
+            Message::Noop
+        });
+        if check {
+            Task::batch([saved, self.update(Message::CheckNow)])
+        } else {
+            saved
+        }
+    }
+
     fn view(&self) -> Element<'_, Message> {
         let p = Palette::of(self.ctx.palette.mode);
+        if let Some(state) = &self.welcome {
+            return welcome::view(state, &self.ctx);
+        }
         let content: Element<'_, Message> = match self.page {
             Page::Home => home::view(&self.home, &self.ctx),
             Page::Fixes => fixes::view(&self.fixes, &self.ctx, &self.app_access),
@@ -1417,8 +1469,14 @@ impl App {
             }
             _ => None,
         });
+        let welcome = if self.welcome.is_some() {
+            welcome::subscription()
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             escape,
+            welcome,
             search_escape,
             focus,
             iced::window::close_requests().map(Message::CloseRequested),

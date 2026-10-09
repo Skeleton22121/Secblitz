@@ -1857,3 +1857,61 @@ fn the_info_dialog_opens_closes_and_gives_way_to_escape_first() {
         assert!(app.ctx.info.is_none());
     }
 }
+
+fn fresh_install() -> App {
+    let mut app = app();
+    app.ctx.report = None;
+    app.ctx.checked_at = None;
+    app.ctx.checking = None;
+    app.may_check = false;
+    app.welcome = Some(pages::welcome::State::default());
+    app
+}
+
+#[test]
+fn leaving_the_welcome_by_any_route_remembers_it_and_checks_only_on_a_yes() {
+    for (leave, checks) in [
+        (Message::Welcome(pages::welcome::Msg::Skip), false),
+        (Message::Escape, false),
+        (Message::Welcome(pages::welcome::Msg::Check), true),
+    ] {
+        let mut app = fresh_install();
+        drop(app.update(leave));
+        assert!(app.welcome.is_none());
+        assert!(app.ctx.prefs.welcome_seen);
+        assert_eq!(app.ctx.checking.is_some(), checks);
+        assert_eq!(app.may_check, checks);
+    }
+}
+
+#[test]
+fn nothing_checks_on_its_own_before_the_person_agrees() {
+    let mut app = fresh_install();
+    drop(app.update(Message::Welcome(pages::welcome::Msg::Skip)));
+    assert!(app.ctx.checking.is_none() && app.ctx.report.is_none());
+    drop(app.update(Message::WindowFocus(false)));
+    drop(app.update(Message::PageOpened(crate::guide::Page::Firewall, true)));
+    drop(app.update(Message::WindowFocus(true)));
+    assert!(app.ctx.checking.is_none());
+    let catalog = app.ctx.catalog.clone();
+    drop(app.update(Message::Worker(worker::Event::Recovered(Ok(catalog)))));
+    assert!(app.ctx.checking.is_none());
+    assert!(!home::fills_window(&app.ctx) && !fixes::fills_window(&app.ctx));
+}
+
+#[test]
+fn pages_without_a_check_ask_for_one_and_the_welcome_covers_the_window() {
+    let _motion = widgets::anim::forced::set(false);
+    let mut app = fresh_install();
+    drop(app.view());
+    for step in 0..3 {
+        drop(app.view());
+        drop(app.update(Message::Welcome(pages::welcome::Msg::Next)));
+        assert!(app.welcome.is_some(), "step {step}");
+    }
+    drop(app.update(Message::Welcome(pages::welcome::Msg::Skip)));
+    for page in Page::ALL {
+        drop(app.update(Message::Navigate(page)));
+        drop(app.view());
+    }
+}

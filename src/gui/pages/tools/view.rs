@@ -1070,7 +1070,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         logic::TipAction::CheckNow => widgets::action(
             p,
             ButtonKind::Secondary,
-            ctx.t("Check now"),
+            ctx.t("Check my PC"),
             Some(Icon::Refresh),
             (!ctx.busy && ctx.checking.is_none()).then_some(Message::CheckNow),
         ),

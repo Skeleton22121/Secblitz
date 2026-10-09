@@ -4,7 +4,7 @@ use crate::app::flow;
 use crate::app::score::{self, Score, ToCheck, Verdict};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Tone};
-use crate::gui::widgets::hairline::magnifier::{self, Labels, Magnifier, Status};
+use crate::gui::widgets::hairline::magnifier::{Labels, Magnifier, Status};
 use crate::gui::widgets::hairline::Plate;
 use crate::gui::widgets::{self, anim, ring, scan, ButtonKind};
 use crate::gui::{CheckProgress, Ctx, Message, Page};
@@ -26,7 +26,6 @@ struct Count {
 pub struct State {
     now: Instant,
     scan: Option<anim::Clock>,
-    ready_since: Instant,
     lines: Vec<(String, Instant)>,
     processed: usize,
     protected_open: bool,
@@ -42,7 +41,6 @@ impl Default for State {
         Self {
             now: Instant::now(),
             scan: None,
-            ready_since: Instant::now(),
             lines: Vec::new(),
             processed: 0,
             protected_open: false,
@@ -178,7 +176,6 @@ pub fn fills_window(ctx: &Ctx) -> bool {
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
-    let p = ctx.palette;
     if let Some(info) = &ctx.damage {
         return super::recovery::card(ctx, info);
     }
@@ -192,34 +189,48 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         if let Some(error) = &ctx.check_error {
             return error_card(ctx, "We couldn't check your PC", error, true);
         }
-        let art = Magnifier {
-            p,
-            plate: Plate::Surface,
-            status: Status::Ready,
-            progress: None,
-            changed: state.ready_since,
-            now: state.now,
-            labels: Labels::new(|s| ctx.t(s)),
-        };
-        return widgets::region(
-            p,
-            widgets::empty_state_art(
-                p,
-                art.view(magnifier::FULL),
-                ctx.t("Let's check your PC"),
-                ctx.t("This takes about a minute. Nothing is changed."),
-                Some(widgets::action(
-                    p,
-                    ButtonKind::Primary,
-                    ctx.t("Check my PC"),
-                    Some(Icon::Refresh),
-                    Some(Message::CheckNow),
-                )),
-            ),
-        )
-        .into();
+        return not_checked(ctx);
     };
     assessed(state, ctx, report)
+}
+
+fn not_checked<'a>(ctx: &'a Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    let ring_view = ring::ring(
+        ring::Ring {
+            p,
+            ratio: 0.0,
+            tone: Tone::Neutral,
+            label: String::new(),
+            caption: String::new(),
+        },
+        176.0,
+    );
+    let texts = column![
+        widgets::h1(p, ctx.t("Not checked yet")),
+        widgets::muted(
+            p,
+            ctx.t("Check your PC to see what's protected. Nothing is changed.")
+        ),
+    ]
+    .spacing(theme::S1);
+    let check = widgets::action(
+        p,
+        ButtonKind::Primary,
+        ctx.t("Check my PC"),
+        Some(Icon::Refresh),
+        (!ctx.busy).then_some(Message::CheckNow),
+    );
+    widgets::region(
+        p,
+        row![
+            ring_view,
+            column![texts, check].spacing(theme::S6).width(Length::Fill)
+        ]
+        .spacing(theme::S8)
+        .align_y(Alignment::Center),
+    )
+    .into()
 }
 
 fn scanning<'a>(state: &'a State, ctx: &'a Ctx, progress: &CheckProgress) -> Element<'a, Message> {
