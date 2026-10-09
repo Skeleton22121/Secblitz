@@ -26,6 +26,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ### Fixed
 - Remove Secblitz warns you when keeping your PC as it is would leave a removed app with no way back.
 - Remove Secblitz waits for a running check instead of leaving out what it would put back.
+- On a small screen set to a larger text size, the Secblitz window no longer opens partly under the taskbar.
 
 ## [0.12.0] - 2026-10-09
 

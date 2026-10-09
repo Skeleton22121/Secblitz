@@ -1574,14 +1574,89 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
     }
 }
 
+const USUAL_SIZE: iced::Size = iced::Size::new(1100.0, 720.0);
+/// The title bar and borders, plus a little room, around the drawn page.
+const FRAME: iced::Size = iced::Size::new(16.0, 48.0);
+
+/// The usual size, made smaller when the screen leaves less room, as on a laptop
+/// set to 150%, so the bottom of the window is never under the taskbar.
+fn first_size(free: Option<iced::Rectangle>) -> iced::Size {
+    let Some(free) = free else {
+        return USUAL_SIZE;
+    };
+    iced::Size::new(
+        USUAL_SIZE
+            .width
+            .min(free.width - FRAME.width)
+            .max(theme::WINDOW_MIN_WIDTH),
+        USUAL_SIZE
+            .height
+            .min(free.height - FRAME.height)
+            .max(theme::WINDOW_MIN_HEIGHT),
+    )
+}
+
+/// Centred in the free part of the screen. Windows centres a new window on the whole
+/// screen, which puts the bottom of a tall window under the taskbar.
+fn first_position(free: Option<iced::Rectangle>, size: iced::Size) -> Option<iced::Point> {
+    free.map(|free| {
+        iced::Point::new(
+            free.x + ((free.width - size.width - FRAME.width) / 2.0).max(0.0),
+            free.y + ((free.height - size.height - FRAME.height) / 2.0).max(0.0),
+        )
+    })
+}
+
+/// The part of the main screen that taskbars leave free, at the screen's scale.
+#[cfg(windows)]
+fn free_area() -> Option<iced::Rectangle> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+    };
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+    // SAFETY: `info` is a MONITORINFO with its size set, and the DPI outputs are locals.
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        if monitor.is_null() {
+            return None;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let (mut dpi, mut dpi_y) = (0u32, 0u32);
+        if GetMonitorInfoW(monitor, &mut info) == 0
+            || GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut dpi_y) != 0
+            || dpi == 0
+        {
+            return None;
+        }
+        let scale = dpi as f32 / 96.0;
+        let work = info.rcWork;
+        Some(iced::Rectangle::new(
+            iced::Point::new(work.left as f32 / scale, work.top as f32 / scale),
+            iced::Size::new(
+                (work.right - work.left) as f32 / scale,
+                (work.bottom - work.top) as f32 / scale,
+            ),
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn free_area() -> Option<iced::Rectangle> {
+    None
+}
+
 pub fn run(options: Options) -> anyhow::Result<()> {
     let renderer = render::select();
+    let free = free_area();
+    let size = first_size(free);
     let mut application =
         iced::application(move || App::new(options.clone()), App::update, App::view)
             .title(|app: &App| app.ctx.t("Secblitz"))
             .theme(|app: &App| app.ctx.palette.theme())
             .subscription(App::subscription)
-            .window_size((1100.0, 720.0))
+            .window_size(size)
             .default_font(theme::REGULAR)
             .antialiasing(render::use_msaa(renderer));
     for font in theme::FONT_FILES {
@@ -1589,8 +1664,11 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     }
     application
         .window(iced::window::Settings {
-            size: iced::Size::new(1100.0, 720.0),
-            position: iced::window::Position::Centered,
+            size,
+            position: first_position(free, size).map_or(
+                iced::window::Position::Centered,
+                iced::window::Position::Specific,
+            ),
             min_size: Some(iced::Size::new(
                 theme::WINDOW_MIN_WIDTH,
                 theme::WINDOW_MIN_HEIGHT,
@@ -1604,6 +1682,45 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     wait_persisted();
     Ok(())
 }
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    fn area(x: f32, y: f32, width: f32, height: f32) -> Option<iced::Rectangle> {
+        Some(iced::Rectangle::new(
+            iced::Point::new(x, y),
+            iced::Size::new(width, height),
+        ))
+    }
+
+    #[test]
+    fn the_window_fits_the_free_part_of_the_screen() {
+        assert_eq!(first_size(None), USUAL_SIZE);
+        assert_eq!(first_size(area(0.0, 0.0, 2560.0, 1400.0)), USUAL_SIZE);
+        let laptop = area(0.0, 0.0, 1280.0, 672.0);
+        assert_eq!(first_size(laptop), iced::Size::new(1100.0, 624.0));
+        assert_eq!(
+            first_size(area(0.0, 0.0, 800.0, 500.0)),
+            iced::Size::new(theme::WINDOW_MIN_WIDTH, theme::WINDOW_MIN_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn the_window_opens_in_the_middle_of_the_free_part() {
+        assert_eq!(first_position(None, USUAL_SIZE), None);
+        let laptop = area(0.0, 0.0, 1280.0, 672.0);
+        assert_eq!(
+            first_position(laptop, first_size(laptop)),
+            Some(iced::Point::new(82.0, 0.0))
+        );
+        let taskbar_on_top = area(0.0, 40.0, 1920.0, 1000.0);
+        assert_eq!(
+            first_position(taskbar_on_top, USUAL_SIZE),
+            Some(iced::Point::new(402.0, 156.0))
+        );
+    }
+}
+
 #[cfg(test)]
 mod recheck_tests {
     use super::*;
