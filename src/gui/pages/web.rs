@@ -997,11 +997,7 @@ fn on_title(coverage: Option<&Coverage>) -> &'static str {
 
 fn hero_text(ctx: &Ctx, line: Line, coverage: Option<&Coverage>) -> (String, Option<String>) {
     match line {
-        Line::On => (
-            ctx.t(on_title(coverage)),
-            matches!(coverage, Some(Coverage::Gaps(_)))
-                .then(|| ctx.t("See below for what can get around it.")),
-        ),
+        Line::On => (ctx.t(on_title(coverage)), None),
         Line::GettingReady => (
             ctx.t("Getting block lists ready"),
             Some(ctx.t("Blocking starts as soon as the lists are ready.")),
@@ -1117,7 +1113,7 @@ fn switch_text(ctx: &Ctx, switch: Switch) -> (Icon, String, String) {
             Icon::Bell,
             ctx.t("Pop-up and notification spam"),
             ctx.t(
-                "Blocks sites that flood you with pop-ups and fake 'your PC is infected' notifications.",
+                "Blocks pop-up floods and fake 'your PC is infected' warnings.",
             ),
         ),
         Switch::Adult => (
@@ -1318,10 +1314,7 @@ fn last_days_group<'a>(state: &'a State, ctx: &'a Ctx, days: &'a [(u64, u64)]) -
             .replace("{n}", &group_digits(ctx.lang, total))
     });
     let body: El<'a> = if total == 0 {
-        widgets::muted(
-            p,
-            ctx.t("Nothing has been blocked yet. When web protection blocks something, you will see it here."),
-        )
+        widgets::muted(p, ctx.t("Nothing has been blocked yet."))
     } else {
         widgets::bars::daily(
             Palette::of(p.mode),
@@ -1367,7 +1360,7 @@ fn most_blocked_group<'a>(ctx: &'a Ctx, top: Vec<(String, u64)>) -> Option<El<'a
     Some(widgets::group(
         p,
         ctx.t("Most blocked"),
-        Some(ctx.t("In the last 30 days. The counts stay on this PC.")),
+        Some(ctx.t("Over the last 30 days, kept only on this PC.")),
         None,
         rows,
     ))
@@ -1400,7 +1393,7 @@ fn gap_text(gap: Gap) -> (Icon, &'static str, &'static str) {
         Gap::BrowserSecureDns => (
             Icon::Globe,
             "A browser uses its own private lookups",
-            "Sites it opens this way skip Web protection. The fix is in Protection, under Browsers use Web protection.",
+            "Sites it opens this way skip Web protection.",
         ),
         Gap::OtherDnsRule => (
             Icon::AlertTriangle,
@@ -1737,9 +1730,7 @@ fn recent_blocks_group<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) 
     Some(widgets::group(
         p,
         ctx.t("Recent blocks"),
-        Some(ctx.t(
-            "Scam, dangerous and pop-up sites blocked in the last 15 minutes. If you trust one, you can open it for 10 minutes.",
-        )),
+        Some(ctx.t("Blocked in the last 15 minutes. You can open one you trust for 10 minutes.")),
         None,
         rows,
     ))
@@ -1830,9 +1821,7 @@ fn sites_tab<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> 
     page = page.push(widgets::group(
         p,
         ctx.t("Something not working?"),
-        Some(ctx.t(
-            "Websites blocked in the last 15 minutes. If a page you trust didn't open, allow it here.",
-        )),
+        Some(ctx.t("If a page you trust didn't open, allow it here.")),
         None,
         recent_rows(state, ctx, snapshot),
     ));

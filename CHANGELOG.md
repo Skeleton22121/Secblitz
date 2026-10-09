@@ -18,6 +18,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The Protection page sections now run in the same order: needs you, your choices, good to know, already protected.
 - Fix lines no longer start with "We can fix this".
 - The approval window drops the lead-in line and the long "put back" sentence.
+||||||| parent of 243f776a (Shorten the text on Home and the Web page)
+- Home, the Web page and their lists have shorter lines, with no sentence that repeats a heading or the line above it.
 
 ## [0.11.0] - 2026-10-08
 
