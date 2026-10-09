@@ -112,6 +112,7 @@ pub struct State {
     held: Option<(Instant, Box<Finished>)>,
     menu_fillers: Vec<u16>,
     ads: ads::State,
+    points: widgets::point::Opened,
 }
 
 impl Default for State {
@@ -149,6 +150,7 @@ impl Default for State {
             held: None,
             menu_fillers: Vec::new(),
             ads: ads::State::default(),
+            points: widgets::point::Opened::default(),
         }
     }
 }
@@ -204,6 +206,7 @@ pub enum Msg {
     Copies(BTreeSet<u16>, u64),
     Icons(BTreeMap<u16, Handle>),
     Ads(ads::Msg),
+    Point(String),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -455,7 +458,21 @@ fn toast(text: String, tone: Tone) -> Task<Message> {
 }
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
+    let task = apply(state, msg, ctx);
+    if matches!(state.sheet, Sheet::None) {
+        state.points.clear();
+    }
+    task
+}
+
+fn apply(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
+        Msg::Point(key) => {
+            if !matches!(state.sheet, Sheet::None) {
+                state.points.toggle(&key);
+            }
+            Task::none()
+        }
         Msg::Scanned(generation, result) => on_scanned(state, generation, result),
         Msg::Icons(found) => {
             state.icons.extend(found);

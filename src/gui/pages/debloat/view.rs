@@ -6,6 +6,7 @@ use crate::gui::widgets::hairline::start_menu::{
     self, Fate, Filler, Labels, MenuApp, Outcome, StartMenu,
 };
 use crate::gui::widgets::hairline::{Glyph, Plate};
+use crate::gui::widgets::point::{self, Words};
 use crate::gui::widgets::{self, anim, progress, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use crate::i18n::Lang;
@@ -563,13 +564,16 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     }
     let mut col = column![
         widgets::h2(p, count_text(ctx, n, "Remove {n} app?", "Remove {n} apps?")),
-        widgets::muted(
+        point::text_point(
             p,
-            if n == 1 {
+            &if n == 1 {
                 ctx.t("This app will be removed for everyone who uses this PC. Your own files are not touched.")
             } else {
                 ctx.t("These apps will be removed for everyone who uses this PC. Your own files are not touched.")
             },
+            Words::Muted,
+            state.points.has("review:intro"),
+            wrap(Msg::Point("review:intro".to_owned())),
         ),
         widgets::scroll_well(p, list, 220.0),
     ]
@@ -607,9 +611,12 @@ fn review_sheet<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 Some(ctx.t("Stop Windows from adding suggested apps again")),
                 Some(wrap(Msg::ToggleBlock)),
             ),
-            container(widgets::small(
+            container(point::text_point(
                 p,
-                ctx.t("Windows sometimes installs apps on its own. Tick this to ask it to stop."),
+                &ctx.t("Windows sometimes installs apps on its own. Tick this to ask it to stop."),
+                Words::Small,
+                state.points.has("review:block"),
+                wrap(Msg::Point("review:block".to_owned())),
             ))
             .padding(Padding {
                 left: theme::S1 + theme::CHECK + theme::S3,
