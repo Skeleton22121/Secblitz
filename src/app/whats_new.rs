@@ -8,6 +8,8 @@ pub const NOTES: &[&str] = &[
     "A new Help tab in Settings answers common questions.",
     "You can save a support file to attach when you report a problem. Secblitz never sends it anywhere.",
     "You can now use all of Secblitz with the keyboard.",
+    "When Web protection stops a dangerous or scam site, a warning now appears over your browser.",
+    "Web protection now also blocks sites known for harmful downloads or for apps that secretly spy on people.",
 ];
 
 pub fn due(seen: Option<&str>, used_before: bool) -> bool {
