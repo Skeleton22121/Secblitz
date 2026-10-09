@@ -5,6 +5,7 @@ use crate::broker::{Reply, Request};
 use crate::gui::pages::settings;
 use crate::gui::theme::Tone;
 use crate::gui::widgets::anim;
+use crate::gui::widgets::point::Opened;
 use crate::gui::{blocking, blocking_stream, Ctx, Helper, Message};
 use crate::i18n::Lang;
 use crate::uninstall::{Left, Plan};
@@ -275,6 +276,7 @@ pub struct State {
     spin: anim::Clock,
     now: Instant,
     since: Instant,
+    points: Opened,
 }
 
 impl Default for State {
@@ -286,6 +288,7 @@ impl Default for State {
             spin: anim::Clock::new(),
             now: Instant::now(),
             since: Instant::now(),
+            points: Opened::default(),
         }
     }
 }
@@ -386,6 +389,7 @@ pub enum Msg {
     RemoveAnyway,
     Spawned(bool),
     Frame(Instant),
+    Point(String),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -399,7 +403,21 @@ pub use system::uninstaller;
 use system::{launch_uninstaller, load_plan, run_put_back};
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
+    let task = apply(state, msg, ctx);
+    if matches!(state.sheet, Sheet::Closed) {
+        state.points.clear();
+    }
+    task
+}
+
+fn apply(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
+        Msg::Point(key) => {
+            if !matches!(state.sheet, Sheet::Closed) {
+                state.points.toggle(&key);
+            }
+            Task::none()
+        }
         Msg::Open => {
             if ctx.busy || !matches!(state.sheet, Sheet::Closed) {
                 return Task::none();

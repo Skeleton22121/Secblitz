@@ -3,6 +3,7 @@ use super::*;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::hairline::{self, rewind, Plate, Run};
+use crate::gui::widgets::point::{self, Words};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, space};
@@ -52,10 +53,10 @@ fn loading_sheet<'a>(state: &State, ctx: &Ctx, p: Palette) -> El<'a> {
 
 fn option_row<'a>(
     p: Palette,
+    state: &State,
+    more: String,
     selected: bool,
-    glyph: Icon,
-    title: String,
-    help: String,
+    (key, glyph, title, help): (&str, Icon, String, String),
     on_press: Option<Message>,
 ) -> El<'a> {
     let mark: El<'a> = if selected {
@@ -63,11 +64,12 @@ fn option_row<'a>(
     } else {
         space::horizontal().width(theme::ICON_ROW).into()
     };
-    container(widgets::row_item(
+    let (first, rest) = point::first_sentence(&help);
+    let row = container(widgets::row_item(
         p,
         Some(glyph),
         title,
-        Some(help),
+        Some(first.to_owned()),
         mark,
         on_press,
     ))
@@ -78,7 +80,27 @@ fn option_row<'a>(
             ..Border::default()
         },
         ..container::Style::default()
-    })
+    });
+    let Some(rest) = rest else {
+        return row.into();
+    };
+    let key = format!("option:{key}");
+    column![
+        row,
+        container(point::point(
+            p,
+            widgets::small(p, more),
+            Vec::new(),
+            Some(widgets::small(p, rest.to_owned())),
+            state.points.has(&key),
+            wrap(Msg::Point(key)),
+        ))
+        .padding(iced::Padding {
+            left: theme::ICON_ROW + theme::S4 * 2.0,
+            right: theme::S4,
+            ..iced::Padding::ZERO
+        })
+    ]
     .into()
 }
 
@@ -124,18 +146,23 @@ fn choose_sheet<'a>(
         options = options.push(match option {
             Choice::Keep => option_row(
                 p,
+                state,
+                ctx.t("More details"),
                 choice == Some(Choice::Keep),
-                Icon::Shield,
-                ctx.t(KEEP_TITLE),
-                ctx.t(KEEP_HELP),
+                ("keep", Icon::Shield, ctx.t(KEEP_TITLE), ctx.t(KEEP_HELP)),
                 on,
             ),
             Choice::PutBack => option_row(
                 p,
+                state,
+                ctx.t("More details"),
                 choice == Some(Choice::PutBack),
-                Icon::Undo,
-                ctx.t(PUT_BACK_TITLE),
-                put_back_text(ctx.lang, n),
+                (
+                    "put-back",
+                    Icon::Undo,
+                    ctx.t(PUT_BACK_TITLE),
+                    put_back_text(ctx.lang, n),
+                ),
                 on,
             ),
         });
@@ -173,9 +200,21 @@ fn choose_sheet<'a>(
             col = col.push(widgets::small(p, ctx.t(KEEP_DELETES_COPIES)))
         }
         Some(Choice::PutBack) => {
-            col = col.push(widgets::small(p, ctx.t(OWN_ACCOUNT_ONLY)));
+            col = col.push(point::text_point(
+                p,
+                &ctx.t(OWN_ACCOUNT_ONLY),
+                Words::Small,
+                state.points.has("note:own"),
+                wrap(Msg::Point("note:own".to_owned())),
+            ));
             if store_only {
-                col = col.push(widgets::small(p, ctx.t(STORE_NEEDS_INTERNET)));
+                col = col.push(point::text_point(
+                    p,
+                    &ctx.t(STORE_NEEDS_INTERNET),
+                    Words::Small,
+                    state.points.has("note:store"),
+                    wrap(Msg::Point("note:store".to_owned())),
+                ));
             }
         }
         _ => {}
@@ -288,8 +327,15 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
             .push(widgets::muted_centred(p, ctx.t(DELETE_EXE)));
     } else {
         let mut list = column![].spacing(theme::S2);
-        for line in lines {
-            list = list.push(widgets::body(p, line.clone()));
+        for (i, line) in lines.iter().enumerate() {
+            let key = format!("left:{i}");
+            list = list.push(point::text_point(
+                p,
+                line,
+                Words::Body,
+                state.points.has(&key),
+                wrap(Msg::Point(key)),
+            ));
         }
         col = col
             .push(widgets::h2_centred(p, ctx.t(RESULT_LEFT_TITLE)))
