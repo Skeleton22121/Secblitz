@@ -137,9 +137,10 @@ pub fn work_area(window: usize) -> Option<Rect> {
     }
 }
 
+/// Down now, or pressed since the last look: a quick tap falls between two checks.
 pub fn escape_down() -> bool {
     // SAFETY: plain query of the key state.
-    unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE)) as u16 & 0x8000 != 0 }
+    unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE)) as u16 & 0x8001 != 0 }
 }
 
 /// Puts the browser in front and waits briefly until Windows agrees, so the keys that follow
