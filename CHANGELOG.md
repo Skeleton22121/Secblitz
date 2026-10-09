@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-09
+
 ### Added
 - An accessibility statement says what works with the keyboard today and what does not yet.
 - The README lists which Windows versions Secblitz supports and has been tested on.

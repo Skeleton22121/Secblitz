@@ -124,11 +124,12 @@ class BumpTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
 
     def test_numeric_comparison_not_text(self):
-        self.assertEqual(self.bump("0.99.0")[0], 0)
+        major = int(self.old.split(".")[0])
+        self.assertEqual(self.bump(f"{major}.99.0")[0], 0)
         path = self.root / "CHANGELOG.md"
         path.write_text(path.read_text().replace("## [Unreleased]\n", "## [Unreleased]\n\n- Another entry.\n", 1))
-        self.assertEqual(self.bump("0.100.0", "--dry-run")[0], 0)
-        self.assertEqual(self.bump("0.98.9", "--dry-run")[0], 1)
+        self.assertEqual(self.bump(f"{major}.100.0", "--dry-run")[0], 0)
+        self.assertEqual(self.bump(f"{major}.98.9", "--dry-run")[0], 1)
 
     def test_refuses_empty_unreleased_unless_allowed(self):
         path = self.root / "CHANGELOG.md"
