@@ -27,7 +27,8 @@ variants, used under the MIT license. The notice and license text are in
 `vendor/iced_tiny_skia` is a copy of the iced CPU renderer (iced_tiny_skia
 0.14.1) from https://github.com/iced-rs/iced with one small change, described
 in `vendor/iced_tiny_skia/SECBLITZ-PATCH.md`. It stays under upstream's MIT
-license.
+license, and upstream's copyright notice and license text are in
+`vendor/iced_tiny_skia/LICENSE`.
 
 ## Block lists (downloaded, not shipped)
 
@@ -129,6 +130,7 @@ dependency under any other license fails the build.
 | flate2 | 1.1.10 | MIT OR Apache-2.0 |
 | float-cmp | 0.9.0 | MIT |
 | float_next_after | 1.0.0 | MIT |
+| fnv | 1.0.7 | Apache-2.0 OR MIT |
 | foldhash | 0.1.5 | Zlib |
 | foldhash | 0.2.0 | Zlib |
 | font-types | 0.10.1 | MIT OR Apache-2.0 |
@@ -158,6 +160,7 @@ dependency under any other license fails the build.
 | gpu-descriptor | 0.3.2 | MIT OR Apache-2.0 |
 | gpu-descriptor-types | 0.2.0 | MIT OR Apache-2.0 |
 | guillotiere | 0.6.2 | MIT/Apache-2.0 |
+| h2 | 0.4.20 | MIT |
 | half | 2.7.1 | MIT OR Apache-2.0 |
 | harfrust | 0.3.2 | MIT |
 | hashbrown | 0.15.5 | MIT OR Apache-2.0 |
@@ -374,6 +377,7 @@ dependency under any other license fails the build.
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 |
+| windows_aarch64_msvc | 0.52.6 | MIT OR Apache-2.0 |
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 |
 | winit | 0.30.13 | Apache-2.0 |
 | writeable | 0.6.4 | Unicode-3.0 |

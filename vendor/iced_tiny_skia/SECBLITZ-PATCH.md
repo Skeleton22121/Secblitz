@@ -17,5 +17,5 @@ Everything else is unchanged from upstream.
 
 ## License
 
-Upstream's MIT license is kept, and `Cargo.toml` still names it. The Secblitz
+Upstream's MIT license is kept, and `Cargo.toml` still names it. Upstream's copyright notice and license text are in [LICENSE](LICENSE). The Secblitz
 change is released under the same terms.
