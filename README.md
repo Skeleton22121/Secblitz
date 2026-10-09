@@ -53,9 +53,9 @@ Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to 
 
 | Windows | Edition | Version | Processor | Supported | Tested |
 | --- | --- | --- | --- | --- | --- |
-| Windows 11 | Home | 24H2 | x64 | ✓ | Not yet |
-| Windows 11 | Pro | 25H2 | x64 | ✓ | Not yet |
-| Windows 11 | Enterprise | 24H2 | x64 | ✓ | ✓ 0.12.0 |
+| Windows 11 | Home | 24H2 | x64 | ✓ | ✓ 1.0.0 |
+| Windows 11 | Pro | 25H2 | x64 | ✓ | ✓ 1.0.0 |
+| Windows 11 | Enterprise | 25H2 | x64 | ✓ | ✓ 1.0.0 |
 | Windows 11 | Pro | 24H2 | ARM | ✓ | Not yet |
 | Windows 10 | Enterprise | 22H2 | x64 | ✓ | Not yet |
 
