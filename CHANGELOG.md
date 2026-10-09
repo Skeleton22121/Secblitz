@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+- Details and dialogs show one line per point; open a point to read more.
+
 ## [0.12.0] - 2026-10-09
 
 ### Added

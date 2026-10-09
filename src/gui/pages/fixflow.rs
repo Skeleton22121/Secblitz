@@ -1638,4 +1638,27 @@ mod tests {
         assert!((bar_target(3, 0, true) - 0.75).abs() < 1e-6);
         assert!(bar_target(0, 0, true) <= 0.0 + f32::EPSILON);
     }
+
+    #[test]
+    fn open_points_reset_when_the_window_closes() {
+        let (mut app, _) = crate::gui::App::new(crate::gui::Options {
+            lang: crate::i18n::Lang::En,
+            broker: None,
+            start: None,
+        });
+        let mut state = State::default();
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        assert!(!state.points.has("plan:a"), "nothing opens while closed");
+        state.stage = Stage::Review {
+            ids: Vec::new(),
+            undo: false,
+        };
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        assert!(state.points.has("plan:a"));
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        assert!(!state.points.has("plan:a"));
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        let _ = update(&mut state, Msg::Cancel, &mut app.ctx);
+        assert!(!state.points.has("plan:a"));
+    }
 }

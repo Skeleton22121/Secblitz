@@ -308,4 +308,25 @@ mod tests {
             .without(&["firewall: on"]);
         assert!(s.is_empty());
     }
+
+    #[test]
+    fn only_the_first_block_starts_open_and_a_new_sheet_starts_over() {
+        let (mut app, _) = crate::gui::App::new(crate::gui::Options {
+            lang: crate::i18n::Lang::En,
+            broker: None,
+            start: None,
+        });
+        let sheet = InfoSheet::new("x")
+            .text("a", "One. Two.")
+            .text("b", "Three. Four.");
+        let _ = app.update(Message::Info(Some(Box::new(sheet.clone()))));
+        let open = |app: &crate::gui::App, key: &str| app.ctx.info.as_ref().unwrap().open.has(key);
+        assert!(open(&app, "0") && !open(&app, "1"));
+        let _ = app.update(Message::InfoPoint("1".into()));
+        let _ = app.update(Message::InfoPoint("0".into()));
+        assert!(!open(&app, "0") && open(&app, "1"));
+        let _ = app.update(Message::Info(None));
+        let _ = app.update(Message::Info(Some(Box::new(sheet))));
+        assert!(open(&app, "0") && !open(&app, "1"));
+    }
 }
