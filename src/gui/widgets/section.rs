@@ -470,7 +470,7 @@ impl Widget<Message, Theme, Renderer> for Chevron {
     }
 }
 
-fn chevron<'a>(size: f32, color: Color, open: bool) -> Element<'a, Message> {
+pub fn chevron<'a>(size: f32, color: Color, open: bool) -> Element<'a, Message> {
     Element::new(Chevron { size, color, open })
 }
 

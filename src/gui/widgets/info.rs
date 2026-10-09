@@ -1,5 +1,6 @@
 //! The "About this" dialog: one place to read about a setting or a result.
-use super::{body, h2, icon_button, section_label, small, ButtonKind};
+use super::point::{self, Opened, Words};
+use super::{h2, icon_button, section_label, small, ButtonKind};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
 use crate::gui::{Ctx, Message};
@@ -10,6 +11,8 @@ use iced::{Border, Element, Length};
 pub struct InfoSheet {
     pub title: String,
     pub blocks: Vec<InfoBlock>,
+    /// Which points are open. Only the first block starts open.
+    pub open: Opened,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +51,7 @@ impl InfoSheet {
         Self {
             title: title.into(),
             blocks: Vec::new(),
+            open: Opened::default(),
         }
     }
 
@@ -177,22 +181,41 @@ pub fn link<'a>(
     ))
 }
 
+fn point_key(block: usize, item: Option<usize>) -> String {
+    match item {
+        Some(i) => format!("{block}.{i}"),
+        None => block.to_string(),
+    }
+}
+
 pub fn dialog<'a>(ctx: &Ctx, sheet: &InfoSheet) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut blocks = column![].spacing(theme::S4).width(Length::Fill);
-    for block in &sheet.blocks {
+    for (n, block) in sheet.blocks.iter().enumerate() {
+        let toggle = |key: &str| Message::InfoPoint(key.to_owned());
         blocks = blocks.push(match block {
             InfoBlock::Text { label, body: text } => {
-                column![section_label(p, label.clone()), body(p, text.clone())]
-                    .spacing(theme::S1)
-                    .width(Length::Fill)
+                let key = point_key(n, None);
+                column![
+                    section_label(p, label.clone()),
+                    point::text_point(p, text, Words::Body, sheet.open.has(&key), toggle(&key))
+                ]
+                .spacing(theme::S1)
+                .width(Length::Fill)
             }
             InfoBlock::List { label, items } => {
                 let mut lines = column![section_label(p, label.clone())]
                     .spacing(theme::S1)
                     .width(Length::Fill);
-                for item in items {
-                    lines = lines.push(body(p, item.clone()));
+                for (i, item) in items.iter().enumerate() {
+                    let key = point_key(n, Some(i));
+                    lines = lines.push(point::text_point(
+                        p,
+                        item,
+                        Words::Body,
+                        sheet.open.has(&key),
+                        toggle(&key),
+                    ));
                 }
                 lines
             }

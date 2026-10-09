@@ -11,6 +11,7 @@ pub mod handoff;
 pub mod info;
 pub mod menu;
 pub mod parts;
+pub mod point;
 pub mod press;
 pub mod progress;
 pub mod ring;
