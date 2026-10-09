@@ -226,14 +226,14 @@ impl Every {
     }
 }
 
-/// Counts and the last dangerous block time go out only every 10 s.
+/// Counts and the last dangerous block time go out only every 10 s. A new block notice goes out
+/// on the next tick, because the tray shows its warning from it.
 fn same_apart_from_counts(a: &Status, b: &Status) -> bool {
     let strip = |s: &Status| Status {
         written_at: 0,
         blocked: [0; KINDS],
         day: 0,
         dangerous_at: None,
-        notice: None,
         ..s.clone()
     };
     strip(a) == strip(b)
@@ -852,6 +852,34 @@ mod tests {
         assert!(!status.listening);
         stop.store(true, Ordering::Release);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn a_new_notice_is_written_at_once_and_counts_wait_for_the_timer() {
+        let base = Status::default();
+        let counted = Status {
+            blocked: [3; KINDS],
+            written_at: 9,
+            dangerous_at: Some(5),
+            ..base.clone()
+        };
+        assert!(same_apart_from_counts(&base, &counted));
+        let notice = |at| config::Notice {
+            kind: crate::filter::matcher::Kind::Scam,
+            site: "scam.example".into(),
+            at,
+        };
+        let first = Status {
+            notice: Some(notice(100)),
+            ..base.clone()
+        };
+        assert!(!same_apart_from_counts(&base, &first));
+        let again = Status {
+            notice: Some(notice(101)),
+            ..first.clone()
+        };
+        assert!(!same_apart_from_counts(&first, &again));
+        assert!(same_apart_from_counts(&first, &first.clone()));
     }
 
     #[test]

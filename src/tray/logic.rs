@@ -162,10 +162,22 @@ pub struct Notices {
     shown: Option<u64>,
 }
 
+/// A block that has not been announced yet. `spaced` says whether the ten quiet minutes since the
+/// last balloon have passed; the warning over the browser does not wait for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fresh {
+    pub notice: Notice,
+    pub spaced: bool,
+}
+
 impl Notices {
     /// The first reading only sets the starting point, so old blocks do not notify at sign-in.
-    /// Returns the block to announce, at most once every ten minutes.
-    pub fn observe(&mut self, notice: Option<Notice>, now: u64, allowed: bool) -> Option<Notice> {
+    pub fn observe_fresh(
+        &mut self,
+        notice: Option<Notice>,
+        now: u64,
+        allowed: bool,
+    ) -> Option<Fresh> {
         let notice = notice.filter(|n| n.at <= now.saturating_add(NOTICE_FUTURE));
         if !self.started {
             self.started = true;
@@ -177,14 +189,33 @@ impl Notices {
             return None;
         }
         self.seen = notice.at;
-        let spaced = self
-            .shown
-            .is_none_or(|last| now.saturating_sub(last) >= NOTICE_GAP);
-        if !allowed || !spaced {
+        if !allowed {
             return None;
         }
+        Some(Fresh {
+            notice,
+            spaced: self.spaced(now),
+        })
+    }
+
+    pub fn spaced(&self, now: u64) -> bool {
+        self.shown
+            .is_none_or(|last| now.saturating_sub(last) >= NOTICE_GAP)
+    }
+
+    /// A balloon went out, so the next one waits ten minutes.
+    pub fn announced(&mut self, now: u64) {
         self.shown = Some(now);
-        Some(notice)
+    }
+
+    /// The block to announce with a balloon, at most once every ten minutes.
+    #[cfg(test)]
+    pub fn observe(&mut self, notice: Option<Notice>, now: u64, allowed: bool) -> Option<Notice> {
+        let fresh = self.observe_fresh(notice, now, allowed)?;
+        fresh.spaced.then(|| {
+            self.announced(now);
+            fresh.notice
+        })
     }
 }
 
@@ -547,6 +578,35 @@ mod tests {
             e.observe(at(350), 400, true),
             at(350),
             "a forged time changed nothing"
+        );
+    }
+
+    #[test]
+    fn the_warning_does_not_wait_for_the_quiet_ten_minutes() {
+        let mut n = Notices::default();
+        assert_eq!(n.observe_fresh(None, 1000, true), None);
+        let first = n
+            .observe_fresh(Some(notice(Kind::Scam, "a.example", 1001)), 1002, true)
+            .unwrap();
+        assert!(first.spaced);
+        n.announced(1002);
+        let second = n
+            .observe_fresh(Some(notice(Kind::Dangerous, "b.example", 1100)), 1101, true)
+            .unwrap();
+        assert_eq!(second.notice.site, "b.example");
+        assert!(!second.spaced, "a balloon would wait");
+        assert_eq!(
+            n.observe_fresh(Some(notice(Kind::Dangerous, "b.example", 1100)), 1102, true),
+            None,
+            "the same block is not announced twice"
+        );
+        assert_eq!(
+            n.observe_fresh(
+                Some(notice(Kind::Dangerous, "c.example", 1200)),
+                1201,
+                false
+            ),
+            None
         );
     }
 

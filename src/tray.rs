@@ -1,7 +1,12 @@
 use crate::i18n::Lang;
 
+#[cfg(windows)]
+#[path = "tray/browser.rs"]
+pub mod browser;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod logic;
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod warn_logic;
 #[cfg(windows)]
 #[path = "tray/windows.rs"]
 mod win;
