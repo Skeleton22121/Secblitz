@@ -1,11 +1,17 @@
 use super::logic::{self, Icon};
+use super::{browser, warn_logic};
 use crate::i18n::Lang;
 use anyhow::{bail, Result};
+use secblitz::filter::config::Notice;
 use secblitz::status::{self, Status};
 use std::{
     cell::RefCell,
     os::windows::ffi::OsStrExt,
     ptr::{null, null_mut},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -21,9 +27,13 @@ use windows_sys::Win32::{
         Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT},
         IsWellKnownSid, WinBuiltinAdministratorsSid, WinLocalSystemSid, OWNER_SECURITY_INFORMATION,
     },
+    Storage::FileSystem::{
+        FindCloseChangeNotification, FindFirstChangeNotificationW, FindNextChangeNotification,
+        FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
+    },
     System::{
         LibraryLoader::GetModuleHandleW,
-        Threading::{CreateMutexW, OpenEventW, WaitForSingleObject},
+        Threading::{CreateMutexW, OpenEventW, WaitForSingleObject, INFINITE},
     },
     UI::{
         Shell::{
@@ -54,6 +64,12 @@ const QUIESCE_EVENT: &str = "Global\\SecblitzUpdateQuiesce";
 const SYNCHRONIZE: u32 = 0x0010_0000;
 const READ_CONTROL: u32 = 0x0002_0000;
 const CALLBACK: u32 = WM_APP + 1;
+const FOLDER_CHANGED: u32 = WM_APP + 2;
+const BALLOON_LATER: u32 = WM_APP + 3;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const MATCH_FOR: Duration = Duration::from_secs(4);
+const MATCH_EVERY: Duration = Duration::from_millis(200);
+const ADDRESS_WAIT: Duration = Duration::from_millis(1500);
 const POLL_TIMER: usize = 1;
 const QUIESCE_TIMER: usize = 2;
 const POLL_EVERY: u32 = 60_000;
@@ -72,6 +88,12 @@ struct Tray {
     notices: logic::Notices,
     page: Option<&'static str>,
 }
+/// The one warning panel that may be open, and the blocks waiting for a balloon because no
+/// browser showed the site in time. Both are used from the detection threads.
+static PANEL: Mutex<Option<std::process::Child>> = Mutex::new(None);
+static LATER: Mutex<Vec<Notice>> = Mutex::new(Vec::new());
+static CHANGE_QUEUED: AtomicBool = AtomicBool::new(false);
+
 thread_local! {
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
 }
@@ -260,12 +282,137 @@ fn refresh(hwnd: HWND, t: &mut Tray) {
         }
         t.last = Some(now);
     }
-    if let Some(notice) = t
-        .notices
-        .observe(block_notice(), status::now(), notify.dangerous)
-    {
-        balloon(hwnd, t, &logic::Balloon::Blocked(notice));
+    check_notice(hwnd, t);
+}
+
+/// A new block is warned about over the browser when one shows the site, and otherwise gets the
+/// balloon (at most one every ten minutes).
+fn check_notice(hwnd: HWND, t: &mut Tray) {
+    let now = status::now();
+    let allowed = status::read_notify().dangerous;
+    let Some(fresh) = t.notices.observe_fresh(block_notice(), now, allowed) else {
+        return;
+    };
+    if warn_logic::fresh(fresh.notice.at, now) {
+        look_for_browser(hwnd, t.lang, fresh.notice);
+    } else if fresh.spaced {
+        show_blocked(hwnd, t, fresh.notice, now);
     }
+}
+
+fn show_blocked(hwnd: HWND, t: &mut Tray, notice: Notice, now: u64) {
+    t.notices.announced(now);
+    balloon(hwnd, t, &logic::Balloon::Blocked(notice));
+}
+
+fn tab_shows(window: usize, site: &str) -> bool {
+    match browser::browser_of(window) {
+        Some(warn_logic::Browser::Chromium) => {
+            warn_logic::title_shows(&browser::title(window), site)
+        }
+        Some(warn_logic::Browser::Firefox) => browser::firefox_address(window, ADDRESS_WAIT)
+            .is_some_and(|address| warn_logic::address_shows(&address, site)),
+        None => false,
+    }
+}
+
+fn start_panel(lang: Lang, notice: &Notice, window: usize) -> bool {
+    use std::os::windows::process::CommandExt;
+    let (Some(words), Ok(exe)) = (
+        warn_logic::start_arguments(notice.kind, &notice.site, window),
+        std::env::current_exe(),
+    ) else {
+        return false;
+    };
+    let Ok(mut panel) = PANEL.lock() else {
+        return false;
+    };
+    if let Some(mut old) = panel.take() {
+        let _ = old.kill();
+        let _ = old.wait();
+    }
+    match std::process::Command::new(exe)
+        .args(["--lang", lang.code()])
+        .args(words)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(child) => {
+            *panel = Some(child);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Gives the browser a few seconds to show the blocked site, then either starts the warning
+/// panel over it or hands the block back to the tray for the balloon.
+fn look_for_browser(hwnd: HWND, lang: Lang, notice: Notice) {
+    let hwnd = hwnd as usize;
+    let _ = std::thread::Builder::new()
+        .name("browser-match".into())
+        .spawn(move || {
+            let until = Instant::now() + MATCH_FOR;
+            loop {
+                let window = browser::foreground();
+                if window != 0
+                    && tab_shows(window, &notice.site)
+                    && start_panel(lang, &notice, window)
+                {
+                    return;
+                }
+                if Instant::now() >= until {
+                    break;
+                }
+                std::thread::sleep(MATCH_EVERY);
+            }
+            if let Ok(mut later) = LATER.lock() {
+                later.push(notice);
+                // SAFETY: posting to the tray window; a window that is gone just fails.
+                unsafe { PostMessageW(hwnd as HWND, BALLOON_LATER, 0, 0) };
+            }
+        });
+}
+
+/// Wakes the tray whenever something in the web protection folder is written, so a block is
+/// noticed within a moment instead of at the next poll.
+fn watch_folder(hwnd: HWND) {
+    let hwnd = hwnd as usize;
+    let _ = std::thread::Builder::new()
+        .name("folder-watch".into())
+        .spawn(move || loop {
+            let folder = secblitz::filter::config::status_path()
+                .ok()
+                .and_then(|path| path.parent().map(wide));
+            // SAFETY: the folder name is a null-terminated wide string; the handle is closed below.
+            let watch = folder.map(|folder| unsafe {
+                FindFirstChangeNotificationW(
+                    folder.as_ptr(),
+                    0,
+                    FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME,
+                )
+            });
+            match watch {
+                Some(handle) if !handle.is_null() && handle as isize != -1 => {
+                    // SAFETY: `handle` is the live notification handle created above.
+                    unsafe {
+                        while WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0 {
+                            if !CHANGE_QUEUED.swap(true, Ordering::AcqRel) {
+                                PostMessageW(hwnd as HWND, FOLDER_CHANGED, 0, 0);
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                            if FindNextChangeNotification(handle) == 0 {
+                                break;
+                            }
+                        }
+                        FindCloseChangeNotification(handle);
+                    }
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+                // The service has not made its folder yet: look again later.
+                _ => std::thread::sleep(Duration::from_secs(30)),
+            }
+        });
 }
 
 fn quiesce_requested() -> bool {
@@ -369,6 +516,23 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                     }
                 }
                 _ => {}
+            }
+            0
+        }
+        FOLDER_CHANGED => {
+            CHANGE_QUEUED.store(false, Ordering::Release);
+            with_tray(|t| check_notice(hwnd, t));
+            0
+        }
+        BALLOON_LATER => {
+            let waiting = LATER.lock().map(|mut l| std::mem::take(&mut *l));
+            for notice in waiting.unwrap_or_default() {
+                with_tray(|t| {
+                    let now = status::now();
+                    if t.notices.spaced(now) {
+                        show_blocked(hwnd, t, notice, now);
+                    }
+                });
             }
             0
         }
@@ -486,6 +650,7 @@ pub fn run(lang: Lang) -> Result<i32> {
         bail!("Cannot create tray window");
     }
     with_tray(|t| refresh(hwnd, t));
+    watch_folder(hwnd);
     unsafe {
         SetTimer(hwnd, POLL_TIMER, POLL_EVERY, None);
         SetTimer(hwnd, QUIESCE_TIMER, QUIESCE_EVERY, None);

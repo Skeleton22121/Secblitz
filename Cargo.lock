@@ -3239,6 +3239,7 @@ dependencies = [
  "tempfile",
  "uuid",
  "wgpu",
+ "windows",
  "windows-service",
  "windows-sys 0.61.2",
 ]

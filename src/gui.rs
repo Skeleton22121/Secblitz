@@ -7,6 +7,7 @@ mod persist;
 pub mod render;
 mod tasks;
 pub mod theme;
+pub mod warn;
 pub mod widgets;
 mod window;
 

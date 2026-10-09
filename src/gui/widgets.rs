@@ -209,7 +209,7 @@ fn button_colors(
     }
 }
 
-fn button_style(
+pub fn button_style(
     p: Palette,
     kind: ButtonKind,
 ) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
