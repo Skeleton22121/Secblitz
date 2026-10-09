@@ -468,6 +468,7 @@ pub fn save_new(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf
 }
 
 /// The newest support file in `dir`. Links and anything not named like a support file are skipped.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn newest_file(dir: &Path) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
@@ -488,6 +489,7 @@ pub fn newest_file(dir: &Path) -> Option<PathBuf> {
         .map(|(_, path)| path)
 }
 
+#[cfg(windows)]
 pub use system::downloads;
 
 pub fn redactor() -> Redactor {
