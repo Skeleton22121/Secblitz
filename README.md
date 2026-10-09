@@ -11,7 +11,7 @@ Secblitz turns on the security and privacy settings Windows leaves off, in one c
 
 ![Version 0.11.1](https://img.shields.io/badge/version-0.11.1-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
-<img src="docs/tour.gif" width="900" alt="A tour of Secblitz: checking the PC, fixing problems, and each page of the app.">
+<img src="docs/tour.webp" width="900" alt="A tour of Secblitz: checking the PC, fixing problems, blocking a dangerous site, removing apps and undoing a change.">
 
 </div>
 
