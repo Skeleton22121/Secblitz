@@ -72,9 +72,19 @@ fn trusted_owner(path: &std::path::Path) -> bool {
     }
 }
 
+/// A check holds the journal for as long as it runs, so the plan waits for it instead of
+/// leaving out what Secblitz changed.
 #[cfg(windows)]
 pub(super) fn load_plan() -> Result<Plan, String> {
-    crate::uninstall::plan().map_err(|e| format!("{e:#}"))
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    loop {
+        match crate::uninstall::plan().map_err(|e| format!("{e:#}")) {
+            Err(e) if e.contains("holds the journal lock") && std::time::Instant::now() < until => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            plan => return plan,
+        }
+    }
 }
 
 #[cfg(not(windows))]
