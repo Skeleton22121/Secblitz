@@ -193,6 +193,17 @@ class SbomTests(unittest.TestCase):
         with self.assertRaises(sbom.SbomError):
             sbom.build(data, LOCK, "t")
 
+    def test_two_packages_with_one_name_and_version_are_an_error(self):
+        data = fixture()
+        local = "path+file:///work/secblitz/vendor/serde#1.0.0"
+        data["packages"].append(package("serde", "1.0.0", source=None, pkg_id=local,
+                                        manifest="/work/secblitz/vendor/serde/Cargo.toml"))
+        data["resolve"]["nodes"].append(node(local))
+        data["resolve"]["nodes"][0]["deps"].append(dep(local))
+        data["resolve"]["nodes"][0]["dependencies"].append(local)
+        with self.assertRaises(sbom.SbomError):
+            sbom.build(data, LOCK, "t")
+
     def test_license_forms(self):
         self.assertEqual(sbom.license_expression("MIT/Apache-2.0"), "MIT OR Apache-2.0")
         self.assertEqual(sbom.license_expression("MIT OR  Apache-2.0"), "MIT OR Apache-2.0")

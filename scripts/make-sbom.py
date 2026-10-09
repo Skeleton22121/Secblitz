@@ -125,6 +125,9 @@ def build(metadata, lock_text, target, timestamp=None):
             component["properties"] = [{"name": "cargo:source", "value": "path:" + local_path(metadata, package)}]
         components.append(component)
     components.sort(key=lambda item: (item["name"], item["version"], item["bom-ref"]))
+    refs = [item["bom-ref"] for item in components] + [ref(root)]
+    if len(set(refs)) != len(refs):
+        raise SbomError("Two packages share a name and version, so their parts list references would clash.")
 
     root_package = packages[root]
     root_ref = ref(root)
