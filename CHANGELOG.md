@@ -15,7 +15,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - When Web protection stops a dangerous or scam site, a warning now appears over your browser with a way to go back or let it through once.
 
 ### Changed
-- Web protection also blocks known malware download sites and stalkerware sites as part of its dangerous sites choice.
+- Web protection also blocks sites known for harmful downloads or for apps that secretly spy on people, as part of its dangerous sites choice.
 
 ### Removed
 - App updates are gone from the Tools page. Windows updates and repair are unchanged.

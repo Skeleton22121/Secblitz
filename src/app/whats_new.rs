@@ -5,8 +5,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Empty for a version with nothing worth announcing: then nothing is shown.
 pub const NOTES: &[&str] = &[
-    "Press the info button next to any setting to read what it does, in plain words.",
-    "Shorter, clearer text on every page.",
+    "When Web protection stops a dangerous or scam site, a warning now appears over your browser.",
+    "Web protection now also blocks sites known for harmful downloads or for apps that secretly spy on people.",
 ];
 
 pub fn due(seen: Option<&str>, used_before: bool) -> bool {
