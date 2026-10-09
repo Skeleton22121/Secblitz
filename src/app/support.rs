@@ -21,6 +21,7 @@ const NEWEST_ENTRIES: usize = 30;
 const BLOCK_DAYS: usize = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Changes {
     Unreadable,
     Damaged,
@@ -28,6 +29,7 @@ pub enum Changes {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum AppState {
     Removed { copy_kept: bool },
     BroughtBack,
@@ -242,6 +244,7 @@ fn apps_text(f: &Facts) -> String {
     s
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn apps_from(
     batches: &[Batch],
     family: impl Fn(u16) -> Option<String>,

@@ -170,7 +170,7 @@ mod revert_all {
         apply_one(&mut e, Y);
         let summary = e.change_summary().unwrap();
         assert_eq!((summary.sets, summary.applied, summary.reverted), (2, 2, 0));
-        assert_eq!(summary.checks, vec![X.to_string(), Y.to_string()]);
+        assert_eq!(summary.checks, vec![Y.to_string(), X.to_string()]);
         e.revert_all(|_| {}).unwrap();
         let summary = e.change_summary().unwrap();
         assert_eq!((summary.sets, summary.applied, summary.reverted), (2, 0, 2));
