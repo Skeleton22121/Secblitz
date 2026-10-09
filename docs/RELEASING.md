@@ -332,11 +332,16 @@ Use the commit of the "Release X.Y.Z" merge as the digest (check it in the
 Actions run, and `git log origin/main`), not just any commit. A tag someone else
 created on a different commit fails the digest check.
 
-Each draft also carries the two parts lists. To check one against its program:
+Each draft also carries the two parts lists. To check that one is the parts list
+attested for its program (the website deploy checks the same):
 
 ```sh
 gh attestation verify secblitz-0.8.1-windows-x64.exe --repo secblitz/Secblitz \
-  --predicate-type https://cyclonedx.org/bom
+  --predicate-type https://cyclonedx.org/bom \
+  --signer-workflow secblitz/Secblitz/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.8.1 --format json > sbom-x64.json
+jq -e --slurpfile want secblitz-0.8.1-windows-x64.cdx.json \
+  'any(.[]; .verificationResult.statement.predicate == $want[0])' sbom-x64.json
 ```
 
 The attestation proves the file was built by this repository's `release.yml`

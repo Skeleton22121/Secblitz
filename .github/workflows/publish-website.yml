@@ -183,7 +183,13 @@ jobs:
               --signer-workflow "$REPO/.github/workflows/release.yml" \
               --source-ref "refs/tags/$TAG" \
               --source-digest "$SHA" \
-              --deny-self-hosted-runners
+              --deny-self-hosted-runners \
+              --format json > "$RUNNER_TEMP/sbom-$arch.json"
+            # The attached parts list must be the one that was attested, not a later replacement.
+            if ! jq -e --slurpfile want "secblitz-$VERSION-windows-$arch.cdx.json" \
+                'any(.[]; .verificationResult.statement.predicate == $want[0])' "$RUNNER_TEMP/sbom-$arch.json" > /dev/null; then
+              echo "::error::secblitz-$VERSION-windows-$arch.cdx.json is not the attested parts list."; exit 1
+            fi
           done
       - name: Verify the owner-signed update feed (pinned public key, version, setup hash)
         env:
