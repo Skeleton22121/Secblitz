@@ -9,6 +9,8 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-09
+
 ### Changed
 - Each setting has one info button that opens a small window explaining it, instead of text that opens under the row.
 - The Details button is gone, and the window never repeats a setting's status or the line on its row.
