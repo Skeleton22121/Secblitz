@@ -27,6 +27,15 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Settings, History and Tools use shorter lines and no longer repeat a heading or a status.
 - The History page no longer shows the same "nothing to undo" line twice.
 - The tray alert for a drop in protection is shorter.
+||||||| parent of f1dc0105 (Say Secblitz checks settings, add uninstall steps and a network FAQ)
+### Added
+- A code signing policy page on the website and in the README.
+- The installer tells you that web protection, if you turn it on later, downloads block lists and passes website lookups on.
+
+### Changed
+- The website and README say Secblitz checks your settings, and describe what each part does in plainer words.
+- The privacy policy names every site the block lists come from and links their privacy policies.
+- The privacy policy describes the download counter correctly.
 
 ## [0.11.0] - 2026-10-08
 
