@@ -167,12 +167,20 @@ fn choose_sheet<'a>(
     if let Some(note) = web_note(plan.as_ref()) {
         col = col.push(widgets::small(p, ctx.t(note)));
     }
-    let copies = plan.as_ref().is_some_and(|pl| pl.apps_with_copy > 0);
     let store_only = plan.as_ref().is_some_and(|pl| pl.apps_store_only > 0);
     match choice {
-        Some(Choice::Keep) if copies => {
-            col = col.push(widgets::small(p, ctx.t(KEEP_DELETES_COPIES)))
-        }
+        Some(Choice::Keep) => match keep_note(plan.as_ref()) {
+            Some((Tone::Warn, key)) => {
+                let n = plan.as_ref().map_or(0, |pl| pl.apps_copy_only);
+                col = col.push(widgets::inline_notice(
+                    p,
+                    Tone::Warn,
+                    ctx.t(key).replace("{n}", &n.to_string()),
+                ));
+            }
+            Some((_, key)) => col = col.push(widgets::small(p, ctx.t(key))),
+            None => {}
+        },
         Some(Choice::PutBack) => {
             col = col.push(widgets::small(p, ctx.t(OWN_ACCOUNT_ONLY)));
             if store_only {

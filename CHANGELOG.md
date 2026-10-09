@@ -23,6 +23,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - Details and dialogs show one line per point; open a point to read more.
 - Every switch, tab and menu works with the keyboard, and Tab stays inside an open window.
 
+### Fixed
+- Remove Secblitz warns you when keeping your PC as it is would leave a removed app with no way back.
+
 ## [0.12.0] - 2026-10-09
 
 ### Added

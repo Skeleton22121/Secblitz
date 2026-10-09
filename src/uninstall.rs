@@ -15,6 +15,8 @@ pub struct Plan {
     pub settings: usize,
     pub apps_with_copy: usize,
     pub apps_store_only: usize,
+    /// Apps with a saved copy that the Microsoft Store does not offer.
+    pub apps_copy_only: usize,
     pub suggested: bool,
     pub web_on: bool,
     /// The saved undo history cannot be read, so earlier fixes cannot be put back.
@@ -185,10 +187,14 @@ pub fn plan() -> Result<Plan> {
         Err(e) if is_damaged(&e) => (0, true),
         Err(e) => return Err(e),
     };
-    let (mut apps_with_copy, mut apps_store_only) = (0, 0);
-    for (index, _) in journal::still_removed(&journal::load(), debloat::catalog().len()) {
+    let (mut apps_with_copy, mut apps_store_only, mut apps_copy_only) = (0, 0, 0);
+    let catalog = debloat::catalog();
+    for (index, _) in journal::still_removed(&journal::load(), catalog.len()) {
         if offline::has_copy(index) {
             apps_with_copy += 1;
+            if catalog[index as usize].store_id.is_none() {
+                apps_copy_only += 1;
+            }
         } else {
             apps_store_only += 1;
         }
@@ -197,6 +203,7 @@ pub fn plan() -> Result<Plan> {
         settings,
         apps_with_copy,
         apps_store_only,
+        apps_copy_only,
         suggested: suggested::journal_path()
             .map(|p| suggested::recorded(&p))
             .unwrap_or(false),
