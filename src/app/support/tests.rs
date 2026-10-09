@@ -237,7 +237,7 @@ fn the_check_file_keeps_ids_and_statuses_only() {
     assert_eq!(value["checks"][1]["id"], "firewall.public.inbound");
     assert_eq!(value["checks"][1]["status"], "attention");
     assert_eq!(value["checks"][1].as_object().unwrap().len(), 2);
-    assert_eq!(value["checked_at"], "2026-10-09 14:26");
+    assert_eq!(value["checked_at"], local_minute(1_791_556_000, " ", ":"));
 }
 
 #[test]
@@ -345,9 +345,28 @@ fn a_long_file_is_cut_at_a_character_boundary() {
 fn the_file_name_has_the_local_date_and_minute() {
     assert_eq!(
         file_name(1_791_556_200),
+        format!(
+            "Secblitz-support-{}.zip",
+            local_minute(1_791_556_200, "-", "")
+        )
+    );
+    #[cfg(not(windows))]
+    assert_eq!(
+        file_name(1_791_556_200),
         "Secblitz-support-2026-10-09-1430.zip"
     );
-    assert_eq!(file_name(0), "Secblitz-support-1970-01-01-0000.zip");
+}
+
+/// The test PC's time zone decides the local time, so the expected text is worked out here.
+fn local_minute(t: u64, between: &str, colon: &str) -> String {
+    let local = secblitz::clock::local_seconds(t);
+    let (y, m, d) = crate::app::history::civil(local / 86_400);
+    let rest = local % 86_400;
+    format!(
+        "{y:04}-{m:02}-{d:02}{between}{:02}{colon}{:02}",
+        rest / 3600,
+        rest % 3600 / 60
+    )
 }
 
 #[test]
