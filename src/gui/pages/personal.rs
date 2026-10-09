@@ -1,13 +1,12 @@
-//! Per-account settings and updates for the apps the user installed, not Windows apps or Secblitz.
+//! Per-account settings for the apps the user installed, not Windows apps or Secblitz.
 use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
 use crate::gui::pages::tools;
 use crate::gui::theme::{self, Palette, Tone};
-use crate::gui::widgets::{self, progress, ButtonKind};
-use crate::gui::{blocking, Ctx, Helper, Message};
-use iced::widget::{column, row, space};
-use iced::{Alignment, Element, Length, Task};
-use secblitz::user_apps::APPS;
+use crate::gui::widgets::{self, ButtonKind};
+use crate::gui::{Ctx, Helper, Message};
+use iced::widget::{row, space};
+use iced::{Alignment, Element, Task};
 use secblitz::user_settings::{Op, Setting};
 
 type El<'a> = Element<'a, Message>;
@@ -18,14 +17,6 @@ pub enum Msg {
     Reported(Setting, Result<Reply, String>),
     Toggle(Setting, bool),
     Changed(Setting, Result<Reply, String>),
-    ScanApps,
-    Scanned(Result<Reply, String>),
-    AppQuery(usize, Result<Reply, String>),
-    Update(usize),
-    Updated(usize, Result<Reply, String>),
-    InstallerChecked(Result<Reply, String>),
-    ScanOnline(bool),
-    UpdateOnline(usize, bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,49 +27,15 @@ enum Cell {
     Working,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Why {
-    Offline,
-    Unavailable,
-    Unreadable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Apps {
-    Unchecked,
-    Probing,
-    Idle,
-    Preparing,
-    Scanning,
-    Reading(usize),
-    Ready,
-    Failed(Why),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppCell {
-    Hidden,
-    Available,
-    Preparing,
-    Updating,
-    Updated,
-    Unconfirmed,
-    Failed(Why),
-}
-
 #[derive(Debug)]
 pub struct State {
     cells: [Cell; Setting::PERSONAL.len()],
-    apps: Apps,
-    app_cells: [AppCell; APPS.len()],
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
             cells: [Cell::Idle; Setting::PERSONAL.len()],
-            apps: Apps::Unchecked,
-            app_cells: [AppCell::Hidden; APPS.len()],
         }
     }
 }
@@ -99,17 +56,10 @@ pub fn on_enter(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if ctx.helper != Helper::Ready {
         return Task::none();
     }
-    let mut tasks = Vec::new();
     if state.cells.iter().all(|c| *c == Cell::Idle) {
-        tasks.push(update(state, Msg::Load, ctx));
+        return update(state, Msg::Load, ctx);
     }
-    if state.apps == Apps::Unchecked {
-        state.apps = Apps::Probing;
-        tasks.push(ctx.broker_task(Request::AppInstallerStatus, |r| {
-            wrap(Msg::InstallerChecked(r))
-        }));
-    }
-    Task::batch(tasks)
+    Task::none()
 }
 
 fn query(ctx: &Ctx, setting: Setting) -> Task<Message> {
@@ -170,125 +120,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 None => reread,
             }
         }
-        Msg::ScanApps => {
-            if ctx.helper != Helper::Ready
-                || matches!(
-                    state.apps,
-                    Apps::Unchecked
-                        | Apps::Probing
-                        | Apps::Preparing
-                        | Apps::Scanning
-                        | Apps::Reading(_)
-                )
-                || updating(state)
-            {
-                return Task::none();
-            }
-            state.apps = Apps::Preparing;
-            Task::perform(
-                blocking(secblitz::software_install::dns_offline),
-                |offline| wrap(Msg::ScanOnline(!offline)),
-            )
-        }
-        Msg::InstallerChecked(reply) => {
-            if state.apps == Apps::Probing {
-                state.apps = match reply {
-                    Ok(Reply::Unavailable) => Apps::Failed(Why::Unavailable),
-                    _ => Apps::Idle,
-                };
-            }
-            Task::none()
-        }
-        Msg::ScanOnline(online) => {
-            if state.apps != Apps::Preparing {
-                return Task::none();
-            }
-            if !online {
-                state.apps = Apps::Failed(Why::Offline);
-                return Task::none();
-            }
-            state.apps = Apps::Scanning;
-            state.app_cells = [AppCell::Hidden; APPS.len()];
-            ctx.broker_task(Request::AppUpdatesScan, |r| wrap(Msg::Scanned(r)))
-        }
-        Msg::Scanned(reply) => {
-            match reply {
-                Ok(Reply::Done) => {
-                    state.apps = Apps::Reading(APPS.len());
-                    let tasks = (0..APPS.len()).map(|i| {
-                        ctx.broker_task(Request::AppUpdateQuery(i as u16), move |r| {
-                            wrap(Msg::AppQuery(i, r))
-                        })
-                    });
-                    return Task::batch(tasks);
-                }
-                Ok(Reply::Offline) => state.apps = Apps::Failed(Why::Offline),
-                Ok(Reply::Unavailable) => state.apps = Apps::Failed(Why::Unavailable),
-                _ => state.apps = Apps::Failed(Why::Unreadable),
-            }
-            Task::none()
-        }
-        Msg::AppQuery(index, reply) => {
-            if let Apps::Reading(left) = state.apps {
-                state.app_cells[index] = match reply {
-                    Ok(Reply::UpdateAvailable) => AppCell::Available,
-                    _ => AppCell::Hidden,
-                };
-                state.apps = if left <= 1 {
-                    Apps::Ready
-                } else {
-                    Apps::Reading(left - 1)
-                };
-            }
-            Task::none()
-        }
-        Msg::Update(index) => {
-            if index >= APPS.len()
-                || !matches!(
-                    state.app_cells[index],
-                    AppCell::Available | AppCell::Failed(_)
-                )
-                || updating(state)
-            {
-                return Task::none();
-            }
-            state.app_cells[index] = AppCell::Preparing;
-            Task::perform(
-                blocking(secblitz::software_install::dns_offline),
-                move |offline| wrap(Msg::UpdateOnline(index, !offline)),
-            )
-        }
-        Msg::UpdateOnline(index, online) => {
-            if state.app_cells[index] != AppCell::Preparing {
-                return Task::none();
-            }
-            if !online {
-                state.app_cells[index] = AppCell::Failed(Why::Offline);
-                return Task::none();
-            }
-            state.app_cells[index] = AppCell::Updating;
-            ctx.broker_task(Request::AppUpdate(index as u16), move |r| {
-                wrap(Msg::Updated(index, r))
-            })
-        }
-        Msg::Updated(index, reply) => {
-            state.app_cells[index] = match reply {
-                Ok(Reply::Done) => AppCell::Updated,
-                Ok(Reply::Unknown) => AppCell::Unconfirmed,
-                Ok(Reply::Offline) => AppCell::Failed(Why::Offline),
-                Ok(Reply::Unavailable) => AppCell::Failed(Why::Unavailable),
-                _ => AppCell::Failed(Why::Unreadable),
-            };
-            Task::none()
-        }
     }
-}
-
-fn updating(state: &State) -> bool {
-    state
-        .app_cells
-        .iter()
-        .any(|c| matches!(c, AppCell::Updating | AppCell::Preparing))
 }
 
 fn helper_text(ctx: &Ctx) -> String {
@@ -311,36 +143,12 @@ pub fn account<'a>(state: &'a State, ctx: &'a Ctx) -> Part<'a> {
     }
 }
 
-pub fn apps<'a>(state: &'a State, ctx: &'a Ctx) -> Part<'a> {
-    Part {
-        subtitle: ctx.t("Newer versions of popular programs fix security problems."),
-        rows: apps_rows(state, ctx),
-    }
-}
-
 pub fn account_busy(state: &State) -> bool {
     state.cells.iter().any(|c| matches!(c, Cell::Working))
 }
 
-pub fn apps_busy(state: &State) -> bool {
-    matches!(
-        state.apps,
-        Apps::Preparing | Apps::Scanning | Apps::Reading(_)
-    ) || state
-        .app_cells
-        .iter()
-        .any(|c| matches!(c, AppCell::Preparing | AppCell::Updating))
-}
-
 fn secondary<'a>(p: Palette, label: String, msg: Option<Msg>) -> El<'a> {
     widgets::action(p, ButtonKind::Secondary, label, None, msg.map(wrap))
-}
-
-fn block<'a>(head: El<'a>, extra: Option<El<'a>>) -> El<'a> {
-    match extra {
-        Some(e) => column![head, e].width(Length::Fill).into(),
-        None => head,
-    }
 }
 
 fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
@@ -460,200 +268,6 @@ fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<E
     ))
 }
 
-fn why_text(ctx: &Ctx, why: Why) -> String {
-    match why {
-        Why::Offline => ctx.t("You seem to be offline. Connect to the internet, then press Try again."),
-        Why::Unavailable => ctx.t("App updates need App Installer from Microsoft, which this PC doesn't have. Install it from the Microsoft Store, then open Secblitz again."),
-        Why::Unreadable => ctx.t("We couldn't check for updates. Press Try again. If it keeps failing, try again a little later."),
-    }
-}
-
-fn apps_rows<'a>(state: &'a State, ctx: &'a Ctx) -> Vec<El<'a>> {
-    let p = ctx.palette;
-    let mut rows: Vec<El<'a>> = Vec::new();
-    let scan_title = ctx.t("Look for app updates");
-    let scan_help =
-        ctx.t("Checks your browser, Java, PDF reader and a few other popular programs.");
-    if ctx.helper != Helper::Ready {
-        rows.push(widgets::row_item(
-            p,
-            Some(Icon::Info),
-            helper_text(ctx),
-            None,
-            space::horizontal().width(0),
-            None,
-        ));
-    } else {
-        match state.apps {
-            Apps::Unchecked | Apps::Probing => rows.push(widgets::row_item(
-                p,
-                Some(Icon::Download),
-                scan_title,
-                Some(ctx.t("Checking that this PC can do it…")),
-                secondary(p, ctx.t("Check"), None),
-                None,
-            )),
-            Apps::Preparing => rows.push(widgets::row_item(
-                p,
-                Some(Icon::Download),
-                scan_title,
-                Some(ctx.t("Checking your internet connection…")),
-                secondary(p, ctx.t("Check"), None),
-                None,
-            )),
-            Apps::Idle => rows.push(widgets::row_item(
-                p,
-                Some(Icon::Download),
-                scan_title,
-                Some(scan_help),
-                secondary(p, ctx.t("Check"), Some(Msg::ScanApps)),
-                None,
-            )),
-            Apps::Scanning | Apps::Reading(_) => rows.push(block(
-                widgets::row_item(
-                    p,
-                    Some(Icon::Download),
-                    ctx.t("Looking for app updates…"),
-                    Some(ctx.t("This can take a minute.")),
-                    space::horizontal().width(0),
-                    None,
-                ),
-                Some(widgets::under_row(vec![progress::indeterminate(
-                    p,
-                    Tone::Brand,
-                )])),
-            )),
-            Apps::Failed(why) => rows.push(widgets::row_item_tinted(
-                p,
-                Some(Icon::AlertTriangle),
-                Some(Tone::Warn),
-                why_text(ctx, why),
-                None,
-                if why == Why::Unavailable {
-                    space::horizontal().width(0).into()
-                } else {
-                    secondary(p, ctx.t("Try again"), Some(Msg::ScanApps))
-                },
-                None,
-            )),
-            Apps::Ready => {
-                let shown: Vec<usize> = (0..APPS.len())
-                    .filter(|i| state.app_cells[*i] != AppCell::Hidden)
-                    .collect();
-                let again = secondary(p, ctx.t("Check again"), Some(Msg::ScanApps));
-                if shown.is_empty() {
-                    rows.push(widgets::row_item_tinted(
-                        p,
-                        Some(Icon::CheckCircle),
-                        Some(Tone::Good),
-                        ctx.t("Your popular programs are up to date."),
-                        None,
-                        again,
-                        None,
-                    ));
-                } else {
-                    rows.push(widgets::row_item(
-                        p,
-                        Some(Icon::Download),
-                        ctx.t("Newer versions are available"),
-                        Some(
-                            ctx.t("Updates can't be undone. A program may close while it updates."),
-                        ),
-                        again,
-                        None,
-                    ));
-                    let busy = updating(state);
-                    for i in shown {
-                        rows.push(app_row(state, ctx, i, busy));
-                    }
-                }
-            }
-        }
-    }
-    let sheet = widgets::info::for_check(
-        ctx,
-        ctx.t("Look for app updates"),
-        "software.outdated_winget",
-        false,
-    );
-    if let Some(more) = widgets::info::link(ctx, ctx.t("More details"), sheet) {
-        rows.push(widgets::under_row(vec![more]));
-    }
-    rows
-}
-
-fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
-    let p = ctx.palette;
-    let name = APPS[i].name.to_owned();
-    match state.app_cells[i] {
-        AppCell::Updating => block(
-            widgets::row_item(
-                p,
-                Some(Icon::Package),
-                name,
-                Some(ctx.t("Updating…")),
-                space::horizontal().width(0),
-                None,
-            ),
-            Some(widgets::under_row(vec![progress::indeterminate(
-                p,
-                Tone::Brand,
-            )])),
-        ),
-        AppCell::Preparing => widgets::row_item(
-            p,
-            Some(Icon::Package),
-            name,
-            Some(ctx.t("Checking your internet connection…")),
-            secondary(p, ctx.t("Update"), None),
-            None,
-        ),
-        AppCell::Updated => widgets::row_item_tinted(
-            p,
-            Some(Icon::CheckCircle),
-            Some(Tone::Good),
-            name,
-            Some(ctx.t("Updated.")),
-            space::horizontal().width(0),
-            None,
-        ),
-        AppCell::Unconfirmed => widgets::row_item_tinted(
-            p,
-            Some(Icon::AlertTriangle),
-            Some(Tone::Warn),
-            name,
-            Some(ctx.t("Updated, but we couldn't confirm it. Check again.")),
-            space::horizontal().width(0),
-            None,
-        ),
-        AppCell::Failed(why) => {
-            let help = match why {
-                Why::Offline => {
-                    ctx.t("You seem to be offline. Connect to the internet, then press Try again.")
-                }
-                _ => ctx.t("We couldn't update it. Close the program, then press Try again."),
-            };
-            widgets::row_item_tinted(
-                p,
-                Some(Icon::AlertTriangle),
-                Some(Tone::Warn),
-                name,
-                Some(help),
-                secondary(p, ctx.t("Try again"), (!busy).then_some(Msg::Update(i))),
-                None,
-            )
-        }
-        AppCell::Available | AppCell::Hidden => widgets::row_item(
-            p,
-            Some(Icon::Package),
-            name,
-            None,
-            secondary(p, ctx.t("Update"), (!busy).then_some(Msg::Update(i))),
-            None,
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,22 +280,5 @@ mod tests {
             assert_eq!(cell(*setting), i);
             assert!(secblitz::explain::for_check(setting.id()).is_some());
         }
-    }
-
-    #[test]
-    fn a_failed_app_can_be_retried_but_not_while_another_updates() {
-        let mut state = State::default();
-        state.app_cells[0] = AppCell::Failed(Why::Unreadable);
-        state.app_cells[1] = AppCell::Updating;
-        assert!(updating(&state));
-        state.app_cells[1] = AppCell::Updated;
-        assert!(!updating(&state));
-    }
-
-    #[test]
-    fn a_preparing_app_blocks_other_updates() {
-        let mut state = State::default();
-        state.app_cells[0] = AppCell::Preparing;
-        assert!(updating(&state));
     }
 }

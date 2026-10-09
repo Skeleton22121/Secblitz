@@ -1,7 +1,6 @@
 //! Launcher <-> elevated GUI broker: a closed set of user-context actions.
 
 use crate::app::app_access::{self, Capability, Target};
-use secblitz::user_apps;
 use secblitz::user_settings::{Op, Setting};
 use std::time::Duration;
 
@@ -43,11 +42,7 @@ pub enum Request {
     StartTray,
     OpenDownloadPage,
     UserSetting(Setting, Op),
-    AppUpdatesScan,
-    AppUpdateQuery(u16),
-    AppUpdate(u16),
     BitwardenStatus,
-    AppInstallerStatus,
     AppAccessList(Capability),
     AppAccessSet {
         capability: Capability,
@@ -70,7 +65,6 @@ pub enum Reply {
     NeedsAttention,
     NotApplicable,
     Unknown,
-    UpdateAvailable,
     Working,
     ChangedSince,
 }
@@ -104,7 +98,6 @@ impl Reply {
             Reply::NeedsAttention => 8,
             Reply::NotApplicable => 9,
             Reply::Unknown => 10,
-            Reply::UpdateAvailable => 11,
             Reply::Working => 12,
             Reply::ChangedSince => 13,
         }
@@ -121,7 +114,6 @@ impl Reply {
             8 => Reply::NeedsAttention,
             9 => Reply::NotApplicable,
             10 => Reply::Unknown,
-            11 => Reply::UpdateAvailable,
             12 => Reply::Working,
             13 => Reply::ChangedSince,
             _ => return None,
@@ -135,10 +127,7 @@ impl Request {
         match self {
             Request::StoreAppStatus(_)
             | Request::StartStoreApp(_)
-            | Request::AppUpdatesScan
-            | Request::AppUpdateQuery(_)
             | Request::BitwardenStatus
-            | Request::AppInstallerStatus
             | Request::AppAccessList(_)
             | Request::UserSetting(_, Op::Query)
             | Request::OpenReportProblem
@@ -150,8 +139,7 @@ impl Request {
             | Request::InstallBitwarden
             | Request::BlockSuggestedApps
             | Request::ReinstallStoreApp(_)
-            | Request::AppAccessSet { .. }
-            | Request::AppUpdate(_) => false,
+            | Request::AppAccessSet { .. } => false,
             Request::OpenWindowsUpdate
             | Request::OpenWindowsSecurity
             | Request::OpenEncryption
@@ -223,13 +211,9 @@ impl Request {
             | Request::StartStoreApp(_)
             | Request::StoreAppStatus(_)
             | Request::UserSetting(..)
-            | Request::AppUpdatesScan
-            | Request::AppUpdateQuery(_)
-            | Request::AppUpdate(_)
             | Request::BitwardenStatus
             | Request::AppAccessList(_)
             | Request::AppAccessSet { .. }
-            | Request::AppInstallerStatus
             | Request::StartTray => return None,
         })
     }
@@ -264,7 +248,6 @@ impl Request {
             Request::OpenInstalledApps => (33, 0),
             Request::OpenReportProblem => (34, 0),
             Request::OpenSuggestFeature => (35, 0),
-            Request::AppInstallerStatus => (36, 0),
             Request::OpenPrivacyPolicy => (37, 0),
             Request::OpenTaskbar => (38, 0),
             Request::OpenRecoveryKey => (41, 0),
@@ -274,9 +257,6 @@ impl Request {
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
             ),
-            Request::AppUpdatesScan => (14, 0),
-            Request::AppUpdateQuery(i) => (15, i),
-            Request::AppUpdate(i) => (16, i),
             Request::BitwardenStatus => (17, 0),
             Request::StartStoreApp(i) => (18, i),
             Request::StoreAppStatus(i) => (19, i),
@@ -302,10 +282,9 @@ impl Request {
     pub fn decode_with(bytes: [u8; 3], catalog_len: usize) -> Option<Self> {
         let [kind, lo, hi] = bytes;
         let arg = u16::from_le_bytes([lo, hi]);
-        if !matches!(kind, 7 | 13 | 15 | 16 | 18 | 19 | 39 | 40) && arg != 0 {
+        if !matches!(kind, 7 | 13 | 18 | 19 | 39 | 40) && arg != 0 {
             return None;
         }
-        let apps = user_apps::APPS.len();
         Some(match kind {
             1 => Request::OpenWindowsUpdate,
             2 => Request::OpenWindowsSecurity,
@@ -335,16 +314,12 @@ impl Request {
             33 => Request::OpenInstalledApps,
             34 => Request::OpenReportProblem,
             35 => Request::OpenSuggestFeature,
-            36 => Request::AppInstallerStatus,
             37 => Request::OpenPrivacyPolicy,
             38 => Request::OpenTaskbar,
             41 => Request::OpenRecoveryKey,
             42 => Request::StartTray,
             43 => Request::OpenDownloadPage,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
-            14 => Request::AppUpdatesScan,
-            15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
-            16 if usize::from(arg) < apps => Request::AppUpdate(arg),
             17 => Request::BitwardenStatus,
             18 if usize::from(arg) < catalog_len => Request::StartStoreApp(arg),
             19 if usize::from(arg) < catalog_len => Request::StoreAppStatus(arg),
@@ -364,10 +339,9 @@ impl Request {
 
     pub fn timeout(self) -> Duration {
         match self {
-            Request::ReinstallStoreApp(_) | Request::InstallBitwarden | Request::AppUpdate(_) => {
+            Request::ReinstallStoreApp(_) | Request::InstallBitwarden => {
                 Duration::from_secs(15 * 60)
             }
-            Request::AppUpdatesScan => Duration::from_secs(4 * 60),
             _ => Duration::from_secs(30),
         }
     }
@@ -681,13 +655,7 @@ mod tests {
             Request::OpenRecoveryKey,
             Request::StartTray,
             Request::OpenDownloadPage,
-            Request::AppUpdatesScan,
-            Request::AppUpdateQuery(0),
-            Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
-            Request::AppUpdate(0),
-            Request::AppUpdate(user_apps::APPS.len() as u16 - 1),
             Request::BitwardenStatus,
-            Request::AppInstallerStatus,
             Request::StartStoreApp(0),
             Request::StartStoreApp(41),
             Request::StoreAppStatus(0),
@@ -786,9 +754,6 @@ mod tests {
             assert!(!Request::UserSetting(setting, Op::Apply).is_read_only());
             assert!(!Request::UserSetting(setting, Op::Undo).is_read_only());
         }
-        assert!(!Request::AppUpdate(0).is_read_only());
-        assert!(Request::AppUpdatesScan.is_read_only());
-        assert!(Request::AppInstallerStatus.is_read_only());
         assert!(Request::AppAccessList(Capability::Camera).is_read_only());
         let set = Request::AppAccessSet {
             capability: Capability::Camera,
@@ -836,12 +801,8 @@ mod tests {
         assert!(Request::decode_with([13, 0, 0], 0).is_some());
         assert_eq!(Request::decode_with([14, 1, 0], 100), None);
         assert_eq!(Request::decode_with([14, 0, 1], 100), None);
-        let n = user_apps::APPS.len() as u8;
-        for kind in [15u8, 16] {
-            assert!(Request::decode_with([kind, n - 1, 0], 100).is_some());
-            assert_eq!(Request::decode_with([kind, n, 0], 100), None);
-            assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
-            assert_eq!(Request::decode_with([kind, 255, 255], 100), None);
+        for kind in [14u8, 15, 16, 36] {
+            assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         assert_eq!(Request::decode_with([7, 0, 0], 0), None);
         assert_eq!(Request::decode_with([7, 5, 0], 5), None);
@@ -906,13 +867,12 @@ mod tests {
             Reply::NeedsAttention,
             Reply::NotApplicable,
             Reply::Unknown,
-            Reply::UpdateAvailable,
             Reply::Working,
             Reply::ChangedSince,
         ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
-        for byte in [0u8, 14, 15, 100, 255] {
+        for byte in [0u8, 11, 14, 15, 100, 255] {
             assert_eq!(Reply::decode(byte), None);
         }
     }
@@ -968,8 +928,6 @@ mod tests {
     fn long_operations_get_long_timeouts() {
         assert!(Request::ReinstallStoreApp(0).timeout() >= Duration::from_secs(900));
         assert_eq!(Request::OpenSignIn.timeout(), Duration::from_secs(30));
-        assert!(Request::AppUpdate(0).timeout() >= Duration::from_secs(900));
-        assert!(Request::AppUpdatesScan.timeout() > Duration::from_secs(150));
         assert_eq!(
             Request::UserSetting(Setting::ShowExtensions, Op::Apply).timeout(),
             Duration::from_secs(30)

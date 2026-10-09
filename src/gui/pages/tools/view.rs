@@ -99,17 +99,13 @@ fn updates_tab<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     let p = ctx.palette;
     let mut windows = vec![repair_row(state, ctx), updates_row(state, ctx)];
     windows.extend(shortcut_rows(ctx, &[Shortcut::WindowsUpdate]));
-    let apps = personal::apps(&state.personal, ctx);
-    column![
-        widgets::group(p, ctx.t("Repair & updates"), None, None, windows),
-        widgets::group(
-            p,
-            ctx.t("App updates"),
-            Some(apps.subtitle),
-            None,
-            apps.rows
-        ),
-    ]
+    column![widgets::group(
+        p,
+        ctx.t("Repair & updates"),
+        None,
+        None,
+        windows
+    )]
     .spacing(theme::S8)
     .width(Length::Fill)
     .into()

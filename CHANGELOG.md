@@ -12,6 +12,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ### Changed
 - Web protection also blocks known malware download sites and stalkerware sites as part of its dangerous sites choice.
 
+### Removed
+- App updates are gone from the Tools page. Windows updates and repair are unchanged.
+
 ## [0.11.1] - 2026-10-09
 
 ### Changed

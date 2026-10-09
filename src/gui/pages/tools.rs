@@ -749,7 +749,6 @@ impl State {
             ToolsTab::Updates => {
                 matches!(self.repair, Repair::Working { .. })
                     || matches!(self.updates, Updates::Looking | Updates::Installing { .. })
-                    || personal::apps_busy(&self.personal)
             }
             ToolsTab::Account => {
                 matches!(self.bitwarden, Run::Working) || personal::account_busy(&self.personal)
