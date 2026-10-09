@@ -278,8 +278,9 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
         operation: &mut dyn Operation,
     ) {
         operation.container(None, layout.bounds());
-        if self.enabled() {
-            let st = tree.state.downcast_mut::<State>();
+        let st = tree.state.downcast_mut::<State>();
+        // A button that is busy for a moment keeps its place, so Tab goes on from it.
+        if self.enabled() || st.focused {
             operation.focusable(self.id.as_ref(), layout.bounds(), st);
         }
         operation.traverse(&mut |operation| {

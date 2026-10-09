@@ -889,8 +889,9 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
         _: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        if self.on_toggle.is_some() {
-            let st = tree.state.downcast_mut::<SwitchState>();
+        let st = tree.state.downcast_mut::<SwitchState>();
+        // A switch that is busy saving keeps its place, so Tab goes on from it.
+        if self.on_toggle.is_some() || st.focused {
             operation.focusable(None, layout.bounds(), st);
         }
     }
@@ -908,14 +909,14 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
         let st = tree.state.downcast_mut::<SwitchState>();
         let enabled = self.on_toggle.is_some();
         let over = enabled && cursor.is_over(layout.bounds());
-        if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) || !enabled {
+        if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
             st.focused = false;
         }
         match event {
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space),
                 ..
-            }) if st.focused => {
+            }) if st.focused && enabled => {
                 if let Some(f) = &self.on_toggle {
                     shell.publish(f(!self.on));
                 }
@@ -1579,5 +1580,64 @@ mod tests {
         assert_eq!(drop_step(Some(2), 6, &named(Named::Home)), Some(0));
         assert_eq!(drop_step(Some(2), 6, &named(Named::End)), Some(5));
         assert_eq!(drop_step(Some(2), 0, &named(Named::ArrowDown)), None);
+    }
+
+    struct Stops {
+        focus: bool,
+        seen: Vec<bool>,
+    }
+
+    impl Operation for Stops {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+        fn focusable(
+            &mut self,
+            _: Option<&iced::advanced::widget::Id>,
+            _: Rectangle,
+            state: &mut dyn Focusable,
+        ) {
+            if self.focus {
+                state.focus();
+            }
+            self.seen.push(state.is_focused());
+        }
+    }
+
+    fn stops(element: &mut Element<'_, Message>, tree: &mut Tree, focus: bool) -> Vec<bool> {
+        use iced::advanced::renderer::Headless;
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            theme::REGULAR,
+            14.0.into(),
+            Some("tiny-skia"),
+        ))
+        .expect("tiny-skia renderer");
+        tree.diff(&*element);
+        let node = element.as_widget_mut().layout(
+            tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(200.0, 50.0)),
+        );
+        let mut op = Stops {
+            focus,
+            seen: Vec::new(),
+        };
+        element
+            .as_widget_mut()
+            .operate(tree, Layout::new(&node), &renderer, &mut op);
+        op.seen
+    }
+
+    #[test]
+    fn a_switch_busy_saving_keeps_focus_and_its_tab_stop() {
+        let p = theme::LIGHT;
+        let mut on = switch(p, false, Some(|_| Message::Noop));
+        let mut tree = Tree::new(&on);
+        assert_eq!(stops(&mut on, &mut tree, true), vec![true]);
+        let mut busy = switch(p, true, None::<fn(bool) -> Message>);
+        assert_eq!(stops(&mut busy, &mut tree, false), vec![true]);
+        let mut fresh = switch(p, true, None::<fn(bool) -> Message>);
+        let mut fresh_tree = Tree::new(&fresh);
+        assert!(stops(&mut fresh, &mut fresh_tree, false).is_empty());
     }
 }
