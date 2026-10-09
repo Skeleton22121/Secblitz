@@ -230,6 +230,8 @@ pub enum Message {
     /// Opens Clean up apps already narrowed to the app with this package name.
     OpenCleanUp(&'static str),
     CheckNow,
+    /// A check after a change the person made, only once they have agreed to checks.
+    CheckIfAgreed,
     Worker(worker::Event),
     ReviewFixes(Vec<String>),
     ReviewUndo,
@@ -589,6 +591,8 @@ impl App {
                 self.ctx.checking = Some(CheckProgress::default());
                 Task::run(self.ctx.worker.run(worker::Job::Check), Message::Worker)
             }
+            Message::CheckIfAgreed if self.may_check => self.update(Message::CheckNow),
+            Message::CheckIfAgreed => Task::none(),
             Message::Worker(event) => self.on_worker(event),
             Message::ReviewFixes(ids) => fixflow::open_fixes(&mut self.fix, ids, &mut self.ctx),
             Message::ReviewUndo => fixflow::open_undo(&mut self.fix, &mut self.ctx),

@@ -476,7 +476,7 @@ fn apply(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         lines,
                         at: state.now,
                     };
-                    Task::done(Message::CheckNow)
+                    Task::done(Message::CheckIfAgreed)
                 }
             }
         }

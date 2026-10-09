@@ -1886,6 +1886,17 @@ fn leaving_the_welcome_by_any_route_remembers_it_and_checks_only_on_a_yes() {
 }
 
 #[test]
+fn a_check_after_a_change_waits_for_the_persons_agreement() {
+    let mut app = fresh_install();
+    drop(app.update(Message::Welcome(pages::welcome::Msg::Skip)));
+    drop(app.update(Message::CheckIfAgreed));
+    assert!(app.ctx.checking.is_none());
+    app.may_check = true;
+    drop(app.update(Message::CheckIfAgreed));
+    assert!(app.ctx.checking.is_some());
+}
+
+#[test]
 fn nothing_checks_on_its_own_before_the_person_agrees() {
     let mut app = fresh_install();
     drop(app.update(Message::Welcome(pages::welcome::Msg::Skip)));
