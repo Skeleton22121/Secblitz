@@ -286,10 +286,19 @@ fn address_bar(window: usize, browser: Browser) -> Option<String> {
                 UIA_AutomationIdPropertyId,
                 &VARIANT::from("urlbar-input"),
             ),
-            Browser::Chromium => automation.CreatePropertyCondition(
-                UIA_ClassNamePropertyId,
-                &VARIANT::from("OmniboxViewViews"),
-            ),
+            // Brave gives its address bar a class name of its own.
+            Browser::Chromium => automation
+                .CreatePropertyCondition(
+                    UIA_ClassNamePropertyId,
+                    &VARIANT::from("OmniboxViewViews"),
+                )
+                .and_then(|chromium| {
+                    let brave = automation.CreatePropertyCondition(
+                        UIA_ClassNamePropertyId,
+                        &VARIANT::from("BraveOmniboxViewViews"),
+                    )?;
+                    automation.CreateOrCondition(&chromium, &brave)
+                }),
         }
         .ok()?;
         // The toolbar comes before the page in the tree, so a page element made to look like the
