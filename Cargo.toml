@@ -26,6 +26,7 @@ hex = "0.4"
 png = "0.17"
 semver = "1"
 sha2 = "0.10"
+crc32fast = "1.5"
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tiny-skia", "canvas", "svg", "advanced", "thread-pool", "crisp", "image-without-codecs"] }
 # Direct wgpu use is limited to the quick adapter probe in src/gui/render.rs.
 wgpu = { version = "27", default-features = false, features = ["std", "dx12", "vulkan"] }

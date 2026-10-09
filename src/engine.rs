@@ -153,6 +153,16 @@ pub struct Outcome {
     pub switched_back: bool,
 }
 
+/// How many sets of changes Secblitz has recorded, by state, and which checks they touch.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ChangeSummary {
+    pub sets: usize,
+    pub applied: usize,
+    pub pending: usize,
+    pub reverted: usize,
+    pub checks: Vec<String>,
+}
+
 /// Approval alone cannot make an ambiguous original safe, so there is deliberately no force-truncate API. Restore a verified journal backup under engine.lock instead.
 #[derive(Debug, Serialize)]
 pub struct JournalRecoveryRequired {
