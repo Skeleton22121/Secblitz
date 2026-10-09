@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+- Web protection also blocks known malware download sites and stalkerware sites as part of its dangerous sites choice.
+
 ## [0.11.1] - 2026-10-09
 
 ### Changed

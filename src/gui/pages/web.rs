@@ -1497,7 +1497,7 @@ fn block_tab<'a>(state: &'a State, ctx: &'a Ctx, snapshot: &Snapshot) -> El<'a> 
                     "Some ads, like the ones inside YouTube videos, come from the same place as the video and can't be blocked this way.",
                 ),
             ),
-            widgets::small(p, ctx.t("Block lists by AdGuard, EasyList and HaGeZi.")),
+            widgets::small(p, ctx.t("Block lists by AdGuard, EasyList, HaGeZi, malware-filter and Echap.")),
         ]
         .spacing(theme::S2),
     ]

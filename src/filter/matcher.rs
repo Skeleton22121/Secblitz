@@ -135,6 +135,8 @@ pub struct Filter {
     pub scam: Category,
     pub popups: Category,
     pub never: HashSet64,
+    /// Which lists the set was built from, one bit per entry in `SOURCES`.
+    pub sources: u64,
 }
 
 impl Filter {
@@ -273,6 +275,7 @@ mod tests {
             scam: Category::default(),
             popups: Category::default(),
             never: HashSet64::default(),
+            sources: 0,
         };
         assert_eq!(f.decide("bad.com", ALL), Some(Kind::Dangerous));
         assert_eq!(f.decide("adult.com", ALL), Some(Kind::Adult));
