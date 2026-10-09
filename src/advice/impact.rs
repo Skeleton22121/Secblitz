@@ -42,7 +42,7 @@ pub fn control_impact(id: &str) -> &'static str {
         "net.public_sharing_exposure" => "Other devices on public Wi-Fi seeing your shared files",
         "printer.point_and_print" => "Harmful printer drivers getting full control of your PC",
         "net.llmnr" => "Someone on your network answering name lookups with wrong replies",
-        "accounts.lockout_policy" => "Wrong passwords never slowing anyone down at your sign-in",
+        "accounts.lockout_policy" => "Someone trying one password after another on your PC",
         "autorun.disabled" => "Harmful programs starting from a USB stick or disc",
         "clickfix.run_box" => "A fake web page tricking you into running a harmful command",
         "wifi.risky_profiles" => "Unknown Wi-Fi hotspots connecting your PC without asking",
