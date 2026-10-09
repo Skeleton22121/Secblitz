@@ -53,10 +53,10 @@ fn loading_sheet<'a>(state: &State, ctx: &Ctx, p: Palette) -> El<'a> {
 
 fn option_row<'a>(
     p: Palette,
-    state: &State,
-    more: String,
     selected: bool,
-    (key, glyph, title, help): (&str, Icon, String, String),
+    glyph: Icon,
+    title: String,
+    help: String,
     on_press: Option<Message>,
 ) -> El<'a> {
     let mark: El<'a> = if selected {
@@ -64,12 +64,11 @@ fn option_row<'a>(
     } else {
         space::horizontal().width(theme::ICON_ROW).into()
     };
-    let (first, rest) = point::first_sentence(&help);
-    let row = container(widgets::row_item(
+    container(widgets::row_item(
         p,
         Some(glyph),
         title,
-        Some(first.to_owned()),
+        Some(help),
         mark,
         on_press,
     ))
@@ -80,27 +79,7 @@ fn option_row<'a>(
             ..Border::default()
         },
         ..container::Style::default()
-    });
-    let Some(rest) = rest else {
-        return row.into();
-    };
-    let key = format!("option:{key}");
-    column![
-        row,
-        container(point::point(
-            p,
-            widgets::small(p, more),
-            Vec::new(),
-            Some(widgets::small(p, rest.to_owned())),
-            state.points.has(&key),
-            wrap(Msg::Point(key)),
-        ))
-        .padding(iced::Padding {
-            left: theme::ICON_ROW + theme::S4 * 2.0,
-            right: theme::S4,
-            ..iced::Padding::ZERO
-        })
-    ]
+    })
     .into()
 }
 
@@ -146,23 +125,18 @@ fn choose_sheet<'a>(
         options = options.push(match option {
             Choice::Keep => option_row(
                 p,
-                state,
-                ctx.t("More details"),
                 choice == Some(Choice::Keep),
-                ("keep", Icon::Shield, ctx.t(KEEP_TITLE), ctx.t(KEEP_HELP)),
+                Icon::Shield,
+                ctx.t(KEEP_TITLE),
+                ctx.t(KEEP_HELP),
                 on,
             ),
             Choice::PutBack => option_row(
                 p,
-                state,
-                ctx.t("More details"),
                 choice == Some(Choice::PutBack),
-                (
-                    "put-back",
-                    Icon::Undo,
-                    ctx.t(PUT_BACK_TITLE),
-                    put_back_text(ctx.lang, n),
-                ),
+                Icon::Undo,
+                ctx.t(PUT_BACK_TITLE),
+                put_back_text(ctx.lang, n),
                 on,
             ),
         });
@@ -200,21 +174,9 @@ fn choose_sheet<'a>(
             col = col.push(widgets::small(p, ctx.t(KEEP_DELETES_COPIES)))
         }
         Some(Choice::PutBack) => {
-            col = col.push(point::text_point(
-                p,
-                &ctx.t(OWN_ACCOUNT_ONLY),
-                Words::Small,
-                state.points.has("note:own"),
-                wrap(Msg::Point("note:own".to_owned())),
-            ));
+            col = col.push(widgets::small(p, ctx.t(OWN_ACCOUNT_ONLY)));
             if store_only {
-                col = col.push(point::text_point(
-                    p,
-                    &ctx.t(STORE_NEEDS_INTERNET),
-                    Words::Small,
-                    state.points.has("note:store"),
-                    wrap(Msg::Point("note:store".to_owned())),
-                ));
+                col = col.push(widgets::small(p, ctx.t(STORE_NEEDS_INTERNET)));
             }
         }
         _ => {}
