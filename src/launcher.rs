@@ -91,6 +91,49 @@ fn args_are_plain(args: &[String]) -> bool {
         .all(|a| !a.is_empty() && a.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'))
 }
 
+/// Plain words, then one site name that is already in its clean form.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn site_args_are_plain(args: &[String]) -> bool {
+    match args.split_last() {
+        Some((site, words)) => {
+            args_are_plain(words)
+                && secblitz::filter::config::normalized_site(site).as_deref() == Some(site)
+        }
+        None => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllowOnce {
+    Done,
+    /// The person said no at the Windows permission prompt.
+    Declined,
+    Failed,
+}
+
+/// Lets one site through Web protection for a short while. Windows asks for permission first.
+pub fn allow_site_once(site: &str, lang: Lang) -> AllowOnce {
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = ["--lang", lang.code(), "filter", "allow-once", site]
+            .map(String::from)
+            .into();
+        match imp::elevate_for_site(&args) {
+            Ok(Some(child)) => match child.wait() {
+                Ok(0) => AllowOnce::Done,
+                _ => AllowOnce::Failed,
+            },
+            Ok(None) => AllowOnce::Declined,
+            Err(_) => AllowOnce::Failed,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (site, lang);
+        AllowOnce::Failed
+    }
+}
+
 const OPEN_PAGES: [&str; 4] = ["protection", "web", "tools", "history"];
 
 pub fn open_page(value: &str) -> Option<&'static str> {
@@ -293,6 +336,18 @@ mod imp {
 
     pub fn elevate(args: &[String]) -> Result<Option<Elevated>> {
         ensure!(args_are_plain(args), "Invalid elevation arguments");
+        start(args)
+    }
+
+    pub fn elevate_for_site(args: &[String]) -> Result<Option<Elevated>> {
+        ensure!(
+            super::site_args_are_plain(args),
+            "Invalid elevation arguments"
+        );
+        start(args)
+    }
+
+    fn start(args: &[String]) -> Result<Option<Elevated>> {
         let exe: Vec<u16> = std::env::current_exe()?
             .as_os_str()
             .encode_wide()
@@ -1174,6 +1229,33 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_clean_site_name_follows_the_plain_words() {
+        let words = |last: &str| -> Vec<String> {
+            ["--lang", "en", "filter", "allow-once", last]
+                .map(String::from)
+                .into()
+        };
+        assert!(site_args_are_plain(&words("evil-site.example")));
+        assert!(site_args_are_plain(&words("a_b.example")));
+        for bad in [
+            "Evil.example",
+            "evil.example.",
+            "evil.example evil2.example",
+            "evil.example\\",
+            "\"evil.example",
+            "evil",
+            "",
+            "-x.example",
+        ] {
+            assert!(!site_args_are_plain(&words(bad)), "{bad}");
+        }
+        assert!(!site_args_are_plain(&[]));
+        let mut loose = words("evil.example");
+        loose[2] = "filter now".into();
+        assert!(!site_args_are_plain(&loose));
+    }
 
     #[test]
     fn known_start_problems_get_a_fix_and_unknown_ones_get_the_general_text() {
