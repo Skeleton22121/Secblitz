@@ -23,6 +23,10 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ||||||| parent of 2206f019 (Say each thing once on the apps, ads and tips, and app access pages)
 - Clean up apps, Ads and tips, and app updates say each thing once, with shorter lines under headings and rows.
 - Camera, microphone and location switches no longer repeat the same advice on every page.
+||||||| parent of fe42087b (Shorten and de-duplicate text on Settings, History, Tools and the tray)
+- Settings, History and Tools use shorter lines and no longer repeat a heading or a status.
+- The History page no longer shows the same "nothing to undo" line twice.
+- The tray alert for a drop in protection is shorter.
 
 ## [0.11.0] - 2026-10-08
 

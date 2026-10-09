@@ -201,9 +201,9 @@ fn date_fn(lang: Lang) -> &'static dyn Fn(u64) -> String {
 fn removed_text(ctx: &Ctx, removed: usize) -> String {
     match removed {
         0 => ctx.t("No apps are removed right now."),
-        1 => ctx.t("1 app is removed. You can bring it back at any time."),
+        1 => ctx.t("1 app is removed."),
         n => ctx
-            .t("{n} apps are removed. You can bring any of them back at any time.")
+            .t("{n} apps are removed.")
             .replace("{n}", &n.to_string()),
     }
 }
@@ -315,7 +315,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let header = widgets::page_header(
         p,
         ctx.t("History"),
-        Some(ctx.t("How your protection has changed over time.")),
+        Some(ctx.t("What you checked, fixed and undid.")),
     );
     let spacer = space::vertical().height(theme::S6);
 
@@ -340,10 +340,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let solid = Palette::of(p.mode);
     let shown = progress(&data.scores);
     let trend_body: Element<'a, Message> = match shown {
-        Progress::Nothing => widgets::muted(
-            p,
-            ctx.t("Check your PC a few times and we'll draw how your protection changes."),
-        ),
+        Progress::Nothing => widgets::muted(p, ctx.t("Check a few times to see your progress.")),
         Progress::StartingPoint(score) => starting_point(ctx, score),
         Progress::Line => widgets::chart::trend(
             solid,
@@ -385,10 +382,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             ctx.t("We couldn't read your list of fixes. Close Secblitz and open it again."),
             false,
         ),
-        Some(Ok(_)) if can_undo(state) => (
-            ctx.t("Put your settings back the way they were before your last fixes."),
-            true,
-        ),
+        Some(Ok(_)) if can_undo(state) => (ctx.t("Go back to how things were before."), true),
         Some(Ok(_)) => (ctx.t("There's nothing to undo yet."), false),
     };
     let undo_trailing: Element<'a, Message> = if undo_enabled && !ctx.busy {
@@ -403,7 +397,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         p,
         Some(Icon::Undo),
         ctx.t("Undo your last fixes"),
-        Some(undo_body.clone()),
+        Some(undo_body),
         undo_trailing,
         None,
     );
@@ -420,11 +414,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         p,
         Some(Icon::Undo),
         ctx.t("Put back chosen settings"),
-        Some(if undo_enabled {
-            ctx.t("Pick the settings you want back the way they were. The rest stay as they are.")
-        } else {
-            undo_body.clone()
-        }),
+        Some(ctx.t("Pick which settings to put back.")),
         choose_trailing,
         None,
     );

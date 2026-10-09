@@ -1019,10 +1019,7 @@ fn tips_lists<'a>(state: &'a State, ctx: &'a Ctx, report: &logic::TipsReport) ->
         out.push(widgets::collapsible(
             p,
             ctx.t("Needs a look"),
-            Some(match report.count(TipState::Look) {
-                0 => ctx.t("{n} items").replace("{n}", &needs.len().to_string()),
-                n => ctx.t("{n} worth a look").replace("{n}", &n.to_string()),
-            }),
+            Some(count_text(ctx, needs.len())),
             !state.detail_open(Detail::TipsList),
             tools(Msg::ToggleDetail(Detail::TipsList)),
             rows(&needs),
@@ -1032,16 +1029,21 @@ fn tips_lists<'a>(state: &'a State, ctx: &'a Ctx, report: &logic::TipsReport) ->
         out.push(widgets::collapsible(
             p,
             ctx.t("All good"),
-            Some(
-                ctx.t("{n} look good")
-                    .replace("{n}", &fine.len().to_string()),
-            ),
+            Some(count_text(ctx, fine.len())),
             state.detail_open(Detail::TipsGood),
             tools(Msg::ToggleDetail(Detail::TipsGood)),
             rows(&fine),
         ));
     }
     out
+}
+
+fn count_text(ctx: &Ctx, n: usize) -> String {
+    if n == 1 {
+        ctx.t("1 item")
+    } else {
+        ctx.t("{n} items").replace("{n}", &n.to_string())
+    }
 }
 
 fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) -> El<'a> {
@@ -1116,7 +1118,7 @@ fn tip_row<'a>(ctx: &Ctx, tip: &logic::Tip, scanning: bool, threats_busy: bool) 
         Some(icon),
         Some(tone),
         ctx.t(tip.title),
-        Some(words.clone()),
+        (tip.state != TipState::Good).then(|| words.clone()),
         action,
         None,
     );

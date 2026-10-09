@@ -86,9 +86,7 @@ impl Balloon {
 
     pub fn text(&self, lang: Lang) -> String {
         match self {
-            Balloon::Worsened => {
-                lang.t("Your protection dropped. Open Secblitz to see what needs attention.")
-            }
+            Balloon::Worsened => lang.t("Your protection dropped. Open Secblitz to see why."),
             Balloon::Reverted(ids) => reverted_text(lang, ids),
             Balloon::Blocked(notice) => lang
                 .t(match notice.kind {
