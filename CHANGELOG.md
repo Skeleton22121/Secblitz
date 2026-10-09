@@ -9,6 +9,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- Each release comes with a parts list of the code it is built from.
+
 ## [0.12.0] - 2026-10-09
 
 ### Added

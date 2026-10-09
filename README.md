@@ -45,6 +45,8 @@ The installer is not code-signed yet, so Windows may show an unknown publisher w
 Get-FileHash .\secblitz-0.12.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
+Each release also has a parts list (`.cdx.json`) on its [GitHub release page](https://github.com/secblitz/Secblitz/releases) that names every piece of code Secblitz is built from.
+
 Tested on Windows 10 (version 22H2) and Windows 11, on regular and ARM PCs.
 
 Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to a newer version. Download and run the installer once; your settings, history and undo stay.
