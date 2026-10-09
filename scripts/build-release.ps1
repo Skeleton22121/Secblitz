@@ -77,6 +77,12 @@ function Sign-ReleaseFile([string]$Path) {
     Assert-PublisherSignature $Path
 }
 
+function Assert-ProductMetadata([string]$Path, [string]$Version) {
+    $info = (Get-Item -LiteralPath $Path).VersionInfo
+    if ($info.ProductName -cne 'Secblitz') { throw "$(Split-Path $Path -Leaf) has product name '$($info.ProductName)', not 'Secblitz'." }
+    if ($info.ProductVersion -cne $Version) { throw "$(Split-Path $Path -Leaf) has product version '$($info.ProductVersion)', not '$Version'." }
+}
+
 function Assert-ReleasePe([string]$Path) {
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Path))
     try {
@@ -187,6 +193,8 @@ try {
     Invoke-Checked $IsccPath $compilerArgs
     $setup = Join-Path $dist "secblitz-$version-windows-$Arch-setup.exe"
     Assert-ReleasePe $exe
+    Assert-ProductMetadata $exe $version
+    Assert-ProductMetadata $setup $version
     if ($CertificateThumbprint) {
         Assert-PublisherSignature $exe
         Assert-PublisherSignature $setup
