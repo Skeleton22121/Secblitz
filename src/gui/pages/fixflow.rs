@@ -1030,7 +1030,7 @@ fn addon_picker<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if state.addons_picked.is_empty() {
         c = c.push(widgets::small(
             p,
-            ctx.t("Tick at least one add-on. Nothing is turned off until you do."),
+            ctx.t("Tick at least one add-on to continue."),
         ));
     }
     c.into()
@@ -1064,9 +1064,9 @@ fn review_view<'a>(
         c = c.push(widgets::muted(
             p,
             ctx.t(if one {
-                "We'll put this setting back the way it was before Secblitz changed it:"
+                "We'll put this setting back the way it was:"
             } else {
-                "We'll put these settings back the way they were before Secblitz changed them:"
+                "We'll put these settings back the way they were:"
             }),
         ));
         c = c.push(plan_list(ctx, &state.plan, &restart_label));
@@ -1107,7 +1107,6 @@ fn review_view<'a>(
             ctx.t("Anything you changed yourself since then is left as it is."),
         ));
     } else {
-        c = c.push(widgets::muted(p, ctx.t("Here's what we'll change:")));
         c = c.push(plan_list(ctx, &state.plan, &restart_label));
         if !state.addons.is_empty() && ids.iter().any(|id| id == ADDONS) {
             c = c.push(addon_picker(state, ctx));

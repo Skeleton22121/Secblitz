@@ -185,47 +185,47 @@ pub(super) fn repair_help(id: &str) -> &'static str {
         | "firewall.domain.inbound"
         | "firewall.private.inbound"
         | "firewall.public.inbound" => {
-            "We can fix this. It stops uninvited connections to your PC."
+            "It stops uninvited connections to your PC."
         }
         "permissions.service.bits" | "permissions.service.wuauserv" => {
-            "We can fix this. It keeps Windows updates from being tampered with."
+            "It keeps Windows updates from being tampered with."
         }
         "wdigest.use_logon_credential" => {
-            "We can fix this. Your password will no longer be kept where other programs can read it."
+            "Your password will no longer be kept where other programs can read it."
         }
-        "uac.enabled" => "We can fix this. Windows will ask before big changes are made.",
-        "uac.consent" => "We can fix this. Windows will ask for approval before big changes.",
+        "uac.enabled" => "Windows will ask before big changes are made.",
+        "uac.consent" => "Windows will ask for approval before big changes.",
         "installer.always_install_elevated" => {
-            "We can fix this. App installers will no longer get full control of your PC."
+            "App installers will no longer get full control of your PC."
         }
         "lsa.restrict_anonymous_sam" => {
-            "We can fix this. Other devices on the network will no longer see your account names."
+            "Other devices on the network will no longer see your account names."
         }
         "lsa.limit_blank_password_use" => {
-            "We can fix this. Accounts without a password can no longer be used over the network."
+            "Accounts without a password can no longer be used over the network."
         }
-        "defender.pua" => "We can fix this. Junk apps bundled with downloads will be blocked.",
-        "defender.script_nis" => "We can fix this. It turns scanning for harmful scripts back on.",
+        "defender.pua" => "Junk apps bundled with downloads will be blocked.",
+        "defender.script_nis" => "It turns scanning for harmful scripts back on.",
         "defender.asr.standard" => {
-            "We can fix this. It blocks common ways harmful programs read passwords."
+            "It blocks common ways harmful programs read passwords."
         }
         "net.public_sharing_exposure" => {
-            "We can fix this. Your shared files and printers stay hidden on public Wi-Fi."
+            "Your shared files and printers stay hidden on public Wi-Fi."
         }
         "printer.point_and_print" => {
-            "We can fix this. Printer drivers will only be installed with your permission."
+            "Printer drivers will only be installed with your permission."
         }
-        "net.llmnr" => "We can fix this. Wrong name-lookup answers will be ignored.",
+        "net.llmnr" => "Wrong name-lookup answers will be ignored.",
         "accounts.lockout_policy" => {
-            "We can fix this. Too many wrong passwords will lock sign-in for a few minutes."
+            "Too many wrong passwords will lock sign-in for a few minutes."
         }
         "system.exploit_mitigations" => {
-            "We can fix this. It switches Windows' built-in memory protections back on."
+            "It switches Windows' built-in memory protections back on."
         }
         "recovery.winre_enabled" => {
-            "We can fix this. It turns the recovery tools back on, so Windows can repair itself if it stops starting."
+            "It turns the recovery tools back on, so Windows can repair itself if it stops starting."
         }
-        _ => "We can fix this. It turns this protection on.",
+        _ => "It turns this protection on.",
     }
 }
 

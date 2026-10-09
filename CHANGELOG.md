@@ -14,6 +14,10 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The Details button on the Fixes page is gone, and no more panels open under the rows.
 - The window no longer repeats a setting's status or the line already on its row.
 - The "More details" text on results and errors opens in the same small window.
+- Each setting on the Protection page shows at most one tag, and "Your choice" is gone because the section already says it.
+- The Protection page sections now run in the same order: needs you, your choices, good to know, already protected.
+- Fix lines no longer start with "We can fix this".
+- The approval window drops the lead-in line and the long "put back" sentence.
 
 ## [0.11.0] - 2026-10-08
 

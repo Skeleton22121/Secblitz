@@ -253,6 +253,7 @@ struct Att {
     name: String,
     line: String,
     restart: bool,
+    #[cfg(test)]
     choice: bool,
     info: Option<InfoSheet>,
     hay: Haystack,
@@ -415,20 +416,13 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             id,
         );
         let (status, next) = plain_status(&r.status, &a, lang);
-        let (back, restart_text, choice_text) = (
-            ctx.t("Switched back"),
-            ctx.t("Restart needed"),
-            ctx.t("Your choice"),
-        );
+        let (back, restart_text) = (ctx.t("Switched back"), ctx.t("Restart needed"));
         let mut shown = vec![line.as_str(), status.as_str()];
         if r.switched_back {
             shown.push(&back);
         }
         if restart {
             shown.push(&restart_text);
-        }
-        if choice {
-            shown.push(&choice_text);
         }
         let info = sheet(
             ctx,
@@ -446,6 +440,7 @@ fn build(ctx: &Ctx, report: &Report) -> Rows {
             name,
             line,
             restart,
+            #[cfg(test)]
             choice,
             info,
             hay,
@@ -1225,25 +1220,16 @@ fn attention_row<'a>(
     a: &Att,
     checked: bool,
     restart_label: &str,
-    choice_label: &str,
     extra: bool,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
-    let mut pills = row![].spacing(theme::S3).align_y(Alignment::Center);
-    if a.switched_back {
-        pills = pills.push(widgets::pill(p, ctx.t("Switched back"), Tone::Warn));
-    }
-    if a.choice {
-        pills = pills.push(widgets::pill(p, choice_label.to_owned(), Tone::Neutral));
-    }
-    if a.restart {
-        pills = pills.push(widgets::tag(
-            p,
-            Some(Icon::Restart),
-            restart_label.to_owned(),
-        ));
-    }
-    let trailing: Element<'a, Message> = pills.into();
+    let trailing: Element<'a, Message> = if a.switched_back {
+        widgets::pill(p, ctx.t("Switched back"), Tone::Warn)
+    } else if a.restart {
+        widgets::tag(p, Some(Icon::Restart), restart_label.to_owned())
+    } else {
+        nothing()
+    };
     let toggle = Message::Fixes(Msg::Toggle(a.id.clone()));
     let mut tools = row![].spacing(theme::S1).align_y(Alignment::Center);
     if let Some(t) = widgets::info::button(ctx, a.info.clone()) {
@@ -2039,19 +2025,9 @@ fn topic_groups<'a>(
         .collect();
     let chosen = selection(state, ctx, &all);
     let restart_label = ctx.t("Restart needed");
-    let choice_label = ctx.t("Your choice");
     let rows_of = |list: &[&Att], extra: bool| -> Vec<Element<'a, Message>> {
         list.iter()
-            .map(|a| {
-                attention_row(
-                    ctx,
-                    a,
-                    chosen.contains(&a.id),
-                    &restart_label,
-                    &choice_label,
-                    extra,
-                )
-            })
+            .map(|a| attention_row(ctx, a, chosen.contains(&a.id), &restart_label, extra))
             .collect()
     };
     let look: Vec<&Other> = shown
@@ -2098,31 +2074,29 @@ fn topic_groups<'a>(
             list,
         ));
     }
-    if !shown.privacy.is_empty() {
-        groups.push(widgets::group(
-            p,
-            ctx.t("Optional"),
-            Some(ctx.t("Not part of your protection score. Nothing here is chosen for you.")),
-            None,
-            rows_of(&shown.privacy, true),
-        ));
-    }
     if !look.is_empty() {
         groups.push(widgets::group(
             p,
             ctx.t("Worth a look"),
-            Some(
-                ctx.t("Most of these are done in Windows itself. Steps are shown where they help."),
-            ),
+            Some(ctx.t("You do these in Windows itself. We show the steps.")),
             None,
             look.iter().map(|o| other_row(ctx, o)).collect(),
         ));
     }
-    if !shown.protected.is_empty() {
-        groups.push(protected_group(state, ctx, rows, shown, topic, narrowed));
+    if !shown.privacy.is_empty() {
+        groups.push(widgets::group(
+            p,
+            ctx.t("Your choices"),
+            Some(ctx.t("None of these are chosen for you, and they don't change your score.")),
+            None,
+            rows_of(&shown.privacy, true),
+        ));
     }
     if let Some(group) = more_group(state, ctx, shown, topic, narrowed) {
         groups.push(group);
+    }
+    if !shown.protected.is_empty() {
+        groups.push(protected_group(state, ctx, rows, shown, topic, narrowed));
     }
     if topic == Topic::Clutter && !narrowed {
         groups.push(widgets::row_item(
@@ -2169,7 +2143,7 @@ fn more_group<'a>(
     for (bucket, title) in [
         (Bucket::Unavailable, "Can't check right now"),
         (Bucket::Managed, "Managed elsewhere"),
-        (Bucket::GoodToKnow, "Good to know"),
+        (Bucket::GoodToKnow, "Left alone"),
     ] {
         let list: Vec<&&Other> = shown.others.iter().filter(|o| o.bucket == bucket).collect();
         if list.is_empty() {
@@ -2186,7 +2160,7 @@ fn more_group<'a>(
     (total > 0).then(|| {
         widgets::collapsible(
             p,
-            ctx.t("More"),
+            ctx.t("Good to know"),
             Some(count_text(ctx, total)),
             narrowed || state.open_more.contains(&topic),
             Message::Fixes(Msg::ToggleMore(topic)),
@@ -2319,7 +2293,7 @@ fn protected_group<'a>(
     });
     widgets::collapsible_with(
         p,
-        ctx.t("Protected"),
+        ctx.t("Already protected"),
         Some(summary),
         open,
         Message::Fixes(Msg::ShowProtected(topic)),
