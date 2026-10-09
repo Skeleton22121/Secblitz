@@ -28,23 +28,31 @@ impl Role {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Format {
+    Adblock,
+    Hosts,
+}
+
 pub struct Source {
     pub id: &'static str,
     pub url: &'static str,
     pub max_bytes: u64,
     pub refresh_days: u64,
     pub role: Role,
+    pub format: Format,
 }
 
 const MIB: u64 = 1024 * 1024;
 
-pub const SOURCES: [Source; 12] = [
+pub const SOURCES: [Source; 14] = [
     Source {
         id: "adguard-dns",
         url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
         max_bytes: 16 * MIB,
         refresh_days: 1,
         role: Role::Dns,
+        format: Format::Adblock,
     },
     Source {
         id: "hagezi-windows",
@@ -52,6 +60,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 16 * MIB,
         refresh_days: 1,
         role: Role::WindowsTracking,
+        format: Format::Adblock,
     },
     Source {
         id: "hagezi-tif",
@@ -59,6 +68,23 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 128 * MIB,
         refresh_days: 1,
         role: Role::Threats,
+        format: Format::Adblock,
+    },
+    Source {
+        id: "malware-filter-urlhaus",
+        url: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-agh.txt",
+        max_bytes: 4 * MIB,
+        refresh_days: 1,
+        role: Role::Threats,
+        format: Format::Adblock,
+    },
+    Source {
+        id: "echap-stalkerware",
+        url: "https://raw.githubusercontent.com/AssoEchap/stalkerware-indicators/master/generated/hosts",
+        max_bytes: MIB,
+        refresh_days: 1,
+        role: Role::Threats,
+        format: Format::Hosts,
     },
     // The medium gambling list is a third of the full size and keeps the well known sites.
     Source {
@@ -67,6 +93,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 8 * MIB,
         refresh_days: 7,
         role: Role::Adult,
+        format: Format::Adblock,
     },
     Source {
         id: "hagezi-gambling",
@@ -74,6 +101,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 16 * MIB,
         refresh_days: 7,
         role: Role::Gambling,
+        format: Format::Adblock,
     },
     Source {
         id: "hagezi-fake",
@@ -81,6 +109,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 8 * MIB,
         refresh_days: 1,
         role: Role::Scam,
+        format: Format::Adblock,
     },
     Source {
         id: "hagezi-popupads",
@@ -88,6 +117,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 8 * MIB,
         refresh_days: 1,
         role: Role::Popups,
+        format: Format::Adblock,
     },
     Source {
         id: "adguard-tracking",
@@ -95,6 +125,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 32 * MIB,
         refresh_days: 7,
         role: Role::TrackingClassifier,
+        format: Format::Adblock,
     },
     Source {
         id: "easyprivacy",
@@ -102,6 +133,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 16 * MIB,
         refresh_days: 7,
         role: Role::TrackingClassifier,
+        format: Format::Adblock,
     },
     Source {
         id: "adguard-base",
@@ -109,6 +141,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 32 * MIB,
         refresh_days: 7,
         role: Role::AdClassifier,
+        format: Format::Adblock,
     },
     Source {
         id: "adguard-mobile",
@@ -116,6 +149,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 16 * MIB,
         refresh_days: 7,
         role: Role::AdClassifier,
+        format: Format::Adblock,
     },
     Source {
         id: "easylist",
@@ -123,6 +157,7 @@ pub const SOURCES: [Source; 12] = [
         max_bytes: 16 * MIB,
         refresh_days: 7,
         role: Role::AdClassifier,
+        format: Format::Adblock,
     },
 ];
 
@@ -152,6 +187,8 @@ pub const NEVER_BLOCK: &[&str] = &[
     "smartscreen.microsoft.com",
     "checkappexec.microsoft.com",
     "urs.microsoft.com",
+    // A legitimate open-source GPS tracking project on the stalkerware list.
+    "traccar.org",
     "displaycatalog.mp.microsoft.com",
     "storeedgefd.dsx.mp.microsoft.com",
     "purchase.mp.microsoft.com",
@@ -212,6 +249,24 @@ fn parse_line(line: &str) -> Option<(bool, &str)> {
     Some((allow, host))
 }
 
+/// One line of a hosts-style list: a bare name, or an address that points
+/// nowhere (`0.0.0.0` or `127.0.0.1`) followed by the name. Comments and
+/// anything else are `None`.
+fn parse_hosts_line(line: &str) -> Option<&str> {
+    let line = line.split('#').next().unwrap_or("");
+    let mut words = line.split_whitespace();
+    let first = words.next()?;
+    let host = match words.next() {
+        None => first,
+        Some(host) if matches!(first, "0.0.0.0" | "127.0.0.1") => host,
+        Some(_) => return None,
+    };
+    if words.next().is_some() || host.parse::<std::net::IpAddr>().is_ok() || !valid_hostname(host) {
+        return None;
+    }
+    Some(host)
+}
+
 pub fn parse_blocklist(text: &str) -> Parsed {
     let mut out = Parsed::default();
     for (allow, host) in text.lines().filter_map(parse_line) {
@@ -245,6 +300,25 @@ pub fn parse_blocklist_hashes(text: &str) -> (Vec<u64>, Vec<u64>) {
         v.shrink_to_fit();
     }
     (block, allow)
+}
+
+/// Hashes (block, allow) of a list in any supported format, sorted and
+/// without duplicates. A hosts list has no exceptions.
+pub fn parse_hashes(format: Format, text: &str) -> (Vec<u64>, Vec<u64>) {
+    match format {
+        Format::Adblock => parse_blocklist_hashes(text),
+        Format::Hosts => {
+            let mut block: Vec<u64> = text
+                .lines()
+                .filter_map(parse_hosts_line)
+                .map(hash)
+                .collect();
+            block.sort_unstable();
+            block.dedup();
+            block.shrink_to_fit();
+            (block, Vec::new())
+        }
+    }
 }
 
 /// Hosts from `||host^`, `||host/` and `||host$` lines of a browser filter
@@ -472,6 +546,61 @@ mod tests {
         assert!(f.never.any_suffix("dl.delivery.mp.microsoft.com"));
     }
 
+    const HAGEZI: &str = "https://raw.githubusercontent.com/hagezi/";
+    const MALWARE_FILTER: &str = "https://malware-filter.gitlab.io/malware-filter/";
+    const ECHAP: &str = "https://raw.githubusercontent.com/AssoEchap/stalkerware-indicators/";
+
+    #[test]
+    fn sources_only_come_from_known_hosts() {
+        let hosts = [
+            "adguardteam.github.io",
+            "filters.adtidy.org",
+            "easylist.to",
+            "raw.githubusercontent.com",
+            "malware-filter.gitlab.io",
+        ];
+        for s in &SOURCES {
+            let host = s.url.strip_prefix("https://").unwrap().split('/').next();
+            assert!(hosts.contains(&host.unwrap()), "{}", s.id);
+        }
+    }
+
+    #[test]
+    fn extra_lists_sit_inside_the_existing_choices() {
+        let find = |id| SOURCES.iter().find(|s| s.id == id).unwrap();
+        let urlhaus = find("malware-filter-urlhaus");
+        assert_eq!(urlhaus.role, Role::Threats);
+        assert!(urlhaus.url.starts_with(MALWARE_FILTER));
+        let stalkerware = find("echap-stalkerware");
+        assert_eq!(stalkerware.role, Role::Threats);
+        assert_eq!(stalkerware.format, Format::Hosts);
+        assert!(stalkerware.url.starts_with(ECHAP));
+        let off = Config::default();
+        assert!(Role::Threats.wanted(&off) && !Role::Scam.wanted(&off));
+    }
+
+    #[test]
+    fn hosts_lines_are_read_strictly() {
+        let text =
+            "# comment\n\nBad.Example\n0.0.0.0 zero.example\n127.0.0.1\tloop.example # note\n\
+                    192.168.1.1\n10.0.0.1 other.example\n0.0.0.0 a.example extra\nnodots\n\
+                    <html>Not found</html>\n  spaced.example  \r\nbad_char!.example\n";
+        let (block, allow) = parse_hashes(Format::Hosts, text);
+        let mut expect: Vec<u64> = [
+            "bad.example",
+            "zero.example",
+            "loop.example",
+            "spaced.example",
+        ]
+        .iter()
+        .map(|n| hash(n))
+        .collect();
+        expect.sort_unstable();
+        assert_eq!(block, expect);
+        assert!(allow.is_empty());
+        assert!(parse_hashes(Format::Adblock, "bad.example\n").0.is_empty());
+    }
+
     #[test]
     fn sources_are_https_and_unique() {
         let mut ids: Vec<_> = SOURCES.iter().map(|s| s.id).collect();
@@ -489,9 +618,7 @@ mod tests {
             let weekly = weekly || matches!(s.role, Role::Adult | Role::Gambling);
             assert_eq!(s.refresh_days, if weekly { 7 } else { 1 }, "{}", s.id);
             if matches!(s.role, Role::Scam | Role::Popups) {
-                assert!(s
-                    .url
-                    .starts_with("https://raw.githubusercontent.com/hagezi/"));
+                assert!(s.url.starts_with(HAGEZI), "{}", s.id);
                 assert_eq!(s.max_bytes, 8 * MIB, "{}", s.id);
             }
         }

@@ -102,7 +102,7 @@ pub fn usable_entries(source: &Source, text: &str) -> usize {
     match source.role {
         Role::Dns | Role::WindowsTracking => lists::parse_blocklist(text).block.len(),
         Role::Threats | Role::Adult | Role::Gambling | Role::Scam | Role::Popups => {
-            lists::parse_blocklist_hashes(text).0.len()
+            lists::parse_hashes(source.format, text).0.len()
         }
         Role::TrackingClassifier | Role::AdClassifier => lists::parse_classifier(text).len(),
     }
@@ -119,8 +119,8 @@ fn text_of<'a>(lists: &'a BTreeMap<&str, String>, role: Role) -> Vec<&'a str> {
 pub fn rebuild(lists: &BTreeMap<&str, String>) -> Option<Filter> {
     let dns = text_of(lists, Role::Dns).into_iter().next();
     let windows = text_of(lists, Role::WindowsTracking).into_iter().next();
-    let threats = text_of(lists, Role::Threats).into_iter().next();
-    if dns.is_none() && windows.is_none() && threats.is_none() {
+    let threats = text_of(lists, Role::Threats);
+    if dns.is_none() && windows.is_none() && threats.is_empty() {
         return None;
     }
     // The threat feed and the family lists go in as hashes only.
@@ -131,39 +131,61 @@ pub fn rebuild(lists: &BTreeMap<&str, String>) -> Option<Filter> {
         tracking_classifiers: text_of(lists, Role::TrackingClassifier),
         ad_classifiers: text_of(lists, Role::AdClassifier),
     });
-    if let Some(text) = threats {
-        filter.dangerous = hashed(text);
+    if let Some(category) = hashed(lists, Role::Threats) {
+        filter.dangerous = category;
     }
-    if let Some(text) = text_of(lists, Role::Adult).into_iter().next() {
-        filter.adult = hashed(text);
+    if let Some(category) = hashed(lists, Role::Adult) {
+        filter.adult = category;
     }
-    if let Some(text) = text_of(lists, Role::Gambling).into_iter().next() {
-        filter.gambling = hashed(text);
+    if let Some(category) = hashed(lists, Role::Gambling) {
+        filter.gambling = category;
     }
-    if let Some(text) = text_of(lists, Role::Scam).into_iter().next() {
-        filter.scam = hashed(text);
+    if let Some(category) = hashed(lists, Role::Scam) {
+        filter.scam = category;
     }
-    if let Some(text) = text_of(lists, Role::Popups).into_iter().next() {
-        filter.popups = hashed(text);
+    if let Some(category) = hashed(lists, Role::Popups) {
+        filter.popups = category;
     }
+    filter.sources = SOURCES
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| lists.contains_key(s.id))
+        .fold(0, |bits, (i, _)| bits | 1 << i);
     Some(filter)
 }
 
-fn hashed(text: &str) -> Category {
-    let (block, allow) = lists::parse_blocklist_hashes(text);
-    Category {
+/// Every downloaded list of one role, merged into one set of hashes. None
+/// when no list of that role has been downloaded yet.
+fn hashed(lists: &BTreeMap<&str, String>, role: Role) -> Option<Category> {
+    let mut block = Vec::new();
+    let mut allow = Vec::new();
+    let mut found = false;
+    for source in SOURCES.iter().filter(|s| s.role == role) {
+        let Some(text) = lists.get(source.id) else {
+            continue;
+        };
+        found = true;
+        let (b, a) = lists::parse_hashes(source.format, text);
+        block.extend(b);
+        allow.extend(a);
+    }
+    found.then(|| Category {
         block: HashSet64::from_hashes(block),
         allow: HashSet64::from_hashes(allow),
-    }
+    })
 }
 
 /// A freshly built set replaces the one in use unless a switch that had
-/// domains would end up with none (a broken list); then the old set stays.
+/// domains would end up with none (a broken list) or a list it was built from
+/// is gone; then the old set stays.
 pub fn accept(candidate: Filter, previous: &Filter) -> Result<Filter> {
     let new = lists::counts(&candidate);
     let old = lists::counts(previous);
     if new.iter().zip(old).any(|(&n, o)| n == 0 && o > 0) {
         bail!("The new lists are missing entries");
+    }
+    if previous.sources & !candidate.sources != 0 {
+        bail!("A block list that was in use is missing");
     }
     Ok(candidate)
 }
@@ -320,6 +342,73 @@ mod tests {
     }
 
     #[test]
+    fn extra_lists_join_their_switch() {
+        let mut lists = BTreeMap::new();
+        lists.insert("adguard-dns", "||ads.example^\n".to_string());
+        lists.insert("hagezi-tif", "||evil.example^\n".to_string());
+        lists.insert("malware-filter-urlhaus", "||files.example^\n".to_string());
+        lists.insert(
+            "echap-stalkerware",
+            "# spy\nspy.example\n0.0.0.0 snoop.example\n".to_string(),
+        );
+        lists.insert("hagezi-fake", "||shop.example^\n".to_string());
+        let filter = rebuild(&lists).unwrap();
+        assert_eq!(lists::counts(&filter), [1, 1, 4, 0, 0, 1, 0]);
+        for name in [
+            "evil.example",
+            "files.example",
+            "www.spy.example",
+            "snoop.example",
+        ] {
+            assert!(filter.dangerous.blocks(name), "{name}");
+        }
+        assert!(filter.scam.blocks("shop.example"));
+        assert!(!filter.scam.blocks("spy.example"));
+    }
+
+    #[test]
+    fn a_missing_main_threat_list_does_not_shrink_the_set() {
+        let mut full = BTreeMap::new();
+        full.insert("adguard-dns", "||ads.example^\n".to_string());
+        let tif: String = (0..100).map(|i| format!("||bad{i}.example^\n")).collect();
+        full.insert("hagezi-tif", tif);
+        let previous = rebuild(&full).unwrap();
+        let mut partial = full.clone();
+        partial.remove("hagezi-tif");
+        partial.insert("echap-stalkerware", "spy.example\n".to_string());
+        let candidate = rebuild(&partial).unwrap();
+        assert!(accept(candidate, &previous).is_err());
+    }
+
+    #[test]
+    fn a_list_that_shrinks_on_its_own_is_still_accepted() {
+        let mut full = BTreeMap::new();
+        full.insert("adguard-dns", "||ads.example^\n".to_string());
+        let tif: String = (0..100).map(|i| format!("||bad{i}.example^\n")).collect();
+        full.insert("hagezi-tif", tif);
+        let previous = rebuild(&full).unwrap();
+        let mut smaller = full.clone();
+        smaller.insert("hagezi-tif", "||bad0.example^\n".to_string());
+        assert!(accept(rebuild(&smaller).unwrap(), &previous).is_ok());
+    }
+
+    #[test]
+    fn every_source_has_a_bit() {
+        assert!(SOURCES.len() <= 64);
+    }
+
+    #[test]
+    fn extra_list_alone_still_starts_protection_only_with_a_threat_list() {
+        let mut lists = BTreeMap::new();
+        lists.insert("echap-stalkerware", "spy.example\n".to_string());
+        let filter = rebuild(&lists).unwrap();
+        assert_eq!(lists::counts(&filter), [0, 0, 1, 0, 0, 0, 0]);
+        let mut lists = BTreeMap::new();
+        lists.insert("hagezi-fake", "||shop.example^\n".to_string());
+        assert!(rebuild(&lists).is_none());
+    }
+
+    #[test]
     fn scam_list_that_goes_missing_keeps_the_previous_set() {
         let mut good = BTreeMap::new();
         good.insert("adguard-dns", "||ads.example^\n".to_string());
@@ -352,6 +441,8 @@ mod tests {
             "hagezi-gambling",
             "hagezi-fake",
             "hagezi-popupads",
+            "malware-filter-urlhaus",
+            "echap-stalkerware",
         ] {
             assert_eq!(
                 usable_entries(source(id), "<html>Not found</html>"),
