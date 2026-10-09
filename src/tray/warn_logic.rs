@@ -53,8 +53,10 @@ pub fn host_from_address(value: &str) -> Option<String> {
 
 /// A Chromium window that could not look a site up is titled "site - Browser" (or with the
 /// profile name before the browser name).
+/// Edge follows the host with " and 2 more pages", in the person's language, when the window
+/// has more tabs, so only the first word counts.
 pub fn host_from_title(title: &str) -> Option<String> {
-    let first = title.split(" - ").next()?;
+    let first = title.split(" - ").next()?.split_whitespace().next()?;
     host_from_address(first)
 }
 
@@ -314,6 +316,21 @@ mod tests {
         ));
         assert!(!address_shows("https://notevil.example", "evil.example"));
         assert!(!address_shows("", "evil.example"));
+    }
+
+    #[test]
+    fn an_edge_window_with_more_tabs_still_shows_the_site() {
+        for title in [
+            "evil.example and 1 more page - Profile 1 - Microsoft\u{200b} Edge",
+            "evil.example und 2 weitere Seiten - Microsoft\u{200b} Edge",
+            "evil.example y 3 páginas más - Personal - Microsoft\u{200b} Edge",
+        ] {
+            assert!(title_shows(title, "evil.example"), "{title}");
+        }
+        assert!(!title_shows(
+            "Problem loading page - Mozilla Firefox",
+            "evil.example"
+        ));
     }
 
     #[test]
