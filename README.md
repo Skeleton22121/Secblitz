@@ -45,9 +45,19 @@ The installer is not code-signed yet, so Windows may show an unknown publisher w
 Get-FileHash .\secblitz-0.12.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-Tested on Windows 10 (version 22H2) and Windows 11, on regular and ARM PCs.
-
 Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to a newer version. Download and run the installer once; your settings, history and undo stay.
+
+## Supported Windows
+
+| Windows | Edition | Version | Processor | Supported | Tested |
+| --- | --- | --- | --- | --- | --- |
+| Windows 11 | Home | 24H2 | x64 | ✓ | Not yet |
+| Windows 11 | Pro | 25H2 | x64 | ✓ | Not yet |
+| Windows 11 | Enterprise | 24H2 | x64 | ✓ | ✓ 0.12.0 |
+| Windows 11 | Pro | 24H2 | ARM | ✓ | Not yet |
+| Windows 10 | Enterprise | 22H2 | x64 | ✓ | Not yet |
+
+Secblitz supports Windows 10 version 22H2 and Windows 11. Microsoft stopped free security updates for Windows 10 on 14 October 2025 and Secblitz cannot replace them, so moving to Windows 11, or Microsoft's Extended Security Updates, keeps a Windows 10 PC safest.
 
 ## Uninstall
 
@@ -86,7 +96,7 @@ Free code signing provided by SignPath.io, certificate by SignPath Foundation. R
 
 ## Security and contributing
 
-To report a security problem, see [SECURITY.md](SECURITY.md). To build Secblitz or send a change, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For how well Secblitz works with the keyboard and other ways of using a PC, see the [accessibility statement](docs/ACCESSIBILITY.md). For what is planned, see the [roadmap](docs/ROADMAP.md). To report a security problem, see [SECURITY.md](SECURITY.md). To build Secblitz or send a change, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
