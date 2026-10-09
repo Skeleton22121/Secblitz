@@ -23,7 +23,7 @@ STATIC = (
     "index.html", "404.html", "privacy.html", "code-signing.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json", "releases/stable-arm64.json",
     "assets/favicon.svg", "assets/preview-92912b03eb97.webp",
     "assets/app-home-light.webp", "assets/app-home-dark.webp",
-    "assets/app-protection-light.webp", "assets/app-protection-dark.webp", "assets/intro-909e4b4d6414.mp4",
+    "assets/app-protection-light.webp", "assets/app-protection-dark.webp", "assets/intro-ccc7b9cf66d0.mp4",
     "assets/fonts/ibm-plex-sans-400.woff2", "assets/fonts/ibm-plex-sans-500.woff2",
     "assets/fonts/ibm-plex-sans-600.woff2", "assets/fonts/IBMPlexSans-LICENSE.txt",
 )
@@ -31,7 +31,7 @@ FONT_LICENSES = ("assets/fonts/OFL.txt", "assets/fonts/LICENSE.txt")
 LEGACY_ASSETS = {
     "assets/poster.webp", "assets/preview-33b342ab21fb.webp", "assets/secblitz-demo.mp4", "assets/intro-6bb434a9c067.mp4",
     "assets/secblitz.svg", "assets/fonts/schibsted-grotesk-latin.woff2", "assets/fonts/OFL.txt",
-    "assets/intro-a18b68fac12f.mp4", "assets/intro-a8f1e9ace5d9.webm",
+    "assets/intro-a18b68fac12f.mp4", "assets/intro-a8f1e9ace5d9.webm", "assets/intro-909e4b4d6414.mp4",
     "assets/preview-541ff80cb74f.webp", "assets/home-dark-1215a72074e4.webp", "assets/preview-b081691b149a.webp",
 }
 HISTORICAL = (
