@@ -1838,7 +1838,8 @@ fn the_info_dialog_opens_closes_and_gives_way_to_escape_first() {
     let mut app = app();
     let sheet = widgets::info::InfoSheet::new("Title").text("What it is", "A plain sentence.");
     drop(app.update(Message::Info(Some(Box::new(sheet.clone())))));
-    assert_eq!(app.ctx.info.as_deref(), Some(&sheet));
+    let shown = app.ctx.info.as_deref().expect("the dialog is open");
+    assert_eq!((&shown.title, &shown.blocks), (&sheet.title, &sheet.blocks));
     drop(app.view());
     drop(app.update(Message::Info(None)));
     assert!(app.ctx.info.is_none());
