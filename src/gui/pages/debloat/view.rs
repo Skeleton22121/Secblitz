@@ -1124,10 +1124,12 @@ mod tests {
     #[test]
     fn removal_days_count_calendar_days_not_hours() {
         let day = 86_400;
-        assert_eq!(days_since(10 * day + 100, 9 * day + day - 100), 1);
-        assert_eq!(days_since(10 * day + 80_000, 10 * day + 100), 0);
-        assert_eq!(days_since(10 * day, 7 * day + 5), 3);
-        assert_eq!(days_since(5 * day, 6 * day), 0);
+        let now = 1_791_500_000;
+        let midnight = now - secblitz::clock::local_seconds(now) % day;
+        assert_eq!(days_since(midnight + 100, midnight - 100), 1);
+        assert_eq!(days_since(midnight + 40_000, midnight + 100), 0);
+        assert_eq!(days_since(midnight + 100, midnight - 2 * day - 100), 3);
+        assert_eq!(days_since(midnight, midnight + day), 0);
     }
 
     #[test]
