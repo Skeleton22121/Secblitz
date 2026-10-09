@@ -16,7 +16,7 @@ Check your Windows security settings, choose supported fixes, and retain origina
 
 The live release is at **[secblitz.lol](https://secblitz.lol/)**. [Download 0.5.0](https://secblitz.lol/downloads/secblitz-0.5.0-windows-x64-setup.exe), or use the local installer and checksums. The genuine published **0.4.3 to 0.5.0** update passed live acceptance, including monitor resumption, release-floor advancement and real-guide deferral.
 
-Tested platforms: Windows 11 Enterprise Evaluation x64 and, from 0.10.0, Windows 10 Enterprise Evaluation 22H2 (build 19045) x64. Windows binaries are unsigned by Authenticode; the updater authenticates signed Ed25519 release metadata separately. Neither is a claim of perfect protection.
+Supported platforms: Windows 10 version 22H2 and Windows 11, on x64 and ARM PCs. Microsoft stopped free security updates for Windows 10 on 14 October 2025 and Secblitz cannot replace them, so moving to Windows 11, or Microsoft's Extended Security Updates, keeps a Windows 10 PC safest. The supported and tested versions are listed in the README. Early testing used Windows 11 Enterprise Evaluation x64 and, from 0.10.0, Windows 10 Enterprise Evaluation 22H2 (build 19045) x64. Windows binaries are unsigned by Authenticode; the updater authenticates signed Ed25519 release metadata separately. Neither is a claim of perfect protection.
 
 ## Scan, choose, fix, undo
 
@@ -237,7 +237,7 @@ Native 0.5.0 acceptance passed **138 library + 66 CLI tests**, a separate real-r
 - Authentic prior release floor advanced to **0.5.0**, matching installer hash and publication timestamp **1791022530**, with SYSTEM/Administrators-only protection; current/busy checks left its bytes unchanged.
 - All 18 baseline states, original data and eight genuine journal copies unchanged; normal uninstall/cleanup restored the isolated lab's original state.
 
-Only Windows 11 Enterprise Evaluation build 26200.9457 in a disposable VM was used. Windows 10, broader Home/Pro/hardware/accessibility coverage and complete original-standard-user broker execution remain untested. Authenticode signing, physical power-loss durability and comprehensive prevention efficacy are not established.
+This section was tested on Windows 11 Enterprise Evaluation build 26200.9457 in a disposable VM. Broader Home/Pro/hardware/accessibility coverage and complete original-standard-user broker execution remain untested. Authenticode signing, physical power-loss durability and comprehensive prevention efficacy are not established.
 
 The public homepage is current **0.5.0**; its actual **0.3.1** Remotion/Windows footage remains illustrative, muted/looping, with no captions or playback controls. Media uses content-hashed public names; source/provenance/test code stays outside allowlisted publication. The recording is not current updater evidence or six-language runtime coverage.
 
