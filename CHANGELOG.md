@@ -9,7 +9,6 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
-### Added
 - An accessibility statement says what works with the keyboard today and what does not yet.
 - The README lists which Windows versions Secblitz supports and has been tested on.
 - Each release comes with a parts list of the code it is built from.
@@ -18,6 +17,7 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 ### Changed
 - The roadmap is now a short, plain list of what is planned.
 - Secblitz no longer checks your PC on its own the first time it opens.
+- Details and dialogs show one line per point; open a point to read more.
 
 ## [0.12.0] - 2026-10-09
 

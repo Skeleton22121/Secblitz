@@ -9,6 +9,7 @@ use crate::gui::widgets::controls::{fade_below, more_below, scroll_style, scroll
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::handoff;
 use crate::gui::widgets::info::InfoSheet;
+use crate::gui::widgets::point::{self, Opened, Words};
 use crate::gui::widgets::{self, progress, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
@@ -48,6 +49,7 @@ pub struct State {
     /// The person scrolled the step list themselves, so it stops following.
     steps_held: bool,
     result_view: Option<scrollable::Viewport>,
+    points: Opened,
 }
 
 /// The step list gliding to keep the running step in its middle.
@@ -98,6 +100,7 @@ impl Default for State {
             follow: None,
             steps_held: false,
             result_view: None,
+            points: Opened::default(),
         }
     }
 }
@@ -193,6 +196,7 @@ enum Stage {
 #[derive(Debug, Clone)]
 pub enum Msg {
     PickAddon(String),
+    Point(String),
     Confirm,
     Cancel,
     Done,
@@ -290,6 +294,7 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
         return Task::none();
     }
     ctx.info = None;
+    state.points.clear();
     state.chosen = false;
     state.together = false;
     state.addons = chosen
@@ -354,6 +359,7 @@ pub fn open_undo_some(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Tas
     }
     let (chosen, together) = flow::with_dependents(chosen, &undoable);
     ctx.info = None;
+    state.points.clear();
     state.chosen = true;
     state.together = together;
     state.plan = chosen.iter().map(|id| undo_row(ctx, id)).collect();
@@ -369,6 +375,7 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         return Task::none();
     }
     ctx.info = None;
+    state.points.clear();
     state.chosen = false;
     state.together = false;
     state.plan = ctx
@@ -400,6 +407,7 @@ pub fn escape(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
 }
 
 fn close(state: &mut State) {
+    state.points.clear();
     state.addons.clear();
     state.addons_picked.clear();
     state.held = None;
@@ -424,6 +432,12 @@ fn bar_target(planned: usize, finished: usize, verifying: bool) -> f32 {
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
+        Msg::Point(key) => {
+            if matches!(state.stage, Stage::Review { .. } | Stage::Result { .. }) {
+                state.points.toggle(&key);
+            }
+            Task::none()
+        }
         Msg::PickAddon(key) => {
             if matches!(state.stage, Stage::Review { undo: false, .. })
                 && state.addons.iter().any(|a| a.key == key)
@@ -763,6 +777,7 @@ fn finish(state: &mut State, undo: bool, summary: Summary, technical: Vec<String
 }
 
 fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<String>) {
+    state.points.clear();
     state.now = Instant::now();
     state.since = state.now;
     state.bar = None;
@@ -967,15 +982,18 @@ fn footer<'a>(buttons: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     r.into()
 }
 
-fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a, Message> {
+fn plan_list<'a>(
+    ctx: &Ctx,
+    plan: &[PlanRow],
+    restart_label: &str,
+    opened: &Opened,
+) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut list = column![].spacing(theme::S3);
     for r in plan {
-        let mut line = row![row_text(p, r.name.clone(), r.line.clone())]
-            .spacing(theme::S3)
-            .align_y(Alignment::Center);
+        let mut trailing = Vec::new();
         if r.restart {
-            line = line.push(widgets::tag(
+            trailing.push(widgets::tag(
                 p,
                 Some(Icon::Restart),
                 restart_label.to_owned(),
@@ -984,9 +1002,18 @@ fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a
         let sheet = widgets::info::for_check(ctx, r.name.clone(), &r.id, false)
             .map(|s| s.without(&[r.line.as_deref().unwrap_or_default()]));
         if let Some(info) = widgets::info::button(ctx, sheet) {
-            line = line.push(info);
+            trailing.push(info);
         }
-        let mut item = column![line].spacing(theme::S2);
+        let key = format!("plan:{}", r.id);
+        let mut item = column![point::point(
+            p,
+            row_text(p, r.name.clone(), None),
+            trailing,
+            r.line.as_ref().map(|l| widgets::small(p, l.clone())),
+            opened.has(&key),
+            Message::Fix(Msg::Point(key)),
+        )]
+        .spacing(theme::S2);
         if r.managed {
             item = item.push(note(
                 p,
@@ -1069,7 +1096,7 @@ fn review_view<'a>(
                 "We'll put these settings back the way they were:"
             }),
         ));
-        c = c.push(plan_list(ctx, &state.plan, &restart_label));
+        c = c.push(plan_list(ctx, &state.plan, &restart_label, &state.points));
         if state.together {
             c = c.push(widgets::small(
                 p,
@@ -1100,14 +1127,14 @@ fn review_view<'a>(
                 p,
                 ctx.t("We'll put these settings back the way they were:"),
             ));
-            c = c.push(plan_list(ctx, &state.plan, &restart_label));
+            c = c.push(plan_list(ctx, &state.plan, &restart_label, &state.points));
         }
         c = c.push(widgets::small(
             p,
             ctx.t("Anything you changed yourself since then is left as it is."),
         ));
     } else {
-        c = c.push(plan_list(ctx, &state.plan, &restart_label));
+        c = c.push(plan_list(ctx, &state.plan, &restart_label, &state.points));
         if !state.addons.is_empty() && ids.iter().any(|id| id == ADDONS) {
             c = c.push(addon_picker(state, ctx));
         }
@@ -1416,11 +1443,29 @@ fn result_view<'a>(
             }),
             s.not_done
                 .iter()
-                .map(|(id, reason)| row_text(p, ctx.lang.control(id), Some(ctx.t(reason))))
+                .map(|(id, reason)| {
+                    let key = format!("fail:{id}");
+                    let reason = ctx.t(reason);
+                    let (first, rest) = point::first_sentence(&reason);
+                    point::point(
+                        p,
+                        row_text(p, ctx.lang.control(id), Some(first.to_owned())),
+                        Vec::new(),
+                        rest.map(|r| widgets::small(p, r.to_owned())),
+                        state.points.has(&key),
+                        Message::Fix(Msg::Point(key)),
+                    )
+                })
                 .collect(),
         ));
     } else if let Some(why) = &s.failure {
-        body = body.push(widgets::muted(p, ctx.t(why)));
+        body = body.push(point::text_point(
+            p,
+            &ctx.t(why),
+            Words::Muted,
+            state.points.has("failure"),
+            Message::Fix(Msg::Point("failure".to_owned())),
+        ));
     } else if s.kind == SummaryKind::Failed && s.done.is_empty() {
         body = body.push(widgets::muted(
             p,
@@ -1592,5 +1637,28 @@ mod tests {
         assert!((bar_target(3, 9, false) - 0.75).abs() < 1e-6);
         assert!((bar_target(3, 0, true) - 0.75).abs() < 1e-6);
         assert!(bar_target(0, 0, true) <= 0.0 + f32::EPSILON);
+    }
+
+    #[test]
+    fn open_points_reset_when_the_window_closes() {
+        let (mut app, _) = crate::gui::App::new(crate::gui::Options {
+            lang: crate::i18n::Lang::En,
+            broker: None,
+            start: None,
+        });
+        let mut state = State::default();
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        assert!(!state.points.has("plan:a"), "nothing opens while closed");
+        state.stage = Stage::Review {
+            ids: Vec::new(),
+            undo: false,
+        };
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        assert!(state.points.has("plan:a"));
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        assert!(!state.points.has("plan:a"));
+        let _ = update(&mut state, Msg::Point("plan:a".into()), &mut app.ctx);
+        let _ = update(&mut state, Msg::Cancel, &mut app.ctx);
+        assert!(!state.points.has("plan:a"));
     }
 }

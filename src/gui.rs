@@ -244,6 +244,7 @@ pub enum Message {
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
     Info(Option<Box<widgets::info::InfoSheet>>),
+    InfoPoint(String),
     DismissToast,
     ToastExpire(u32),
     ToastGone,
@@ -601,8 +602,17 @@ impl App {
                     iced::window::close(id)
                 }
             }
-            Message::Info(sheet) => {
+            Message::Info(mut sheet) => {
+                if let Some(sheet) = sheet.as_mut() {
+                    sheet.open.open("0");
+                }
                 self.ctx.info = sheet;
+                Task::none()
+            }
+            Message::InfoPoint(key) => {
+                if let Some(sheet) = self.ctx.info.as_mut() {
+                    sheet.open.toggle(&key);
+                }
                 Task::none()
             }
             Message::Escape => {
