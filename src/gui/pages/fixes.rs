@@ -1487,8 +1487,7 @@ pub fn subscription(ctx: &Ctx) -> Subscription<Message> {
 }
 
 pub fn fills_window(ctx: &Ctx) -> bool {
-    ctx.engine_error.is_none()
-        && (ctx.full_check().is_some() || (ctx.report.is_none() && ctx.check_error.is_none()))
+    ctx.engine_error.is_none() && ctx.full_check().is_some()
 }
 
 pub fn view<'a>(
@@ -1558,7 +1557,7 @@ pub fn view<'a>(
         if let Some(error) = &ctx.check_error {
             return page(Vec::new(), body.push(check_failed(ctx, error)));
         }
-        return page(Vec::new(), body);
+        return page(Vec::new(), body.push(not_checked(ctx)));
     };
 
     ensure(state, ctx, report);
@@ -1837,6 +1836,27 @@ fn error_details<'a>(ctx: &Ctx, title: &str, error: &str) -> Element<'a, Message
         ctx.t(crate::app::flow::plain_failure(error)),
     );
     widgets::info::link(ctx, ctx.t("More details"), Some(sheet)).unwrap_or_else(nothing)
+}
+
+fn not_checked<'a>(ctx: &Ctx) -> Element<'a, Message> {
+    let p = ctx.palette;
+    widgets::region(
+        p,
+        widgets::empty_state(
+            p,
+            Icon::ShieldCheck,
+            ctx.t("Not checked yet"),
+            ctx.t("Check your PC to see what's protected. Nothing is changed."),
+            Some(widgets::action(
+                p,
+                ButtonKind::Primary,
+                ctx.t("Check my PC"),
+                Some(Icon::Refresh),
+                (!ctx.busy).then_some(Message::CheckNow),
+            )),
+        ),
+    )
+    .into()
 }
 
 fn check_failed<'a>(ctx: &Ctx, error: &str) -> Element<'a, Message> {

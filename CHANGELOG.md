@@ -9,6 +9,12 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+- A short welcome on first start explains what Secblitz does and asks before the first check.
+
+### Changed
+- Secblitz no longer checks your PC on its own the first time it opens.
+
 ## [0.12.0] - 2026-10-09
 
 ### Added
