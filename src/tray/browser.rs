@@ -2,7 +2,10 @@
 //! it is on screen, and the two keys sent to it.
 use super::warn_logic::{self, Browser, Rect};
 use std::{
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -219,13 +222,22 @@ pub fn reload(window: usize) -> bool {
 /// Firefox shows a translated "Problem loading page" as its title, so its address bar is read
 /// through UI Automation, on a thread of its own that is given up on after `limit`.
 pub fn firefox_address(window: usize, limit: Duration) -> Option<String> {
+    // A read stuck inside Firefox must not pile up more threads behind it.
+    static READING: AtomicBool = AtomicBool::new(false);
+    if READING.swap(true, Ordering::AcqRel) {
+        return None;
+    }
     let (tx, rx) = mpsc::channel();
-    thread::Builder::new()
+    let started = thread::Builder::new()
         .name("address-bar".into())
         .spawn(move || {
             let _ = tx.send(read_address(window));
-        })
-        .ok()?;
+            READING.store(false, Ordering::Release);
+        });
+    if started.is_err() {
+        READING.store(false, Ordering::Release);
+        return None;
+    }
     rx.recv_timeout(limit).ok().flatten()
 }
 

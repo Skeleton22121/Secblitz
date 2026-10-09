@@ -9,7 +9,7 @@ use std::{
     os::windows::ffi::OsStrExt,
     ptr::{null, null_mut},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
     time::{Duration, Instant},
@@ -90,7 +90,15 @@ struct Tray {
 }
 /// The one warning panel that may be open, and the blocks waiting for a balloon because no
 /// browser showed the site in time. Both are used from the detection threads.
-static PANEL: Mutex<Option<std::process::Child>> = Mutex::new(None);
+static PANEL: Mutex<Option<OpenPanel>> = Mutex::new(None);
+/// Counts the blocks being looked for, so only the newest one may open a panel.
+static NEWEST: AtomicU64 = AtomicU64::new(0);
+
+struct OpenPanel {
+    child: std::process::Child,
+    window: usize,
+    site: String,
+}
 static LATER: Mutex<Vec<Notice>> = Mutex::new(Vec::new());
 static CHANGE_QUEUED: AtomicBool = AtomicBool::new(false);
 
@@ -328,8 +336,14 @@ fn start_panel(lang: Lang, notice: &Notice, window: usize) -> bool {
         return false;
     };
     if let Some(mut old) = panel.take() {
-        let _ = old.kill();
-        let _ = old.wait();
+        if matches!(old.child.try_wait(), Ok(None)) {
+            if old.window == window && old.site == notice.site {
+                *panel = Some(old);
+                return true;
+            }
+            let _ = old.child.kill();
+        }
+        let _ = old.child.wait();
     }
     match std::process::Command::new(exe)
         .args(["--lang", lang.code()])
@@ -338,7 +352,11 @@ fn start_panel(lang: Lang, notice: &Notice, window: usize) -> bool {
         .spawn()
     {
         Ok(child) => {
-            *panel = Some(child);
+            *panel = Some(OpenPanel {
+                child,
+                window,
+                site: notice.site.clone(),
+            });
             true
         }
         Err(_) => false,
@@ -346,20 +364,26 @@ fn start_panel(lang: Lang, notice: &Notice, window: usize) -> bool {
 }
 
 /// Gives the browser a few seconds to show the blocked site, then either starts the warning
-/// panel over it or hands the block back to the tray for the balloon.
+/// panel over it or hands the block back to the tray for the balloon. A newer block ends the
+/// search for an older one.
 fn look_for_browser(hwnd: HWND, lang: Lang, notice: Notice) {
     let hwnd = hwnd as usize;
+    let mine = NEWEST.fetch_add(1, Ordering::AcqRel) + 1;
     let _ = std::thread::Builder::new()
         .name("browser-match".into())
         .spawn(move || {
             let until = Instant::now() + MATCH_FOR;
             loop {
-                let window = browser::foreground();
-                if window != 0
-                    && tab_shows(window, &notice.site)
-                    && start_panel(lang, &notice, window)
-                {
+                if NEWEST.load(Ordering::Acquire) != mine {
                     return;
+                }
+                let window = browser::foreground();
+                if window != 0 && tab_shows(window, &notice.site) {
+                    if NEWEST.load(Ordering::Acquire) == mine && start_panel(lang, &notice, window)
+                    {
+                        return;
+                    }
+                    break;
                 }
                 if Instant::now() >= until {
                     break;
@@ -375,7 +399,7 @@ fn look_for_browser(hwnd: HWND, lang: Lang, notice: Notice) {
 }
 
 /// Wakes the tray whenever something in the web protection folder is written, so a block is
-/// noticed within a moment instead of at the next poll.
+/// noticed within a moment instead of at the next poll. The thread ends with the tray process.
 fn watch_folder(hwnd: HWND) {
     let hwnd = hwnd as usize;
     let _ = std::thread::Builder::new()
@@ -397,8 +421,10 @@ fn watch_folder(hwnd: HWND) {
                     // SAFETY: `handle` is the live notification handle created above.
                     unsafe {
                         while WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0 {
-                            if !CHANGE_QUEUED.swap(true, Ordering::AcqRel) {
-                                PostMessageW(hwnd as HWND, FOLDER_CHANGED, 0, 0);
+                            if !CHANGE_QUEUED.swap(true, Ordering::AcqRel)
+                                && PostMessageW(hwnd as HWND, FOLDER_CHANGED, 0, 0) == 0
+                            {
+                                CHANGE_QUEUED.store(false, Ordering::Release);
                             }
                             std::thread::sleep(Duration::from_millis(100));
                             if FindNextChangeNotification(handle) == 0 {

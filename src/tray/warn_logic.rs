@@ -62,8 +62,13 @@ fn bare(host: &str) -> &str {
     host.strip_prefix("www.").unwrap_or(host)
 }
 
-pub fn same_site(a: &str, b: &str) -> bool {
-    a == b || bare(a) == bare(b)
+/// `host` is what the tab shows; the blocked `site` may be its parent domain.
+pub fn same_site(host: &str, site: &str) -> bool {
+    host == site
+        || bare(host) == bare(site)
+        || host
+            .strip_suffix(bare(site))
+            .is_some_and(|front| front.ends_with('.'))
 }
 
 pub fn title_shows(title: &str, site: &str) -> bool {
@@ -298,13 +303,14 @@ mod tests {
         ));
         assert!(address_shows("https://www.evil.example/a", "evil.example"));
         assert!(!title_shows("evil.example - Google Chrome", "good.example"));
-        assert!(!title_shows(
-            "sub.evil.example - Google Chrome",
+        assert!(title_shows(
+            "login.evil.example - Google Chrome",
             "evil.example"
         ));
+        assert!(address_shows("https://a.b.evil.example/x", "evil.example"));
         assert!(!title_shows(
-            "www.www.evil.example - Google Chrome",
-            "evil.example"
+            "evil.example - Google Chrome",
+            "login.evil.example"
         ));
         assert!(!address_shows("https://notevil.example", "evil.example"));
         assert!(!address_shows("", "evil.example"));

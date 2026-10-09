@@ -24,6 +24,8 @@ const FOLLOW_EVERY: Duration = Duration::from_millis(150);
 const ADDRESS_EVERY: Duration = Duration::from_secs(1);
 const ADDRESS_WAIT: Duration = Duration::from_millis(1500);
 const SITE_SHOWN: usize = 36;
+/// Not the app's own window title, which the launcher uses to find a running Secblitz.
+const PANEL_TITLE: &str = "Secblitz warning";
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -34,6 +36,7 @@ enum Message {
     Allow,
     Allowed(AllowOnce),
     Address(Option<String>),
+    Sent(bool),
     Close,
 }
 
@@ -44,6 +47,7 @@ enum Phase {
     Waiting,
     Declined,
     Failed,
+    NoBrowser,
 }
 
 struct Panel {
@@ -51,7 +55,6 @@ struct Panel {
     lang: Lang,
     palette: Palette,
     browser: Browser,
-    first_title: String,
     phase: Phase,
     waiting_since: Instant,
     panel: Option<usize>,
@@ -92,7 +95,7 @@ fn show(args: WarnArgs, browser: Browser, lang: Lang) -> anyhow::Result<()> {
         Panel::update,
         Panel::view,
     )
-    .title(|_: &Panel| "Secblitz".to_owned())
+    .title(|_: &Panel| PANEL_TITLE.to_owned())
     .theme(|panel: &Panel| panel.palette.theme())
     .subscription(Panel::subscription)
     .window_size(size)
@@ -197,7 +200,6 @@ fn system_mode() -> Mode {
 impl Panel {
     fn new(args: WarnArgs, browser: Browser, lang: Lang) -> (Self, Task<Message>) {
         let panel = Panel {
-            first_title: sys::title(args.window),
             args,
             lang,
             palette: Palette::of(system_mode()),
@@ -248,9 +250,7 @@ impl Panel {
             Message::GoBack if self.phase != Phase::Leaving && self.phase != Phase::Waiting => {
                 self.phase = Phase::Leaving;
                 let window = self.args.window;
-                Task::perform(super::blocking(move || sys::go_back(window)), |_| {
-                    Message::Close
-                })
+                Task::perform(super::blocking(move || sys::go_back(window)), Message::Sent)
             }
             Message::Allow if self.phase != Phase::Leaving && self.phase != Phase::Waiting => {
                 self.phase = Phase::Waiting;
@@ -264,9 +264,7 @@ impl Panel {
             Message::Allowed(AllowOnce::Done) => {
                 self.phase = Phase::Leaving;
                 let window = self.args.window;
-                Task::perform(super::blocking(move || sys::reload(window)), |_| {
-                    Message::Close
-                })
+                Task::perform(super::blocking(move || sys::reload(window)), Message::Sent)
             }
             Message::Allowed(AllowOnce::Declined) => {
                 self.phase = Phase::Declined;
@@ -283,18 +281,23 @@ impl Panel {
                 }
                 Task::none()
             }
-            Message::Close => iced::exit(),
+            Message::Sent(true) | Message::Close => iced::exit(),
+            Message::Sent(false) => {
+                self.phase = Phase::NoBrowser;
+                Task::none()
+            }
             Message::GoBack | Message::Allow => Task::none(),
         }
     }
 
     /// The tab still shows the blocked site. Firefox titles its error page in the person's
-    /// language, so for Firefox a changed title or address bar means the person moved on.
+    /// language and changes the title while loading, so its address bar is checked instead.
     fn still_there(&self) -> bool {
-        let title = sys::title(self.args.window);
         match self.browser {
-            Browser::Chromium => warn_logic::title_shows(&title, &self.args.site),
-            Browser::Firefox => title == self.first_title,
+            Browser::Chromium => {
+                warn_logic::title_shows(&sys::title(self.args.window), &self.args.site)
+            }
+            Browser::Firefox => true,
         }
     }
 
@@ -309,7 +312,7 @@ impl Panel {
         let escape = sys::escape_down();
         let pressed = escape && !self.escape_was_down;
         self.escape_was_down = escape;
-        if pressed && (front == window || ours) && self.phase != Phase::Waiting {
+        if pressed && (front == window || ours) {
             return iced::exit();
         }
         if near != self.shown {
@@ -470,6 +473,11 @@ impl Panel {
             Phase::Declined => small(self.lang.t("Nothing changed."), p.text_muted).into(),
             Phase::Failed => small(
                 self.lang.t("Couldn't let this site through. Open Secblitz, then Web protection, to try again."),
+                p.bad_text,
+            )
+            .into(),
+            Phase::NoBrowser => small(
+                self.lang.t("Secblitz couldn't reach the browser. Use its own back or reload button."),
                 p.bad_text,
             )
             .into(),
@@ -692,12 +700,13 @@ mod tests {
     }
 
     const LANGS: [Lang; 6] = [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It];
-    const PHASES: [Phase; 5] = [
+    const PHASES: [Phase; 6] = [
         Phase::Ready,
         Phase::Leaving,
         Phase::Waiting,
         Phase::Declined,
         Phase::Failed,
+        Phase::NoBrowser,
     ];
 
     #[test]
@@ -751,6 +760,7 @@ mod tests {
                 "Letting you through…",
                 "Nothing changed.",
                 "Couldn't let this site through. Open Secblitz, then Web protection, to try again.",
+                "Secblitz couldn't reach the browser. Use its own back or reload button.",
             ] {
                 let text = lang.t(key);
                 assert!(!text.contains('\u{2014}'), "{key}");
@@ -761,6 +771,11 @@ mod tests {
             let sentence = lang.t(sentence_key(Kind::Scam));
             assert!(sentence.contains("{site}"));
         }
+    }
+
+    #[test]
+    fn the_panel_window_is_not_titled_like_the_app() {
+        assert_ne!(PANEL_TITLE, "Secblitz");
     }
 
     #[test]
