@@ -2,7 +2,7 @@
 //! zone marks where the current page starts.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
-use iced::advanced::widget::operation::{self, Focusable, Operation, Outcome};
+use iced::advanced::widget::operation::{self, Focusable, Operation, Outcome, Scrollable};
 use iced::advanced::widget::{tree, Id, Tree};
 use iced::advanced::{overlay, Clipboard, Shell, Widget};
 use iced::keyboard::{self, key::Named};
@@ -213,9 +213,39 @@ pub fn target(stops: &[Stop], step: Move) -> Option<usize> {
     }
 }
 
+/// A scrolled area as an operation sees it: where it is, how tall its content is, how far down it is.
+#[derive(Debug, Clone, Copy)]
+struct Area {
+    view: Rectangle,
+    content: Rectangle,
+    offset: f32,
+}
+
+const REVEAL_MARGIN: f32 = 24.0;
+
+/// How far to scroll `area` so `control` is in view, or `None` when it already is.
+fn reveal(control: Rectangle, area: Area) -> Option<f32> {
+    let top = area.view.y + area.offset;
+    let bottom = top + area.view.height;
+    let wanted = if control.y < top + REVEAL_MARGIN {
+        control.y - area.view.y - REVEAL_MARGIN
+    } else if control.y + control.height > bottom - REVEAL_MARGIN {
+        control.y + control.height - area.view.y - area.view.height + REVEAL_MARGIN
+    } else {
+        return None;
+    };
+    let most = (area.content.height - area.view.height).max(0.0);
+    let to = wanted.clamp(0.0, most);
+    ((to - area.offset).abs() >= 1.0).then_some(to)
+}
+
 struct Survey {
     step: Move,
     stops: Vec<Stop>,
+    places: Vec<(Rectangle, Option<usize>)>,
+    areas: Vec<Area>,
+    entering: Option<usize>,
+    inside: Vec<Option<usize>>,
     windows: usize,
     open: Vec<Option<usize>>,
     pages: usize,
@@ -223,14 +253,35 @@ struct Survey {
 
 impl<T: 'static> Operation<T> for Survey {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+        // A scrolled area reports itself just before it walks its content.
+        let area = self.entering.take();
+        self.inside.push(area);
         operate(self);
+        self.inside.pop();
     }
-    fn focusable(&mut self, _: Option<&Id>, _: Rectangle, state: &mut dyn Focusable) {
+    fn scrollable(
+        &mut self,
+        _: Option<&Id>,
+        view: Rectangle,
+        content: Rectangle,
+        translation: Vector,
+        _: &mut dyn Scrollable,
+    ) {
+        self.areas.push(Area {
+            view,
+            content,
+            offset: translation.y,
+        });
+        self.entering = Some(self.areas.len() - 1);
+    }
+    fn focusable(&mut self, _: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
         self.stops.push(Stop {
             window: self.open.iter().rev().find_map(|w| *w),
             page: self.pages > 0,
             focused: state.is_focused(),
         });
+        self.places
+            .push((bounds, self.inside.iter().rev().find_map(|a| *a)));
     }
     fn custom(&mut self, _: Option<&Id>, _: Rectangle, state: &mut dyn Any) {
         match state.downcast_ref::<Mark>() {
@@ -247,9 +298,18 @@ impl<T: 'static> Operation<T> for Survey {
         }
     }
     fn finish(&self) -> Outcome<T> {
+        let target = target(&self.stops, self.step);
+        let scroll = target
+            .and_then(|t| self.places.get(t))
+            .and_then(|(bounds, area)| {
+                let area = (*area)?;
+                Some((area, reveal(*bounds, *self.areas.get(area)?)?))
+            });
         Outcome::Chain(Box::new(Apply {
-            target: target(&self.stops, self.step),
+            target,
             at: 0,
+            scroll,
+            areas: 0,
         }))
     }
 }
@@ -257,11 +317,29 @@ impl<T: 'static> Operation<T> for Survey {
 struct Apply {
     target: Option<usize>,
     at: usize,
+    scroll: Option<(usize, f32)>,
+    areas: usize,
 }
 
 impl<T: 'static> Operation<T> for Apply {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
         operate(self);
+    }
+    fn scrollable(
+        &mut self,
+        _: Option<&Id>,
+        _: Rectangle,
+        _: Rectangle,
+        _: Vector,
+        state: &mut dyn Scrollable,
+    ) {
+        if let Some((_, y)) = self.scroll.filter(|(area, _)| *area == self.areas) {
+            state.scroll_to(operation::scrollable::AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            });
+        }
+        self.areas += 1;
     }
     fn focusable(&mut self, _: Option<&Id>, _: Rectangle, state: &mut dyn Focusable) {
         if self.target == Some(self.at) {
@@ -278,6 +356,10 @@ pub fn step<T: Send + 'static>(step: Move) -> impl Operation<T> {
     Survey {
         step,
         stops: Vec::new(),
+        places: Vec::new(),
+        areas: Vec::new(),
+        entering: None,
+        inside: Vec::new(),
         windows: 0,
         open: Vec::new(),
         pages: 0,
@@ -389,5 +471,39 @@ mod tests {
             stop(None, true, false),
         ];
         assert_eq!(target(&clicked, Move::PageStart), Some(2));
+    }
+
+    fn area(offset: f32) -> Area {
+        Area {
+            view: Rectangle::new(iced::Point::new(0.0, 100.0), Size::new(800.0, 400.0)),
+            content: Rectangle::new(iced::Point::new(0.0, 100.0), Size::new(800.0, 1500.0)),
+            offset,
+        }
+    }
+
+    fn at(y: f32) -> Rectangle {
+        Rectangle::new(iced::Point::new(20.0, y), Size::new(100.0, 30.0))
+    }
+
+    #[test]
+    fn a_control_in_view_does_not_scroll() {
+        assert_eq!(reveal(at(300.0), area(0.0)), None);
+        assert_eq!(reveal(at(700.0), area(400.0)), None);
+    }
+
+    #[test]
+    fn a_control_below_the_view_scrolls_up_just_enough() {
+        assert_eq!(reveal(at(900.0), area(0.0)), Some(454.0));
+    }
+
+    #[test]
+    fn a_control_above_the_view_scrolls_down_to_it() {
+        assert_eq!(reveal(at(150.0), area(600.0)), Some(26.0));
+        assert_eq!(reveal(at(110.0), area(600.0)), Some(0.0));
+    }
+
+    #[test]
+    fn scrolling_never_goes_past_the_end() {
+        assert_eq!(reveal(at(1590.0), area(0.0)), Some(1100.0));
     }
 }
