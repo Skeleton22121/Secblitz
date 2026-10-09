@@ -434,10 +434,7 @@ fn setting_row<'a>(state: &'a State, ctx: &'a Ctx, setting: Setting) -> Option<E
         Cell::Known(Reply::NeedsAttention) => {
             (ctx.t("Off"), widgets::switch(p, false, Some(toggle)))
         }
-        Cell::Known(Reply::SafeByUs) => (
-            ctx.t("On. You can switch it back."),
-            widgets::switch(p, true, Some(toggle)),
-        ),
+        Cell::Known(Reply::SafeByUs) => (ctx.t("On"), widgets::switch(p, true, Some(toggle))),
         Cell::Known(reply) => (
             ctx.t("On"),
             widgets::switch(p, is_on(reply), None::<fn(bool) -> Message>),
@@ -594,7 +591,7 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
                 p,
                 Some(Icon::Package),
                 name,
-                Some(ctx.t("Updating… The program may close for a moment.")),
+                Some(ctx.t("Updating…")),
                 space::horizontal().width(0),
                 None,
             ),
@@ -650,7 +647,7 @@ fn app_row<'a>(state: &'a State, ctx: &'a Ctx, i: usize, busy: bool) -> El<'a> {
             p,
             Some(Icon::Package),
             name,
-            Some(ctx.t("A newer version is available.")),
+            None,
             secondary(p, ctx.t("Update"), (!busy).then_some(Msg::Update(i))),
             None,
         ),

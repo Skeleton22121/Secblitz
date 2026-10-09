@@ -177,10 +177,7 @@ fn switch_row<'a>(state: &State, ctx: &Ctx, setting: Setting) -> Option<El<'a>> 
         Cell::Known(Reply::NeedsAttention) => {
             (ctx.t("Off"), widgets::switch(p, false, Some(toggle)))
         }
-        Cell::Known(Reply::SafeByUs) => (
-            ctx.t("On. You can switch it back."),
-            widgets::switch(p, true, Some(toggle)),
-        ),
+        Cell::Known(Reply::SafeByUs) => (ctx.t("On"), widgets::switch(p, true, Some(toggle))),
         Cell::Known(_) => (
             ctx.t("On"),
             widgets::switch(p, true, None::<fn(bool) -> Message>),
@@ -235,7 +232,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     widgets::group(
         p,
         ctx.t("Ads and tips"),
-        Some(ctx.t("Hide the tips, suggestions and ads Windows shows you. Nothing changes until you switch one on, and you can switch it back any time. These switches are only for your account.")),
+        Some(ctx.t("Nothing changes until you switch one on. You can switch it back any time, and it only affects your account.")),
         None,
         rows,
     )

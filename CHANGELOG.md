@@ -20,6 +20,9 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 - The approval window drops the lead-in line and the long "put back" sentence.
 ||||||| parent of 243f776a (Shorten the text on Home and the Web page)
 - Home, the Web page and their lists have shorter lines, with no sentence that repeats a heading or the line above it.
+||||||| parent of 2206f019 (Say each thing once on the apps, ads and tips, and app access pages)
+- Clean up apps, Ads and tips, and app updates say each thing once, with shorter lines under headings and rows.
+- Camera, microphone and location switches no longer repeat the same advice on every page.
 
 ## [0.11.0] - 2026-10-08
 

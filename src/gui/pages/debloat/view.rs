@@ -19,9 +19,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let header = widgets::page_header(
         p,
         ctx.t("Clean up apps"),
-        Some(ctx.t(
-            "Remove apps that came with Windows but you don't need. Secblitz keeps a copy, so you can bring them back any time.",
-        )),
+        Some(ctx.t("Remove apps you don't need. You can bring them back any time.")),
     );
     let removed_label = if state.removed.is_empty() {
         ctx.t("Removed apps")
@@ -79,7 +77,6 @@ fn loading_state<'a>(state: &State, ctx: &Ctx) -> Element<'a, Message> {
         column![
             anim::spinner(32.0, p.text_muted, state.spin.elapsed_at(state.now)),
             widgets::h2(p, ctx.t("Looking for apps you can remove…")),
-            widgets::muted(p, ctx.t("This only takes a moment.")),
         ]
         .spacing(theme::S3)
         .align_x(Alignment::Center),
@@ -176,7 +173,7 @@ fn action_bar<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     let hint = if ctx.busy {
         ctx.t("Please wait until the current task has finished.")
     } else if hidden > 0 {
-        ctx.t("Some apps you chose are hidden by your search. You can review before anything is removed.")
+        ctx.t("Some chosen apps are hidden by your search.")
     } else if n == 0 {
         ctx.t("Tick the apps you want to remove.")
     } else {
@@ -217,7 +214,7 @@ fn group_text(group: Group) -> (&'static str, &'static str, Icon) {
         ),
         Group::Promotions => (
             "Microsoft extras",
-            "Newer Microsoft features that are pushed to you. Remove them only if you don't use them.",
+            "Newer Microsoft features pushed to you.",
             Icon::Bot,
         ),
         Group::Utilities => (
@@ -343,7 +340,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             p,
             Icon::Package,
             ctx.t("No removed apps"),
-            ctx.t("Apps you remove will show up here so you can bring them back."),
+            ctx.t("Apps you remove show up here."),
             None,
         );
     }
@@ -379,11 +376,7 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             )
         } else if has_copy {
             (
-                format!(
-                    "{} · {}",
-                    ago(ctx, t),
-                    ctx.t("Can be brought back without internet")
-                ),
+                ago(ctx, t),
                 actions_view(p, ctx, row_actions(state, ctx.helper, index, enabled)),
             )
         } else if let Some(note) = app.store_id.and(super::store_blocker(ctx.helper)) {
@@ -417,10 +410,11 @@ fn removed_tab<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
         ));
     }
     let summary = (state.saved_bytes > 0).then(|| {
-        ctx.t("Saved copies use about {size}.").replace(
-            "{size}",
-            &crate::app::maintenance::size_phrase(state.saved_bytes),
-        )
+        ctx.t("Saved copies use about {size} and bring apps back without internet.")
+            .replace(
+                "{size}",
+                &crate::app::maintenance::size_phrase(state.saved_bytes),
+            )
     });
     widgets::group(
         p,
