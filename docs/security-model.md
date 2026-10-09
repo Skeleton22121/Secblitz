@@ -1,5 +1,7 @@
 # Secblitz 0.5.0 security model
 
+Secblitz changes settings on this PC to safer values. It does not scan networks, list open ports, test passwords or look for exploits.
+
 Reviewed against published 0.5.0 and 0.4.3 to 0.5.0 LIVE E2E PASS, 2026-10-03. See [security review summary](SECURITY-REVIEW.md) for fixed cases versus known boundaries, [features](FEATURES.md), [updater](update-contract.md), [permissions](permissions-design.md), [readiness review](readiness-security-review.md) and [roadmap](ROADMAP.md). Historical review-time compilation, deployment and replay/persistence blockers are not current release failures when superseded by recorded fixes/acceptance.
 
 ## Unreleased 0.6.0 additions

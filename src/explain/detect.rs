@@ -4,7 +4,7 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
     Some(match id {
         "os.feature_release_support" => Explainer {
             what: "This checks whether your version of Windows still gets safety updates from Microsoft.",
-            risk: "Once a version stops getting updates, new security holes stay open on your PC.",
+            risk: "Once a version stops getting updates, you no longer get new security fixes.",
             change: "To fix it, install the newest Windows version in Windows Update. It takes a while and needs a restart. Back up first.",
         },
         "boot.secure_boot_certs" => Explainer {
@@ -49,17 +49,17 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
         },
         "update.paused" => Explainer {
             what: "This checks whether Windows updates are paused.",
-            risk: "While updates are paused, known security holes stay open on your PC.",
+            risk: "While updates are paused, your PC misses important security fixes.",
             change: "Resume updates in Windows Update. Your PC will download updates and may ask for a restart.",
         },
         "update.drivers_excluded" => Explainer {
             what: "This checks whether Windows is told to skip driver updates for your hardware.",
-            risk: "Old drivers can leave bugs or security holes in things like Wi-Fi and graphics.",
+            risk: "Old drivers can keep bugs and missing security fixes in things like Wi-Fi and graphics.",
             change: "Nothing to change if it was on purpose. Some people skip drivers to avoid problems after updates.",
         },
         "update.reboot_overdue" => Explainer {
             what: "This checks whether your PC has been waiting a long time for a restart to finish an update.",
-            risk: "Until you restart, the fixes are only half installed and the holes may stay open.",
+            risk: "Until you restart, the fixes are only half installed.",
             change: "Choose Restart now when it suits you. Save your work first. Secblitz only restarts when you ask.",
         },
         "ps.v2_engine" => Explainer {
@@ -78,18 +78,18 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             change: "Ask someone who knows PCs to review them. Some hardware and management tools use them on purpose, so nothing is removed for you.",
         },
         "services.unquoted_paths" => Explainer {
-            what: "This looks for background programs whose location has spaces and no quotes, which Windows can misread.",
-            risk: "Someone without admin rights could plant a program that Windows then starts with full power.",
+            what: "This checks background programs whose location has spaces and no quotes, which Windows can misread.",
+            risk: "Windows can mistake the location of the program and start the wrong file with full power.",
             change: "Quotes are added around the location and nothing else changes. The program works as before. You can undo this.",
         },
         "accounts.stale_enabled" => Explainer {
             what: "This counts accounts on your PC that are switched on but haven't been used in months.",
-            risk: "Nobody notices a forgotten account, so someone could sign in to it and use your PC unseen.",
+            risk: "A forgotten account is easy to overlook, so it is safer switched off.",
             change: "Secblitz switches them off and never deletes them. Your own account stays on, and Undo switches them back on.",
         },
         "smb.shares_exposed" => Explainer {
-            what: "This looks for folders on your PC that other people on your network can open.",
-            risk: "On a shared or café network, other people could read or change files in a folder shared with everyone.",
+            what: "This shows who each shared folder on your PC is shared with.",
+            risk: "On a shared or café network, other people can read or change files in a folder shared with the Everyone entry.",
             change: "Secblitz takes away the open access for everyone, so only the people listed on each folder can open it from other devices. Undo gives it back.",
         },
         "smb.server_encryption" => Explainer {
@@ -118,8 +118,8 @@ pub(super) fn get(id: &str) -> Option<Explainer> {
             change: "Turn it on in Settings. It shares your laptop's location with your Microsoft account. Only checked on laptops.",
         },
         "vbs.kernel_stack_protection" => Explainer {
-            what: "This is an extra shield that keeps harmful code from taking over programs that run in the core of Windows.",
-            risk: "Without it, a bug in a driver is easier to use for taking control of Windows.",
+            what: "This is an extra shield that keeps harmful code from misusing programs that run in the core of Windows.",
+            risk: "Without it, a bug in a driver is more likely to cause serious trouble in Windows.",
             change: "If your PC supports it, Secblitz can turn it on after Core system protection runs. You restart once, and some older drivers may not load. You can undo it.",
         },
         "net.dns_encryption" => Explainer {

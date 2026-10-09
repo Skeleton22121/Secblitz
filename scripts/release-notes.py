@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Print the CHANGELOG.md section of one version, for a release body.
 
-    python3 scripts/release-notes.py 0.8.0 [--changelog CHANGELOG.md]
+    python3 scripts/release-notes.py 0.8.0 [--changelog CHANGELOG.md] [--with-footer]
+
+With --with-footer the fixed code signing text from docs/release-footer.md
+follows the notes.
 
 Fails (exit 1) when the version has no dated section or the section has no
 entries, so a release cannot go out without notes. Standard library only.
@@ -32,9 +35,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("version")
     ap.add_argument("--changelog", default=str(Path(__file__).resolve().parents[1] / "CHANGELOG.md"))
+    ap.add_argument("--with-footer", action="store_true")
+    ap.add_argument("--footer", default=str(Path(__file__).resolve().parents[1] / "docs/release-footer.md"))
     args = ap.parse_args(argv)
     try:
-        sys.stdout.write(section(Path(args.changelog).read_text(encoding="utf-8"), args.version))
+        notes = section(Path(args.changelog).read_text(encoding="utf-8"), args.version)
+        if args.with_footer:
+            notes += Path(args.footer).read_text(encoding="utf-8")
+        sys.stdout.write(notes)
         return 0
     except (OSError, ValueError) as err:
         print(f"error: {err}", file=sys.stderr)

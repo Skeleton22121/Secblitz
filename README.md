@@ -5,11 +5,11 @@
   <img src="docs/banner-light.webp" width="900" alt="Secblitz">
 </picture>
 
-Secblitz maximizes Windows security and privacy by fixing security holes and misconfigurations in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.
+Secblitz turns on the security and privacy settings Windows leaves off, in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.
 
-[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.11.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.11.1-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![Version 0.11.0](https://img.shields.io/badge/version-0.11.0-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
+![Version 0.11.1](https://img.shields.io/badge/version-0.11.1-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
 <img src="docs/tour.gif" width="900" alt="A tour of Secblitz: checking the PC, fixing problems, and each page of the app.">
 
@@ -17,8 +17,8 @@ Secblitz maximizes Windows security and privacy by fixing security holes and mis
 
 ## How it works
 
-1. **Scan.** Secblitz scans Windows for security holes and privacy problems. It takes about a minute and changes nothing.
-2. **Review.** Each problem says what it protects against and what changes for you.
+1. **Check.** Secblitz looks at your Windows settings and shows which ones could be safer. It takes about a minute and changes nothing.
+2. **Review.** Each setting says what it protects against and what changes for you.
 3. **Fix.** One click fixes everything you approved. Secblitz then confirms each fix worked.
 4. **Undo.** Every change is recorded. History puts your old settings back.
 
@@ -31,21 +31,29 @@ Secblitz maximizes Windows security and privacy by fixing security holes and mis
 - **History** of every change and every removed app.
 - **Six languages:** English, Spanish, French, German, Portuguese and Italian. Light and dark mode.
 
+Secblitz only looks at settings on this PC and changes them with your approval. It does not look at other devices, list open ports or test passwords.
+
 Secblitz is not an antivirus. It turns on and configures the protection built into Windows, and it leaves third-party antivirus and PCs managed by work or school alone.
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.11.0-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-0.11.0-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
+Download the [installer](https://secblitz.lol/downloads/secblitz-0.11.1-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-0.11.1-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
 
 The installer is not code-signed yet, so Windows may show an unknown publisher warning. Choose **More info**, then **Run anyway**. To check the file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
 ```powershell
-Get-FileHash .\secblitz-0.11.0-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\secblitz-0.11.1-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Tested on Windows 10 (version 22H2) and Windows 11, on regular and ARM PCs.
 
 Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to a newer version. Download and run the installer once; your settings, history and undo stay.
+
+## Uninstall
+
+Open **Settings**, then **Apps**, then **Installed apps** (on Windows 10: **Apps**, then **Apps and features**). Find Secblitz and choose **Uninstall**. Secblitz asks whether to keep your PC as it is now or put everything back the way it was. Either way, it removes itself.
+
+You can also open Secblitz, go to **Settings** and choose **Remove Secblitz from this PC**. If you use the portable version, do that to put your settings back, then delete the `secblitz.exe` file.
 
 ## Build from source
 
@@ -71,6 +79,10 @@ To build the Windows app from Linux, see [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Privacy
 
 No account, no ads, no telemetry. Secblitz goes online to update itself (if updates are on), for actions you start, and to download block lists if web protection is on. See the [privacy policy](https://secblitz.lol/privacy.html).
+
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation. Releases are built from this repository by GitHub Actions, and each signing request is approved by hand. Read the full [Code signing policy](docs/CODE_SIGNING.md), also on the [website](https://secblitz.lol/code-signing.html).
 
 ## Security and contributing
 

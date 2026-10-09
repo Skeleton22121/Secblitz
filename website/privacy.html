@@ -21,26 +21,27 @@
   </header>
   <main class="wrap policy">
     <h1>Privacy policy</h1>
-    <p class="meta">Last updated: 7 October 2026</p>
+    <p class="meta">Last updated: 9 October 2026</p>
 
     <h2>1. Summary</h2>
-    <p>Secblitz does not collect personal data. It has no account, no ads, no analytics, no telemetry and no crash reporting. Scan results, settings, history and the list of installed apps stay on your PC.</p>
+    <p>Secblitz does not collect personal data. It has no account, no ads, no analytics, no telemetry and no crash reporting. Check results, settings, history and the list of installed apps stay on your PC.</p>
 
     <h2>2. Data Secblitz collects</h2>
-    <p>None. Secblitz does not ask for personal details and does not send scan results, settings, history or app lists to anyone. All scans run locally.</p>
-    <p>The website counts how many times each Secblitz file is downloaded, including automatic updates. Only the file name and a running total are stored. No IP address, cookie or other detail about the download is kept.</p>
+    <p>None. Secblitz does not ask for personal details and does not send check results, settings, history or app lists to anyone. All checks run on your PC.</p>
+    <p>The website shows one number: the total of how many times the Secblitz installers and the portable app have been downloaded from GitHub. We store only that single number. No IP address, cookie or other detail about a visitor is kept by us.</p>
+    <p>The website is hosted on Cloudflare, and the installers are hosted on GitHub. Both may keep their own logs of visitors, including IP addresses, under their own privacy policies: <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare</a> and <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a>.</p>
 
     <h2>3. Network connections</h2>
 
     <h3>3.1 Automatic updates</h3>
     <p>If automatic updates were left on during installation, Secblitz checks for a new version once an hour. It downloads a small signed file from secblitz.lol that names the latest version. If a newer version exists, it downloads the installer from secblitz.lol, verifies the signature and installs it while Secblitz is not in use.</p>
-    <p>These requests contain no account, name or information about your PC. As with any website, secblitz.lol receives your IP address and the time of the request. To turn updates off, run the installer again and clear the update option, or remove Secblitz.</p>
+    <p>These requests contain no account, name or information about your PC, other than whether you use the regular or the ARM version. As with any website, secblitz.lol receives your IP address and the time of the request. The website is hosted on Cloudflare, which may keep its own logs under its <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a>. To turn updates off, run the installer again and clear the update option, or remove Secblitz.</p>
 
     <h3>3.2 Web protection</h3>
     <p>Web protection is off by default. When it is on:</p>
     <ul>
-      <li>Secblitz downloads block lists daily or weekly from AdGuard (adguardteam.github.io, filters.adtidy.org) and EasyList (easylist.to). Each request identifies Secblitz and its version.</li>
-      <li>Website name lookups from your PC go through Secblitz. Names on a block list receive a "not found" answer. All other lookups are forwarded to the name servers your network already uses, or to Quad9 if none are available. Quad9 has its own <a href="https://quad9.net/privacy/policy/">privacy policy</a>.</li>
+      <li>Secblitz downloads block lists daily or weekly from these places: adguardteam.github.io and filters.adtidy.org (AdGuard), easylist.to (EasyList, which also provides EasyPrivacy), and raw.githubusercontent.com (lists by HaGeZi, hosted by GitHub). adguardteam.github.io is also hosted by GitHub. Each of these places receives your PC's IP address and the Secblitz version, which Secblitz adds to the request. Read their privacy policies: <a href="https://adguard.com/en/privacy.html">AdGuard</a>, <a href="https://easylist.to/">EasyList</a> and <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a>.</li>
+      <li>Website name lookups from your PC go through Secblitz. Names on a block list receive a "not found" answer. All other lookups are forwarded to the name servers your network already uses, or to Quad9 if none are available. Whoever runs those name servers can see the names you look up, as they could before. Quad9 has its own <a href="https://quad9.net/privacy/policy/">privacy policy</a>.</li>
       <li>Secblitz does not store the names you look up. It keeps only a daily count of blocked lookups.</li>
     </ul>
     <p>Private lookups through Secblitz is a separate switch and is off by default. When it is on, website name lookups leave your PC encrypted and go to Quad9, a Swiss non-profit that does not log IP addresses, so your internet provider or a public Wi-Fi network cannot read them. Names that only exist on your own network, such as your router, your printer or your company's computers, are never sent there. If a name that only works on your own network does not open while this switch is on, turn it off. If your network does not let encrypted lookups through, Secblitz uses your network's usual name servers instead and tries again after two minutes.</p>
@@ -48,15 +49,16 @@
 
     <h3>3.3 Actions you start</h3>
     <ul>
-      <li>Installing Bitwarden or updating apps uses winget, which downloads from Microsoft and the app's publisher.</li>
+      <li>Installing Bitwarden, checking which apps have updates and updating apps use winget, which connects to Microsoft and downloads from the app's publisher. Secblitz only does this when you ask it to.</li>
       <li>Installing Windows updates or updating virus protection is done by Windows, which downloads from Microsoft. Secblitz sends no data of its own.</li>
       <li>Opening the Microsoft Store opens it in Windows, where Microsoft's terms apply.</li>
+      <li>Microsoft handles all of these under its <a href="https://privacy.microsoft.com/privacystatement">privacy statement</a>.</li>
       <li>Report a problem, Suggest a feature and the privacy link in Settings open a page in your web browser. GitHub pages are operated by GitHub.</li>
     </ul>
 
     <h2>4. Data stored on your PC</h2>
     <ul>
-      <li><strong>C:\ProgramData\Secblitz</strong>, readable only by administrators: the record of changes and how to undo them, the latest scan, history, language and theme, web protection lists, and saved copies of removed apps.</li>
+      <li><strong>C:\ProgramData\Secblitz</strong>, readable only by administrators: the record of changes and how to undo them, the latest check, history, language and theme, web protection lists, and saved copies of removed apps.</li>
       <li><strong>Your user profile</strong>: a small file listing the personal Windows settings Secblitz changed, so they can be undone.</li>
     </ul>
     <p>This data is not sent anywhere.</p>
@@ -73,7 +75,7 @@
   </main>
   <footer class="footer">
     <div class="wrap footer-inner">
-      <p>Open source under the MIT license · <a href="https://github.com/secblitz/Secblitz">GitHub</a> · <a href="mailto:support@secblitz.lol">support@secblitz.lol</a> · © 2026 Secblitz</p>
+      <p>Open source under the MIT license · <a href="https://github.com/secblitz/Secblitz">GitHub</a> · <a href="mailto:support@secblitz.lol">support@secblitz.lol</a> · <a href="/code-signing.html">Code signing policy</a> · © 2026 Secblitz</p>
     </div>
   </footer>
 </body>

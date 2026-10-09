@@ -524,7 +524,7 @@ function AutoLogonFinding {
         if ($flag -cnotin @('0','1')) { throw 'AutoAdminLogon has an unknown configuration' }
         $enabled = $flag -ceq '1'
     }
-    return @{title='Automatic logon';status=$(if ($enabled -or $secretPresent) {'attention'} else {'info'});detail="AutoAdminLogon enabled=$enabled; Winlogon DefaultPassword value present=$secretPresent. Presence only: no password data is read. LSA-secret autologon storage is not inspected. Review physical access and credential exposure; automatic logon is preserved to avoid disrupting kiosk or sign-in workflows."}
+    return @{title='Automatic logon';status=$(if ($enabled -or $secretPresent) {'attention'} else {'info'});detail="AutoAdminLogon enabled=$enabled; Winlogon DefaultPassword value present=$secretPresent. Presence only: no password data is read. Passwords kept in the Windows secret store are not checked. Review who can use this PC; automatic logon is kept to avoid disrupting kiosk or sign-in workflows."}
 }
 function Findings {
     Finding 'Automatic logon' { AutoLogonFinding }
@@ -576,7 +576,7 @@ function Findings {
         if ($r.ResultCode -ne 2) { throw 'Offline update query did not fully succeed' }
         @{title='Windows updates';status='info';detail="Locally cached pending updates=$($r.Updates.Count). This offline result does not establish current patch compliance; open Windows Update and check for updates."}
     }
-    Finding 'Remote Desktop' { $v=Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections'; $homeEdition=([string](Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'EditionID')) -cmatch '^Core'; @{title='Remote Desktop';status=$(if ($v -eq 1 -or $homeEdition) {'ok'} else {'attention'});detail="Deny incoming Remote Desktop connections=$v; Windows Home=$homeEdition. Review need, network exposure and Network Level Authentication; no changes made."} }
+    Finding 'Remote Desktop' { $v=Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections'; $homeEdition=([string](Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'EditionID')) -cmatch '^Core'; @{title='Remote Desktop';status=$(if ($v -eq 1 -or $homeEdition) {'ok'} else {'attention'});detail="Deny incoming Remote Desktop connections=$v; Windows Home=$homeEdition. Review need, network use and Network Level Authentication; no changes made."} }
     Finding 'SMB1' { $v=FeatureState 'SMB1Protocol'; @{title='SMB1';status=$(if ($v -cin @('Disabled','Missing')) {'ok'} else {'attention'});detail="SMB1 optional feature state=$v. Review dependencies before removing legacy protocol support."} }
     @{title='SmartScreen';status='info';detail='Review reputation-based protection and SmartScreen in Windows Security and your browser. Per-user, browser and policy settings differ; effective protection is not inferred from a single registry value.'}
     Finding 'Memory integrity' { Load 'CimCmdlets'; $v=Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard; @{title='Memory integrity';status=$(if ($v.SecurityServicesRunning -contains 2) {'ok'} else {'attention'});detail="HVCI running=$($v.SecurityServicesRunning -contains 2); configured=$($v.SecurityServicesConfigured -contains 2). Review Core isolation in Windows Security and driver compatibility before enabling."} }

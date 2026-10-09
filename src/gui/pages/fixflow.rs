@@ -8,6 +8,7 @@ use crate::gui::widgets::anim::{self, Clock, Tween};
 use crate::gui::widgets::controls::{fade_below, more_below, scroll_style, scrollbar};
 use crate::gui::widgets::hairline::{self, rewind, shield_fill, Plate, Run};
 use crate::gui::widgets::handoff;
+use crate::gui::widgets::info::InfoSheet;
 use crate::gui::widgets::{self, progress, ButtonKind, CheckState};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, scrollable, space};
@@ -186,7 +187,6 @@ enum Stage {
         undo: bool,
         summary: Summary,
         technical: Vec<String>,
-        show_technical: bool,
     },
 }
 
@@ -198,7 +198,6 @@ pub enum Msg {
     Done,
     CheckAgain,
     Retry,
-    Technical,
     Frame(Instant),
     Steps(scrollable::Viewport),
     ResultList(scrollable::Viewport),
@@ -290,7 +289,7 @@ pub fn open_fixes(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Task<Me
     if chosen.is_empty() {
         return Task::none();
     }
-    ctx.explain_open = None;
+    ctx.info = None;
     state.chosen = false;
     state.together = false;
     state.addons = chosen
@@ -354,7 +353,7 @@ pub fn open_undo_some(state: &mut State, ids: Vec<String>, ctx: &mut Ctx) -> Tas
         return Task::none();
     }
     let (chosen, together) = flow::with_dependents(chosen, &undoable);
-    ctx.explain_open = None;
+    ctx.info = None;
     state.chosen = true;
     state.together = together;
     state.plan = chosen.iter().map(|id| undo_row(ctx, id)).collect();
@@ -369,7 +368,7 @@ pub fn open_undo(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
     if ctx.busy || state.is_open() {
         return Task::none();
     }
-    ctx.explain_open = None;
+    ctx.info = None;
     state.chosen = false;
     state.together = false;
     state.plan = ctx
@@ -484,13 +483,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             if matches!(state.stage, Stage::Result { .. }) {
                 close(state);
                 return Task::done(Message::CheckNow);
-            }
-            Task::none()
-        }
-        Msg::Technical => {
-            if let Stage::Result { show_technical, .. } = &mut state.stage {
-                *show_technical = !*show_technical;
-                state.result_view = None;
             }
             Task::none()
         }
@@ -780,7 +772,6 @@ fn show_result(state: &mut State, undo: bool, summary: Summary, technical: Vec<S
         undo,
         summary,
         technical,
-        show_technical: false,
     };
 }
 
@@ -849,9 +840,8 @@ pub fn overlay_content<'a>(state: &'a State, ctx: &'a Ctx) -> Option<Element<'a,
             undo,
             summary,
             technical,
-            show_technical,
         } => Some(widgets::appear::settle(
-            result_view(state, ctx, *undo, summary, technical, *show_technical),
+            result_view(state, ctx, *undo, summary, technical),
             ctx.palette.surface,
         )),
     }
@@ -991,7 +981,9 @@ fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a
                 restart_label.to_owned(),
             ));
         }
-        if let Some(info) = widgets::explain::toggle(ctx, "plan", &r.id) {
+        let sheet = widgets::info::for_check(ctx, r.name.clone(), &r.id, false)
+            .map(|s| s.without(&[r.line.as_deref().unwrap_or_default()]));
+        if let Some(info) = widgets::info::button(ctx, sheet) {
             line = line.push(info);
         }
         let mut item = column![line].spacing(theme::S2);
@@ -1004,9 +996,6 @@ fn plan_list<'a>(ctx: &Ctx, plan: &[PlanRow], restart_label: &str) -> Element<'a
         }
         if !r.undoable {
             item = item.push(note(p, Icon::AlertTriangle, ctx.t("Can't be undone")));
-        }
-        if let Some(inset) = widgets::explain::panel(ctx, "plan", &r.id, false, 0.0) {
-            item = item.push(inset);
         }
         list = list.push(item);
     }
@@ -1041,7 +1030,7 @@ fn addon_picker<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
     if state.addons_picked.is_empty() {
         c = c.push(widgets::small(
             p,
-            ctx.t("Tick at least one add-on. Nothing is turned off until you do."),
+            ctx.t("Tick at least one add-on to continue."),
         ));
     }
     c.into()
@@ -1075,9 +1064,9 @@ fn review_view<'a>(
         c = c.push(widgets::muted(
             p,
             ctx.t(if one {
-                "We'll put this setting back the way it was before Secblitz changed it:"
+                "We'll put this setting back the way it was:"
             } else {
-                "We'll put these settings back the way they were before Secblitz changed them:"
+                "We'll put these settings back the way they were:"
             }),
         ));
         c = c.push(plan_list(ctx, &state.plan, &restart_label));
@@ -1118,7 +1107,6 @@ fn review_view<'a>(
             ctx.t("Anything you changed yourself since then is left as it is."),
         ));
     } else {
-        c = c.push(widgets::muted(p, ctx.t("Here's what we'll change:")));
         c = c.push(plan_list(ctx, &state.plan, &restart_label));
         if !state.addons.is_empty() && ids.iter().any(|id| id == ADDONS) {
             c = c.push(addon_picker(state, ctx));
@@ -1362,7 +1350,6 @@ fn result_view<'a>(
     undo: bool,
     s: &'a Summary,
     technical: &'a [String],
-    show_technical: bool,
 ) -> Element<'a, Message> {
     let p = ctx.palette;
     let title = match (undo, s.kind) {
@@ -1454,18 +1441,9 @@ fn result_view<'a>(
             ctx.t("We couldn't confirm the result. Check again to be sure."),
         ));
     }
-    if !technical.is_empty() {
-        let mut lines = column![].spacing(theme::S1);
-        for line in technical {
-            lines = lines.push(widgets::small(p, line.clone()));
-        }
-        body = body.push(widgets::expander(
-            p,
-            ctx.t("More details"),
-            show_technical,
-            Message::Fix(Msg::Technical),
-            lines,
-        ));
+    let sheet = InfoSheet::new(ctx.t(title)).list(ctx.t("More details"), technical.to_vec());
+    if let Some(more) = widgets::info::link(ctx, ctx.t("More details"), Some(sheet)) {
+        body = body.push(more);
     }
 
     let mut buttons = Vec::new();

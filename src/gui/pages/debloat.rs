@@ -85,7 +85,6 @@ pub struct State {
     selected: BTreeSet<u16>,
     block_again: bool,
     sheet: Sheet,
-    details: bool,
     open: Vec<Group>,
     expanded: Vec<Group>,
     journal: Vec<Batch>,
@@ -126,7 +125,6 @@ impl Default for State {
             selected: BTreeSet::new(),
             block_again: false,
             sheet: Sheet::None,
-            details: false,
             open: vec![Group::Recommended],
             expanded: Vec::new(),
             journal: Vec::new(),
@@ -189,7 +187,6 @@ pub enum Msg {
     Run(Run),
     UserBlocked(bool),
     Frame(Instant),
-    ToggleDetails,
     CloseResult,
     Restore(u16),
     RestoreAll,
@@ -532,10 +529,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             on_user_blocked(state, ok);
             Task::none()
         }
-        Msg::ToggleDetails => {
-            state.details = !state.details;
-            Task::none()
-        }
         Msg::CloseResult => {
             close_result(state);
             Task::none()
@@ -674,7 +667,6 @@ fn toggle_group(state: &mut State, ctx: &Ctx, group: Group) {
 fn close_result(state: &mut State) {
     if matches!(state.sheet, Sheet::Done(_)) {
         state.sheet = Sheet::None;
-        state.details = false;
     }
 }
 
@@ -1170,7 +1162,6 @@ fn confirm(state: &mut State, ctx: &mut Ctx) -> Task<Message> {
         return Task::none();
     }
     ctx.busy = true;
-    state.details = false;
     state.now = Instant::now();
     state.spin = anim::Clock::at(state.now);
     state.run_at = state.now;

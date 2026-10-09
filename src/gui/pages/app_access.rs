@@ -193,26 +193,17 @@ fn recency_text(ctx: &Ctx, recency: Recency) -> String {
 
 fn master_texts(ctx: &Ctx, capability: Capability, on: bool) -> (String, String) {
     match (capability, on) {
-        (Capability::Camera, true) => (
-            ctx.t("Let apps use your camera"),
-            ctx.t("On. Switch off any app below that you don't trust."),
-        ),
+        (Capability::Camera, true) => (ctx.t("Let apps use your camera"), ctx.t("On")),
         (Capability::Camera, false) => (
             ctx.t("Let apps use your camera"),
             ctx.t("Off. No app can use your camera."),
         ),
-        (Capability::Microphone, true) => (
-            ctx.t("Let apps use your microphone"),
-            ctx.t("On. Switch off any app below that you don't trust."),
-        ),
+        (Capability::Microphone, true) => (ctx.t("Let apps use your microphone"), ctx.t("On")),
         (Capability::Microphone, false) => (
             ctx.t("Let apps use your microphone"),
             ctx.t("Off. No app can use your microphone."),
         ),
-        (Capability::Location, true) => (
-            ctx.t("Let apps use your location"),
-            ctx.t("On. Switch off any app below that you don't trust."),
-        ),
+        (Capability::Location, true) => (ctx.t("Let apps use your location"), ctx.t("On")),
         (Capability::Location, false) => (
             ctx.t("Let apps use your location"),
             ctx.t("Off. No app can see where you are."),
@@ -287,7 +278,7 @@ fn desktop_row<'a>(state: &State, ctx: &Ctx, listing: &Listing, now: u64) -> El<
         widgets::switch(p, listing.desktop_allowed, toggle),
         vec![widgets::small(
             p,
-            ctx.t("Windows can only switch all desktop apps on or off together."),
+            ctx.t("Windows switches all desktop apps together."),
         )],
         None,
     )

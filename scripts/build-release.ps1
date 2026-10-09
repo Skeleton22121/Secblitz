@@ -77,6 +77,15 @@ function Sign-ReleaseFile([string]$Path) {
     Assert-PublisherSignature $Path
 }
 
+function Assert-ProductMetadata([string]$Path, [string]$Version) {
+    $info = (Get-Item -LiteralPath $Path).VersionInfo
+    # Inno Setup pads the strings it writes into the setup's version resource with spaces.
+    $name = "$($info.ProductName)".TrimEnd(' ', [char]0)
+    $productVersion = "$($info.ProductVersion)".TrimEnd(' ', [char]0)
+    if ($name -cne 'Secblitz') { throw "$(Split-Path $Path -Leaf) has product name '$name', not 'Secblitz'." }
+    if ($productVersion -cne $Version) { throw "$(Split-Path $Path -Leaf) has product version '$productVersion', not '$Version'." }
+}
+
 function Assert-ReleasePe([string]$Path) {
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Path))
     try {
@@ -187,6 +196,8 @@ try {
     Invoke-Checked $IsccPath $compilerArgs
     $setup = Join-Path $dist "secblitz-$version-windows-$Arch-setup.exe"
     Assert-ReleasePe $exe
+    Assert-ProductMetadata $exe $version
+    Assert-ProductMetadata $setup $version
     if ($CertificateThumbprint) {
         Assert-PublisherSignature $exe
         Assert-PublisherSignature $setup

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F7F7F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E0E10" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="The Secblitz code signing policy: what is signed, who approves it and where to read about privacy.">
+  <title>Code signing policy – Secblitz</title>
+  <link rel="canonical" href="https://secblitz.lol/code-signing.html">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=0705">
+  <script src="/theme.js?v=0703"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="wrap header-inner">
+      <a class="brand" href="/" aria-label="Secblitz home"><img class="brand-mark" src="/assets/favicon.svg" width="24" height="24" alt="">Secblitz</a>
+    </div>
+  </header>
+  <main class="wrap policy">
+    <h1>Code signing policy</h1>
+    <p>Free code signing provided by SignPath.io, certificate by SignPath Foundation.</p>
+
+    <h2>What is signed</h2>
+    <p>The Secblitz installers (for regular PCs and for ARM PCs) and the Secblitz program files inside them. Releases are built from the source code in the <a href="https://github.com/secblitz/Secblitz">Secblitz repository</a> by GitHub Actions. Only files built from this repository are signed. Nothing made by anyone else is signed with this certificate.</p>
+    <p>Every signing request is approved by hand before the file is signed.</p>
+
+    <h2>Who does what</h2>
+    <p>Secblitz is run by one maintainer, the GitHub account <a href="https://github.com/secblitz">github.com/secblitz</a>.</p>
+    <ul>
+      <li><strong>Committer:</strong> <a href="https://github.com/secblitz">github.com/secblitz</a> writes and commits the code.</li>
+      <li><strong>Reviewer:</strong> <a href="https://github.com/secblitz">github.com/secblitz</a> reviews every pull request from anyone else before it is merged.</li>
+      <li><strong>Approver:</strong> <a href="https://github.com/secblitz">github.com/secblitz</a> approves every signing request.</li>
+    </ul>
+
+    <h2>Privacy</h2>
+    <p>Read the full <a href="https://secblitz.lol/privacy.html">privacy policy</a>. It lists when Secblitz connects to the internet: to update itself if you left updates on, for actions you start, and to download block lists and pass on website lookups if you switch on web protection. It also links to the privacy policies of the services involved.</p>
+
+    <p><a href="/">Back to Secblitz</a></p>
+  </main>
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <p>Open source under the MIT license · <a href="https://github.com/secblitz/Secblitz">GitHub</a> · <a href="mailto:support@secblitz.lol">support@secblitz.lol</a> · <a href="/privacy.html">Privacy</a> · © 2026 Secblitz</p>
+    </div>
+  </footer>
+</body>
+</html>

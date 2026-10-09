@@ -173,7 +173,7 @@ impl Backend for AuditedBackend {
         match audit() {
             Ok(extra) => findings.extend(extra),
             Err(error) => findings.push(Finding {
-                title: "Service permission audit".into(),
+                title: "Windows service settings".into(),
                 status: CheckStatus::Unknown,
                 detail: error.to_string(),
             }),

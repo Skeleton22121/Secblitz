@@ -232,5 +232,66 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(digest[:8], "big") % 10000, 9219)
 
 
+ROOT = Path(__file__).resolve().parents[1]
+SIGNING_SENTENCE = "Free code signing provided by SignPath.io, certificate by SignPath Foundation"
+
+
+class PolicyTests(unittest.TestCase):
+    def test_release_body_ends_with_the_code_signing_footer(self):
+        spec = importlib.util.spec_from_file_location("release_notes", ROOT / "scripts/release-notes.py")
+        notes = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(notes)
+        with tempfile.TemporaryDirectory() as directory:
+            changelog = Path(directory) / "CHANGELOG.md"
+            changelog.write_text("# Changelog\n\n## [9.0.0] - 2026-01-02\n\n- A change.\n", encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(notes.main(["9.0.0", "--changelog", str(changelog), "--with-footer"]), 0)
+            plain = io.StringIO()
+            with redirect_stdout(plain):
+                self.assertEqual(notes.main(["9.0.0", "--changelog", str(changelog)]), 0)
+        body = out.getvalue()
+        self.assertTrue(body.startswith(plain.getvalue()))
+        self.assertIn(SIGNING_SENTENCE, body)
+        self.assertIn("https://secblitz.lol/code-signing.html", body)
+        self.assertIn("https://secblitz.lol/privacy.html", body)
+        self.assertNotIn(SIGNING_SENTENCE, plain.getvalue())
+        self.assertIn("--with-footer", (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+
+    def test_code_signing_texts_agree(self):
+        page = (ROOT / "website/code-signing.html").read_text(encoding="utf-8")
+        doc = (ROOT / "docs/CODE_SIGNING.md").read_text(encoding="utf-8")
+        for text in (page, doc, (ROOT / "README.md").read_text(encoding="utf-8")):
+            self.assertIn("Code signing policy", text)
+        for text in (page, doc):
+            self.assertIn(SIGNING_SENTENCE, text)
+            self.assertIn("https://github.com/secblitz", text)
+            self.assertIn("https://secblitz.lol/privacy.html", text)
+        self.assertNotIn("will not transfer any information", page + doc)
+        for text in (page, doc, (ROOT / "docs/release-footer.md").read_text(encoding="utf-8")):
+            self.assertNotIn("\u2014", text)
+
+    def test_installer_and_exe_metadata_name_the_product_and_version(self):
+        import re
+        cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        version = re.search(r'^version\s*=\s*"([^"]+)"', cargo, re.M).group(1)
+        iss = (ROOT / "installer/setup.iss").read_text(encoding="utf-8")
+        setup = dict(re.findall(r"^(VersionInfo\w+)=(.*)$", iss, re.M))
+        self.assertEqual(setup["VersionInfoProductName"], "Secblitz")
+        for key in ("VersionInfoVersion", "VersionInfoProductVersion", "VersionInfoProductTextVersion", "VersionInfoTextVersion"):
+            self.assertEqual(setup[key], "{#AppVersion}", key)
+        rc = (ROOT / "assets/secblitz.rc").read_text(encoding="utf-8")
+        self.assertIn('VALUE "ProductName", "Secblitz"', rc)
+        self.assertIn(f'VALUE "ProductVersion", "{version}"', rc)
+        build = (ROOT / "scripts/build-release.ps1").read_text(encoding="utf-8")
+        self.assertIn("Assert-ProductMetadata $exe $version", build)
+        self.assertIn("Assert-ProductMetadata $setup $version", build)
+
+    def test_inno_download_is_pinned_by_hash(self):
+        script = (ROOT / "scripts/install-inno.ps1").read_text(encoding="utf-8")
+        self.assertRegex(script, r"\$expectedHash = '[0-9a-f]{64}'")
+        self.assertLess(script.index("Get-FileHash"), script.index("Start-Process"))
+
+
 if __name__ == "__main__":
     unittest.main()

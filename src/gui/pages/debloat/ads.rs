@@ -1,12 +1,11 @@
 //! The Ads and tips tab: switches for the tips, suggestions and ads Windows shows the signed-in person.
 use crate::broker::{Reply, Request};
 use crate::gui::icons::Icon;
-use crate::gui::theme::{self, Palette, Tone};
+use crate::gui::theme::{self, Tone};
 use crate::gui::widgets;
 use crate::gui::{Ctx, Helper, Message};
-use iced::widget::{column, space};
-use iced::{Element, Length, Task};
-use secblitz::explain;
+use iced::widget::{row, space};
+use iced::{Alignment, Element, Task};
 use secblitz::user_settings::{Op, Setting};
 
 type El<'a> = Element<'a, Message>;
@@ -24,14 +23,12 @@ enum Cell {
 #[derive(Debug)]
 pub struct State {
     cells: [Cell; COUNT],
-    open: Vec<Setting>,
 }
 
 impl Default for State {
     fn default() -> Self {
         State {
             cells: [Cell::Idle; COUNT],
-            open: Vec::new(),
         }
     }
 }
@@ -41,7 +38,6 @@ pub enum Msg {
     Reported(Setting, Result<Reply, String>),
     Toggle(Setting, bool),
     Changed(Setting, Result<Reply, String>),
-    ToggleDetail(Setting),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -142,14 +138,6 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 None => reread,
             }
         }
-        Msg::ToggleDetail(setting) => {
-            if let Some(at) = state.open.iter().position(|s| *s == setting) {
-                state.open.remove(at);
-            } else {
-                state.open.push(setting);
-            }
-            Task::none()
-        }
     }
 }
 
@@ -168,30 +156,6 @@ pub(crate) fn label(ctx: &Ctx, setting: Setting) -> (Icon, String) {
         ),
         _ => (Icon::Settings, ctx.t("Windows settings")),
     }
-}
-
-fn line<'a>(p: Palette, label: String, text: String) -> El<'a> {
-    column![widgets::small(p, label), widgets::body(p, text)]
-        .spacing(2)
-        .into()
-}
-
-fn explainer<'a>(state: &State, ctx: &Ctx, setting: Setting) -> Option<El<'a>> {
-    let e = explain::for_check(setting.id())?;
-    let p = ctx.palette;
-    let lines = column![
-        line(p, ctx.t("What it is"), ctx.t(e.what)),
-        line(p, ctx.t("If it's off"), ctx.t(e.risk)),
-        line(p, ctx.t("If you turn it on"), ctx.t(e.change)),
-    ]
-    .spacing(theme::S2);
-    Some(widgets::under_row(vec![widgets::expander(
-        p,
-        ctx.t("More details"),
-        state.open.contains(&setting),
-        wrap(Msg::ToggleDetail(setting)),
-        lines,
-    )]))
 }
 
 fn switch_row<'a>(state: &State, ctx: &Ctx, setting: Setting) -> Option<El<'a>> {
@@ -213,20 +177,29 @@ fn switch_row<'a>(state: &State, ctx: &Ctx, setting: Setting) -> Option<El<'a>> 
         Cell::Known(Reply::NeedsAttention) => {
             (ctx.t("Off"), widgets::switch(p, false, Some(toggle)))
         }
-        Cell::Known(Reply::SafeByUs) => (
-            ctx.t("On. You can switch it back."),
-            widgets::switch(p, true, Some(toggle)),
-        ),
+        Cell::Known(Reply::SafeByUs) => (ctx.t("On"), widgets::switch(p, true, Some(toggle))),
         Cell::Known(_) => (
             ctx.t("On"),
             widgets::switch(p, true, None::<fn(bool) -> Message>),
         ),
     };
-    let head = widgets::row_item(p, Some(icon), title, Some(sub), control, None);
-    Some(match explainer(state, ctx, setting) {
-        Some(e) => column![head, e].width(Length::Fill).into(),
-        None => head,
-    })
+    let sheet = widgets::info::for_check(ctx, title.clone(), setting.id(), false)
+        .map(|s| s.without(&[sub.as_str()]));
+    let control = match widgets::info::button(ctx, sheet) {
+        Some(info) => row![info, control]
+            .spacing(theme::S1)
+            .align_y(Alignment::Center)
+            .into(),
+        None => control,
+    };
+    Some(widgets::row_item(
+        p,
+        Some(icon),
+        title,
+        Some(sub),
+        control,
+        None,
+    ))
 }
 
 pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
@@ -259,7 +232,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> El<'a> {
     widgets::group(
         p,
         ctx.t("Ads and tips"),
-        Some(ctx.t("Hide the tips, suggestions and ads Windows shows you. Nothing changes until you switch one on, and you can switch it back any time. These switches are only for your account.")),
+        Some(ctx.t("Nothing changes until you switch one on. You can switch it back any time, and it only affects your account.")),
         None,
         rows,
     )
@@ -273,7 +246,7 @@ mod tests {
     fn every_switch_has_a_slot_a_label_and_an_explainer() {
         for (i, setting) in Setting::ADS_AND_TIPS.iter().enumerate() {
             assert_eq!(slot(*setting), Some(i));
-            assert!(explain::for_check(setting.id()).is_some());
+            assert!(secblitz::explain::for_check(setting.id()).is_some());
         }
         assert_eq!(slot(Setting::SuggestedApps), None);
     }

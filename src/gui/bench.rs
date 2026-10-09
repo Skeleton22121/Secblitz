@@ -1062,7 +1062,7 @@ fn the_apps_tab_keeps_its_search_after_a_visit_to_ads_and_tips() {
 }
 
 #[test]
-fn the_ads_and_tips_tab_lays_out_in_every_language_with_details_open() {
+fn the_ads_and_tips_tab_lays_out_in_every_language_with_the_info_dialog_open() {
     use crate::broker::Reply;
     let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
         theme::REGULAR,
@@ -1072,11 +1072,10 @@ fn the_ads_and_tips_tab_lays_out_in_every_language_with_details_open() {
     .expect("tiny-skia renderer");
     let mut app = on_ads_tab();
     app.enter_t = 1.0;
-    for setting in Setting::ADS_AND_TIPS {
-        ads(&mut app, debloat::ads::Msg::ToggleDetail(setting));
-    }
     for lang in [Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::Pt, Lang::It] {
         app.ctx.lang = lang;
+        app.ctx.info =
+            widgets::info::for_check(&app.ctx, "Title".into(), "defender.pua", false).map(Box::new);
         for reply in [
             Reply::NeedsAttention,
             Reply::SafeByUs,
@@ -1310,7 +1309,7 @@ fn a_setting_secblitz_fixed_that_is_off_again_is_counted_and_chosen() {
     assert_eq!(line_of(&app, Topic::Network), Line::SwitchedBack(1));
     assert_eq!(line_of(&app, Topic::Privacy), Line::SwitchedBack(1));
     assert_eq!(line_of(&app, Topic::Windows), Line::ToFix(1));
-    drop(app.update(Message::Fixes(fixes::Msg::Expand("x".into()))));
+    drop(app.update(Message::Fixes(fixes::Msg::Search(String::new()))));
     let chosen = fixes::selected_ids(&app.fixes);
     for id in ["defender.pua", "net.llmnr"] {
         assert!(
@@ -1832,4 +1831,29 @@ fn browser_add_ons_start_unpicked_and_only_the_picked_ones_are_turned_off() {
     drop(app.update(Message::Fix(fixflow::Msg::Cancel)));
     drop(app.update(Message::ReviewFixes(vec![id.into()])));
     assert!(fixflow::addons_waiting(&app.fix), "picks do not carry over");
+}
+
+#[test]
+fn the_info_dialog_opens_closes_and_gives_way_to_escape_first() {
+    let mut app = app();
+    let sheet = widgets::info::InfoSheet::new("Title").text("What it is", "A plain sentence.");
+    drop(app.update(Message::Info(Some(Box::new(sheet.clone())))));
+    assert_eq!(app.ctx.info.as_deref(), Some(&sheet));
+    drop(app.view());
+    drop(app.update(Message::Info(None)));
+    assert!(app.ctx.info.is_none());
+
+    app.whats_new = true;
+    drop(app.update(Message::Info(Some(Box::new(sheet.clone())))));
+    drop(app.update(Message::Escape));
+    assert!(app.ctx.info.is_none(), "Escape closes the dialog first");
+    assert!(app.whats_new, "the note underneath stays open");
+    drop(app.update(Message::Escape));
+    assert!(!app.whats_new);
+
+    for leave in [Message::Navigate(Page::Tools), Message::CheckNow] {
+        drop(app.update(Message::Info(Some(Box::new(sheet.clone())))));
+        drop(app.update(leave));
+        assert!(app.ctx.info.is_none());
+    }
 }

@@ -5,7 +5,7 @@ use super::{icon, small, ButtonKind};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::Message;
-use iced::widget::text::{LineHeight, Wrapping};
+use iced::widget::text::LineHeight;
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Pixels, Shadow, Theme};
 
@@ -27,16 +27,6 @@ pub fn well_style(p: Palette) -> impl Fn(&Theme) -> container::Style {
         },
         ..container::Style::default()
     }
-}
-
-pub fn well<'a>(
-    p: Palette,
-    content: impl Into<Element<'a, Message>>,
-) -> container::Container<'a, Message> {
-    container(content)
-        .padding(theme::S3)
-        .width(Length::Fill)
-        .style(well_style(p))
 }
 
 /// A well whose content scrolls once it is taller than `max`.
@@ -73,6 +63,9 @@ pub fn step_row<'a>(
         .into()
 }
 
+/// Where a row's text starts, after its icon.
+pub const INDENT: f32 = theme::S4 + theme::ICON_ROW + theme::S4;
+
 /// Items set under a row's title, lined up with its text rather than its icon.
 pub fn under_row<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     container(column(items).spacing(theme::S2).width(Length::Fill))
@@ -80,7 +73,7 @@ pub fn under_row<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
             top: 0.0,
             right: theme::S4,
             bottom: theme::S2,
-            left: super::explain::INDENT,
+            left: INDENT,
         })
         .width(Length::Fill)
         .into()
@@ -167,54 +160,6 @@ pub fn inline_notice<'a>(
         ..container::Style::default()
     })
     .into()
-}
-
-pub fn expander<'a>(
-    p: Palette,
-    title: impl Into<String>,
-    open: bool,
-    on_toggle: Message,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    let head = arrow(
-        button(
-            row![
-                text(title.into())
-                    .size(theme::SMALL)
-                    .font(theme::MEDIUM)
-                    .wrapping(Wrapping::None),
-                icon(
-                    if open {
-                        Icon::ChevronDown
-                    } else {
-                        Icon::ChevronRight
-                    },
-                    14.0,
-                    p.text_muted
-                ),
-            ]
-            .spacing(theme::S2)
-            .align_y(Alignment::Center),
-        )
-        .padding([theme::S1, 0.0])
-        .on_press(on_toggle)
-        .style(move |_, status| button::Style {
-            background: None,
-            text_color: if status == button::Status::Active {
-                p.text_muted
-            } else {
-                p.text
-            },
-            border: Border::default(),
-            shadow: Shadow::default(),
-            snap: true,
-        }),
-    );
-    let mut c = column![head].spacing(theme::S2);
-    if open {
-        c = c.push(well(p, content));
-    }
-    c.into()
 }
 
 pub fn toast<'a>(

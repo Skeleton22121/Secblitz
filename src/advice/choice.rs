@@ -27,7 +27,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Very old devices may stop showing your shared folders. Needs a restart."
         }
         "remote_assistance.disabled" => {
-            "Nobody can invite a helper to take over this PC. Quick Assist still works."
+            "Nobody can invite a helper to control this PC this way. Quick Assist still works."
         }
         "wsh.disabled" => "Old .vbs and .js script files will stop running when you open them.",
         "update.auto_policy_disabled" => {
@@ -37,7 +37,7 @@ pub fn choice_consequence(id: &str) -> &'static str {
             "Very old network drives or scanners may stop signing in. Needs a restart."
         }
         "accounts.builtin_administrator" => {
-            "Switches off the hidden Administrator account. Your own account keeps working."
+            "Switches off the built-in Administrator account. Your own account keeps working."
         }
         "privacy.activity_history" => "Windows stops keeping a list of what you did on this PC.",
         "privacy.advertising_id" => "Apps will show less relevant ads. Nothing else changes.",

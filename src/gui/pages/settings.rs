@@ -223,6 +223,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
         }
         Msg::SetLang(LangItem(lang)) => {
             ctx.lang = lang;
+            ctx.info = None;
             ctx.prefs.lang = Some(lang.code().to_owned());
             save_prefs(ctx)
         }
@@ -387,17 +388,17 @@ fn confirm_text(confirm: Confirm) -> (&'static str, &'static str, &'static str) 
         ),
         Confirm::Background(false) => (
             "Stop checking automatically?",
-            "Secblitz will stop checking your PC in the background. You can still check any time from Home. Nothing on your PC will change.",
+            "Secblitz stops checking in the background. You can still check any time from Home.",
             "Turn off",
         ),
         Confirm::Tray(true) => (
             "Show Secblitz in the system tray?",
-            "A small shield will appear in the bottom-right corner of your screen when you sign in. It shows whether your PC looks safe.",
+            "A small shield will appear near the clock when you sign in. It shows whether your PC looks safe.",
             "Turn on",
         ),
         Confirm::Tray(false) => (
             "Hide Secblitz from the system tray?",
-            "The small shield will no longer appear when you sign in. Nothing else changes.",
+            "The small shield will no longer appear when you sign in.",
             "Turn off",
         ),
     }
@@ -554,7 +555,7 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
             widgets::row_item(
                 p,
                 Some(Icon::ShieldAlert),
-                t("Tell me when a dangerous or scam website is blocked"),
+                t("Tell me when a website is blocked"),
                 None,
                 widgets::switch(
                     p,
@@ -681,31 +682,36 @@ pub fn view<'a>(state: &'a State, ctx: &'a Ctx) -> Element<'a, Message> {
                 p,
                 Some(Icon::Bug),
                 t("Report a problem"),
-                Some(t("Tell us what went wrong. This opens a form on GitHub.")),
-                link("Report a problem", crate::broker::Request::OpenReportProblem),
+                Some(t("Tell us what went wrong.")),
+                link("Open form", crate::broker::Request::OpenReportProblem),
                 None,
             ),
             widgets::row_item(
                 p,
                 Some(Icon::Sparkles),
                 t("Suggest a feature"),
-                Some(t("Share an idea that would make Secblitz better. This opens a form on GitHub.")),
-                link("Suggest a feature", crate::broker::Request::OpenSuggestFeature),
+                Some(t("Share an idea to make Secblitz better.")),
+                link("Open form", crate::broker::Request::OpenSuggestFeature),
                 None,
             ),
             widgets::row_item(
                 p,
                 Some(Icon::Eye),
                 t("Privacy"),
-                Some(t("See what Secblitz stores and when it uses the internet. This opens a page on our website.")),
-                link("Open privacy policy", crate::broker::Request::OpenPrivacyPolicy),
+                Some(t("See what Secblitz stores and when it uses the internet.")),
+                link(
+                    "Open privacy policy",
+                    crate::broker::Request::OpenPrivacyPolicy,
+                ),
                 None,
             ),
             widgets::row_item(
                 p,
                 Some(Icon::Lock),
                 t("Found a security problem?"),
-                Some(t("Please don't post it publicly. Email support@secblitz.lol instead.")),
+                Some(t(
+                    "Please don't post it publicly. Email support@secblitz.lol instead.",
+                )),
                 space::horizontal().width(0),
                 None,
             ),

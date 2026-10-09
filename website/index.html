@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#F7F7F8" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0E0E10" media="(prefers-color-scheme: dark)">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Secblitz maximizes Windows security and privacy by fixing security holes and misconfigurations in one click. It also removes bloatware and blocks ads, trackers and malware sites. Free and open source.">
+  <meta name="description" content="Secblitz turns on the security and privacy settings Windows leaves off, in one click. It also removes bloatware and blocks ads, trackers and malware sites. Free and open source.">
   <title>Secblitz: Windows security and privacy in one click</title>
   <link rel="canonical" href="https://secblitz.lol/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Secblitz">
   <meta property="og:title" content="Secblitz: Windows security and privacy in one click">
-  <meta property="og:description" content="Secblitz maximizes Windows security and privacy by fixing security holes and misconfigurations in one click. It also removes bloatware and blocks ads, trackers and malware sites. Free and open source.">
+  <meta property="og:description" content="Secblitz turns on the security and privacy settings Windows leaves off, in one click. It also removes bloatware and blocks ads, trackers and malware sites. Free and open source.">
   <meta property="og:url" content="https://secblitz.lol/">
   <meta property="og:image" content="https://secblitz.lol/assets/preview-92912b03eb97.webp">
   <meta property="og:image:alt" content="The Secblitz home screen">
@@ -87,14 +87,14 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap hero-copy">
         <h1 id="hero-title">Maximum Windows security and privacy, in one click.</h1>
-        <p class="lead">Secblitz finds security holes and misconfigurations in Windows and fixes them automatically. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.</p>
+        <p class="lead">Secblitz turns on the security and privacy settings Windows leaves off, in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.</p>
         <div class="cta">
-          <a class="button" href="downloads/secblitz-0.11.0-windows-x64-setup.exe" data-auto-download download>
+          <a class="button" href="downloads/secblitz-0.11.1-windows-x64-setup.exe" data-auto-download download>
             <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download for Windows
           </a>
           <a class="button button-quiet" href="#how">See how it works</a>
         </div>
-        <p class="meta choice"><a href="downloads/secblitz-0.11.0-windows-x64-setup.exe" data-arch="x64" download>For most PCs</a> · <a href="downloads/secblitz-0.11.0-windows-arm64-setup.exe" data-arch="arm64" download>For PCs with an ARM processor, like Snapdragon laptops</a></p>
+        <p class="meta choice"><a href="downloads/secblitz-0.11.1-windows-x64-setup.exe" data-arch="x64" download>For most PCs</a> · <a href="downloads/secblitz-0.11.1-windows-arm64-setup.exe" data-arch="arm64" download>For PCs with an ARM processor, like Snapdragon laptops</a></p>
         <p class="meta"><span>Free and open source</span> · <span>No account</span> · <span>Windows 10 and 11, 64-bit</span><span id="downloads" hidden>&nbsp;· <span></span> downloads</span> · <a href="privacy.html">Privacy</a></p>
       </div>
       <div class="wrap-wide">
@@ -115,10 +115,10 @@
 
     <section class="facts wrap" aria-label="Why people trust it">
       <ul class="fact-list">
-        <li><svg class="icon" aria-hidden="true"><use href="#i-shield-check"/></svg><span><strong>You approve every change.</strong> Scanning changes nothing.</span></li>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-shield-check"/></svg><span><strong>You approve every change.</strong> Checking changes nothing.</span></li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg><span><strong>Every change can be undone.</strong> Your original settings are saved first.</span></li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-eye-off"/></svg><span><strong>No data collection.</strong> No account, no ads, no tracking.</span></li>
-        <li><svg class="icon" aria-hidden="true"><use href="#i-check-circle"/></svg><span><strong>Uses Windows protection.</strong> It turns on the security Windows already has.</span></li>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check-circle"/></svg><span><strong>Only changes this PC.</strong> It turns on the security Windows already has. It does not look at other devices, list open ports or test passwords.</span></li>
       </ul>
     </section>
 
@@ -129,13 +129,13 @@
       <ol class="steps">
         <li>
           <svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg>
-          <h3>Scan</h3>
-          <p>Secblitz scans Windows for security holes and privacy problems. It takes about a minute and changes nothing.</p>
+          <h3>Check</h3>
+          <p>Secblitz looks at your Windows settings and shows which ones could be safer. It takes about a minute and changes nothing.</p>
         </li>
         <li>
           <svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>
           <h3>Review</h3>
-          <p>See what is wrong and why it matters. Optional settings are up to you.</p>
+          <p>See which settings could be safer and why it matters. Optional settings are up to you.</p>
         </li>
         <li>
           <svg class="icon" aria-hidden="true"><use href="#i-wrench"/></svg>
@@ -160,14 +160,14 @@
           <div class="demo-head">
             <svg class="icon tone-warn" aria-hidden="true"><use href="#i-alert"/></svg>
             <div>
-              <p class="demo-title">Password guessing lockout</p>
-              <p class="demo-sub">Leaves you open to: someone guessing your password again and again</p>
+              <p class="demo-title">Lock after wrong passwords</p>
+              <p class="demo-sub">Leaves you open to: someone trying one password after another on your PC</p>
             </div>
             <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
           </div>
           <dl class="demo-body">
             <div><dt>What it is</dt><dd>Windows can pause sign-in for a few minutes after too many wrong passwords.</dd></div>
-            <div><dt>If it's off</dt><dd>Someone with your PC, or on your network, could try thousands of passwords until one works.</dd></div>
+            <div><dt>If it's off</dt><dd>Windows lets anyone keep typing passwords with no pause.</dd></div>
             <div><dt>If you turn it on</dt><dd>Nothing you'll notice. If you mistype your password ten times, wait ten minutes.</dd></div>
           </dl>
         </div>
@@ -183,17 +183,17 @@
         <div class="check-group">
           <svg class="icon" aria-hidden="true"><use href="#i-shield-check"/></svg>
           <h3>Virus protection</h3>
-          <p>Real-time scanning, cloud protection, tamper protection, blocking of unwanted software bundled with downloads, and extra protections Windows leaves off by default.</p>
+          <p>Real-time protection, cloud protection, tamper protection, blocking of unwanted software bundled with downloads, and extra protections Windows leaves off by default.</p>
         </div>
         <div class="check-group">
           <svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg>
           <h3>Network and Wi-Fi</h3>
-          <p>Your firewall at home, at work and in public, file sharing, risky Wi-Fi networks and old network features that are no longer safe to leave on.</p>
+          <p>Turns on your firewall everywhere, turns off file sharing on public networks, and sets weak saved Wi-Fi networks to join only when you choose.</p>
         </div>
         <div class="check-group">
           <svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>
           <h3>Sign-in and accounts</h3>
-          <p>Protection against password guessing, hidden administrator accounts, unused accounts and the settings that keep your password safe.</p>
+          <p>Lock an account after wrong passwords, switch off the built-in Administrator and unused accounts, and keep your sign-in settings safe.</p>
         </div>
         <div class="check-group">
           <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>
@@ -258,7 +258,11 @@
         </details>
         <details>
           <summary>Will it change things without asking?<svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-          <p>No. Scanning your PC changes nothing. Secblitz only makes the changes you approve, and optional settings are never selected for you.</p>
+          <p>No. Checking your PC changes nothing. Secblitz only makes the changes you approve, and optional settings are never selected for you.</p>
+        </details>
+        <details>
+          <summary>Does Secblitz scan my network?<svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+          <p>No. Secblitz only looks at the settings on this PC and changes them, with your approval. It does not look for other devices, list open ports, test passwords or look for ways into a PC.</p>
         </details>
         <details>
           <summary>Can I undo a change?<svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
@@ -279,6 +283,7 @@
         <details>
           <summary>What happens if I remove Secblitz?<svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
           <p>You choose. Keep the safer settings Secblitz made, or put everything back the way it was before, including the apps you removed. Either way, Secblitz removes itself completely.</p>
+          <p>To remove it, open Settings, then Apps, then Installed apps (on Windows 10: Apps, then Apps and features). Find Secblitz and choose Uninstall. You can also open Secblitz, go to Settings and choose Remove Secblitz from this PC. If you use the portable version, open Secblitz, go to Settings and choose Remove Secblitz from this PC to put your settings back, then delete the secblitz.exe file.</p>
         </details>
         <details>
           <summary>Is Secblitz open source?<svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
@@ -299,16 +304,16 @@
       <div class="wrap download-inner">
         <svg class="download-mark" aria-hidden="true"><use href="#i-brand"/></svg>
         <h2 id="download-title">Download Secblitz</h2>
-        <p>Free. The first scan takes about a minute and changes nothing.</p>
-        <a class="button" href="downloads/secblitz-0.11.0-windows-x64-setup.exe" data-auto-download download>
+        <p>Free. The first check takes about a minute and changes nothing.</p>
+        <a class="button" href="downloads/secblitz-0.11.1-windows-x64-setup.exe" data-auto-download download>
           <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download for Windows
         </a>
-        <p class="meta choice"><a href="downloads/secblitz-0.11.0-windows-x64-setup.exe" data-arch="x64" download>For most PCs</a> · <a href="downloads/secblitz-0.11.0-windows-arm64-setup.exe" data-arch="arm64" download>For PCs with an ARM processor, like Snapdragon laptops</a></p>
-        <p class="meta">Free and open source · Windows 10 and 11, 64-bit · <a href="privacy.html">Privacy</a></p>
+        <p class="meta choice"><a href="downloads/secblitz-0.11.1-windows-x64-setup.exe" data-arch="x64" download>For most PCs</a> · <a href="downloads/secblitz-0.11.1-windows-arm64-setup.exe" data-arch="arm64" download>For PCs with an ARM processor, like Snapdragon laptops</a></p>
+        <p class="meta">Free and open source · Windows 10 and 11, 64-bit · <a href="privacy.html">Privacy</a> · <a href="code-signing.html">Code signing policy</a></p>
         <details class="download-details">
           <summary>Download details<svg class="icon chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
           <div class="details-body">
-            <p>Version 0.11.0 · 8.2 MB installer</p>
+            <p>Version 0.11.1 · 8.2 MB installer</p>
             <p>The first time you run it, Windows may warn that the publisher is unknown. Select More info, then Run anyway. The checksums below let you confirm the file is the one we published.</p>
             <div class="hash">
               <span class="hash-label">SHA-256</span>
@@ -332,7 +337,7 @@
   <footer class="footer">
     <div class="wrap footer-inner">
       <a class="brand brand-small" href="#main"><svg class="brand-mark" aria-hidden="true"><use href="#i-brand"/></svg>Secblitz</a>
-      <p>Open source under the MIT license · <a href="https://github.com/secblitz/Secblitz">GitHub</a> · <a href="mailto:support@secblitz.lol">support@secblitz.lol</a> · <a href="privacy.html">Privacy</a> · No trackers. No cookies. © 2026 Secblitz</p>
+      <p>Open source under the MIT license · <a href="https://github.com/secblitz/Secblitz">GitHub</a> · <a href="mailto:support@secblitz.lol">support@secblitz.lol</a> · <a href="privacy.html">Privacy</a> · <a href="code-signing.html">Code signing policy</a> · <a href="https://github.com/secblitz/Secblitz/blob/main/THIRD-PARTY-NOTICES.md">Third-party notices</a> · No trackers. No cookies. © 2026 Secblitz</p>
     </div>
   </footer>
 </body>

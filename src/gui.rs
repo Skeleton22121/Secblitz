@@ -154,7 +154,7 @@ pub struct Ctx {
     /// This x64 build runs through emulation on an ARM PC.
     pub x64_on_arm: bool,
     pub toast: Option<(String, Tone)>,
-    pub explain_open: Option<String>,
+    pub info: Option<Box<widgets::info::InfoSheet>>,
     pub copilot_installed: bool,
 }
 
@@ -240,7 +240,7 @@ pub enum Message {
     CloseWhatsNew,
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
-    Explain(String),
+    Info(Option<Box<widgets::info::InfoSheet>>),
     DismissToast,
     ToastExpire(u32),
     ToastGone,
@@ -426,7 +426,7 @@ impl App {
             prefs,
             x64_on_arm: secblitz::platform::x64_on_arm(),
             toast: None,
-            explain_open: None,
+            info: None,
             copilot_installed: false,
         };
         let mut app = App {
@@ -525,7 +525,7 @@ impl App {
                 }
                 let finished = self.finish_handoff();
                 self.page = page;
-                self.ctx.explain_open = None;
+                self.ctx.info = None;
                 self.begin_entrance();
                 Task::batch([
                     finished,
@@ -559,6 +559,7 @@ impl App {
                 if self.ctx.checking.is_some() || self.ctx.busy {
                     return Task::none();
                 }
+                self.ctx.info = None;
                 self.ctx.checking = Some(CheckProgress::default());
                 Task::run(self.ctx.worker.run(worker::Job::Check), Message::Worker)
             }
@@ -580,22 +581,19 @@ impl App {
                     iced::window::close(id)
                 }
             }
-            Message::Explain(key) => {
-                self.ctx.explain_open = match self.ctx.explain_open.take() {
-                    Some(open) if open == key => None,
-                    _ => Some(key),
-                };
+            Message::Info(sheet) => {
+                self.ctx.info = sheet;
                 Task::none()
             }
             Message::Escape => {
+                if self.ctx.info.take().is_some() {
+                    return Task::none();
+                }
                 if std::mem::take(&mut self.whats_new) {
                     return Task::none();
                 }
                 if self.fix.is_open() {
                     return fixflow::escape(&mut self.fix, &mut self.ctx);
-                }
-                if self.ctx.explain_open.take().is_some() {
-                    return Task::none();
                 }
                 match self.page {
                     Page::Fixes => fixes::escape(&mut self.fixes),
@@ -1186,6 +1184,14 @@ impl App {
         } else {
             none()
         };
+        let info_layer = match &self.ctx.info {
+            Some(sheet) => widgets::dismissable_sheet_layer(
+                p,
+                widgets::info::dialog(&self.ctx, sheet),
+                Message::Info(None),
+            ),
+            None => none(),
+        };
         let toast_layer = match &self.ctx.toast {
             Some((message, tone)) => container(widgets::toast(
                 p,
@@ -1199,7 +1205,15 @@ impl App {
             .into(),
             None => none(),
         };
-        stack![body, modal_layer, fix_layer, news_layer, toast_layer].into()
+        stack![
+            body,
+            modal_layer,
+            fix_layer,
+            news_layer,
+            info_layer,
+            toast_layer
+        ]
+        .into()
     }
 
     fn whats_new_panel(&self, p: Palette) -> Element<'_, Message> {

@@ -6,9 +6,9 @@ pub mod bars;
 pub mod chart;
 pub mod controls;
 pub mod cursor;
-pub mod explain;
 pub mod hairline;
 pub mod handoff;
+pub mod info;
 pub mod menu;
 pub mod parts;
 pub mod press;
@@ -288,6 +288,23 @@ pub fn sheet_layer<'a>(
     p: Palette,
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    sheet_over(p, content, None)
+}
+
+/// A sheet that closes with `dismiss` when the dimmed background is clicked.
+pub fn dismissable_sheet_layer<'a>(
+    p: Palette,
+    content: impl Into<Element<'a, Message>>,
+    dismiss: Message,
+) -> Element<'a, Message> {
+    sheet_over(p, content, Some(dismiss))
+}
+
+fn sheet_over<'a>(
+    p: Palette,
+    content: impl Into<Element<'a, Message>>,
+    dismiss: Option<Message>,
+) -> Element<'a, Message> {
     let panel = container(content)
         .max_width(theme::CONTENT_MAX)
         .padding(theme::S6)
@@ -301,12 +318,16 @@ pub fn sheet_layer<'a>(
             text_color: Some(p.text),
             snap: true,
         });
-    opaque(appear::pop(
-        container(panel).center(Length::Fill).padding(theme::S6),
-        p.scrim,
-        p.surface,
-        theme::R_LARGE,
-    ))
+    let layer = match dismiss {
+        Some(message) => {
+            let panel = iced::widget::mouse_area(panel).on_press(Message::Noop);
+            iced::widget::mouse_area(container(panel).center(Length::Fill).padding(theme::S6))
+                .on_press(message)
+                .into()
+        }
+        None => Element::from(container(panel).center(Length::Fill).padding(theme::S6)),
+    };
+    opaque(appear::pop(layer, p.scrim, p.surface, theme::R_LARGE))
 }
 
 pub fn page_header<'a>(
