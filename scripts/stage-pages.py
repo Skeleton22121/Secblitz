@@ -20,7 +20,7 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 STATIC = (
-    "index.html", "404.html", "privacy.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json", "releases/stable-arm64.json",
+    "index.html", "404.html", "privacy.html", "code-signing.html", "styles.css", "app.js", "theme.js", "_headers", "releases/stable.json", "releases/stable-arm64.json",
     "assets/favicon.svg", "assets/preview-92912b03eb97.webp",
     "assets/app-home-light.webp", "assets/app-home-dark.webp",
     "assets/app-protection-light.webp", "assets/app-protection-dark.webp", "assets/intro-909e4b4d6414.mp4",

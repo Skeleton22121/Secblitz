@@ -412,6 +412,26 @@ class AssembleTests(unittest.TestCase):
         self.assertNotIn(f"secblitz-{self.version}-windows-arm64.exe", names)
         self.assertIn(f"secblitz-{self.shown_before()}-windows-x64-setup.exe", names)  # the replaced version stays
 
+    def test_code_signing_page_is_published_and_checked(self):
+        done = self.assemble()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("code-signing.html references verified", done.stdout)
+        text = (self.out / "code-signing.html").read_text()
+        self.assertIn("Free code signing provided by SignPath.io, certificate by SignPath Foundation", text)
+        page = self.root / "website/code-signing.html"
+        original = page.read_text()
+        for broken in (original.replace("certificate by SignPath Foundation", "certificate"),
+                       original.replace("https://secblitz.lol/privacy.html", "https://example.test/"),
+                       original.replace("</main>", '<a href="http://example.test/">x</a></main>')):
+            page.write_text(broken)
+            shutil.rmtree(self.out, ignore_errors=True)
+            failed = self.assemble()
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("code-signing.html", failed.stderr)
+        page.write_text(original)
+        shutil.rmtree(self.out, ignore_errors=True)
+        self.assertEqual(self.assemble().returncode, 0)
+
     def test_live_check_compares_bytes_and_fails_loudly(self):
         self.assertEqual(self.assemble().returncode, 0)
         files = live.expected_files(self.out, self.version)

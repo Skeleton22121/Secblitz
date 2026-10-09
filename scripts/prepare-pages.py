@@ -207,20 +207,33 @@ def verify_not_found_page(site):
     print("Static 404 page and root-relative assets verified.")
 
 
-def verify_privacy_page(site):
+def verify_policy_page(site, name):
     page = SiteReferences()
-    page.feed((site / "privacy.html").read_text(encoding="utf-8"))
+    page.feed((site / name).read_text(encoding="utf-8"))
     for reference in page.references:
         url = urlsplit(reference)
         if url.scheme or url.netloc:
             if url.scheme not in {"https", "mailto"}:
-                raise ValueError("privacy page may only link to https or mailto addresses")
+                raise ValueError(f"{name} may only link to https or mailto addresses")
             continue
         if url.path == "/":
             continue
         if not url.path.startswith("/") or not (site / local_reference(url.path)).is_file():
-            raise ValueError("privacy page references must be root-relative and exist")
-    print("Privacy page references verified.")
+            raise ValueError(f"{name} references must be root-relative and exist")
+    print(f"{name} references verified.")
+
+
+def verify_privacy_page(site):
+    verify_policy_page(site, "privacy.html")
+
+
+def verify_code_signing_page(site):
+    verify_policy_page(site, "code-signing.html")
+    text = (site / "code-signing.html").read_text(encoding="utf-8")
+    if "Free code signing provided by SignPath.io, certificate by SignPath Foundation" not in text:
+        raise ValueError("code-signing.html lacks the SignPath attribution")
+    if "https://secblitz.lol/privacy.html" not in text:
+        raise ValueError("code-signing.html lacks the privacy policy link")
 
 
 def verify_migration_redirects(site, origin):
@@ -327,6 +340,8 @@ def main():
         verify_not_found_page(site)
     if (site / "privacy.html").exists():
         verify_privacy_page(site)
+    if (site / "code-signing.html").exists():
+        verify_code_signing_page(site)
     verify_migration_redirects(site, effective_origin)
     if origin:
         (ROOT / "assets/update-origin.txt").write_text(origin + "\n", encoding="utf-8")
