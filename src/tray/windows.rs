@@ -70,8 +70,8 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MATCH_FOR: Duration = Duration::from_secs(4);
 const MATCH_EVERY: Duration = Duration::from_millis(200);
 const ADDRESS_WAIT: Duration = Duration::from_millis(1500);
-/// Reading Firefox's address bar walks its whole accessibility tree, so it is done far less
-/// often than the cheap title check.
+/// Reading an address bar walks the browser's accessibility tree, so it is done far less often
+/// than the title check.
 const ADDRESS_EVERY: Duration = Duration::from_secs(1);
 const POLL_TIMER: usize = 1;
 const QUIESCE_TIMER: usize = 2;
@@ -318,21 +318,23 @@ fn show_blocked(hwnd: HWND, t: &mut Tray, notice: Notice, now: u64) {
     balloon(hwnd, t, &logic::Balloon::Blocked(notice));
 }
 
+/// Chromium's title is checked first because it costs nothing; the address bar, which a page
+/// cannot change, then has to agree.
 fn tab_shows(window: usize, site: &str, address_read: &mut Option<Instant>) -> bool {
-    match browser::browser_of(window) {
-        Some(warn_logic::Browser::Chromium) => {
-            warn_logic::title_shows(&browser::title(window), site)
-        }
-        Some(warn_logic::Browser::Firefox) => {
-            if address_read.is_some_and(|at| at.elapsed() < ADDRESS_EVERY) {
-                return false;
-            }
-            *address_read = Some(Instant::now());
-            browser::firefox_address(window, ADDRESS_WAIT)
-                .is_some_and(|address| warn_logic::address_shows(&address, site))
-        }
-        None => false,
+    let Some(kind) = browser::browser_of(window) else {
+        return false;
+    };
+    if kind == warn_logic::Browser::Chromium
+        && !warn_logic::title_shows(&browser::title(window), site)
+    {
+        return false;
     }
+    if address_read.is_some_and(|at| at.elapsed() < ADDRESS_EVERY) {
+        return false;
+    }
+    *address_read = Some(Instant::now());
+    browser::address(window, kind, ADDRESS_WAIT)
+        .is_some_and(|address| warn_logic::address_shows(&address, site))
 }
 
 fn start_panel(lang: Lang, notice: &Notice, window: usize) -> bool {

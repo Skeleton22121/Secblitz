@@ -220,9 +220,10 @@ pub fn reload(window: usize) -> bool {
     press(window, &[key(VK_F5, false), key(VK_F5, true)])
 }
 
-/// Firefox shows a translated "Problem loading page" as its title, so its address bar is read
-/// through UI Automation, on a thread of its own that is given up on after `limit`.
-pub fn firefox_address(window: usize, limit: Duration) -> Option<String> {
+/// The browser's address bar, read through UI Automation on a thread of its own that is given up
+/// on after `limit`. Firefox titles its error page in the person's language, and any page can
+/// set a Chromium title, so only the address bar shows what the tab really is.
+pub fn address(window: usize, browser: Browser, limit: Duration) -> Option<String> {
     // A read stuck inside Firefox must not pile up more threads behind it.
     static READING: AtomicBool = AtomicBool::new(false);
     if READING.swap(true, Ordering::AcqRel) {
@@ -232,7 +233,7 @@ pub fn firefox_address(window: usize, limit: Duration) -> Option<String> {
     let started = thread::Builder::new()
         .name("address-bar".into())
         .spawn(move || {
-            let _ = tx.send(read_address(window));
+            let _ = tx.send(read_address(window, browser));
             READING.store(false, Ordering::Release);
         });
     if started.is_err() {
@@ -242,7 +243,7 @@ pub fn firefox_address(window: usize, limit: Duration) -> Option<String> {
     rx.recv_timeout(limit).ok().flatten()
 }
 
-fn read_address(window: usize) -> Option<String> {
+fn read_address(window: usize, browser: Browser) -> Option<String> {
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
     struct Com;
     impl Drop for Com {
@@ -259,10 +260,10 @@ fn read_address(window: usize) -> Option<String> {
         }
     }
     let _com = Com;
-    address_bar(window)
+    address_bar(window, browser)
 }
 
-fn address_bar(window: usize) -> Option<String> {
+fn address_bar(window: usize, browser: Browser) -> Option<String> {
     use windows::{
         core::VARIANT,
         Win32::{
@@ -270,7 +271,7 @@ fn address_bar(window: usize) -> Option<String> {
             System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
             UI::Accessibility::{
                 CUIAutomation, IUIAutomation, IUIAutomationValuePattern, TreeScope_Descendants,
-                UIA_AutomationIdPropertyId, UIA_ValuePatternId,
+                UIA_AutomationIdPropertyId, UIA_ClassNamePropertyId, UIA_ValuePatternId,
             },
         },
     };
@@ -279,9 +280,19 @@ fn address_bar(window: usize) -> Option<String> {
         let automation: IUIAutomation =
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
         let root = automation.ElementFromHandle(HWND(window as *mut _)).ok()?;
-        let wanted = automation
-            .CreatePropertyCondition(UIA_AutomationIdPropertyId, &VARIANT::from("urlbar-input"))
-            .ok()?;
+        let wanted = match browser {
+            Browser::Firefox => automation.CreatePropertyCondition(
+                UIA_AutomationIdPropertyId,
+                &VARIANT::from("urlbar-input"),
+            ),
+            Browser::Chromium => automation.CreatePropertyCondition(
+                UIA_ClassNamePropertyId,
+                &VARIANT::from("OmniboxViewViews"),
+            ),
+        }
+        .ok()?;
+        // The toolbar comes before the page in the tree, so a page element made to look like the
+        // address bar is never the first match.
         let bar = root.FindFirst(TreeScope_Descendants, &wanted).ok()?;
         let value: IUIAutomationValuePattern = bar.GetCurrentPatternAs(UIA_ValuePatternId).ok()?;
         Some(value.CurrentValue().ok()?.to_string())

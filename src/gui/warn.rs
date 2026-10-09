@@ -149,7 +149,7 @@ fn spin() -> impl iced::futures::Stream<Item = Message> {
 fn tab_shows(browser: Browser, window: usize, site: &str) -> bool {
     match browser {
         Browser::Chromium => warn_logic::title_shows(&sys::title(window), site),
-        Browser::Firefox => sys::firefox_address(window, ADDRESS_WAIT)
+        Browser::Firefox => sys::address(window, browser, ADDRESS_WAIT)
             .is_some_and(|address| warn_logic::address_shows(&address, site)),
     }
 }
@@ -360,7 +360,7 @@ impl Panel {
             self.address_check = Some(now);
             self.address_read = Some(now);
             return Task::perform(
-                super::blocking(move || sys::firefox_address(window, ADDRESS_WAIT)),
+                super::blocking(move || sys::address(window, Browser::Firefox, ADDRESS_WAIT)),
                 Message::Address,
             );
         }
@@ -690,7 +690,7 @@ mod stub {
     pub fn reload(_: usize) -> bool {
         false
     }
-    pub fn firefox_address(_: usize, _: Duration) -> Option<String> {
+    pub fn address(_: usize, _: Browser, _: Duration) -> Option<String> {
         None
     }
 }
