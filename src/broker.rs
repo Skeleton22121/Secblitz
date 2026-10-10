@@ -1,7 +1,6 @@
 //! Launcher <-> elevated GUI broker: a closed set of user-context actions.
 
 use crate::app::app_access::{self, Capability, Target};
-use secblitz::user_apps;
 use secblitz::user_settings::{Op, Setting};
 use std::time::Duration;
 
@@ -42,12 +41,11 @@ pub enum Request {
     OpenRecoveryKey,
     StartTray,
     OpenDownloadPage,
+    ShowSupportFile,
+    /// Followed on the wire by a `FileHeader` and the zip itself; sent with `Client::save_file`.
+    SaveSupportFile,
     UserSetting(Setting, Op),
-    AppUpdatesScan,
-    AppUpdateQuery(u16),
-    AppUpdate(u16),
     BitwardenStatus,
-    AppInstallerStatus,
     AppAccessList(Capability),
     AppAccessSet {
         capability: Capability,
@@ -70,7 +68,6 @@ pub enum Reply {
     NeedsAttention,
     NotApplicable,
     Unknown,
-    UpdateAvailable,
     Working,
     ChangedSince,
 }
@@ -104,7 +101,6 @@ impl Reply {
             Reply::NeedsAttention => 8,
             Reply::NotApplicable => 9,
             Reply::Unknown => 10,
-            Reply::UpdateAvailable => 11,
             Reply::Working => 12,
             Reply::ChangedSince => 13,
         }
@@ -121,7 +117,6 @@ impl Reply {
             8 => Reply::NeedsAttention,
             9 => Reply::NotApplicable,
             10 => Reply::Unknown,
-            11 => Reply::UpdateAvailable,
             12 => Reply::Working,
             13 => Reply::ChangedSince,
             _ => return None,
@@ -135,23 +130,21 @@ impl Request {
         match self {
             Request::StoreAppStatus(_)
             | Request::StartStoreApp(_)
-            | Request::AppUpdatesScan
-            | Request::AppUpdateQuery(_)
             | Request::BitwardenStatus
-            | Request::AppInstallerStatus
             | Request::AppAccessList(_)
             | Request::UserSetting(_, Op::Query)
             | Request::OpenReportProblem
             | Request::OpenSuggestFeature
             | Request::OpenPrivacyPolicy
             | Request::OpenRecoveryKey
-            | Request::OpenDownloadPage => true,
+            | Request::OpenDownloadPage
+            | Request::ShowSupportFile
+            | Request::SaveSupportFile => true,
             Request::UserSetting(_, Op::Apply | Op::Undo)
             | Request::InstallBitwarden
             | Request::BlockSuggestedApps
             | Request::ReinstallStoreApp(_)
-            | Request::AppAccessSet { .. }
-            | Request::AppUpdate(_) => false,
+            | Request::AppAccessSet { .. } => false,
             Request::OpenWindowsUpdate
             | Request::OpenWindowsSecurity
             | Request::OpenEncryption
@@ -181,7 +174,7 @@ impl Request {
     }
 
     pub fn opens_window(self) -> bool {
-        self.page().is_some()
+        self.page().is_some() || self == Request::ShowSupportFile
     }
 
     /// The settings page or web page this request opens, if that is all it does.
@@ -223,14 +216,12 @@ impl Request {
             | Request::StartStoreApp(_)
             | Request::StoreAppStatus(_)
             | Request::UserSetting(..)
-            | Request::AppUpdatesScan
-            | Request::AppUpdateQuery(_)
-            | Request::AppUpdate(_)
             | Request::BitwardenStatus
             | Request::AppAccessList(_)
             | Request::AppAccessSet { .. }
-            | Request::AppInstallerStatus
-            | Request::StartTray => return None,
+            | Request::StartTray
+            | Request::ShowSupportFile
+            | Request::SaveSupportFile => return None,
         })
     }
 
@@ -264,19 +255,17 @@ impl Request {
             Request::OpenInstalledApps => (33, 0),
             Request::OpenReportProblem => (34, 0),
             Request::OpenSuggestFeature => (35, 0),
-            Request::AppInstallerStatus => (36, 0),
             Request::OpenPrivacyPolicy => (37, 0),
             Request::OpenTaskbar => (38, 0),
             Request::OpenRecoveryKey => (41, 0),
             Request::StartTray => (42, 0),
             Request::OpenDownloadPage => (43, 0),
+            Request::ShowSupportFile => (44, 0),
+            Request::SaveSupportFile => (45, 0),
             Request::UserSetting(setting, op) => (
                 13,
                 u16::from(setting.to_byte()) | (u16::from(op.to_byte()) << 8),
             ),
-            Request::AppUpdatesScan => (14, 0),
-            Request::AppUpdateQuery(i) => (15, i),
-            Request::AppUpdate(i) => (16, i),
             Request::BitwardenStatus => (17, 0),
             Request::StartStoreApp(i) => (18, i),
             Request::StoreAppStatus(i) => (19, i),
@@ -302,10 +291,9 @@ impl Request {
     pub fn decode_with(bytes: [u8; 3], catalog_len: usize) -> Option<Self> {
         let [kind, lo, hi] = bytes;
         let arg = u16::from_le_bytes([lo, hi]);
-        if !matches!(kind, 7 | 13 | 15 | 16 | 18 | 19 | 39 | 40) && arg != 0 {
+        if !matches!(kind, 7 | 13 | 18 | 19 | 39 | 40) && arg != 0 {
             return None;
         }
-        let apps = user_apps::APPS.len();
         Some(match kind {
             1 => Request::OpenWindowsUpdate,
             2 => Request::OpenWindowsSecurity,
@@ -335,16 +323,14 @@ impl Request {
             33 => Request::OpenInstalledApps,
             34 => Request::OpenReportProblem,
             35 => Request::OpenSuggestFeature,
-            36 => Request::AppInstallerStatus,
             37 => Request::OpenPrivacyPolicy,
             38 => Request::OpenTaskbar,
             41 => Request::OpenRecoveryKey,
             42 => Request::StartTray,
             43 => Request::OpenDownloadPage,
+            44 => Request::ShowSupportFile,
+            45 => Request::SaveSupportFile,
             13 => Request::UserSetting(Setting::from_byte(lo)?, Op::from_byte(hi)?),
-            14 => Request::AppUpdatesScan,
-            15 if usize::from(arg) < apps => Request::AppUpdateQuery(arg),
-            16 if usize::from(arg) < apps => Request::AppUpdate(arg),
             17 => Request::BitwardenStatus,
             18 if usize::from(arg) < catalog_len => Request::StartStoreApp(arg),
             19 if usize::from(arg) < catalog_len => Request::StoreAppStatus(arg),
@@ -364,13 +350,50 @@ impl Request {
 
     pub fn timeout(self) -> Duration {
         match self {
-            Request::ReinstallStoreApp(_) | Request::InstallBitwarden | Request::AppUpdate(_) => {
+            Request::ReinstallStoreApp(_) | Request::InstallBitwarden => {
                 Duration::from_secs(15 * 60)
             }
-            Request::AppUpdatesScan => Duration::from_secs(4 * 60),
             _ => Duration::from_secs(30),
         }
     }
+}
+
+/// The largest support file the launcher accepts; the zip itself stays under 1 MB.
+pub const MAX_FILE: usize = 1 << 20;
+
+/// When the file was made, which names it, and how many bytes follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileHeader {
+    pub at: u64,
+    pub len: usize,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl FileHeader {
+    pub const SIZE: usize = 12;
+
+    pub fn encode(self) -> [u8; Self::SIZE] {
+        let mut out = [0u8; Self::SIZE];
+        out[..8].copy_from_slice(&self.at.to_le_bytes());
+        out[8..].copy_from_slice(&(self.len as u32).to_le_bytes());
+        out
+    }
+
+    pub fn decode(bytes: [u8; Self::SIZE]) -> Option<Self> {
+        let at = u64::from_le_bytes(bytes[..8].try_into().ok()?);
+        let len = u32::from_le_bytes(bytes[8..].try_into().ok()?) as usize;
+        (len > 0 && len <= MAX_FILE).then_some(FileHeader { at, len })
+    }
+}
+
+/// A whole zip as `app::support` writes it: a first entry, and the end record with no comment.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn looks_like_zip(bytes: &[u8]) -> bool {
+    bytes.len() >= 52
+        && bytes.len() <= MAX_FILE
+        && bytes.starts_with(b"PK\x03\x04")
+        && bytes[bytes.len() - 22..].starts_with(b"PK\x05\x06")
+        && bytes.ends_with(&[0, 0])
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -424,6 +447,10 @@ impl Client {
     }
 
     pub fn send(&self, request: Request) -> anyhow::Result<Reply> {
+        anyhow::ensure!(
+            request != Request::SaveSupportFile,
+            "a support file is sent with save_file"
+        );
         #[cfg(windows)]
         {
             let mut pipe = self.inner.lock().map_err(|e| {
@@ -436,6 +463,36 @@ impl Client {
         #[cfg(not(windows))]
         {
             let _ = request;
+            anyhow::bail!("The broker is only available on Windows")
+        }
+    }
+
+    /// Hands a support file to the launcher, which saves it in the person's own Downloads.
+    /// On success, returns the number `app::support::numbered` adds to the file name.
+    pub fn save_file(&self, at: u64, zip: &[u8]) -> anyhow::Result<Result<u8, Reply>> {
+        anyhow::ensure!(looks_like_zip(zip), "not a support file");
+        #[cfg(windows)]
+        {
+            let mut pipe = self.inner.lock().map_err(|e| {
+                eprintln!("{e}");
+                anyhow::anyhow!("broker unavailable")
+            })?;
+            let header = FileHeader { at, len: zip.len() }.encode();
+            let mut message = Vec::with_capacity(3 + header.len() + zip.len());
+            message.extend_from_slice(&Request::SaveSupportFile.encode());
+            message.extend_from_slice(&header);
+            message.extend_from_slice(zip);
+            let [reply, number] =
+                pipe.round_trip_bytes(message, Request::SaveSupportFile.timeout())?;
+            match Reply::decode(reply) {
+                Some(Reply::Done) => Ok(Ok(number)),
+                Some(other) => Ok(Err(other)),
+                None => anyhow::bail!("invalid broker reply"),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = at;
             anyhow::bail!("The broker is only available on Windows")
         }
     }
@@ -635,6 +692,24 @@ mod imp {
             }
             result
         }
+
+        pub fn round_trip_bytes(
+            &mut self,
+            mut message: Vec<u8>,
+            timeout: Duration,
+        ) -> anyhow::Result<[u8; 2]> {
+            anyhow::ensure!(!self.broken, "broker unavailable");
+            let result = (|| {
+                self.io(true, &mut message, Duration::from_secs(10))?;
+                let mut reply = [0u8; 2];
+                self.io(false, &mut reply, timeout)?;
+                Ok(reply)
+            })();
+            if result.is_err() {
+                self.broken = true;
+            }
+            result
+        }
     }
 }
 
@@ -681,13 +756,9 @@ mod tests {
             Request::OpenRecoveryKey,
             Request::StartTray,
             Request::OpenDownloadPage,
-            Request::AppUpdatesScan,
-            Request::AppUpdateQuery(0),
-            Request::AppUpdateQuery(user_apps::APPS.len() as u16 - 1),
-            Request::AppUpdate(0),
-            Request::AppUpdate(user_apps::APPS.len() as u16 - 1),
+            Request::ShowSupportFile,
+            Request::SaveSupportFile,
             Request::BitwardenStatus,
-            Request::AppInstallerStatus,
             Request::StartStoreApp(0),
             Request::StartStoreApp(41),
             Request::StoreAppStatus(0),
@@ -756,7 +827,8 @@ mod tests {
     fn only_page_requests_bring_a_window_forward() {
         for request in all() {
             let page = format!("{request:?}").starts_with("Open");
-            assert_eq!(request.opens_window(), page, "{request:?}");
+            let folder = request == Request::ShowSupportFile;
+            assert_eq!(request.opens_window(), page || folder, "{request:?}");
         }
     }
 
@@ -768,7 +840,11 @@ mod tests {
             Request::OpenPrivacyPolicy,
             Request::OpenRecoveryKey,
             Request::OpenDownloadPage,
+            Request::ShowSupportFile,
         ];
+        assert!(
+            Request::SaveSupportFile.is_read_only() && !Request::SaveSupportFile.opens_window()
+        );
         for request in all() {
             if request.opens_window() && !feedback.contains(&request) {
                 assert!(!request.is_read_only(), "{request:?}");
@@ -786,9 +862,6 @@ mod tests {
             assert!(!Request::UserSetting(setting, Op::Apply).is_read_only());
             assert!(!Request::UserSetting(setting, Op::Undo).is_read_only());
         }
-        assert!(!Request::AppUpdate(0).is_read_only());
-        assert!(Request::AppUpdatesScan.is_read_only());
-        assert!(Request::AppInstallerStatus.is_read_only());
         assert!(Request::AppAccessList(Capability::Camera).is_read_only());
         let set = Request::AppAccessSet {
             capability: Capability::Camera,
@@ -801,13 +874,13 @@ mod tests {
 
     #[test]
     fn decode_is_strict() {
-        for kind in [0u8, 44, 45, 100, 255] {
+        for kind in [0u8, 46, 100, 255] {
             assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         for kind in (1..=6u8)
             .chain(8..=12)
             .chain(20..=38)
-            .chain([17, 41, 42, 43])
+            .chain([17, 41, 42, 43, 44, 45])
         {
             assert_eq!(Request::decode_with([kind, 1, 0], 100), None);
             assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
@@ -836,12 +909,8 @@ mod tests {
         assert!(Request::decode_with([13, 0, 0], 0).is_some());
         assert_eq!(Request::decode_with([14, 1, 0], 100), None);
         assert_eq!(Request::decode_with([14, 0, 1], 100), None);
-        let n = user_apps::APPS.len() as u8;
-        for kind in [15u8, 16] {
-            assert!(Request::decode_with([kind, n - 1, 0], 100).is_some());
-            assert_eq!(Request::decode_with([kind, n, 0], 100), None);
-            assert_eq!(Request::decode_with([kind, 0, 1], 100), None);
-            assert_eq!(Request::decode_with([kind, 255, 255], 100), None);
+        for kind in [14u8, 15, 16, 36] {
+            assert_eq!(Request::decode_with([kind, 0, 0], 100), None);
         }
         assert_eq!(Request::decode_with([7, 0, 0], 0), None);
         assert_eq!(Request::decode_with([7, 5, 0], 5), None);
@@ -906,13 +975,12 @@ mod tests {
             Reply::NeedsAttention,
             Reply::NotApplicable,
             Reply::Unknown,
-            Reply::UpdateAvailable,
             Reply::Working,
             Reply::ChangedSince,
         ] {
             assert_eq!(Reply::decode(reply.encode()), Some(reply));
         }
-        for byte in [0u8, 14, 15, 100, 255] {
+        for byte in [0u8, 11, 14, 15, 100, 255] {
             assert_eq!(Reply::decode(byte), None);
         }
     }
@@ -965,11 +1033,35 @@ mod tests {
     }
 
     #[test]
+    fn a_file_header_round_trips_and_refuses_empty_or_huge_files() {
+        let header = FileHeader {
+            at: 1_791_000_000,
+            len: 40_000,
+        };
+        assert_eq!(FileHeader::decode(header.encode()), Some(header));
+        for len in [0, MAX_FILE + 1, u32::MAX as usize] {
+            let bytes = FileHeader { at: 1, len }.encode();
+            assert_eq!(FileHeader::decode(bytes), None, "{len}");
+        }
+        let full = FileHeader {
+            at: 1,
+            len: MAX_FILE,
+        };
+        assert_eq!(FileHeader::decode(full.encode()), Some(full));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_support_file_is_only_sent_with_its_bytes() {
+        let client = Client { _private: () };
+        assert!(client.send(Request::SaveSupportFile).is_err());
+        assert!(client.save_file(1, b"not a zip").is_err());
+    }
+
+    #[test]
     fn long_operations_get_long_timeouts() {
         assert!(Request::ReinstallStoreApp(0).timeout() >= Duration::from_secs(900));
         assert_eq!(Request::OpenSignIn.timeout(), Duration::from_secs(30));
-        assert!(Request::AppUpdate(0).timeout() >= Duration::from_secs(900));
-        assert!(Request::AppUpdatesScan.timeout() > Duration::from_secs(150));
         assert_eq!(
             Request::UserSetting(Setting::ShowExtensions, Op::Apply).timeout(),
             Duration::from_secs(30)

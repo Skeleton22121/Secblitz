@@ -99,7 +99,12 @@ fn command(lang: Lang) -> Command {
                 .subcommand(Command::new("run").hide(true))
                 .subcommand(Command::new("reconcile").hide(true))
                 .subcommand(Command::new("install").hide(true))
-                .subcommand(Command::new("uninstall").hide(true)),
+                .subcommand(Command::new("uninstall").hide(true))
+                .subcommand(
+                    Command::new("allow-once")
+                        .hide(true)
+                        .arg(Arg::new("site").required(true).value_parser(clean_site)),
+                ),
         );
     fn localize(cmd: Command, lang: Lang, parent: &str) -> Command {
         let path = if parent.is_empty() {
@@ -275,19 +280,31 @@ fn execute(matches: &ArgMatches, lang: Lang) -> Result<i32> {
     Ok(0)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A site name exactly as Web protection writes it, so the argument cannot be anything else.
+fn clean_site(value: &str) -> Result<String, String> {
+    secblitz::filter::config::normalized_site(value)
+        .filter(|site| site == value)
+        .ok_or_else(String::new)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum FilterCommand {
     Reconcile,
     Install,
     Uninstall,
+    AllowOnce(String),
 }
 
 fn filter_command(matches: &ArgMatches) -> Option<FilterCommand> {
-    match matches.subcommand_matches("filter")?.subcommand_name()? {
-        "reconcile" => Some(FilterCommand::Reconcile),
-        "install" => Some(FilterCommand::Install),
-        "uninstall" => Some(FilterCommand::Uninstall),
-        "run" => None,
+    let filter = matches.subcommand_matches("filter")?;
+    match filter.subcommand()? {
+        ("reconcile", _) => Some(FilterCommand::Reconcile),
+        ("install", _) => Some(FilterCommand::Install),
+        ("uninstall", _) => Some(FilterCommand::Uninstall),
+        ("allow-once", sub) => Some(FilterCommand::AllowOnce(
+            sub.get_one::<String>("site")?.clone(),
+        )),
+        ("run", _) => None,
         _ => unreachable!(),
     }
 }
@@ -314,6 +331,7 @@ fn run_filter(action: FilterCommand) -> Result<()> {
             FilterCommand::Reconcile => control::reconcile(),
             FilterCommand::Install => control::install_all(),
             FilterCommand::Uninstall => control::remove_everything(),
+            FilterCommand::AllowOnce(site) => control::allow_site_once(&site),
         }
     }
     #[cfg(not(windows))]
@@ -605,6 +623,7 @@ fn dispatch_gui(args: &[std::ffi::OsString], lang: Lang) -> Option<i32> {
     match first_word(args)? {
         "gui" => Some(run_gui(args, lang)),
         "tray" => Some(tray::run(lang).unwrap_or(1)),
+        "warn" => Some(gui::warn::run(args, lang)),
         _ => None,
     }
 }
@@ -762,19 +781,27 @@ mod tests {
         let root = command(Lang::En);
         let filter = root.find_subcommand("filter").unwrap();
         assert!(filter.is_hide_set());
-        for (word, expected) in [
-            ("reconcile", FilterCommand::Reconcile),
-            ("install", FilterCommand::Install),
-            ("uninstall", FilterCommand::Uninstall),
+        for (words, expected) in [
+            (&["reconcile"][..], FilterCommand::Reconcile),
+            (&["install"][..], FilterCommand::Install),
+            (&["uninstall"][..], FilterCommand::Uninstall),
+            (
+                &["allow-once", "evil.example"][..],
+                FilterCommand::AllowOnce("evil.example".into()),
+            ),
         ] {
-            assert!(filter.find_subcommand(word).unwrap().is_hide_set());
+            assert!(filter.find_subcommand(words[0]).unwrap().is_hide_set());
             let matches = command(Lang::En)
-                .try_get_matches_from(["secblitz", "filter", word])
+                .try_get_matches_from(
+                    ["secblitz", "filter"]
+                        .into_iter()
+                        .chain(words.iter().copied()),
+                )
                 .unwrap();
-            assert_eq!(filter_command(&matches), Some(expected));
+            assert_eq!(filter_command(&matches), Some(expected.clone()));
             assert!(!json_allowed(&matches));
             let code = run_filter_request(
-                expected,
+                expected.clone(),
                 || Ok(false),
                 |_| panic!("an unelevated caller must not run web protection changes"),
             )
@@ -782,7 +809,7 @@ mod tests {
             assert_eq!(code, 2);
             let mut ran = None;
             let code = run_filter_request(
-                expected,
+                expected.clone(),
                 || Ok(true),
                 |a| {
                     ran = Some(a);
@@ -791,6 +818,25 @@ mod tests {
             )
             .unwrap();
             assert_eq!((code, ran), (0, Some(expected)));
+        }
+        for bad in [
+            &["allow-once"][..],
+            &["allow-once", "Evil.example"][..],
+            &["allow-once", "evil.example."][..],
+            &["allow-once", "https://evil.example"][..],
+            &["allow-once", "evil"][..],
+            &["allow-once", "a.example", "b.example"][..],
+        ] {
+            assert!(
+                command(Lang::En)
+                    .try_get_matches_from(
+                        ["secblitz", "filter"]
+                            .into_iter()
+                            .chain(bad.iter().copied())
+                    )
+                    .is_err(),
+                "{bad:?}"
+            );
         }
         assert!(command(Lang::En)
             .try_get_matches_from(["secblitz", "filter"])

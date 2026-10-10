@@ -9,6 +9,37 @@ dated version section when a release is prepared (see `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-09
+
+### Added
+- An accessibility statement says what works with the keyboard today and what does not yet.
+- The README lists which Windows versions Secblitz supports and has been tested on.
+- Each release comes with a parts list of the code it is built from.
+- A short welcome on first start explains what Secblitz does and asks before the first check.
+- A Help tab in Settings answers common questions.
+- Save a support file to attach when you report a problem, without your files, user name or the websites you visit.
+- When Web protection stops a dangerous or scam site, a warning now appears over your browser with a way to go back or let it through once.
+
+### Changed
+- The roadmap is now a short, plain list of what is planned.
+- Secblitz no longer checks your PC on its own the first time it opens.
+- Details and dialogs show one line per point; open a point to read more.
+- Every switch, tab and menu works with the keyboard, and Tab stays inside an open window.
+- Choosing background checks while installing starts them right away, not after the next restart.
+- Web protection also blocks sites known for harmful downloads or for apps that secretly spy on people, as part of its dangerous sites choice.
+
+### Removed
+- App updates are gone from the Tools page. Windows updates and repair are unchanged.
+
+### Fixed
+- Remove Secblitz warns you when keeping your PC as it is would leave a removed app with no way back.
+- Remove Secblitz waits for a running check instead of leaving out what it would put back.
+- On a small screen set to a larger text size, the Secblitz window no longer opens partly under the taskbar.
+- Typing in the Protection search no longer stops after the first letter.
+- On Windows Home, the drive encryption steps no longer send you to BitLocker, which Home does not have.
+- Removing Secblitz from Windows Settings no longer says every removed app can come back from the Microsoft Store.
+- Removed apps say "yesterday" for an app removed before midnight, not "today".
+
 ## [0.11.1] - 2026-10-09
 
 ### Changed

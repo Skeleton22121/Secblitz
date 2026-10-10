@@ -3,6 +3,7 @@ use super::*;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette, Tone};
 use crate::gui::widgets::hairline::{self, rewind, Plate, Run};
+use crate::gui::widgets::point::{self, Words};
 use crate::gui::widgets::{self, anim, progress, ButtonKind};
 use crate::gui::{Ctx, Message};
 use iced::widget::{column, container, row, space};
@@ -166,12 +167,20 @@ fn choose_sheet<'a>(
     if let Some(note) = web_note(plan.as_ref()) {
         col = col.push(widgets::small(p, ctx.t(note)));
     }
-    let copies = plan.as_ref().is_some_and(|pl| pl.apps_with_copy > 0);
     let store_only = plan.as_ref().is_some_and(|pl| pl.apps_store_only > 0);
     match choice {
-        Some(Choice::Keep) if copies => {
-            col = col.push(widgets::small(p, ctx.t(KEEP_DELETES_COPIES)))
-        }
+        Some(Choice::Keep) => match keep_note(plan.as_ref()) {
+            Some((Tone::Warn, key)) => {
+                let n = plan.as_ref().map_or(0, |pl| pl.apps_copy_only);
+                col = col.push(widgets::inline_notice(
+                    p,
+                    Tone::Warn,
+                    ctx.t(key).replace("{n}", &n.to_string()),
+                ));
+            }
+            Some((_, key)) => col = col.push(widgets::small(p, ctx.t(key))),
+            None => {}
+        },
         Some(Choice::PutBack) => {
             col = col.push(widgets::small(p, ctx.t(OWN_ACCOUNT_ONLY)));
             if store_only {
@@ -288,8 +297,15 @@ fn result_sheet<'a>(state: &State, ctx: &Ctx, p: Palette, lines: &[String], at: 
             .push(widgets::muted_centred(p, ctx.t(DELETE_EXE)));
     } else {
         let mut list = column![].spacing(theme::S2);
-        for line in lines {
-            list = list.push(widgets::body(p, line.clone()));
+        for (i, line) in lines.iter().enumerate() {
+            let key = format!("left:{i}");
+            list = list.push(point::text_point(
+                p,
+                line,
+                Words::Body,
+                state.points.has(&key),
+                wrap(Msg::Point(key)),
+            ));
         }
         col = col
             .push(widgets::h2_centred(p, ctx.t(RESULT_LEFT_TITLE)))

@@ -19,6 +19,7 @@ bump PR -> merge -> tag -> release build (tests, installer tests, attestations) 
 | File | Job |
 | --- | --- |
 | `scripts/bump-version.py` | Moves the version in every file: Cargo, installer resources, changelog, website, README |
+| `scripts/make-sbom.py` | Writes the parts list (CycloneDX SBOM) of one build target from `cargo metadata` and `Cargo.lock` |
 | `scripts/release-notes.py` | Prints one version's changelog section (the release text) |
 | `.github/workflows/ci.yml` | Tests, lints, tool tests and the workflow security audit (zizmor) on every push and pull request |
 | `.github/workflows/bump-version.yml` | Runs the bump script and opens a pull request |
@@ -291,11 +292,15 @@ is drafted.
    codes) and `installer/test-lifecycle.ps1` (install, upgrade with a running
    monitor, uninstall preservation). A broken installer stops the release here,
    before any attestation or draft exists.
-7. `attest`: writes `SHA256SUMS` and creates build provenance attestations for
-   the exe and the setup of each architecture.
+7. `attest`: writes `SHA256SUMS`, creates build provenance attestations for
+   the exe and the setup of each architecture, writes the parts list
+   (`secblitz-X.Y.Z-windows-x64.cdx.json` and `...-windows-arm64.cdx.json`,
+   CycloneDX, from the tagged source by `scripts/make-sbom.py`) and attests each
+   one to the portable exe of its architecture.
 8. `draft-release`: creates a **draft** GitHub Release named "Secblitz X.Y.Z"
    with the changelog section as text and the setup, the portable exe and
-   `SHA256SUMS` attached.
+   `SHA256SUMS` and the two parts lists attached. `SHA256SUMS` still lists only
+   the four programs.
 
 Only one release build runs at a time (`concurrency`). To rebuild an existing
 tag: Actions, Release, Run workflow, tag chosen under "Use workflow from" and
@@ -326,6 +331,18 @@ git fetch origin && git merge-base --is-ancestor "$(git rev-parse origin/main)" 
 Use the commit of the "Release X.Y.Z" merge as the digest (check it in the
 Actions run, and `git log origin/main`), not just any commit. A tag someone else
 created on a different commit fails the digest check.
+
+Each draft also carries the two parts lists. To check that one is the parts list
+attested for its program (the website deploy checks the same):
+
+```sh
+gh attestation verify secblitz-0.8.1-windows-x64.exe --repo secblitz/Secblitz \
+  --predicate-type https://cyclonedx.org/bom \
+  --signer-workflow secblitz/Secblitz/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.8.1 --format json > sbom-x64.json
+jq -e --slurpfile want secblitz-0.8.1-windows-x64.cdx.json \
+  'any(.[]; .verificationResult.statement.predicate == $want[0])' sbom-x64.json
+```
 
 The attestation proves the file was built by this repository's `release.yml`
 from the tagged commit. The installer tests have already passed (step 4.6; see
@@ -365,8 +382,8 @@ Attach the signed feeds to the draft **under the exact names `stable.json` and
 gh release upload v0.8.1 check/stable.json check/stable-arm64.json
 ```
 
-The release must then carry exactly seven files: the setup and the portable exe
-for x64 and for arm64, `SHA256SUMS` and the two feeds. Anything else, or a missing file, stops the
+The release must then carry exactly nine files: the setup and the portable exe
+for x64 and for arm64, the two parts lists, `SHA256SUMS` and the two feeds. Anything else, or a missing file, stops the
 website deploy. Edit the notes if needed, then press Publish (a normal release,
 not a pre-release).
 
@@ -376,9 +393,11 @@ Publishing starts `publish-website.yml` on the tag.
 
 1. `verify` (no secrets): the run is on the tag, the commit is on `main`,
    `Cargo.toml`, the changelog and the website version all equal the tag, the
-   release is final and has exactly the seven files, `SHA256SUMS` matches, all
+   release is final and has exactly the nine files, `SHA256SUMS` matches, all
    four build files pass `gh attestation verify` bound to this repository, to
    `release.yml` as the signer, to `refs/tags/vX.Y.Z` and to the tagged commit,
+   the two portable exes also carry a parts list attestation (predicate type
+   `https://cyclonedx.org/bom`) from the same workflow, tag and commit,
    and both feeds pass `prepare-pages.py --verify-feed`: signature valid for
    the public key pinned in `assets/update-public-key.hex`, version equals the
    tag, the setup name, size and SHA-256 equal the released setup, not expired.

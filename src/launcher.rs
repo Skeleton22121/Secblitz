@@ -91,6 +91,49 @@ fn args_are_plain(args: &[String]) -> bool {
         .all(|a| !a.is_empty() && a.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'))
 }
 
+/// Plain words, then one site name that is already in its clean form.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn site_args_are_plain(args: &[String]) -> bool {
+    match args.split_last() {
+        Some((site, words)) => {
+            args_are_plain(words)
+                && secblitz::filter::config::normalized_site(site).as_deref() == Some(site)
+        }
+        None => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllowOnce {
+    Done,
+    /// The person said no at the Windows permission prompt.
+    Declined,
+    Failed,
+}
+
+/// Lets one site through Web protection for a short while. Windows asks for permission first.
+pub fn allow_site_once(site: &str, lang: Lang) -> AllowOnce {
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = ["--lang", lang.code(), "filter", "allow-once", site]
+            .map(String::from)
+            .into();
+        match imp::elevate_for_site(&args) {
+            Ok(Some(child)) => match child.wait() {
+                Ok(0) => AllowOnce::Done,
+                _ => AllowOnce::Failed,
+            },
+            Ok(None) => AllowOnce::Declined,
+            Err(_) => AllowOnce::Failed,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (site, lang);
+        AllowOnce::Failed
+    }
+}
+
 const OPEN_PAGES: [&str; 4] = ["protection", "web", "tools", "history"];
 
 pub fn open_page(value: &str) -> Option<&'static str> {
@@ -208,7 +251,6 @@ mod imp {
     use crate::broker::{self, Reply, Request};
     use crate::i18n::Lang;
     use anyhow::{ensure, Context, Result};
-    use secblitz::user_apps::{self, AppState};
     use secblitz::user_settings::{self, Op, Setting, SystemRegistry};
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut, time::Duration};
     use windows_sys::core::BOOL;
@@ -293,6 +335,18 @@ mod imp {
 
     pub fn elevate(args: &[String]) -> Result<Option<Elevated>> {
         ensure!(args_are_plain(args), "Invalid elevation arguments");
+        start(args)
+    }
+
+    pub fn elevate_for_site(args: &[String]) -> Result<Option<Elevated>> {
+        ensure!(
+            super::site_args_are_plain(args),
+            "Invalid elevation arguments"
+        );
+        start(args)
+    }
+
+    fn start(args: &[String]) -> Result<Option<Elevated>> {
         let exe: Vec<u16> = std::env::current_exe()?
             .as_os_str()
             .encode_wide()
@@ -524,7 +578,7 @@ mod imp {
         ChildGone,
     }
 
-    fn read_request(pipe: HANDLE, event: HANDLE, child: HANDLE, buf: &mut [u8; 3]) -> Read {
+    fn read_full(pipe: HANDLE, event: HANDLE, child: HANDLE, buf: &mut [u8]) -> Read {
         let mut done = 0usize;
         while done < buf.len() {
             // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
@@ -563,13 +617,20 @@ mod imp {
         Read::Full
     }
 
-    fn write_reply(pipe: HANDLE, event: HANDLE, child: HANDLE, reply: Reply) -> bool {
-        let byte = [reply.encode()];
+    fn write_reply(pipe: HANDLE, event: HANDLE, child: HANDLE, reply: &[u8]) -> bool {
         // SAFETY: plain C struct for which all-zero bytes are a valid initial value.
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event;
         unsafe { ResetEvent(event) };
-        let started = unsafe { WriteFile(pipe, byte.as_ptr(), 1, null_mut(), &mut overlapped) };
+        let started = unsafe {
+            WriteFile(
+                pipe,
+                reply.as_ptr(),
+                reply.len() as u32,
+                null_mut(),
+                &mut overlapped,
+            )
+        };
         if started == 0 {
             if unsafe { GetLastError() } != ERROR_IO_PENDING {
                 return false;
@@ -584,7 +645,9 @@ mod imp {
             }
         }
         let mut n = 0u32;
-        unsafe { GetOverlappedResult(pipe, &overlapped, &mut n, 0) != 0 && n == 1 }
+        unsafe {
+            GetOverlappedResult(pipe, &overlapped, &mut n, 0) != 0 && n as usize == reply.len()
+        }
     }
 
     fn serve(pipe: &Owned, child: &Elevated) {
@@ -630,16 +693,39 @@ mod imp {
             }
             loop {
                 let mut request = [0u8; 3];
-                match read_request(pipe.0, event.0, child_handle, &mut request) {
+                match read_full(pipe.0, event.0, child_handle, &mut request) {
                     Read::Full => {}
                     Read::Closed => break,
                     Read::ChildGone => return,
                 }
                 let reply = match Request::decode(request) {
+                    Some(Request::SaveSupportFile) => {
+                        let mut header = [0u8; broker::FileHeader::SIZE];
+                        match read_full(pipe.0, event.0, child_handle, &mut header) {
+                            Read::Full => {}
+                            Read::Closed => break,
+                            Read::ChildGone => return,
+                        }
+                        // Too big or empty: the rest can't be skipped safely, so hang up.
+                        let Some(header) = broker::FileHeader::decode(header) else {
+                            break;
+                        };
+                        let mut zip = vec![0u8; header.len];
+                        match read_full(pipe.0, event.0, child_handle, &mut zip) {
+                            Read::Full => {}
+                            Read::Closed => break,
+                            Read::ChildGone => return,
+                        }
+                        let (reply, n) = save_support_file(header.at, &zip);
+                        if !write_reply(pipe.0, event.0, child_handle, &[reply.encode(), n]) {
+                            break;
+                        }
+                        continue;
+                    }
                     Some(request) => handle(request),
                     None => Reply::Unavailable,
                 };
-                if !write_reply(pipe.0, event.0, child_handle, reply) {
+                if !write_reply(pipe.0, event.0, child_handle, &[reply.encode()]) {
                     break;
                 }
             }
@@ -699,35 +785,19 @@ mod imp {
                     Err(_) => Reply::Unknown,
                 },
             },
-            Request::AppInstallerStatus => {
-                match secblitz::software_install::bitwarden_installable() {
-                    Ok(()) => Reply::Done,
-                    Err(e) if ToolError::of(&e) == Some(ToolError::NotHere) => Reply::Unavailable,
-                    Err(_) => Reply::Unknown,
-                }
-            }
             Request::BlockSuggestedApps => user_setting(Setting::SuggestedApps, Op::Apply),
             Request::ReinstallStoreApp(index) => reinstall_store_app(index),
             Request::StartStoreApp(index) => start_store_app(index),
             Request::StoreAppStatus(index) => store_app_status(index),
             Request::UserSetting(setting, op) => user_setting(setting, op),
-            Request::AppUpdatesScan => match scan_apps() {
-                Ok(states) => {
-                    user_apps::remember(states);
-                    Reply::Done
-                }
-                Err(reply) => {
-                    user_apps::forget();
-                    reply
-                }
-            },
-            Request::AppUpdateQuery(index) => match user_apps::remembered(usize::from(index)) {
-                Some(AppState::Available) => Reply::UpdateAvailable,
-                Some(AppState::NothingToDo) => Reply::NotApplicable,
-                Some(AppState::Unknown) | None => Reply::Unknown,
-            },
-            Request::AppUpdate(index) => update_app(usize::from(index)),
             Request::StartTray => start_tray(),
+            Request::ShowSupportFile => {
+                if crate::app::support::show_in_folder() {
+                    Reply::Done
+                } else {
+                    Reply::Failed
+                }
+            }
             Request::AppAccessList(capability) => app_access_list(capability),
             Request::AppAccessSet {
                 capability,
@@ -757,6 +827,23 @@ mod imp {
         }
     }
 
+    /// Runs as the signed-in person, so the file lands in their own Downloads, never in a
+    /// folder of the account the window was elevated with.
+    fn save_support_file(at: u64, zip: &[u8]) -> (Reply, u8) {
+        use crate::app::support;
+        if !broker::looks_like_zip(zip) {
+            return (Reply::Failed, 0);
+        }
+        let Some(dir) = support::downloads() else {
+            return (Reply::Unavailable, 0);
+        };
+        match support::save_new(&dir, &support::file_name(at), zip) {
+            Ok((_, n)) => (Reply::Done, n),
+            Err(_) => (Reply::Failed, 0),
+        }
+    }
+
+    /// Runs as the signed-in person, so Explorer opens unelevated and in their own Downloads.
     fn user_setting(setting: Setting, op: Op) -> Reply {
         let mut registry = SystemRegistry;
         let journal = user_settings::journal_path();
@@ -806,67 +893,6 @@ mod imp {
             Ok(()) => Reply::Done,
             Err(app_access::SetError::Unknown) => Reply::Unavailable,
             Err(app_access::SetError::Failed | app_access::SetError::Controlled) => Reply::Failed,
-        }
-    }
-
-    fn scan_apps() -> Result<[AppState; user_apps::APPS.len()], Reply> {
-        let run = user_apps::run_winget(&user_apps::list_args(), Duration::from_secs(150));
-        if run
-            .code
-            .is_some_and(secblitz::software_install::is_offline_code)
-        {
-            return Err(Reply::Offline);
-        }
-        if run.code.is_none() && run.output.trim().is_empty() {
-            return Err(Reply::Unavailable);
-        }
-        match user_apps::parse_upgrades(&run.output, run.code) {
-            user_apps::Scan::Apps(states) => Ok(states),
-            user_apps::Scan::Unreadable if secblitz::software_install::dns_offline() => {
-                Err(Reply::Offline)
-            }
-            user_apps::Scan::Unreadable => Err(Reply::Unknown),
-        }
-    }
-
-    fn update_app(index: usize) -> Reply {
-        let Some(args) = user_apps::upgrade_args(index) else {
-            return Reply::Unavailable;
-        };
-        let run = user_apps::run_winget(&args, Duration::from_secs(13 * 60));
-        if run
-            .code
-            .is_some_and(secblitz::software_install::is_offline_code)
-        {
-            return Reply::Offline;
-        }
-        if run.code.is_none() {
-            return Reply::Failed;
-        }
-        match scan_apps() {
-            Ok(states) => {
-                let reply = match states[index] {
-                    AppState::NothingToDo => Reply::Done,
-                    AppState::Available => {
-                        if run.code != Some(0) && secblitz::software_install::dns_offline() {
-                            Reply::Offline
-                        } else {
-                            Reply::Failed
-                        }
-                    }
-                    AppState::Unknown => Reply::Unknown,
-                };
-                user_apps::remember(states);
-                reply
-            }
-            Err(_) => {
-                user_apps::forget();
-                if run.code == Some(0) {
-                    Reply::Unknown
-                } else {
-                    Reply::Failed
-                }
-            }
         }
     }
 
@@ -1174,6 +1200,33 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_clean_site_name_follows_the_plain_words() {
+        let words = |last: &str| -> Vec<String> {
+            ["--lang", "en", "filter", "allow-once", last]
+                .map(String::from)
+                .into()
+        };
+        assert!(site_args_are_plain(&words("evil-site.example")));
+        assert!(site_args_are_plain(&words("a_b.example")));
+        for bad in [
+            "Evil.example",
+            "evil.example.",
+            "evil.example evil2.example",
+            "evil.example\\",
+            "\"evil.example",
+            "evil",
+            "",
+            "-x.example",
+        ] {
+            assert!(!site_args_are_plain(&words(bad)), "{bad}");
+        }
+        assert!(!site_args_are_plain(&[]));
+        let mut loose = words("evil.example");
+        loose[2] = "filter now".into();
+        assert!(!site_args_are_plain(&loose));
+    }
 
     #[test]
     fn known_start_problems_get_a_fix_and_unknown_ones_get_the_general_text() {

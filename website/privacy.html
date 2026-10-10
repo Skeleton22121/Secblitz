@@ -40,16 +40,16 @@
     <h3>3.2 Web protection</h3>
     <p>Web protection is off by default. When it is on:</p>
     <ul>
-      <li>Secblitz downloads block lists daily or weekly from these places: adguardteam.github.io and filters.adtidy.org (AdGuard), easylist.to (EasyList, which also provides EasyPrivacy), and raw.githubusercontent.com (lists by HaGeZi, hosted by GitHub). adguardteam.github.io is also hosted by GitHub. Each of these places receives your PC's IP address and the Secblitz version, which Secblitz adds to the request. Read their privacy policies: <a href="https://adguard.com/en/privacy.html">AdGuard</a>, <a href="https://easylist.to/">EasyList</a> and <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a>.</li>
+      <li>Secblitz downloads block lists daily or weekly from these places: adguardteam.github.io and filters.adtidy.org (AdGuard), easylist.to (EasyList, which also provides EasyPrivacy), malware-filter.gitlab.io (a list of malware download sites by the malware-filter project, hosted by GitLab), and raw.githubusercontent.com (lists by HaGeZi and Echap, hosted by GitHub). adguardteam.github.io is also hosted by GitHub. Each of these places receives your PC's IP address and the Secblitz version, which Secblitz adds to the request. Read their privacy policies: <a href="https://adguard.com/en/privacy.html">AdGuard</a>, <a href="https://easylist.to/">EasyList</a>, <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a> and <a href="https://about.gitlab.com/privacy/">GitLab</a>.</li>
       <li>Website name lookups from your PC go through Secblitz. Names on a block list receive a "not found" answer. All other lookups are forwarded to the name servers your network already uses, or to Quad9 if none are available. Whoever runs those name servers can see the names you look up, as they could before. Quad9 has its own <a href="https://quad9.net/privacy/policy/">privacy policy</a>.</li>
-      <li>Secblitz does not store the names you look up. It keeps only a daily count of blocked lookups.</li>
+      <li>Secblitz does not store the names you look up. For blocked names only, it keeps the last 15 minutes of blocks, so it can warn you in your browser and list them under Recent blocks, and up to 100 of the most blocked names of each day for 30 days, for its chart. These stay on your PC.</li>
     </ul>
     <p>Private lookups through Secblitz is a separate switch and is off by default. When it is on, website name lookups leave your PC encrypted and go to Quad9, a Swiss non-profit that does not log IP addresses, so your internet provider or a public Wi-Fi network cannot read them. Names that only exist on your own network, such as your router, your printer or your company's computers, are never sent there. If a name that only works on your own network does not open while this switch is on, turn it off. If your network does not let encrypted lookups through, Secblitz uses your network's usual name servers instead and tries again after two minutes.</p>
     <p>Turning web protection off restores your PC's previous network settings.</p>
 
     <h3>3.3 Actions you start</h3>
     <ul>
-      <li>Installing Bitwarden, checking which apps have updates and updating apps use winget, which connects to Microsoft and downloads from the app's publisher. Secblitz only does this when you ask it to.</li>
+      <li>Installing Bitwarden uses winget, which connects to Microsoft and downloads from the app's publisher. Secblitz only does this when you ask it to.</li>
       <li>Installing Windows updates or updating virus protection is done by Windows, which downloads from Microsoft. Secblitz sends no data of its own.</li>
       <li>Opening the Microsoft Store opens it in Windows, where Microsoft's terms apply.</li>
       <li>Microsoft handles all of these under its <a href="https://privacy.microsoft.com/privacystatement">privacy statement</a>.</li>
@@ -58,7 +58,7 @@
 
     <h2>4. Data stored on your PC</h2>
     <ul>
-      <li><strong>C:\ProgramData\Secblitz</strong>, readable only by administrators: the record of changes and how to undo them, the latest check, history, language and theme, web protection lists, and saved copies of removed apps.</li>
+      <li><strong>C:\ProgramData\Secblitz</strong>, readable only by administrators: the record of changes and how to undo them, the latest check, history, language and theme, web protection lists, and saved copies of removed apps. Web protection's recent blocks, chart and status can also be read by the other accounts on this PC, so the Secblitz icon in the notification area can show them.</li>
       <li><strong>Your user profile</strong>: a small file listing the personal Windows settings Secblitz changed, so they can be undone.</li>
     </ul>
     <p>This data is not sent anywhere.</p>

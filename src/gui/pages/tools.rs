@@ -85,6 +85,7 @@ pub enum Detail {
 pub enum Msg {
     Ask(Sheet),
     CloseSheet,
+    Point(String),
     Confirm,
     ScanDone(Result<(), String>),
     ThreatsDone(Result<actions::ThreatRemoval, String>),
@@ -212,6 +213,7 @@ enum Slot {
 pub struct State {
     sheet: Option<Sheet>,
     sheet_block: Option<&'static str>,
+    points: crate::gui::widgets::point::Opened,
     sheet_checking: bool,
     account: Account,
     scan: Run<Result<(), String>>,
@@ -252,6 +254,7 @@ impl Default for State {
         Self {
             sheet: None,
             sheet_block: None,
+            points: crate::gui::widgets::point::Opened::default(),
             sheet_checking: false,
             account: Account::Checking,
             scan: Run::Idle,
@@ -287,6 +290,7 @@ fn plain(e: anyhow::Error) -> String {
 pub fn escape(state: &mut State) {
     if state.sheet.is_some() {
         state.sheet = None;
+        state.points.clear();
         state.sheet_block = None;
         state.sheet_checking = false;
     }
@@ -353,6 +357,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                 return Task::none();
             }
             state.sheet = Some(sheet);
+            state.points.clear();
             state.sheet_block = None;
             state.sheet_checking = false;
             if needs_ready_check(sheet) {
@@ -360,8 +365,15 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
             }
             Task::none()
         }
+        Msg::Point(key) => {
+            if state.sheet.is_some() {
+                state.points.toggle(&key);
+            }
+            Task::none()
+        }
         Msg::CloseSheet => {
             state.sheet = None;
+            state.points.clear();
             state.sheet_block = None;
             state.sheet_checking = false;
             Task::none()
@@ -749,7 +761,6 @@ impl State {
             ToolsTab::Updates => {
                 matches!(self.repair, Repair::Working { .. })
                     || matches!(self.updates, Updates::Looking | Updates::Installing { .. })
-                    || personal::apps_busy(&self.personal)
             }
             ToolsTab::Account => {
                 matches!(self.bitwarden, Run::Working) || personal::account_busy(&self.personal)
@@ -914,6 +925,52 @@ mod followup_tests {
                 n.restart || sheet == Sheet::InstallUpdates,
                 "{sheet:?}"
             );
+        }
+    }
+
+    #[test]
+    fn what_a_sheet_promises_is_never_in_the_hidden_part() {
+        let sheets = [
+            Sheet::Scan,
+            Sheet::RemoveThreats,
+            Sheet::DefenderUpdate,
+            Sheet::Repair(RepairKind::Check),
+            Sheet::Repair(RepairKind::Repair),
+            Sheet::InstallUpdates,
+            Sheet::Bitwarden,
+            Sheet::Restart,
+            Sheet::Renewal { bitlocker: false },
+            Sheet::Renewal { bitlocker: true },
+        ];
+        for sheet in sheets {
+            let (_, _, lines, _) = view::sheet_copy(sheet);
+            let whole = view::whole_lines(sheet);
+            let shown = lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if whole.contains(&i) {
+                        (*l).to_owned()
+                    } else {
+                        crate::gui::widgets::point::first_sentence(l).0.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            let all = lines.join(" ").to_lowercase();
+            let n = sheet.notices();
+            assert_eq!(
+                shown.contains("can't be undone"),
+                all.contains("can't be undone"),
+                "{sheet:?}"
+            );
+            if n.restart || sheet == Sheet::InstallUpdates {
+                assert!(shown.contains("restart"), "{sheet:?}");
+            }
+            if sheet == (Sheet::Renewal { bitlocker: true }) {
+                assert!(shown.contains("bitlocker recovery key"), "{sheet:?}");
+            }
         }
     }
 

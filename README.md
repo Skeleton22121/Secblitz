@@ -7,9 +7,9 @@
 
 Secblitz turns on the security and privacy settings Windows leaves off, in one click. It also removes bloatware and blocks ads, trackers and malware sites on your whole PC. Every change can be undone.
 
-[**Download for Windows**](https://secblitz.lol/downloads/secblitz-0.11.1-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[**Download for Windows**](https://secblitz.lol/downloads/secblitz-1.0.0-windows-x64-setup.exe) · [Website](https://secblitz.lol) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![Version 0.11.1](https://img.shields.io/badge/version-0.11.1-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
+![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-18181B) ![Windows 10 and 11, x64 and ARM](https://img.shields.io/badge/Windows%2010%20%26%2011-x64%20%7C%20ARM-18181B) ![MIT license](https://img.shields.io/badge/license-MIT-18181B) [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fsecblitz.lol%2Fapi%2Fdownloads%3Fformat%3Dbadge)](https://secblitz.lol/#download)
 
 <img src="docs/tour.webp" width="900" alt="A tour of Secblitz: checking the PC, fixing problems, blocking a dangerous site, removing apps and undoing a change.">
 
@@ -37,17 +37,29 @@ Secblitz is not an antivirus. It turns on and configures the protection built in
 
 ## Install
 
-Download the [installer](https://secblitz.lol/downloads/secblitz-0.11.1-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-0.11.1-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
+Download the [installer](https://secblitz.lol/downloads/secblitz-1.0.0-windows-x64-setup.exe) (about 9 MB) and run it. For a PC with an ARM processor, like a Snapdragon laptop, use the [ARM installer](https://secblitz.lol/downloads/secblitz-1.0.0-windows-arm64-setup.exe) instead. Secblitz asks for administrator permission because it reads and changes system settings.
 
 The installer is not code-signed yet, so Windows may show an unknown publisher warning. Choose **More info**, then **Run anyway**. To check the file, compare its SHA-256 with the one on the [download page](https://secblitz.lol/#download):
 
 ```powershell
-Get-FileHash .\secblitz-0.11.1-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\secblitz-1.0.0-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-Tested on Windows 10 (version 22H2) and Windows 11, on regular and ARM PCs.
+Each release also has a parts list (`.cdx.json`) on its [GitHub release page](https://github.com/secblitz/Secblitz/releases) that names every piece of code Secblitz is built from.
 
 Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to a newer version. Download and run the installer once; your settings, history and undo stay.
+
+## Supported Windows
+
+| Windows | Edition | Version | Processor | Supported | Tested |
+| --- | --- | --- | --- | --- | --- |
+| Windows 11 | Home | 24H2 | x64 | ✓ | ✓ 1.0.0 |
+| Windows 11 | Pro | 25H2 | x64 | ✓ | ✓ 1.0.0 |
+| Windows 11 | Enterprise | 25H2 | x64 | ✓ | ✓ 1.0.0 |
+| Windows 11 | Pro | 24H2 | ARM | ✓ | Not yet |
+| Windows 10 | Enterprise | 22H2 | x64 | ✓ | ✓ 1.0.0 |
+
+Secblitz supports Windows 10 version 22H2 and Windows 11. Microsoft stopped free security updates for Windows 10 on 14 October 2025 and Secblitz cannot replace them, so moving to Windows 11, or Microsoft's Extended Security Updates, keeps a Windows 10 PC safest.
 
 ## Uninstall
 
@@ -86,7 +98,7 @@ Free code signing provided by SignPath.io, certificate by SignPath Foundation. R
 
 ## Security and contributing
 
-To report a security problem, see [SECURITY.md](SECURITY.md). To build Secblitz or send a change, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For how well Secblitz works with the keyboard and other ways of using a PC, see the [accessibility statement](docs/ACCESSIBILITY.md). For what is planned, see the [roadmap](docs/ROADMAP.md). To report a security problem, see [SECURITY.md](SECURITY.md). To build Secblitz or send a change, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

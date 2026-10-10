@@ -248,6 +248,15 @@ static ENCRYPTION: Guide = Guide {
         "No Device encryption page? Use Open BitLocker instead, and choose Turn on BitLocker.",
     ],
 };
+/// Windows Home has no BitLocker settings, so a PC without Device encryption has no other way.
+static ENCRYPTION_HOME: Guide = g(
+    Page::Encryption,
+    &[
+        "Save your recovery key somewhere safe first. Microsoft accounts keep it at account.microsoft.com/devices/recoverykey.",
+        "Turn on Device encryption.",
+        "No Device encryption page? Then this PC can't encrypt its drive with Windows Home.",
+    ],
+);
 static SECURE_BOOT: Guide = g(
     Page::Recovery,
     &[
@@ -410,6 +419,7 @@ pub fn guide(key: &str) -> Option<&'static Guide> {
     Some(match key {
         "vbs.memory_integrity" | "Memory integrity" => &MEMORY_INTEGRITY,
         "vbs.kernel_stack_protection" => &KERNEL_STACK,
+        "Device encryption" if secblitz::platform::windows_home() => &ENCRYPTION_HOME,
         "Device encryption" => &ENCRYPTION,
         "Secure Boot" => &SECURE_BOOT,
         "accounts.autologon" | "Automatic logon" => &AUTOLOGON,
@@ -490,8 +500,16 @@ mod tests {
 
     #[test]
     fn every_required_key_has_a_short_plain_guide() {
-        for key in KEYS {
-            let g = guide(key).unwrap_or_else(|| panic!("no guide for {key}"));
+        let guides = KEYS
+            .iter()
+            .map(|key| {
+                (
+                    *key,
+                    guide(key).unwrap_or_else(|| panic!("no guide for {key}")),
+                )
+            })
+            .chain([("Device encryption on Windows Home", &ENCRYPTION_HOME)]);
+        for (key, g) in guides {
             assert!((2..=4).contains(&g.steps.len()), "{key}: 2 to 4 steps");
             for step in g.steps {
                 assert!(step.len() <= 130, "{key}: keep steps short: {step}");
@@ -519,7 +537,7 @@ mod tests {
 
     #[test]
     fn guides_and_pages_are_translated_in_every_language() {
-        let mut keys: Vec<&str> = Vec::new();
+        let mut keys: Vec<&str> = ENCRYPTION_HOME.steps.to_vec();
         for key in KEYS {
             let g = guide(key).unwrap();
             keys.extend(g.steps);
@@ -536,6 +554,16 @@ mod tests {
                 assert_ne!(lang.t(key), *key, "{}: {key}", lang.code());
             }
         }
+    }
+
+    #[test]
+    fn windows_home_is_never_sent_to_bitlocker() {
+        assert_eq!(ENCRYPTION_HOME.page, Page::Encryption);
+        assert_eq!(ENCRYPTION_HOME.alt, None);
+        assert!(ENCRYPTION_HOME
+            .steps
+            .iter()
+            .all(|s| !s.contains("BitLocker")));
     }
 
     #[test]

@@ -61,6 +61,22 @@ impl HashSet64 {
         }
         false
     }
+
+    /// The shortest of the name and its parents (two labels or more) that is in the set.
+    pub fn widest_suffix<'a>(&self, name: &'a str) -> Option<&'a str> {
+        let mut found = None;
+        let mut rest = name;
+        while rest.contains('.') {
+            if self.contains(hash(rest)) {
+                found = Some(rest);
+            }
+            match rest.find('.') {
+                Some(i) => rest = &rest[i + 1..],
+                None => break,
+            }
+        }
+        found
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -135,6 +151,8 @@ pub struct Filter {
     pub scam: Category,
     pub popups: Category,
     pub never: HashSet64,
+    /// Which lists the set was built from, one bit per entry in `SOURCES`.
+    pub sources: u64,
 }
 
 impl Filter {
@@ -173,6 +191,21 @@ impl Filter {
             return Some(Kind::Tracking);
         }
         None
+    }
+
+    /// The list entry that blocked `name` as `kind`. A let-through for it then covers what the
+    /// list covers, never a shared host such as `web.app` that only part of the name is under.
+    pub fn listed<'a>(&self, name: &'a str, kind: Kind) -> &'a str {
+        let category = match kind {
+            Kind::Ads => &self.ads,
+            Kind::Tracking => &self.tracking,
+            Kind::Dangerous => &self.dangerous,
+            Kind::Adult => &self.adult,
+            Kind::Gambling => &self.gambling,
+            Kind::Scam => &self.scam,
+            Kind::Popups => &self.popups,
+        };
+        category.block.widest_suffix(name).unwrap_or(name)
     }
 }
 
@@ -273,6 +306,7 @@ mod tests {
             scam: Category::default(),
             popups: Category::default(),
             never: HashSet64::default(),
+            sources: 0,
         };
         assert_eq!(f.decide("bad.com", ALL), Some(Kind::Dangerous));
         assert_eq!(f.decide("adult.com", ALL), Some(Kind::Adult));
@@ -291,6 +325,24 @@ mod tests {
         };
         assert_eq!(f.decide("x.com", no_family), Some(Kind::Ads));
         assert_eq!(f.decide("bet.com", no_family), None);
+    }
+
+    #[test]
+    fn the_listed_name_is_the_widest_entry_that_blocked_it() {
+        let f = Filter {
+            dangerous: cat(&["evil.com", "www.evil.com", "bad-site.web.app"], &[]),
+            ..Filter::default()
+        };
+        assert_eq!(f.listed("cdn.www.evil.com", Kind::Dangerous), "evil.com");
+        assert_eq!(
+            f.listed("bad-site.web.app", Kind::Dangerous),
+            "bad-site.web.app"
+        );
+        assert_eq!(
+            f.listed("x.bad-site.web.app", Kind::Dangerous),
+            "bad-site.web.app"
+        );
+        assert_eq!(f.listed("other.web.app", Kind::Dangerous), "other.web.app");
     }
 
     #[test]

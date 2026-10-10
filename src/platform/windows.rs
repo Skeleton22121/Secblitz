@@ -75,6 +75,27 @@ pub fn x64_on_arm() -> bool {
     ok != 0 && native == IMAGE_FILE_MACHINE_ARM64
 }
 
+pub fn windows_home() -> bool {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let mut buf = [0u16; 64];
+    let mut size = (buf.len() * 2) as u32;
+    // SAFETY: both names are NUL-terminated; `buf` and `size` describe one writable buffer.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            wide("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion").as_ptr(),
+            wide("EditionID").as_ptr(),
+            RRF_RT_REG_SZ,
+            null_mut(),
+            buf.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    let len = (size as usize / 2).saturating_sub(1).min(buf.len());
+    status == 0 && String::from_utf16_lossy(&buf[..len]).starts_with("Core")
+}
+
 /// The running account's own temp folder, from its profile rather than inherited variables.
 /// Windows PowerShell 5.1 locks itself down when it cannot write its policy test file, and
 /// without TEMP it falls back to the Windows folder, which LocalService cannot write.

@@ -315,6 +315,19 @@ pub fn x64_on_arm() -> bool {
     }
 }
 
+/// Windows Home, which has no BitLocker settings of its own.
+pub fn windows_home() -> bool {
+    #[cfg(windows)]
+    {
+        static HOME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *HOME.get_or_init(windows::windows_home)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 pub fn is_elevated() -> Result<bool> {
     #[cfg(windows)]
     {

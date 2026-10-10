@@ -12,7 +12,7 @@ name: Release
 #
 # Order: check tag, website and notes -> build exe (tests first) -> sign exe
 # (SignPath, optional) -> pack setup -> sign setup (optional) -> test the
-# installer -> checksums and build attestations -> draft release. A broken
+# installer -> checksums, parts lists and build attestations -> draft release. A broken
 # installer stops the run before anything is drafted.
 #
 # The run is always on the tag itself (push of the tag, or started by
@@ -555,6 +555,22 @@ jobs:
             "secblitz-$VERSION-windows-arm64.exe" "secblitz-$VERSION-windows-arm64-setup.exe" > SHA256SUMS
           cat SHA256SUMS
           sha256sum --check SHA256SUMS
+      - name: Check out the tagged source for the parts lists
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Write the parts lists (SBOM) from the tagged source
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          python3 scripts/make-sbom.py --target x86_64-pc-windows-msvc --output "../release/secblitz-$VERSION-windows-x64.cdx.json"
+          python3 scripts/make-sbom.py --target aarch64-pc-windows-msvc --output "../release/secblitz-$VERSION-windows-arm64.cdx.json"
+          ls -l ../release
+          test "$(ls ../release | wc -l)" -eq 7
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -563,6 +579,16 @@ jobs:
             release/secblitz-*-windows-x64-setup.exe
             release/secblitz-*-windows-arm64.exe
             release/secblitz-*-windows-arm64-setup.exe
+      - name: Attest the x64 parts list
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: release/secblitz-*-windows-x64.exe
+          sbom-path: release/secblitz-${{ needs.verify.outputs.version }}-windows-x64.cdx.json
+      - name: Attest the arm64 parts list
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: release/secblitz-*-windows-arm64.exe
+          sbom-path: release/secblitz-${{ needs.verify.outputs.version }}-windows-arm64.cdx.json
       - name: Keep the release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -611,4 +637,6 @@ jobs:
             release/secblitz-"$VERSION"-windows-x64.exe \
             release/secblitz-"$VERSION"-windows-arm64-setup.exe \
             release/secblitz-"$VERSION"-windows-arm64.exe \
+            release/secblitz-"$VERSION"-windows-x64.cdx.json \
+            release/secblitz-"$VERSION"-windows-arm64.cdx.json \
             release/SHA256SUMS

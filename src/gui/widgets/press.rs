@@ -14,7 +14,7 @@ use iced::{
 use std::time::{Duration, Instant};
 
 const PRESS_SCALE: f32 = 0.03;
-const FOCUS_ALPHA: f32 = 0.14;
+pub const FOCUS_ALPHA: f32 = 0.14;
 const HOVER: Duration = Duration::from_millis(110);
 const DOWN: Duration = anim::FASTER;
 const UP: Duration = Duration::from_millis(220);
@@ -278,8 +278,9 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Press<'a, Mes
         operation: &mut dyn Operation,
     ) {
         operation.container(None, layout.bounds());
-        if self.enabled() {
-            let st = tree.state.downcast_mut::<State>();
+        let st = tree.state.downcast_mut::<State>();
+        // A button that is busy for a moment keeps its place, so Tab goes on from it.
+        if self.enabled() || st.focused {
             operation.focusable(self.id.as_ref(), layout.bounds(), st);
         }
         operation.traverse(&mut |operation| {

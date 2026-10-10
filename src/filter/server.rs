@@ -54,14 +54,14 @@ pub struct Stats {
 }
 
 impl Stats {
-    pub fn record(&self, kind: Kind, name: &str, now: u64) {
+    pub fn record(&self, kind: Kind, site: &str, now: u64) {
         if kind == Kind::Dangerous {
             self.dangerous_at.store(now, Ordering::Relaxed);
         }
         if matches!(kind, Kind::Dangerous | Kind::Scam) {
             *self.notice.lock().unwrap_or_else(PoisonError::into_inner) = Some(Notice {
                 kind,
-                site: super::activity::registrable_domain(name).to_string(),
+                site: site.to_string(),
                 at: now,
             });
         }
@@ -226,7 +226,9 @@ pub fn decide(packet: &[u8], shared: &Shared, now: u64) -> Option<(Query, Action
         filter.decide_allowing(&q.question.name, on, &read(&shared.allow))
     };
     if let Some(kind) = kind {
-        shared.stats.record(kind, &q.question.name, now);
+        shared
+            .stats
+            .record(kind, filter.listed(&q.question.name, kind), now);
         shared.activity.record(&q.question.name, kind, now);
         let reply = dns::blocked_reply(packet, &q);
         return Some((q, Action::Reply(reply)));

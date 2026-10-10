@@ -6,11 +6,13 @@ pub mod bars;
 pub mod chart;
 pub mod controls;
 pub mod cursor;
+pub mod focus;
 pub mod hairline;
 pub mod handoff;
 pub mod info;
 pub mod menu;
 pub mod parts;
+pub mod point;
 pub mod press;
 pub mod progress;
 pub mod ring;
@@ -209,7 +211,7 @@ fn button_colors(
     }
 }
 
-fn button_style(
+pub fn button_style(
     p: Palette,
     kind: ButtonKind,
 ) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
@@ -327,7 +329,12 @@ fn sheet_over<'a>(
         }
         None => Element::from(container(panel).center(Length::Fill).padding(theme::S6)),
     };
-    opaque(appear::pop(layer, p.scrim, p.surface, theme::R_LARGE))
+    opaque(appear::pop(
+        focus::window(layer),
+        p.scrim,
+        p.surface,
+        theme::R_LARGE,
+    ))
 }
 
 pub fn page_header<'a>(

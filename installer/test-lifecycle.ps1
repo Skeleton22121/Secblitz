@@ -290,9 +290,7 @@ if ($native.StartName -ine 'NT AUTHORITY\LocalService' -or $native.PathName -cne
 $report = Join-Path $app 'Monitor\latest.json'
 $service = Get-Service SecblitzMonitor
 try {
-    if ($service.Status -ne 'Stopped') { throw 'Fresh monitor must not start automatically.' }
-    $service.Start()
-    $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(30))
+    if ($service.Status -ne 'Running') { throw 'A chosen monitor must start right away.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(420)
     $scanned = $false
     while (-not $scanned -and [DateTime]::UtcNow -lt $deadline) {
@@ -335,4 +333,4 @@ Assert-Removed
 if (Test-Path -LiteralPath $desktopIcon) { throw 'Uninstall retained the owned desktop shortcut.' }
 if ((Get-FileHash -LiteralPath $unrelated).Hash -ne $unrelatedHash) { throw 'Uninstall changed unrelated application data.' }
 if ((Get-FileHash -LiteralPath $lookalike).Hash -ne $lookalikeHash) { throw 'Uninstall changed unrelated lookalike data.' }
-Write-Host "PASS: hourly updater/ACL/delayed start, preserved update choice, foreign-task rejection, default desktop shortcut/removal, desktop opt-out, silent no-UI checks, fresh monitor opt-in, running upgrade/resume, web protection registration/upgrade resume, quiet uninstall rejection/retry, silent and /SECBLITZDONE removal keeping the changes, full cleanup of services, tasks, data, settings and Run value, unrelated-file preservation. Logs: $logs"
+Write-Host "PASS: hourly updater/ACL/delayed start, preserved update choice, foreign-task rejection, default desktop shortcut/removal, desktop opt-out, silent no-UI checks, fresh monitor opt-in started right away, running upgrade/resume, web protection registration/upgrade resume, quiet uninstall rejection/retry, silent and /SECBLITZDONE removal keeping the changes, full cleanup of services, tasks, data, settings and Run value, unrelated-file preservation. Logs: $logs"

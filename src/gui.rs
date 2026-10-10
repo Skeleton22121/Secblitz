@@ -7,6 +7,7 @@ mod persist;
 pub mod render;
 mod tasks;
 pub mod theme;
+pub mod warn;
 pub mod widgets;
 mod window;
 
@@ -15,7 +16,9 @@ use crate::i18n::Lang;
 use iced::widget::{button, column, container, row, scrollable, stack, text};
 use iced::{keyboard, Alignment, Background, Border, Element, Length, Subscription, Task};
 use icons::Icon;
-use pages::{app_access, debloat, fixes, fixflow, history, home, recovery, settings, tools, web};
+use pages::{
+    app_access, debloat, fixes, fixflow, history, home, recovery, settings, tools, web, welcome,
+};
 use secblitz::engine::Report;
 use secblitz::model::CheckStatus;
 use std::path::PathBuf;
@@ -227,6 +230,8 @@ pub enum Message {
     /// Opens Clean up apps already narrowed to the app with this package name.
     OpenCleanUp(&'static str),
     CheckNow,
+    /// A check after a change the person made, only once they have agreed to checks.
+    CheckIfAgreed,
     Worker(worker::Event),
     ReviewFixes(Vec<String>),
     ReviewUndo,
@@ -241,6 +246,7 @@ pub enum Message {
     CloseRequested(iced::window::Id),
     Toast(String, Tone),
     Info(Option<Box<widgets::info::InfoSheet>>),
+    InfoPoint(String),
     DismissToast,
     ToastExpire(u32),
     ToastGone,
@@ -260,6 +266,7 @@ pub enum Message {
     PageOpened(crate::guide::Page, bool),
     WindowFocus(bool),
     OpenRequested(String),
+    Welcome(welcome::Msg),
 }
 
 const RECHECK_WINDOW: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -329,7 +336,11 @@ pub struct App {
     recheck: Recheck,
     switch_backs_seen: std::collections::HashSet<String>,
     focused: bool,
+    page_first_tab: bool,
     user: Option<String>,
+    welcome: Option<welcome::State>,
+    /// The person has agreed to a check, now or in an earlier run.
+    may_check: bool,
 }
 
 impl App {
@@ -351,6 +362,9 @@ impl App {
             secblitz::platform::app_dir().is_ok_and(|dir| app::whats_new::used_before(&dir));
         let mut prefs = app::settings::load();
         let whats_new = app::whats_new::due(prefs.whats_new_seen.as_deref(), used_before);
+        // Tests stand for a PC that has checked before; its own files must not decide the screen.
+        let has_history = cfg!(test)
+            || secblitz::platform::app_dir().is_ok_and(|dir| app::welcome::has_history(&dir));
         let news_unrecorded = prefs.whats_new_seen.as_deref() != Some(app::whats_new::VERSION);
         if news_unrecorded {
             prefs.whats_new_seen = Some(app::whats_new::VERSION.to_owned());
@@ -407,6 +421,12 @@ impl App {
             cached.filter(|(r, _)| app::last_check::missed_switch_backs(r, &reverted).is_empty());
         let checked_at = cached.as_ref().map(|(_, at)| *at);
         let report = cached.map(|(report, _)| Arc::new(report));
+        let launch = app::welcome::launch(
+            cfg!(test) || used_before,
+            prefs.welcome_seen,
+            has_history,
+            report.is_some(),
+        );
         let ctx = Ctx {
             lang,
             palette: Palette::of(mode),
@@ -416,7 +436,7 @@ impl App {
             damage: None,
             check_error: None,
             checked_at,
-            checking: report.is_none().then(CheckProgress::default),
+            checking: launch.check.then(CheckProgress::default),
             finishing: false,
             report,
             busy: false,
@@ -455,7 +475,10 @@ impl App {
             recheck: Recheck::default(),
             switch_backs_seen: reverted.into_iter().collect(),
             focused: true,
+            page_first_tab: false,
             user,
+            welcome: launch.welcome.then(welcome::State::default),
+            may_check: has_history,
         };
         let opened = Task::run(worker.opened(), Message::Worker);
         let first_check = if app.ctx.checking.is_some() {
@@ -468,7 +491,8 @@ impl App {
         let web_state = web::on_enter(&mut app.web, &mut app.ctx);
         let pending =
             Task::perform(blocking(secblitz::debloat::offline::finish_pending), |_| ()).discard();
-        let news = if news_unrecorded {
+        // A first start that is closed during the welcome must show it again next time.
+        let news = if news_unrecorded && !launch.welcome {
             Task::perform(persist::save_prefs(app.ctx.prefs.clone()), |_| {
                 Message::Noop
             })
@@ -526,9 +550,11 @@ impl App {
                 let finished = self.finish_handoff();
                 self.page = page;
                 self.ctx.info = None;
+                self.page_first_tab = true;
                 self.begin_entrance();
                 Task::batch([
                     finished,
+                    iced::advanced::widget::operate(widgets::focus::clear()),
                     self.enter_page(page),
                     iced::widget::operation::snap_to(
                         PAGE_SCROLL,
@@ -549,20 +575,24 @@ impl App {
                 Task::none()
             }
             Message::Tab(back) => {
-                if back {
-                    iced::widget::operation::focus_previous()
-                } else {
-                    iced::widget::operation::focus_next()
-                }
+                let step = match (back, std::mem::take(&mut self.page_first_tab)) {
+                    (true, _) => widgets::focus::Move::Previous,
+                    (false, true) => widgets::focus::Move::PageStart,
+                    (false, false) => widgets::focus::Move::Next,
+                };
+                iced::advanced::widget::operate(widgets::focus::step(step))
             }
             Message::CheckNow => {
                 if self.ctx.checking.is_some() || self.ctx.busy {
                     return Task::none();
                 }
+                self.may_check = true;
                 self.ctx.info = None;
                 self.ctx.checking = Some(CheckProgress::default());
                 Task::run(self.ctx.worker.run(worker::Job::Check), Message::Worker)
             }
+            Message::CheckIfAgreed if self.may_check => self.update(Message::CheckNow),
+            Message::CheckIfAgreed => Task::none(),
             Message::Worker(event) => self.on_worker(event),
             Message::ReviewFixes(ids) => fixflow::open_fixes(&mut self.fix, ids, &mut self.ctx),
             Message::ReviewUndo => fixflow::open_undo(&mut self.fix, &mut self.ctx),
@@ -581,11 +611,23 @@ impl App {
                     iced::window::close(id)
                 }
             }
-            Message::Info(sheet) => {
+            Message::Info(mut sheet) => {
+                if let Some(sheet) = sheet.as_mut() {
+                    sheet.open_first();
+                }
                 self.ctx.info = sheet;
                 Task::none()
             }
+            Message::InfoPoint(key) => {
+                if let Some(sheet) = self.ctx.info.as_mut() {
+                    sheet.open.toggle(&key);
+                }
+                Task::none()
+            }
             Message::Escape => {
+                if self.welcome.is_some() {
+                    return self.leave_welcome(false);
+                }
                 if self.ctx.info.take().is_some() {
                     return Task::none();
                 }
@@ -597,6 +639,7 @@ impl App {
                 }
                 match self.page {
                     Page::Fixes => fixes::escape(&mut self.fixes),
+                    Page::Web => web::escape(&mut self.web),
                     Page::Debloat => debloat::escape(&mut self.debloat),
                     Page::Tools => tools::escape(&mut self.tools),
                     Page::Settings => settings::escape(&mut self.settings),
@@ -634,6 +677,15 @@ impl App {
                 )
             }
             Message::Noop => Task::none(),
+            Message::Welcome(m) => {
+                let Some(state) = self.welcome.as_mut() else {
+                    return Task::none();
+                };
+                match welcome::update(state, m) {
+                    welcome::Outcome::Stay => Task::none(),
+                    welcome::Outcome::Leave { check } => self.leave_welcome(check),
+                }
+            }
             Message::CloseWhatsNew => {
                 self.whats_new = false;
                 Task::none()
@@ -652,7 +704,7 @@ impl App {
             }
             Message::WindowFocus(focused) => {
                 self.focused = focused;
-                let idle = self.ctx.checking.is_none() && !self.ctx.busy;
+                let idle = self.ctx.checking.is_none() && !self.ctx.busy && self.may_check;
                 let recheck = self.recheck.focus(focused, std::time::Instant::now(), idle);
                 if recheck || (focused && idle && self.switched_back_unseen()) {
                     self.update(Message::CheckNow)
@@ -810,7 +862,11 @@ impl App {
                 extra = Task::batch([
                     self.update(Message::Toast(done, Tone::Good)),
                     self.preload_all(),
-                    self.update(Message::CheckNow),
+                    if self.may_check {
+                        self.update(Message::CheckNow)
+                    } else {
+                        Task::none()
+                    },
                 ]);
             }
             E::Recovered(Err(_)) => {
@@ -1086,8 +1142,25 @@ impl App {
         })
     }
 
+    /// Leaves the welcome by any route and remembers that it was shown.
+    fn leave_welcome(&mut self, check: bool) -> Task<Message> {
+        self.welcome = None;
+        self.ctx.prefs.welcome_seen = true;
+        let saved = Task::perform(persist::save_prefs(self.ctx.prefs.clone()), |_| {
+            Message::Noop
+        });
+        if check {
+            Task::batch([saved, self.update(Message::CheckNow)])
+        } else {
+            saved
+        }
+    }
+
     fn view(&self) -> Element<'_, Message> {
         let p = Palette::of(self.ctx.palette.mode);
+        if let Some(state) = &self.welcome {
+            return welcome::view(state, &self.ctx);
+        }
         let content: Element<'_, Message> = match self.page {
             Page::Home => home::view(&self.home, &self.ctx),
             Page::Fixes => fixes::view(&self.fixes, &self.ctx, &self.app_access),
@@ -1156,7 +1229,7 @@ impl App {
             .height(Length::Fill)
             .into()
         };
-        let main = container(column![scroll, footer_bar])
+        let main = container(widgets::focus::page(column![scroll, footer_bar]))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(move |_| container::Style {
@@ -1416,8 +1489,14 @@ impl App {
             }
             _ => None,
         });
+        let welcome = if self.welcome.is_some() {
+            welcome::subscription()
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             escape,
+            welcome,
             search_escape,
             focus,
             iced::window::close_requests().map(Message::CloseRequested),
@@ -1495,14 +1574,89 @@ pub fn status_of(report: &Report, score: &Score, now: u64) -> secblitz::status::
     }
 }
 
+const USUAL_SIZE: iced::Size = iced::Size::new(1100.0, 720.0);
+/// The title bar and borders, plus a little room, around the drawn page.
+const FRAME: iced::Size = iced::Size::new(16.0, 48.0);
+
+/// The usual size, made smaller when the screen leaves less room, as on a laptop
+/// set to 150%, so the bottom of the window is never under the taskbar.
+fn first_size(free: Option<iced::Rectangle>) -> iced::Size {
+    let Some(free) = free else {
+        return USUAL_SIZE;
+    };
+    iced::Size::new(
+        USUAL_SIZE
+            .width
+            .min(free.width - FRAME.width)
+            .max(theme::WINDOW_MIN_WIDTH),
+        USUAL_SIZE
+            .height
+            .min(free.height - FRAME.height)
+            .max(theme::WINDOW_MIN_HEIGHT),
+    )
+}
+
+/// Centred in the free part of the screen. Windows centres a new window on the whole
+/// screen, which puts the bottom of a tall window under the taskbar.
+fn first_position(free: Option<iced::Rectangle>, size: iced::Size) -> Option<iced::Point> {
+    free.map(|free| {
+        iced::Point::new(
+            free.x + ((free.width - size.width - FRAME.width) / 2.0).max(0.0),
+            free.y + ((free.height - size.height - FRAME.height) / 2.0).max(0.0),
+        )
+    })
+}
+
+/// The part of the main screen that taskbars leave free, at the screen's scale.
+#[cfg(windows)]
+fn free_area() -> Option<iced::Rectangle> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+    };
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+    // SAFETY: `info` is a MONITORINFO with its size set, and the DPI outputs are locals.
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        if monitor.is_null() {
+            return None;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let (mut dpi, mut dpi_y) = (0u32, 0u32);
+        if GetMonitorInfoW(monitor, &mut info) == 0
+            || GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut dpi_y) != 0
+            || dpi == 0
+        {
+            return None;
+        }
+        let scale = dpi as f32 / 96.0;
+        let work = info.rcWork;
+        Some(iced::Rectangle::new(
+            iced::Point::new(work.left as f32 / scale, work.top as f32 / scale),
+            iced::Size::new(
+                (work.right - work.left) as f32 / scale,
+                (work.bottom - work.top) as f32 / scale,
+            ),
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn free_area() -> Option<iced::Rectangle> {
+    None
+}
+
 pub fn run(options: Options) -> anyhow::Result<()> {
     let renderer = render::select();
+    let free = free_area();
+    let size = first_size(free);
     let mut application =
         iced::application(move || App::new(options.clone()), App::update, App::view)
             .title(|app: &App| app.ctx.t("Secblitz"))
             .theme(|app: &App| app.ctx.palette.theme())
             .subscription(App::subscription)
-            .window_size((1100.0, 720.0))
+            .window_size(size)
             .default_font(theme::REGULAR)
             .antialiasing(render::use_msaa(renderer));
     for font in theme::FONT_FILES {
@@ -1510,8 +1664,11 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     }
     application
         .window(iced::window::Settings {
-            size: iced::Size::new(1100.0, 720.0),
-            position: iced::window::Position::Centered,
+            size,
+            position: first_position(free, size).map_or(
+                iced::window::Position::Centered,
+                iced::window::Position::Specific,
+            ),
             min_size: Some(iced::Size::new(
                 theme::WINDOW_MIN_WIDTH,
                 theme::WINDOW_MIN_HEIGHT,
@@ -1525,6 +1682,45 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     wait_persisted();
     Ok(())
 }
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    fn area(x: f32, y: f32, width: f32, height: f32) -> Option<iced::Rectangle> {
+        Some(iced::Rectangle::new(
+            iced::Point::new(x, y),
+            iced::Size::new(width, height),
+        ))
+    }
+
+    #[test]
+    fn the_window_fits_the_free_part_of_the_screen() {
+        assert_eq!(first_size(None), USUAL_SIZE);
+        assert_eq!(first_size(area(0.0, 0.0, 2560.0, 1400.0)), USUAL_SIZE);
+        let laptop = area(0.0, 0.0, 1280.0, 672.0);
+        assert_eq!(first_size(laptop), iced::Size::new(1100.0, 624.0));
+        assert_eq!(
+            first_size(area(0.0, 0.0, 800.0, 500.0)),
+            iced::Size::new(theme::WINDOW_MIN_WIDTH, theme::WINDOW_MIN_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn the_window_opens_in_the_middle_of_the_free_part() {
+        assert_eq!(first_position(None, USUAL_SIZE), None);
+        let laptop = area(0.0, 0.0, 1280.0, 672.0);
+        assert_eq!(
+            first_position(laptop, first_size(laptop)),
+            Some(iced::Point::new(82.0, 0.0))
+        );
+        let taskbar_on_top = area(0.0, 40.0, 1920.0, 1000.0);
+        assert_eq!(
+            first_position(taskbar_on_top, USUAL_SIZE),
+            Some(iced::Point::new(402.0, 156.0))
+        );
+    }
+}
+
 #[cfg(test)]
 mod recheck_tests {
     use super::*;

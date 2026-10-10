@@ -5,6 +5,7 @@ use crate::broker::{Reply, Request};
 use crate::gui::pages::settings;
 use crate::gui::theme::Tone;
 use crate::gui::widgets::anim;
+use crate::gui::widgets::point::Opened;
 use crate::gui::{blocking, blocking_stream, Ctx, Helper, Message};
 use crate::i18n::Lang;
 use crate::uninstall::{Left, Plan};
@@ -21,7 +22,7 @@ pub const SECTION_HELP: &str = "You choose whether your settings stay as they ar
 const QUESTION: &str = "What should happen to the changes Secblitz made?";
 const NOTHING_TO_PUT_BACK: &str = "Nothing Secblitz changed needs to be put back.";
 const KEEP_TITLE: &str = "Keep my PC as it is now";
-const KEEP_HELP: &str = "Your protection stays on. Apps you removed stay removed; you can reinstall them from the Microsoft Store.";
+const KEEP_HELP: &str = "Your protection stays on, and apps you removed stay removed.";
 const PUT_BACK_TITLE: &str = "Put everything back the way it was";
 const STAY_NOTE: &str = "Windows updates, virus scans and apps you installed with Secblitz stay.";
 const WEB_STOPS: &str = "Web protection stops too, because it is part of Secblitz.";
@@ -116,6 +117,16 @@ pub fn counts(plan: Option<&Plan>, safe: &[Setting]) -> Option<Counts> {
             + usize::from(plan.suggested && !safe.contains(&Setting::SuggestedApps)),
         apps: plan.apps_with_copy + plan.apps_store_only,
     })
+}
+
+pub fn keep_note(plan: Option<&Plan>) -> Option<(Tone, &'static str)> {
+    let plan = plan?;
+    match plan.apps_copy_only {
+        0 if plan.apps_with_copy > 0 => Some((Tone::Neutral, KEEP_DELETES_COPIES)),
+        0 => None,
+        1 => Some((Tone::Warn, "The saved copies of removed apps are deleted to free space. {n} of these apps is not in the Microsoft Store, so it can't come back after this. To keep it, bring it back first in Clean up apps.")),
+        _ => Some((Tone::Warn, "The saved copies of removed apps are deleted to free space. {n} of these apps are not in the Microsoft Store, so they can't come back after this. To keep them, bring them back first in Clean up apps.")),
+    }
 }
 
 pub fn web_note(plan: Option<&Plan>) -> Option<&'static str> {
@@ -275,6 +286,7 @@ pub struct State {
     spin: anim::Clock,
     now: Instant,
     since: Instant,
+    points: Opened,
 }
 
 impl Default for State {
@@ -286,6 +298,7 @@ impl Default for State {
             spin: anim::Clock::new(),
             now: Instant::now(),
             since: Instant::now(),
+            points: Opened::default(),
         }
     }
 }
@@ -386,6 +399,7 @@ pub enum Msg {
     RemoveAnyway,
     Spawned(bool),
     Frame(Instant),
+    Point(String),
 }
 
 fn wrap(msg: Msg) -> Message {
@@ -399,7 +413,21 @@ pub use system::uninstaller;
 use system::{launch_uninstaller, load_plan, run_put_back};
 
 pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
+    let task = apply(state, msg, ctx);
+    if matches!(state.sheet, Sheet::Closed) {
+        state.points.clear();
+    }
+    task
+}
+
+fn apply(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
     match msg {
+        Msg::Point(key) => {
+            if !matches!(state.sheet, Sheet::Closed) {
+                state.points.toggle(&key);
+            }
+            Task::none()
+        }
         Msg::Open => {
             if ctx.busy || !matches!(state.sheet, Sheet::Closed) {
                 return Task::none();
@@ -458,7 +486,7 @@ pub fn update(state: &mut State, msg: Msg, ctx: &mut Ctx) -> Task<Message> {
                         lines,
                         at: state.now,
                     };
-                    Task::done(Message::CheckNow)
+                    Task::done(Message::CheckIfAgreed)
                 }
             }
         }
@@ -574,6 +602,7 @@ mod tests {
             settings,
             apps_with_copy: copy,
             apps_store_only: store,
+            apps_copy_only: 0,
             suggested,
             web_on: false,
             history_damaged: false,
@@ -762,6 +791,30 @@ mod tests {
     }
 
     #[test]
+    fn keeping_warns_before_an_app_is_lost_for_good() {
+        assert_eq!(keep_note(None), None);
+        assert_eq!(keep_note(Some(&plan(3, 0, 2, false))), None);
+        let in_store = plan(0, 2, 0, false);
+        assert_eq!(
+            keep_note(Some(&in_store)),
+            Some((Tone::Neutral, KEEP_DELETES_COPIES))
+        );
+        let one = Plan {
+            apps_copy_only: 1,
+            ..in_store.clone()
+        };
+        let two = Plan {
+            apps_copy_only: 2,
+            ..in_store
+        };
+        for (plan, word) in [(one, "is not"), (two, "are not")] {
+            let (tone, key) = keep_note(Some(&plan)).unwrap();
+            assert_eq!(tone, Tone::Warn);
+            assert!(key.contains(word) && key.contains("{n}"), "{key}");
+        }
+    }
+
+    #[test]
     fn a_name_that_is_back_is_not_listed() {
         let left = vec![
             Left::AppNeedsStore { name: "A".into() },
@@ -941,6 +994,8 @@ mod tests {
             "Secblitz undoes its {n} change and brings back {apps} removed apps first. This can take a few minutes.",
             "Secblitz undoes its {n} changes and brings back {apps} removed app first. This can take a few minutes.",
             "Secblitz undoes its {n} changes and brings back {apps} removed apps first. This can take a few minutes.",
+            "The saved copies of removed apps are deleted to free space. {n} of these apps is not in the Microsoft Store, so it can't come back after this. To keep it, bring it back first in Clean up apps.",
+            "The saved copies of removed apps are deleted to free space. {n} of these apps are not in the Microsoft Store, so they can't come back after this. To keep them, bring them back first in Clean up apps.",
         ];
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/i18n-pending/a6.tsv");
         let pending = std::fs::read_to_string(path).ok();

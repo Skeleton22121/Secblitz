@@ -1,5 +1,6 @@
 //! The "About this" dialog: one place to read about a setting or a result.
-use super::{body, h2, icon_button, section_label, small, ButtonKind};
+use super::point::{self, Opened, Words};
+use super::{h2, icon_button, section_label, small, ButtonKind};
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, Palette};
 use crate::gui::{Ctx, Message};
@@ -10,6 +11,8 @@ use iced::{Border, Element, Length};
 pub struct InfoSheet {
     pub title: String,
     pub blocks: Vec<InfoBlock>,
+    /// Which points are open. Only the first block starts open.
+    pub open: Opened,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +51,19 @@ impl InfoSheet {
         Self {
             title: title.into(),
             blocks: Vec::new(),
+            open: Opened::default(),
+        }
+    }
+
+    pub fn open_first(&mut self) {
+        match self.blocks.first() {
+            Some(InfoBlock::Text { .. }) => self.open.open(&point_key(0, None)),
+            Some(InfoBlock::List { items, .. }) => {
+                for i in 0..items.len() {
+                    self.open.open(&point_key(0, Some(i)));
+                }
+            }
+            None => {}
         }
     }
 
@@ -177,22 +193,41 @@ pub fn link<'a>(
     ))
 }
 
+fn point_key(block: usize, item: Option<usize>) -> String {
+    match item {
+        Some(i) => format!("{block}.{i}"),
+        None => block.to_string(),
+    }
+}
+
 pub fn dialog<'a>(ctx: &Ctx, sheet: &InfoSheet) -> Element<'a, Message> {
     let p = ctx.palette;
     let mut blocks = column![].spacing(theme::S4).width(Length::Fill);
-    for block in &sheet.blocks {
+    for (n, block) in sheet.blocks.iter().enumerate() {
+        let toggle = |key: &str| Message::InfoPoint(key.to_owned());
         blocks = blocks.push(match block {
             InfoBlock::Text { label, body: text } => {
-                column![section_label(p, label.clone()), body(p, text.clone())]
-                    .spacing(theme::S1)
-                    .width(Length::Fill)
+                let key = point_key(n, None);
+                column![
+                    section_label(p, label.clone()),
+                    point::text_point(p, text, Words::Body, sheet.open.has(&key), toggle(&key))
+                ]
+                .spacing(theme::S1)
+                .width(Length::Fill)
             }
             InfoBlock::List { label, items } => {
                 let mut lines = column![section_label(p, label.clone())]
                     .spacing(theme::S1)
                     .width(Length::Fill);
-                for item in items {
-                    lines = lines.push(body(p, item.clone()));
+                for (i, item) in items.iter().enumerate() {
+                    let key = point_key(n, Some(i));
+                    lines = lines.push(point::text_point(
+                        p,
+                        item,
+                        Words::Body,
+                        sheet.open.has(&key),
+                        toggle(&key),
+                    ));
                 }
                 lines
             }
@@ -284,5 +319,34 @@ mod tests {
             .list("Changes", vec!["Firewall: on".into()])
             .without(&["firewall: on"]);
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn only_the_first_block_starts_open_and_a_new_sheet_starts_over() {
+        let (mut app, _) = crate::gui::App::new(crate::gui::Options {
+            lang: crate::i18n::Lang::En,
+            broker: None,
+            start: None,
+        });
+        let sheet = InfoSheet::new("x")
+            .text("a", "One. Two.")
+            .text("b", "Three. Four.");
+        let _ = app.update(Message::Info(Some(Box::new(sheet.clone()))));
+        let open = |app: &crate::gui::App, key: &str| app.ctx.info.as_ref().unwrap().open.has(key);
+        assert!(open(&app, "0") && !open(&app, "1"));
+        let _ = app.update(Message::InfoPoint("1".into()));
+        let _ = app.update(Message::InfoPoint("0".into()));
+        assert!(!open(&app, "0") && open(&app, "1"));
+        let _ = app.update(Message::Info(None));
+        let _ = app.update(Message::Info(Some(Box::new(sheet))));
+        assert!(open(&app, "0") && !open(&app, "1"));
+        let list_first = InfoSheet::new("x")
+            .list(
+                "More details",
+                vec!["One. Two.".into(), "Three. Four.".into()],
+            )
+            .text("b", "Five. Six.");
+        let _ = app.update(Message::Info(Some(Box::new(list_first))));
+        assert!(open(&app, "0.0") && open(&app, "0.1") && !open(&app, "1"));
     }
 }

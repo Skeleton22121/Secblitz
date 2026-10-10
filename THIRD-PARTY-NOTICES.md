@@ -41,6 +41,13 @@ and each stays under its own license:
 | EasyList and EasyPrivacy | https://easylist.to | GPLv3 or CC BY-SA 3.0 (dual licensed) |
 | AdGuard filters | https://filters.adtidy.org | GPLv3 |
 | AdGuard HostlistsRegistry, including the HaGeZi lists | https://adguardteam.github.io/HostlistsRegistry | GPLv3 |
+| malware-filter, malware download list (curben), built from abuse.ch URLhaus | https://malware-filter.gitlab.io | CC0 1.0 |
+| Stalkerware indicators by Echap (https://github.com/AssoEchap/stalkerware-indicators) | https://raw.githubusercontent.com/AssoEchap/stalkerware-indicators | CC BY 4.0 |
+
+Attribution for the stalkerware list, as CC BY 4.0 asks: "Stalkerware
+indicators" by Echap (Association Echap, https://echap.eu.org), licensed under
+CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Secblitz reads the
+host names from it and changes nothing else.
 
 The exact addresses are in `src/filter/lists.rs`. Secblitz reads the lists to
 decide which sites to block and does not redistribute them.

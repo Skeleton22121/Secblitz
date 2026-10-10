@@ -8,13 +8,14 @@ use crate::gui::theme::{self, mix, Palette};
 use crate::gui::Message;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Renderer as _};
-use iced::advanced::widget::{tree, Tree};
-use iced::advanced::{Clipboard, Shell, Widget};
+use iced::advanced::widget::operation::Focusable;
+use iced::advanced::widget::{tree, Operation, Tree};
+use iced::advanced::{overlay, Clipboard, Shell, Widget};
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, container, pick_list, row, stack, text};
+use iced::widget::{button, container, row, stack, text};
 use iced::{
-    mouse, window, Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
-    Point, Rectangle, Renderer, Shadow, Size, Theme, Vector,
+    keyboard, mouse, touch, window, Alignment, Background, Border, Color, Element, Event, Length,
+    Pixels, Point, Rectangle, Renderer, Shadow, Size, Theme, Vector,
 };
 
 fn line(px: f32) -> LineHeight {
@@ -31,55 +32,436 @@ pub fn dropdown<'a, T>(
 where
     T: ToString + PartialEq + Clone + 'a,
 {
-    let list = pick_list(options, selected, on_select)
-        .placeholder(placeholder.into())
-        .width(Length::Fill)
-        .font(theme::REGULAR)
-        .text_size(theme::BODY)
-        .text_line_height(line(theme::LINE_BODY))
-        .padding(Padding {
-            top: (theme::CONTROL - theme::LINE_BODY) / 2.0,
-            bottom: (theme::CONTROL - theme::LINE_BODY) / 2.0,
-            left: theme::S3,
-            right: theme::S10,
-        })
-        .handle(pick_list::Handle::None)
-        .style(move |_, status| {
-            let bg = match status {
-                pick_list::Status::Active => p.surface_alt,
-                pick_list::Status::Hovered => p.hover_strong,
-                pick_list::Status::Opened { .. } => p.pressed,
-            };
-            pick_list::Style {
-                text_color: p.text,
-                placeholder_color: p.text_muted,
-                handle_color: p.text_muted,
-                background: Background::Color(bg),
-                border: Border {
-                    radius: theme::R.into(),
-                    ..Border::default()
-                },
-            }
-        })
-        .menu_style(move |_| iced::overlay::menu::Style {
-            background: Background::Color(p.surface),
-            border: Border {
-                radius: theme::R.into(),
-                width: 1.0,
-                color: p.border,
-            },
-            text_color: p.text,
-            selected_text_color: p.text,
-            selected_background: Background::Color(p.surface_alt),
-            shadow: Shadow::default(),
-        });
+    let list = Dropdown {
+        p,
+        options,
+        selected,
+        placeholder: placeholder.into(),
+        on_select: Box::new(on_select),
+    };
     let chevron = container(icon(Icon::ChevronDown, 16.0, p.text_muted))
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::End)
         .align_y(Alignment::Center)
         .padding([0.0, theme::S3]);
-    arrow(stack![list, chevron])
+    arrow(stack![Element::new(list), chevron])
+}
+
+struct Dropdown<'a, T> {
+    p: Palette,
+    options: &'a [T],
+    selected: Option<&'a T>,
+    placeholder: String,
+    on_select: Box<dyn Fn(T) -> Message + 'a>,
+}
+
+#[derive(Default)]
+struct DropState {
+    open: bool,
+    hover: Option<usize>,
+    focused: bool,
+    over: bool,
+}
+
+impl Focusable for DropState {
+    fn is_focused(&self) -> bool {
+        self.focused
+    }
+    fn focus(&mut self) {
+        self.focused = true;
+    }
+    fn unfocus(&mut self) {
+        self.focused = false;
+        self.open = false;
+    }
+}
+
+/// Where the highlight goes when an arrow key is pressed in an open list.
+fn drop_step(hover: Option<usize>, count: usize, key: &keyboard::Key) -> Option<usize> {
+    use keyboard::key::Named;
+    if count == 0 {
+        return None;
+    }
+    match (key, hover) {
+        (keyboard::Key::Named(Named::ArrowDown), None) => Some(0),
+        (keyboard::Key::Named(Named::ArrowUp), None) => Some(count - 1),
+        (keyboard::Key::Named(Named::ArrowDown), Some(i)) => Some((i + 1).min(count - 1)),
+        (keyboard::Key::Named(Named::ArrowUp), Some(i)) => Some(i.saturating_sub(1)),
+        (keyboard::Key::Named(Named::Home), _) => Some(0),
+        (keyboard::Key::Named(Named::End), _) => Some(count - 1),
+        _ => hover,
+    }
+}
+
+impl<T: ToString + PartialEq + Clone> Dropdown<'_, T> {
+    fn selected_index(&self) -> Option<usize> {
+        let chosen = self.selected?;
+        self.options.iter().position(|o| o == chosen)
+    }
+}
+
+impl<'a, T> Widget<Message, Theme, Renderer> for Dropdown<'a, T>
+where
+    T: ToString + PartialEq + Clone + 'a,
+{
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<DropState>()
+    }
+    fn state(&self) -> tree::State {
+        tree::State::new(DropState::default())
+    }
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Fixed(theme::CONTROL))
+    }
+    fn layout(&mut self, _: &mut Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
+        layout::Node::new(limits.resolve(Length::Fill, Length::Fixed(theme::CONTROL), Size::ZERO))
+    }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let st = tree.state.downcast_mut::<DropState>();
+        operation.focusable(None, layout.bounds(), st);
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _: &Rectangle,
+    ) {
+        let st = tree.state.downcast_mut::<DropState>();
+        let over = cursor.is_over(layout.bounds());
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            | Event::Touch(touch::Event::FingerPressed { .. }) => {
+                st.focused = false;
+                if over {
+                    st.open = true;
+                    st.hover = self.selected_index();
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key:
+                    keyboard::Key::Named(
+                        keyboard::key::Named::Enter
+                        | keyboard::key::Named::Space
+                        | keyboard::key::Named::ArrowDown
+                        | keyboard::key::Named::ArrowUp,
+                    ),
+                ..
+            }) if st.focused && !st.open => {
+                st.open = true;
+                st.hover = self.selected_index().or(Some(0));
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+        if over != st.over {
+            st.over = over;
+            shell.request_redraw();
+        }
+    }
+    fn mouse_interaction(
+        &self,
+        _: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Rectangle,
+        _: &Renderer,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::Idle
+        }
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        use iced::advanced::text::{self as txt, Renderer as _};
+        let st = tree.state.downcast_ref::<DropState>();
+        let p = self.p;
+        let b = layout.bounds();
+        let bg = if st.open {
+            p.pressed
+        } else if st.over {
+            p.hover_strong
+        } else {
+            p.surface_alt
+        };
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: b,
+                border: Border {
+                    radius: theme::R.into(),
+                    ..Border::default()
+                },
+                ..renderer::Quad::default()
+            },
+            Background::Color(bg),
+        );
+        let label = self.selected.map(ToString::to_string);
+        let shown = label.clone().unwrap_or_else(|| self.placeholder.clone());
+        renderer.fill_text(
+            txt::Text {
+                content: shown,
+                size: Pixels(theme::BODY),
+                line_height: line(theme::LINE_BODY),
+                font: theme::REGULAR,
+                bounds: Size::new(b.width - theme::S3 - theme::S10, theme::LINE_BODY),
+                align_x: txt::Alignment::Default,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: txt::Shaping::default(),
+                wrapping: Wrapping::default(),
+            },
+            Point::new(b.x + theme::S3, b.center_y()),
+            if label.is_some() {
+                p.text
+            } else {
+                p.text_muted
+            },
+            *viewport,
+        );
+        if st.focused {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: b,
+                    border: Border {
+                        radius: theme::R.into(),
+                        ..Border::default()
+                    },
+                    ..renderer::Quad::default()
+                },
+                Background::Color(Color {
+                    a: press::FOCUS_ALPHA,
+                    ..p.text
+                }),
+            );
+        }
+    }
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        _: &Renderer,
+        _: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let st = tree.state.downcast_mut::<DropState>();
+        if !st.open {
+            return None;
+        }
+        Some(overlay::Element::new(Box::new(DropList {
+            p: self.p,
+            options: self.options,
+            on_select: &*self.on_select,
+            state: st,
+            anchor: Rectangle::new(layout.position() + translation, layout.bounds().size()),
+        })))
+    }
+}
+
+struct DropList<'b, T> {
+    p: Palette,
+    options: &'b [T],
+    on_select: &'b dyn Fn(T) -> Message,
+    state: &'b mut DropState,
+    anchor: Rectangle,
+}
+
+impl<T: ToString + Clone> DropList<'_, T> {
+    fn row_at(&self, menu: Rectangle, cursor: mouse::Cursor) -> Option<usize> {
+        let at = cursor.position_in(menu)?;
+        let i = (at.y / theme::CONTROL) as usize;
+        (i < self.options.len()).then_some(i)
+    }
+    fn choose(&mut self, i: usize, shell: &mut Shell<'_, Message>) {
+        if let Some(option) = self.options.get(i) {
+            shell.publish((self.on_select)(option.clone()));
+        }
+        self.state.open = false;
+    }
+}
+
+impl<T: ToString + Clone> overlay::Overlay<Message, Theme, Renderer> for DropList<'_, T> {
+    fn layout(&mut self, _: &Renderer, bounds: Size) -> layout::Node {
+        let height = self.options.len() as f32 * theme::CONTROL;
+        let below = bounds.height - (self.anchor.y + self.anchor.height);
+        let above = self.anchor.y;
+        let at = if below > above {
+            Point::new(self.anchor.x, self.anchor.y + self.anchor.height)
+        } else {
+            Point::new(self.anchor.x, self.anchor.y - height.min(above))
+        };
+        let room = below.max(above);
+        layout::Node::new(Size::new(self.anchor.width, height.min(room))).move_to(at)
+    }
+    fn draw(
+        &self,
+        renderer: &mut Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+    ) {
+        use iced::advanced::text::{self as txt, Renderer as _};
+        let p = self.p;
+        let menu = layout.bounds();
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: menu,
+                border: Border {
+                    radius: theme::R.into(),
+                    width: 1.0,
+                    color: p.border,
+                },
+                ..renderer::Quad::default()
+            },
+            Background::Color(p.surface),
+        );
+        for (i, option) in self.options.iter().enumerate() {
+            let row = Rectangle {
+                x: menu.x,
+                y: menu.y + i as f32 * theme::CONTROL,
+                width: menu.width,
+                height: theme::CONTROL,
+            };
+            if row.y >= menu.y + menu.height {
+                break;
+            }
+            if self.state.hover == Some(i) {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: row.x + 1.0,
+                            width: row.width - 2.0,
+                            ..row
+                        },
+                        border: Border {
+                            radius: theme::R.into(),
+                            ..Border::default()
+                        },
+                        ..renderer::Quad::default()
+                    },
+                    Background::Color(p.surface_alt),
+                );
+            }
+            renderer.fill_text(
+                txt::Text {
+                    content: option.to_string(),
+                    size: Pixels(theme::BODY),
+                    line_height: line(theme::LINE_BODY),
+                    font: theme::REGULAR,
+                    bounds: Size::new(f32::INFINITY, row.height),
+                    align_x: txt::Alignment::Default,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: txt::Shaping::default(),
+                    wrapping: Wrapping::default(),
+                },
+                Point::new(row.x + theme::S3, row.center_y()),
+                p.text,
+                menu,
+            );
+        }
+    }
+    fn update(
+        &mut self,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+        _: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        use keyboard::key::Named;
+        let menu = layout.bounds();
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(i) = self.row_at(menu, cursor) {
+                    if self.state.hover != Some(i) {
+                        self.state.hover = Some(i);
+                        shell.request_redraw();
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            | Event::Touch(touch::Event::FingerPressed { .. }) => {
+                if cursor.is_over(menu) {
+                    if let Some(i) = self.row_at(menu, cursor) {
+                        self.choose(i, shell);
+                    }
+                    shell.capture_event();
+                } else {
+                    self.state.open = false;
+                    // A press on the field itself only closes the list.
+                    if cursor.is_over(self.anchor) {
+                        shell.capture_event();
+                    }
+                }
+                shell.request_redraw();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => match key {
+                keyboard::Key::Named(Named::Escape) => {
+                    self.state.open = false;
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+                keyboard::Key::Named(Named::Enter | Named::Space) => {
+                    if let Some(i) = self.state.hover {
+                        self.choose(i, shell);
+                    } else {
+                        self.state.open = false;
+                    }
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+                keyboard::Key::Named(Named::Tab) => {
+                    self.state.open = false;
+                    shell.request_redraw();
+                }
+                keyboard::Key::Named(
+                    Named::ArrowDown | Named::ArrowUp | Named::Home | Named::End,
+                ) => {
+                    self.state.hover = drop_step(self.state.hover, self.options.len(), key);
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Renderer,
+    ) -> mouse::Interaction {
+        if self.row_at(layout.bounds(), cursor).is_some() {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::default()
+        }
+    }
 }
 
 const SLIDE: std::time::Duration = std::time::Duration::from_millis(200);
@@ -91,6 +473,40 @@ struct SegState {
     slide: Track,
     hover: [Track; MAX_SEGMENTS],
     pressed: Option<usize>,
+    focused: bool,
+    cursor: Option<usize>,
+}
+
+impl Focusable for SegState {
+    fn is_focused(&self) -> bool {
+        self.focused
+    }
+    fn focus(&mut self) {
+        self.focused = true;
+        self.cursor = None;
+    }
+    fn unfocus(&mut self) {
+        self.focused = false;
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SegKey {
+    Move(usize),
+    Choose(usize),
+    Ignore,
+}
+
+fn seg_key(key: &keyboard::Key, cursor: usize, count: usize) -> SegKey {
+    use keyboard::key::Named;
+    match key {
+        keyboard::Key::Named(Named::ArrowLeft) => SegKey::Move(cursor.saturating_sub(1)),
+        keyboard::Key::Named(Named::ArrowRight) => {
+            SegKey::Move((cursor + 1).min(count.saturating_sub(1)))
+        }
+        keyboard::Key::Named(Named::Enter | Named::Space) => SegKey::Choose(cursor),
+        _ => SegKey::Ignore,
+    }
 }
 
 struct Segmented<'a> {
@@ -140,6 +556,8 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
             slide: Track::at(1.0),
             hover: [Track::at(0.0); MAX_SEGMENTS],
             pressed: None,
+            focused: false,
+            cursor: None,
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -169,6 +587,16 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
         }
         layout::Node::with_children(Size::new(x, theme::CONTROL), kids)
     }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let st = tree.state.downcast_mut::<SegState>();
+        operation.focusable(None, layout.bounds(), st);
+    }
     fn update(
         &mut self,
         tree: &mut Tree,
@@ -182,6 +610,30 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
     ) {
         let hit = self.hit(layout, cursor);
         let st = tree.state.downcast_mut::<SegState>();
+        if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
+            st.focused = false;
+        }
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+            if st.focused {
+                let at = st.cursor.unwrap_or(self.selected);
+                match seg_key(key, at, self.labels.len()) {
+                    SegKey::Move(to) => {
+                        st.cursor = Some(to);
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                    SegKey::Choose(i) => {
+                        if i != self.selected {
+                            if let Some(m) = self.on_select.get(i) {
+                                shell.publish(m.clone());
+                            }
+                        }
+                        shell.capture_event();
+                    }
+                    SegKey::Ignore => {}
+                }
+            }
+        }
         let before: Vec<f32> = st.hover.iter().map(Track::goal).collect();
         for (i, h) in st.hover.iter_mut().enumerate() {
             h.target(if hit == Some(i) { 1.0 } else { 0.0 });
@@ -307,6 +759,29 @@ impl Widget<Message, Theme, Renderer> for Segmented<'_> {
             },
             Background::Color(p.surface),
         );
+        if st.focused {
+            let (x, w) = self.seg(layout, st.cursor.unwrap_or(self.selected));
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: b.x + x,
+                        y: b.y + theme::S1,
+                        width: w,
+                        height: theme::CONTROL_SMALL,
+                    },
+                    border: Border {
+                        radius: theme::R_SMALL.into(),
+                        ..Border::default()
+                    },
+                    shadow: Shadow::default(),
+                    snap: false,
+                },
+                Background::Color(Color {
+                    a: press::FOCUS_ALPHA,
+                    ..p.text
+                }),
+            );
+        }
         for (i, (label, child)) in self.labels.iter().zip(layout.children()).enumerate() {
             let h = st.hover[i.min(MAX_SEGMENTS - 1)].value.clamp(0.0, 1.0);
             let (x, w) = self.seg(layout, i);
@@ -367,6 +842,19 @@ struct SwitchState {
     grow: Track,
     hover: Track,
     pressed: bool,
+    focused: bool,
+}
+
+impl Focusable for SwitchState {
+    fn is_focused(&self) -> bool {
+        self.focused
+    }
+    fn focus(&mut self) {
+        self.focused = true;
+    }
+    fn unfocus(&mut self) {
+        self.focused = false;
+    }
 }
 
 struct Switch<'a> {
@@ -385,6 +873,7 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
             grow: Track::at(0.0),
             hover: Track::at(0.0),
             pressed: false,
+            focused: false,
         })
     }
     fn size(&self) -> Size<Length> {
@@ -392,6 +881,19 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
     }
     fn layout(&mut self, _: &mut Tree, _: &Renderer, _: &layout::Limits) -> layout::Node {
         layout::Node::new(Size::new(SWITCH_W, SWITCH_H))
+    }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let st = tree.state.downcast_mut::<SwitchState>();
+        // A switch that is busy saving keeps its place, so Tab goes on from it.
+        if self.on_toggle.is_some() || st.focused {
+            operation.focusable(None, layout.bounds(), st);
+        }
     }
     fn update(
         &mut self,
@@ -407,7 +909,19 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
         let st = tree.state.downcast_mut::<SwitchState>();
         let enabled = self.on_toggle.is_some();
         let over = enabled && cursor.is_over(layout.bounds());
+        if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
+            st.focused = false;
+        }
         match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space),
+                ..
+            }) if st.focused && enabled => {
+                if let Some(f) = &self.on_toggle {
+                    shell.publish(f(!self.on));
+                }
+                shell.capture_event();
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if over => {
                 st.pressed = true;
                 shell.capture_event();
@@ -508,6 +1022,23 @@ impl Widget<Message, Theme, Renderer> for Switch<'_> {
             },
             Background::Color(fill),
         );
+        if st.focused && enabled {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: b,
+                    border: Border {
+                        radius: (SWITCH_H / 2.0).into(),
+                        ..Border::default()
+                    },
+                    shadow: Shadow::default(),
+                    snap: false,
+                },
+                Background::Color(Color {
+                    a: press::FOCUS_ALPHA,
+                    ..p.text
+                }),
+            );
+        }
         let d = 12.0 + 3.0 * st.grow.value.clamp(0.0, 1.0);
         let x = b.x + 10.0 + (b.width - 20.0) * t - d / 2.0;
         renderer.fill_quad(
@@ -1012,4 +1543,101 @@ pub fn scrollbar() -> iced::widget::scrollable::Direction {
             .scroller_width(6)
             .margin(2),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keyboard::key::Named;
+
+    fn named(n: Named) -> keyboard::Key {
+        keyboard::Key::Named(n)
+    }
+
+    #[test]
+    fn segmented_arrows_move_and_stop_at_the_ends() {
+        assert_eq!(seg_key(&named(Named::ArrowRight), 0, 3), SegKey::Move(1));
+        assert_eq!(seg_key(&named(Named::ArrowRight), 2, 3), SegKey::Move(2));
+        assert_eq!(seg_key(&named(Named::ArrowLeft), 1, 3), SegKey::Move(0));
+        assert_eq!(seg_key(&named(Named::ArrowLeft), 0, 3), SegKey::Move(0));
+    }
+
+    #[test]
+    fn segmented_enter_and_space_choose_the_highlighted_option() {
+        assert_eq!(seg_key(&named(Named::Enter), 2, 3), SegKey::Choose(2));
+        assert_eq!(seg_key(&named(Named::Space), 1, 3), SegKey::Choose(1));
+        assert_eq!(seg_key(&named(Named::ArrowDown), 1, 3), SegKey::Ignore);
+        assert_eq!(seg_key(&named(Named::Tab), 1, 3), SegKey::Ignore);
+    }
+
+    #[test]
+    fn dropdown_arrows_move_through_the_list() {
+        assert_eq!(drop_step(None, 6, &named(Named::ArrowDown)), Some(0));
+        assert_eq!(drop_step(None, 6, &named(Named::ArrowUp)), Some(5));
+        assert_eq!(drop_step(Some(5), 6, &named(Named::ArrowDown)), Some(5));
+        assert_eq!(drop_step(Some(0), 6, &named(Named::ArrowUp)), Some(0));
+        assert_eq!(drop_step(Some(2), 6, &named(Named::ArrowDown)), Some(3));
+        assert_eq!(drop_step(Some(2), 6, &named(Named::Home)), Some(0));
+        assert_eq!(drop_step(Some(2), 6, &named(Named::End)), Some(5));
+        assert_eq!(drop_step(Some(2), 0, &named(Named::ArrowDown)), None);
+    }
+
+    struct Stops {
+        focus: bool,
+        seen: Vec<bool>,
+    }
+
+    impl Operation for Stops {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+        fn focusable(
+            &mut self,
+            _: Option<&iced::advanced::widget::Id>,
+            _: Rectangle,
+            state: &mut dyn Focusable,
+        ) {
+            if self.focus {
+                state.focus();
+            }
+            self.seen.push(state.is_focused());
+        }
+    }
+
+    fn stops(element: &mut Element<'_, Message>, tree: &mut Tree, focus: bool) -> Vec<bool> {
+        use iced::advanced::renderer::Headless;
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            theme::REGULAR,
+            14.0.into(),
+            Some("tiny-skia"),
+        ))
+        .expect("tiny-skia renderer");
+        tree.diff(&*element);
+        let node = element.as_widget_mut().layout(
+            tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(200.0, 50.0)),
+        );
+        let mut op = Stops {
+            focus,
+            seen: Vec::new(),
+        };
+        element
+            .as_widget_mut()
+            .operate(tree, Layout::new(&node), &renderer, &mut op);
+        op.seen
+    }
+
+    #[test]
+    fn a_switch_busy_saving_keeps_focus_and_its_tab_stop() {
+        let p = theme::LIGHT;
+        let mut on = switch(p, false, Some(|_| Message::Noop));
+        let mut tree = Tree::new(&on);
+        assert_eq!(stops(&mut on, &mut tree, true), vec![true]);
+        let mut busy = switch(p, true, None::<fn(bool) -> Message>);
+        assert_eq!(stops(&mut busy, &mut tree, false), vec![true]);
+        let mut fresh = switch(p, true, None::<fn(bool) -> Message>);
+        let mut fresh_tree = Tree::new(&fresh);
+        assert!(stops(&mut fresh, &mut fresh_tree, false).is_empty());
+    }
 }

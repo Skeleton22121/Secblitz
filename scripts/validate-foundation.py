@@ -99,8 +99,7 @@ elif mode == "seal":
     bins = dest / "bins"
     bins.mkdir(exist_ok=False)
     paths = {"secblitz.exe": build / "secblitz.exe"}
-    # Rust test metadata is the authority for lib/bin selection. Never select
-    # the separate app_updates integration harness for guest execution.
+    # Rust test metadata is the authority for lib/bin selection.
     for line in (dest / "test-build.jsonl").read_text().splitlines():
         try:
             message = json.loads(line)

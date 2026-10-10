@@ -2,7 +2,7 @@
 
 use super::catalog::assessment_status;
 use super::journal::{Entry, State, Transaction};
-use super::{Engine, Outcome, Progress, ProgressStep, Report, READ_BATCH};
+use super::{ChangeSummary, Engine, Outcome, Progress, ProgressStep, Report, READ_BATCH};
 use crate::model::{CheckStatus, Control, Finding, Observation, Readiness};
 use anyhow::Result;
 
@@ -226,6 +226,31 @@ impl Engine {
                 )
             })
             .collect())
+    }
+
+    /// Counts and check ids only, never the saved before-values.
+    pub fn change_summary(&mut self) -> Result<ChangeSummary> {
+        let _lock = self.lock()?;
+        let transactions = self.load()?;
+        let mut summary = ChangeSummary::default();
+        let mut ids = std::collections::BTreeSet::new();
+        for tx in &transactions {
+            summary.sets += 1;
+            if tx.reverted || tx.fully_restored() {
+                summary.reverted += 1;
+                continue;
+            }
+            if tx.reverting || tx.incomplete() {
+                summary.pending += 1;
+            } else {
+                summary.applied += 1;
+            }
+            for e in tx.entries.iter().filter(|e| e.state != State::Restored) {
+                ids.insert(e.id.clone());
+            }
+        }
+        summary.checks = ids.into_iter().collect();
+        Ok(summary)
     }
 
     pub fn undoable_changes(&mut self) -> Result<usize> {

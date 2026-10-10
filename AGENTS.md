@@ -5,7 +5,7 @@ anything. CONTRIBUTING.md has the short version for first-time contributors.
 
 ## What Secblitz is
 
-A Windows 11 (x64 and arm64) desktop app, written in Rust with the iced GUI toolkit, that
+A Windows 10 (22H2) and Windows 11 (x64 and arm64) desktop app, written in Rust with the iced GUI toolkit, that
 checks a PC's security, privacy and cleanup settings and fixes them when the
 user says yes. The users are not technical. Everything follows from that:
 
@@ -46,8 +46,8 @@ user says yes. The users are not technical. Everything follows from that:
 | `website/` | The download page; built and checked by `scripts/assemble-site.py` |
 | `docs/` | Design notes, security model, release process |
 
-State lives in `C:\ProgramData\Secblitz` (admin-only ACL). User preferences live
-in the user's profile. Never widen an ACL or write state somewhere a standard
+State lives in `C:\ProgramData\Secblitz` (admin-only ACL). User preferences (`gui-prefs.json`)
+live in `C:\ProgramData\Secblitz\App`. Never widen an ACL or write state somewhere a standard
 user could tamper with it.
 
 ## Build and test
@@ -69,6 +69,7 @@ cargo clippy --locked --target aarch64-pc-windows-gnullvm --all-targets -- -D wa
 python3 installer/check-locales.py
 python3 scripts/release-tests.py          # needs scripts/requirements-release.txt
 python3 scripts/bump-version-tests.py
+python3 scripts/make-sbom-tests.py
 python3 scripts/build-site-assets.py --check
 python3 scripts/historical-downloads.py check
 ```

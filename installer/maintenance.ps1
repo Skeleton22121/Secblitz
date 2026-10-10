@@ -368,6 +368,14 @@ public static class SecblitzPaths {
         }
     }
 
+    function Start-OwnedMonitor {
+        $controller = Get-Service -Name SecblitzMonitor
+        try {
+            if ($controller.Status -eq 'Stopped') { $controller.Start() }
+            $controller.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(180))
+        } finally { $controller.Dispose() }
+    }
+
     $reconcileName = 'SecblitzFilterReconcile'
 
     function Get-OwnedFilter {
@@ -637,6 +645,7 @@ public static class SecblitzPaths {
                 Invoke-MonitorCommand 'install'
                 if ($null -eq (Get-OwnedMonitor)) { throw 'Monitor command succeeded without registering the service.' }
             }
+            Start-OwnedMonitor
         }
         RemoveMonitor {
             Close-OwnedWindows
@@ -651,11 +660,7 @@ public static class SecblitzPaths {
             if ($null -ne $monitor) {
                 # An upgrade keeps the service's old settings, so restart-on-failure is set here too.
                 & ([IO.Path]::Combine([Environment]::SystemDirectory, 'sc.exe')) failure SecblitzMonitor reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
-                $controller = Get-Service -Name SecblitzMonitor
-                try {
-                    if ($controller.Status -eq 'Stopped') { $controller.Start() }
-                    $controller.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(180))
-                } finally { $controller.Dispose() }
+                Start-OwnedMonitor
             }
         }
         InstallFilter {
