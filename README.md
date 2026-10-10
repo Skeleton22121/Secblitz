@@ -57,9 +57,11 @@ Using Secblitz 0.9.2 or older with Web protection on? It can't update itself to 
 | Windows 11 | Pro | 25H2 | x64 | ✓ | ✓ 1.0.0 |
 | Windows 11 | Enterprise | 25H2 | x64 | ✓ | ✓ 1.0.0 |
 | Windows 11 | Pro | 24H2 | ARM | ✓ | Not yet |
+| Windows 10 | Home | 22H2 | x64 | ✓ | Not yet |
+| Windows 10 | Pro | 22H2 | x64 | ✓ | Not yet |
 | Windows 10 | Enterprise | 22H2 | x64 | ✓ | ✓ 1.0.0 |
 
-Secblitz supports Windows 10 version 22H2 and Windows 11. Microsoft stopped free security updates for Windows 10 on 14 October 2025 and Secblitz cannot replace them, so moving to Windows 11, or Microsoft's Extended Security Updates, keeps a Windows 10 PC safest.
+Secblitz supports Windows 10 version 22H2 and Windows 11, in the Home, Pro and Enterprise editions. It works from an administrator account or a standard account; on a standard account, Windows asks for an administrator's password before Secblitz changes anything. Microsoft stopped free security updates for Windows 10 on 14 October 2025 and Secblitz cannot replace them, so moving to Windows 11, or Microsoft's Extended Security Updates, keeps a Windows 10 PC safest.
 
 ## Uninstall
 
